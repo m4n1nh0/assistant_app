@@ -1,0 +1,42 @@
+.git
+.gitignore
+.dockerignore
+
+# Secrets and local config
+**/.env
+**/.env.*
+!**/.env.example
+.vscode/
+.idea/
+.claude/
+
+# Python
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/htmlcov/
+**/.coverage
+
+# Flutter and build artifacts
+interface/.dart_tool/
+interface/build/
+interface/windows/flutter/ephemeral/
+interface/coverage/
+
+# Runtime data and logs
+**/logs/
+**/data/
+**/*.log
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+# Misc
+**/.DS_Store
+**/Thumbs.db
+tmp/
+temp/

@@ -1,0 +1,72 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Local tool and editor state
+.vscode/
+.idea/
+.claude/
+*.iml
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Backend runtime data
+backend/logs/
+backend/data/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Flutter and Dart
+interface/.dart_tool/
+interface/.flutter-plugins
+interface/.flutter-plugins-dependencies
+interface/.pub-cache/
+interface/.pub/
+interface/build/
+interface/coverage/
+interface/**/doc/api/
+interface/**/ios/Flutter/.last_build_id
+interface/app.*.symbols
+interface/app.*.map.json
+interface/android/app/debug/
+interface/android/app/profile/
+interface/android/app/release/
+
+# Flutter Windows generated build cache
+interface/windows/flutter/ephemeral/
+interface/windows/**/x64/
+interface/windows/**/x86/
+
+# Docker and local volumes
+docker-compose.override.yml
+data/
+logs/
+
+# OS and temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig

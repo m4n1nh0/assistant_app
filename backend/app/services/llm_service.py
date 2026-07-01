@@ -1,0 +1,506 @@
+import asyncio
+import json
+import re
+import time
+from typing import AsyncIterator, List, Optional
+from loguru import logger
+import httpx
+
+from ..core.config import get_settings
+from ..models.schemas import LLMResponse, Message
+
+settings = get_settings()
+_ERROR_LOG_TTL_SECONDS = 300
+_HTTP_LLM_TIMEOUT_SECONDS = 90
+_last_error_logs: dict[str, tuple[str, float]] = {}
+
+
+def _error_message(error: object) -> str:
+    if isinstance(error, dict):
+        if "error" in error:
+            return _error_message(error["error"])
+        for key in ("message", "detail", "error_description", "code"):
+            value = error.get(key)
+            if value:
+                return _sanitize_error(str(value))
+        return _sanitize_error(json.dumps(error, ensure_ascii=False))
+    if isinstance(error, list):
+        return "; ".join(_error_message(item) for item in error)
+    return _sanitize_error(str(error))
+
+
+def _sanitize_error(text: str) -> str:
+    text = re.sub(r"provided:\s*[^.\s]+", "provided: [redacted]", text)
+    return re.sub(r"\b[A-Za-z0-9_-]{2,}\*{2,}[A-Za-z0-9_-]{2,}\b", "[redacted]", text)
+
+
+def _log_llm_error(service_id: str, error: object) -> str:
+    message = _error_message(error)
+    now = time.monotonic()
+    last = _last_error_logs.get(service_id)
+    if last is None or last[0] != message or now - last[1] > _ERROR_LOG_TTL_SECONDS:
+        logger.error(f"{service_id} error: {message}")
+        _last_error_logs[service_id] = (message, now)
+    else:
+        logger.debug(f"{service_id} repeated error suppressed: {message}")
+    return message
+
+
+def _json_response(resp: httpx.Response) -> object:
+    try:
+        return resp.json()
+    except Exception as exc:
+        text = resp.text.strip()
+        detail = text[:500] if text else "resposta vazia"
+        raise Exception(f"HTTP {resp.status_code}: {detail}") from exc
+
+
+def _service_label(service_id: str) -> str:
+    return settings.llm_labels.get(service_id, service_id.upper())
+
+
+def _claude_api_key() -> str:
+    return settings.claude_api_key
+
+
+def _build_system_prompt(
+    assistant_name: str, user_name: str, personality: str, language: str, gender: str = "f"
+) -> str:
+    if not personality.strip():
+        article = "uma" if gender == "f" else "um"
+        adj = "direta, prática e confiável" if gender == "f" else "direto, prático e confiável"
+        base = f"Você é {assistant_name}, {article} assistente pessoal {adj}."
+    else:
+        base = personality.strip()
+    user = f"\nO usuário se chama {user_name}." if user_name else ""
+    lang = "português brasileiro" if language == "pt-BR" else "English"
+    return (
+        f"{base}{user}\n"
+        f"Responda em {lang}. Seja direto, prático e útil. "
+        f"Especialidades: tarefas de computador, agenda, produtividade e automação."
+    )
+
+
+def _format_history(history: List[Message]) -> List[dict]:
+    return [{"role": m.role, "content": m.content} for m in history if m.role != "system"]
+
+
+async def call_claude(
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    stream: bool = False,
+) -> LLMResponse:
+    api_key = _claude_api_key()
+    if not api_key:
+        return LLMResponse(llm="claude", content="Credencial não configurada", is_error=True)
+
+    try:
+        import anthropic
+        start = time.monotonic()
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        messages = _format_history(history) + [{"role": "user", "content": message}]
+
+        response = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            system=system_prompt,
+            messages=messages,
+        )
+        content = response.content[0].text
+        return LLMResponse(
+            llm="claude", content=content,
+            duration_ms=int((time.monotonic() - start) * 1000),
+            tokens_used=response.usage.output_tokens,
+        )
+    except Exception as e:
+        message = _log_llm_error("claude", e)
+        return LLMResponse(llm="claude", content=message, is_error=True)
+
+
+async def stream_claude(
+    message: str, history: List[Message], system_prompt: str
+) -> AsyncIterator[str]:
+    import anthropic
+    client = anthropic.AsyncAnthropic(api_key=_claude_api_key())
+    messages = _format_history(history) + [{"role": "user", "content": message}]
+    async with client.messages.stream(
+        model="claude-sonnet-4-6",
+        max_tokens=2000,
+        system=system_prompt,
+        messages=messages,
+    ) as stream:
+        async for text in stream.text_stream:
+            yield text
+
+
+async def call_gpt(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    if not settings.openai_api_key:
+        return LLMResponse(llm="gpt", content="Credencial não configurada", is_error=True)
+    try:
+        from openai import AsyncOpenAI
+        start = time.monotonic()
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        messages = [{"role": "system", "content": system_prompt}] + \
+                   _format_history(history) + \
+                   [{"role": "user", "content": message}]
+        resp = await client.chat.completions.create(
+            model="gpt-4o", max_tokens=2000, messages=messages
+        )
+        return LLMResponse(
+            llm="gpt",
+            content=resp.choices[0].message.content,
+            duration_ms=int((time.monotonic() - start) * 1000),
+            tokens_used=resp.usage.completion_tokens,
+        )
+    except Exception as e:
+        message = _log_llm_error("gpt", e)
+        return LLMResponse(llm="gpt", content=message, is_error=True)
+
+
+async def call_openai_compatible(
+    service_id: str,
+    api_key: str,
+    url: str,
+    model: str,
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    extra_headers: Optional[dict] = None,
+) -> LLMResponse:
+    if not api_key:
+        return LLMResponse(llm=service_id, content="Credencial não configurada", is_error=True)
+    try:
+        start = time.monotonic()
+        messages = [{"role": "system", "content": system_prompt}] + \
+                   _format_history(history) + \
+                   [{"role": "user", "content": message}]
+        headers = {"Authorization": f"Bearer {api_key}", **(extra_headers or {})}
+        async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                url,
+                headers=headers,
+                json={"model": model, "max_tokens": 2000, "messages": messages},
+            )
+        data = _json_response(resp)
+        if resp.is_error:
+            detail = data.get("error", data) if isinstance(data, dict) else data
+            raise Exception(_error_message(detail))
+        if isinstance(data, dict) and "error" in data:
+            raise Exception(_error_message(data["error"]))
+        if not isinstance(data, dict):
+            raise Exception(f"Resposta inesperada: {_error_message(data)}")
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise Exception(f"Resposta sem choices: {_error_message(data)}")
+        usage = data.get("usage") or {}
+        return LLMResponse(
+            llm=service_id,
+            content=choices[0]["message"]["content"],
+            duration_ms=int((time.monotonic() - start) * 1000),
+            tokens_used=usage.get("completion_tokens"),
+        )
+    except Exception as e:
+        message = _log_llm_error(service_id, e)
+        return LLMResponse(llm=service_id, content=message, is_error=True)
+
+
+async def call_together(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    return await call_openai_compatible(
+        "together",
+        settings.together_api_key,
+        "https://api.together.xyz/v1/chat/completions",
+        settings.together_model,
+        message,
+        history,
+        system_prompt,
+    )
+
+
+async def call_openrouter(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    return await call_openai_compatible(
+        "openrouter",
+        settings.openrouter_api_key,
+        "https://openrouter.ai/api/v1/chat/completions",
+        settings.openrouter_model,
+        message,
+        history,
+        system_prompt,
+        {"HTTP-Referer": "http://localhost", "X-Title": "Assistant App"},
+    )
+
+
+async def call_deepseek(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    return await call_openai_compatible(
+        "deepseek",
+        settings.deepseek_api_key,
+        "https://api.deepseek.com/chat/completions",
+        settings.deepseek_model,
+        message,
+        history,
+        system_prompt,
+    )
+
+
+async def stream_gpt(
+    message: str, history: List[Message], system_prompt: str
+) -> AsyncIterator[str]:
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    messages = [{"role": "system", "content": system_prompt}] + \
+               _format_history(history) + [{"role": "user", "content": message}]
+    async with await client.chat.completions.create(
+        model="gpt-4o", max_tokens=2000, messages=messages, stream=True
+    ) as stream:
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+
+async def call_gemini(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    if not settings.gemini_api_key:
+        return LLMResponse(llm="gemini", content="Credencial não configurada", is_error=True)
+    try:
+        start = time.monotonic()
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-1.5-flash:generateContent?key={settings.gemini_api_key}"
+        )
+        contents = []
+        for m in history:
+            if m.role != "system":
+                contents.append({
+                    "role": "model" if m.role == "assistant" else "user",
+                    "parts": [{"text": m.content}],
+                })
+        contents.append({"role": "user", "parts": [{"text": message}]})
+
+        async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url, json={
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": contents,
+                "generationConfig": {"maxOutputTokens": 2000},
+            })
+        data = _json_response(resp)
+        if not isinstance(data, dict):
+            raise Exception(f"Resposta inesperada: {_error_message(data)}")
+        if "error" in data:
+            raise Exception(_error_message(data["error"]))
+        content = data["candidates"][0]["content"]["parts"][0]["text"]
+        return LLMResponse(
+            llm="gemini", content=content,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+    except Exception as e:
+        message = _log_llm_error("gemini", e)
+        return LLMResponse(llm="gemini", content=message, is_error=True)
+
+
+async def call_grok(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    if not settings.grok_api_key:
+        return LLMResponse(llm="grok", content="Credencial não configurada", is_error=True)
+    try:
+        start = time.monotonic()
+        messages = [{"role": "system", "content": system_prompt}] + \
+                   _format_history(history) + [{"role": "user", "content": message}]
+        async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                f"{settings.grok_chat_base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.grok_api_key}"},
+                json={"model": settings.active_grok_model, "max_tokens": 2000, "messages": messages},
+            )
+        data = _json_response(resp)
+        if resp.is_error:
+            detail = data.get("error", data) if isinstance(data, dict) else data
+            raise Exception(_error_message(detail))
+        if not isinstance(data, dict):
+            raise Exception(f"Resposta inesperada: {_error_message(data)}")
+        if "error" in data:
+            raise Exception(_error_message(data["error"]))
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise Exception(f"Resposta sem choices: {_error_message(data)}")
+        return LLMResponse(
+            llm="grok",
+            content=choices[0]["message"]["content"],
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+    except Exception as e:
+        message = _log_llm_error("grok", e)
+        return LLMResponse(llm="grok", content=message, is_error=True)
+
+
+async def call_llama(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    try:
+        start = time.monotonic()
+        messages = [{"role": "system", "content": system_prompt}] + \
+                   _format_history(history) + [{"role": "user", "content": message}]
+        async with httpx.AsyncClient(timeout=180) as client:
+            resp = await client.post(
+                f"{settings.ollama_base_url}/api/chat",
+                json={"model": settings.ollama_model, "messages": messages, "stream": False},
+            )
+        data = _json_response(resp)
+        if resp.is_error:
+            detail = data.get("error", data) if isinstance(data, dict) else data
+            raise Exception(_error_message(detail))
+        if not isinstance(data, dict):
+            raise Exception(f"Resposta inesperada: {_error_message(data)}")
+        if "error" in data:
+            raise Exception(_error_message(data["error"]))
+        content = data.get("message", {}).get("content") or data.get("response", "Sem resposta")
+        return LLMResponse(
+            llm="llama", content=content,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+    except Exception as e:
+        message = _log_llm_error("llama", e)
+        return LLMResponse(llm="llama", content=f"Servico local indisponivel: {message}", is_error=True)
+
+
+async def stream_llama(
+    message: str, history: List[Message], system_prompt: str
+) -> AsyncIterator[str]:
+    import json
+    messages = [{"role": "system", "content": system_prompt}] + \
+               _format_history(history) + [{"role": "user", "content": message}]
+    async with httpx.AsyncClient(timeout=180) as client:
+        async with client.stream(
+            "POST",
+            f"{settings.ollama_base_url}/api/chat",
+            json={"model": settings.ollama_model, "messages": messages, "stream": True},
+        ) as response:
+            async for line in response.aiter_lines():
+                if line:
+                    try:
+                        chunk = json.loads(line)
+                        if text := chunk.get("message", {}).get("content"):
+                            yield text
+                    except json.JSONDecodeError:
+                        pass
+
+
+async def call_hf(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    if not settings.huggingface_api_key:
+        return LLMResponse(llm="hf", content="Credencial não configurada", is_error=True)
+    try:
+        start = time.monotonic()
+        model = settings.huggingface_model
+        if ":" not in model.rsplit("/", 1)[-1]:
+            model = f"{model}:preferred"
+        messages = [{"role": "system", "content": system_prompt}] + \
+                   _format_history(history) + [{"role": "user", "content": message}]
+        async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                "https://router.huggingface.co/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.huggingface_api_key}"},
+                json={"model": model, "max_tokens": 500, "messages": messages},
+            )
+        data = _json_response(resp)
+        if resp.is_error:
+            detail = data.get("error", data) if isinstance(data, dict) else data
+            raise Exception(_error_message(detail))
+        if isinstance(data, dict) and "error" in data:
+            raise Exception(_error_message(data["error"]))
+        if not isinstance(data, dict):
+            raise Exception(f"Resposta inesperada: {_error_message(data)}")
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise Exception(f"Resposta sem choices: {_error_message(data)}")
+        content = choices[0]["message"]["content"]
+        return LLMResponse(
+            llm="hf", content=content,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+    except Exception as e:
+        message = _log_llm_error("hf", e)
+        return LLMResponse(llm="hf", content=message, is_error=True)
+
+
+LLM_CALLERS = {
+    "claude": call_claude,
+    "gpt":    call_gpt,
+    "together": call_together,
+    "openrouter": call_openrouter,
+    "deepseek": call_deepseek,
+    "gemini": call_gemini,
+    "grok":   call_grok,
+    "llama":  call_llama,
+    "hf":     call_hf,
+}
+
+LLM_STREAMERS = {
+    "claude": stream_claude,
+    "gpt":    stream_gpt,
+    "llama":  stream_llama,
+}
+
+
+async def dispatch_single(
+    llm: str,
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+) -> LLMResponse:
+    caller = LLM_CALLERS.get(llm)
+    if not caller:
+        return LLMResponse(llm=llm, content=f"Serviço '{llm}' desconhecido", is_error=True)
+    return await caller(message, history, system_prompt)
+
+
+async def dispatch_multi(
+    llms: List[str],
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+) -> List[LLMResponse]:
+    tasks = [dispatch_single(llm, message, history, system_prompt) for llm in llms]
+    return await asyncio.gather(*tasks)
+
+
+async def dispatch_chain(
+    llms: List[str],
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+) -> LLMResponse:
+    current = message
+    last: Optional[LLMResponse] = None
+    for i, llm in enumerate(llms):
+        last = await dispatch_single(llm, current, history, system_prompt)
+        if last.is_error:
+            continue
+        if i < len(llms) - 1:
+            current = (
+                f'Contexto ({_service_label(llm)}): "{last.content[:800]}"\n\n'
+                f'Pergunta original: "{message}"\n\n'
+                f"Melhore e expanda esta resposta:"
+            )
+    if last is None:
+        return LLMResponse(llm="chain", content="Nenhum serviço disponível", is_error=True)
+    return LLMResponse(
+        llm=llms[-1],
+        content=f"**Resposta em etapas:**\n\n{last.content}",
+        duration_ms=last.duration_ms,
+    )
+
+
+async def get_streamer(llm: str):
+    return LLM_STREAMERS.get(llm)

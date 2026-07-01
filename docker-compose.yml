@@ -1,0 +1,91 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: assistant-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: assistant
+      MYSQL_USER: assistant
+      MYSQL_PASSWORD: assistant
+      MYSQL_ROOT_PASSWORD: assistant-root
+    ports:
+      - "3306:3306"
+    volumes:
+      - assistant_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "assistant", "-passistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    container_name: assistant-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - assistant_qdrant:/qdrant/storage
+
+  ollama:
+    build:
+      context: ./ollama
+      dockerfile: Dockerfile
+    container_name: assistant-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - assistant_ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: assistant-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - assistant_data:/app/data
+      - assistant_logs:/app/logs
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - RELOAD=false
+      - DATABASE_URL=mysql+aiomysql://assistant:assistant@mysql:3306/assistant
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_BASE_URL=http://ollama:11434
+    env_file:
+      - path: ./backend/.env
+        required: false
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  assistant_data:
+  assistant_logs:
+  assistant_mysql:
+  assistant_qdrant:
+  assistant_ollama:
