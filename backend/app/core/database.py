@@ -1,3 +1,4 @@
+import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import uuid
@@ -7,10 +8,28 @@ from .config import get_settings
 
 settings = get_settings()
 
+# Build database_url: prefer DATABASE_URL env var, else construct from MYSQL_* vars
+def _get_database_url():
+    # First try to use DATABASE_URL directly (if it's set and not empty)
+    if settings.database_url and not settings.database_url.startswith("mysql+aiomysql://assistant:assistant@localhost"):
+        return settings.database_url
+    
+    # Otherwise construct from individual MYSQL_* environment variables
+    mysql_user = os.getenv("MYSQLUSER", "assistant")
+    mysql_password = os.getenv("MYSQLPASSWORD", "assistant")
+    mysql_host = os.getenv("MYSQLHOST", "localhost")
+    mysql_port = os.getenv("MYSQLPORT", "3306")
+    mysql_database = os.getenv("MYSQLDATABASE", "assistant")
+    
+    db_url = f"mysql+aiomysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}"
+    return db_url
+
+database_url = _get_database_url()
+
 engine = create_async_engine(
-    settings.database_url,
+    database_url,
     echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
+    connect_args={"check_same_thread": False} if "sqlite" in database_url else {},
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -199,3 +218,4 @@ async def init_db():
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
+
