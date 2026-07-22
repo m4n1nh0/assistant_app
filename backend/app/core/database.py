@@ -15,11 +15,11 @@ def _get_database_url():
         return settings.database_url
     
     # Otherwise construct from individual MYSQL_* environment variables
-    mysql_user = os.getenv("MYSQLUSER", "assistant")
-    mysql_password = os.getenv("MYSQLPASSWORD", "assistant")
-    mysql_host = os.getenv("MYSQLHOST", "localhost")
-    mysql_port = os.getenv("MYSQLPORT", "3306")
-    mysql_database = os.getenv("MYSQLDATABASE", "assistant")
+    mysql_user = os.getenv("MYSQL_USER", "assistant")
+    mysql_password = os.getenv("MYSQL_PASSWORD", "assistant")
+    mysql_host = os.getenv("MYSQL_HOST", "localhost")
+    mysql_port = os.getenv("MYSQL_PORT", "3306")
+    mysql_database = os.getenv("MYSQL_DATABASE", "assistant")
     
     db_url = f"mysql+aiomysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}"
     return db_url
