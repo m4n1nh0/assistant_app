@@ -186,7 +186,13 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    # Debug: Print to see what values are loaded
+    import sys
+    print(f"DEBUG: DATABASE_URL={settings.database_url[:50]}...", file=sys.stderr)
+    print(f"DEBUG: QDRANT_URL={settings.qdrant_url}", file=sys.stderr)
+    print(f"DEBUG: LOCALAI_BASE_URL={settings.ollama_base_url}", file=sys.stderr)
+    return settings
 
 
 def _label_model(provider: str, model: str) -> str:
