@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/auto"
     deepseek_model: str = "deepseek-chat"
     huggingface_model: str = "mistralai/Mistral-7B-Instruct-v0.3"
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("LOCALAI_BASE_URL", "OLLAMA_BASE_URL"),
+    )
     ollama_model: str = "llama3"
 
     jwt_secret: str = "change-me-jwt"
@@ -98,8 +101,14 @@ class Settings(BaseSettings):
         ),
     )
 
-    database_url: str = "mysql+aiomysql://assistant:assistant@localhost:3306/assistant"
-    qdrant_url: str = "http://localhost:6333"
+    database_url: str = Field(
+        default="mysql+aiomysql://assistant:assistant@localhost:3306/assistant",
+        validation_alias="DATABASE_URL",
+    )
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        validation_alias="QDRANT_URL",
+    )
     qdrant_api_key: str = ""
     qdrant_collection_prefix: str = "assistant"
     qdrant_vector_size: int = 384
@@ -181,3 +190,4 @@ def get_settings() -> Settings:
 
 def _label_model(provider: str, model: str) -> str:
     return provider if not model else f"{provider} ({model})"
+
