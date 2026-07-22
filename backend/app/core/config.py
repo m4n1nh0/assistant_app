@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import AliasChoices, Field
@@ -38,7 +39,12 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/auto"
     deepseek_model: str = "deepseek-chat"
     huggingface_model: str = "mistralai/Mistral-7B-Instruct-v0.3"
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = Field(
+        default_factory=lambda: os.getenv(
+            "LOCALAI_BASE_URL",
+            f"http://localhost:{os.getenv('LOCALAI_PORT', '11434')}",
+        )
+    )
     ollama_model: str = "llama3"
 
     jwt_secret: str = "change-me-jwt"
@@ -98,8 +104,15 @@ class Settings(BaseSettings):
         ),
     )
 
-    database_url: str = "mysql+aiomysql://assistant:assistant@localhost:3306/assistant"
-    qdrant_url: str = "http://localhost:6333"
+    database_url: str = Field(
+        default_factory=lambda: os.getenv(
+            "DATABASE_URL",
+            "mysql+aiomysql://assistant:assistant@localhost:3306/assistant",
+        )
+    )
+    qdrant_url: str = Field(
+        default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333")
+    )
     qdrant_api_key: str = ""
     qdrant_collection_prefix: str = "assistant"
     qdrant_vector_size: int = 384
