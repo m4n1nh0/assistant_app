@@ -1,4 +1,4 @@
-# Assistente Desktop
+# Assistente Desktop 
 
 Aplicacao de assistente pessoal desktop com backend FastAPI, interface Flutter,
 memoria vetorial, automacoes locais, integracao com calendarios, voz,
