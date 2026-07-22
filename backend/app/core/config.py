@@ -40,10 +40,8 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     huggingface_model: str = "mistralai/Mistral-7B-Instruct-v0.3"
     ollama_base_url: str = Field(
-        default_factory=lambda: os.getenv(
-            "LOCALAI_BASE_URL",
-            f"http://localhost:{os.getenv('LOCALAI_PORT', '11434')}",
-        )
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("LOCALAI_BASE_URL", "OLLAMA_BASE_URL"),
     )
     ollama_model: str = "llama3"
 
@@ -105,13 +103,12 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(
-        default_factory=lambda: os.getenv(
-            "DATABASE_URL",
-            "mysql+aiomysql://assistant:assistant@localhost:3306/assistant",
-        )
+        default="mysql+aiomysql://assistant:assistant@localhost:3306/assistant",
+        validation_alias="DATABASE_URL",
     )
     qdrant_url: str = Field(
-        default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333")
+        default="http://localhost:6333",
+        validation_alias="QDRANT_URL",
     )
     qdrant_api_key: str = ""
     qdrant_collection_prefix: str = "assistant"
@@ -194,3 +191,4 @@ def get_settings() -> Settings:
 
 def _label_model(provider: str, model: str) -> str:
     return provider if not model else f"{provider} ({model})"
+
