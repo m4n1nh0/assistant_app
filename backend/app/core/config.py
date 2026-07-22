@@ -187,11 +187,11 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
-    # Debug: Print to see what values are loaded
+    # Debug: Print full URLs
     import sys
-    print(f"DEBUG: DATABASE_URL={settings.database_url[:50]}...", file=sys.stderr)
-    print(f"DEBUG: QDRANT_URL={settings.qdrant_url}", file=sys.stderr)
-    print(f"DEBUG: LOCALAI_BASE_URL={settings.ollama_base_url}", file=sys.stderr)
+    print(f"DEBUG: DATABASE_URL={repr(settings.database_url)}", file=sys.stderr)
+    print(f"DEBUG: QDRANT_URL={repr(settings.qdrant_url)}", file=sys.stderr)
+    print(f"DEBUG: LOCALAI_BASE_URL={repr(settings.ollama_base_url)}", file=sys.stderr)
     return settings
 
 
