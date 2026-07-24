@@ -1,5 +1,4 @@
 import os
-import sys
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import uuid
@@ -11,29 +10,23 @@ settings = get_settings()
 
 # Build database_url: prefer DATABASE_URL env var, else construct from MYSQL_* vars
 def _get_database_url():
-    # Debug: Print env vars
-    print(f"DEBUG DB: MYSQLUSER={os.getenv('MYSQLUSER')}", file=sys.stderr)
-    print(f"DEBUG DB: MYSQLHOST={os.getenv('MYSQLHOST')}", file=sys.stderr)
-    print(f"DEBUG DB: MYSQLPORT={os.getenv('MYSQLPORT')}", file=sys.stderr)
-    print(f"DEBUG DB: MYSQLDATABASE={os.getenv('MYSQLDATABASE')}", file=sys.stderr)
-    
     # First try to use DATABASE_URL directly (if it's set and not empty)
     if settings.database_url and not settings.database_url.startswith("mysql+aiomysql://assistant:assistant@localhost"):
         return settings.database_url
     
-    # Otherwise construct from individual MYSQL_* environment variables
-    mysql_user = os.getenv("MYSQL_USER", "assistant")
-    mysql_password = os.getenv("MYSQL_PASSWORD", "assistant")
-    mysql_host = os.getenv("MYSQL_HOST", "localhost")
-    mysql_port = os.getenv("MYSQL_PORT", "3306")
-    mysql_database = os.getenv("MYSQL_DATABASE", "assistant")
+    # Otherwise construct from individual MYSQL_* environment variables.
+    # Support both the docker-compose naming (MYSQL_HOST) and Railway's
+    # native MySQL plugin naming (MYSQLHOST, no underscore).
+    mysql_user = os.getenv("MYSQL_USER") or os.getenv("MYSQLUSER", "assistant")
+    mysql_password = os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQLPASSWORD", "assistant")
+    mysql_host = os.getenv("MYSQL_HOST") or os.getenv("MYSQLHOST", "localhost")
+    mysql_port = os.getenv("MYSQL_PORT") or os.getenv("MYSQLPORT", "3306")
+    mysql_database = os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE", "assistant")
     
     db_url = f"mysql+aiomysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}"
-    print(f"DEBUG DB: CONSTRUCTED URL={db_url}", file=sys.stderr)
     return db_url
 
 database_url = _get_database_url()
-print(f"DEBUG DB: FINAL URL={database_url}", file=sys.stderr)
 
 engine = create_async_engine(
     database_url,
