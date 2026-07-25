@@ -7,7 +7,6 @@ import '../services/external_launcher_service.dart';
 import '../services/notification_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
-import '../widgets/face_capture_dialog.dart';
 import '../widgets/title_bar.dart';
 
 class ConfigScreen extends ConsumerStatefulWidget {
@@ -24,9 +23,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _nameCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
   final _personCtrl = TextEditingController();
-  final _pinCtrl = TextEditingController();
-  final _pinCCtrl = TextEditingController();
-  final _voiceCtrl = TextEditingController();
+  final _curPassCtrl = TextEditingController();
+  final _newPassCtrl = TextEditingController();
+  final _newPassCCtrl = TextEditingController();
   final _tgTokenCtrl = TextEditingController();
   final _tgChatCtrl = TextEditingController();
   final _waNumCtrl = TextEditingController();
@@ -57,7 +56,6 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _nameCtrl.text = _draft.assistantName;
     _userCtrl.text = _draft.userName;
     _personCtrl.text = _draft.personality;
-    _voiceCtrl.text = _draft.auth.voicePassphrase;
     _populateNotifFields();
     _gcalClientCtrl.text = _draft.calendar.gcalClientId;
     _gcalSecretCtrl.text = _draft.calendar.gcalClientSecret;
@@ -91,13 +89,6 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         _nameCtrl.text.trim().isEmpty ? 'Assistente' : _nameCtrl.text.trim();
     _draft.userName = _userCtrl.text.trim();
     _draft.personality = _personCtrl.text.trim();
-    _draft.auth.voicePassphrase = _voiceCtrl.text.trim();
-    _draft.auth.voiceEnabled = _voiceCtrl.text.isNotEmpty;
-
-    if (_pinCtrl.text.isNotEmpty && _pinCtrl.text == _pinCCtrl.text) {
-      _draft.auth.pin = _pinCtrl.text;
-      _draft.auth.pinEnabled = true;
-    }
 
     _draft.notif.tgToken = _tgTokenCtrl.text.trim();
     _draft.notif.tgChatId = _tgChatCtrl.text.trim();
@@ -181,28 +172,6 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       if (!mounted) return;
       setState(() => _calendarAccounts = accounts);
     } catch (_) {}
-  }
-
-  Future<void> _enrollFace() async {
-    final bytes = await showDialog<List<int>>(
-      context: context,
-      builder: (_) => const FaceCaptureDialog(
-        title: 'CADASTRO FACIAL',
-        actionLabel: 'CADASTRAR',
-      ),
-    );
-    if (bytes == null) return;
-
-    try {
-      final template = await api.enrollFace(bytes);
-      setState(() {
-        _draft.auth.faceEmbedding = template;
-        _draft.auth.faceEnabled = true;
-      });
-      _showSnack('Reconhecimento facial cadastrado. Clique em Salvar.');
-    } catch (e) {
-      _showSnack('Erro ao cadastrar rosto: $e');
-    }
   }
 
   Future<void> _openGoogleAuthorization() async {
@@ -418,50 +387,50 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       ]);
 
   Widget _buildAuth() => _TabContent(title: 'AUTENTICAÇÃO', children: [
-        _SectionCard(title: '🎙 RECONHECIMENTO DE VOZ', children: [
-          _Field('FRASE SECRETA DE VOZ', _voiceCtrl,
-              hint: 'Ex: acesso autorizado para meu assistente'),
-          _InfoBox(
-              'Ao inicializar, o assistente pedirá que você fale esta frase para autenticar.'),
-        ]),
-        _SectionCard(title: '🔑 CÓDIGO SECRETO (PIN / FRASE)', children: [
+        _SectionCard(title: '🔑 TROCAR SENHA', children: [
+          _InlineField(_curPassCtrl, hint: 'Senha atual', obscure: true),
+          const SizedBox(height: 10),
           Row(children: [
             Expanded(
-                child: _InlineField(_pinCtrl,
-                    hint: 'PIN ou frase secreta', obscure: true)),
+                child: _InlineField(_newPassCtrl,
+                    hint: 'Nova senha', obscure: true)),
             const SizedBox(width: 10),
             Expanded(
-                child:
-                    _InlineField(_pinCCtrl, hint: 'Confirmar', obscure: true)),
+                child: _InlineField(_newPassCCtrl,
+                    hint: 'Confirmar nova senha', obscure: true)),
           ]),
-        ]),
-        _SectionCard(title: '👤 RECONHECIMENTO FACIAL', children: [
-          _InfoBox(
-              'Reconhecimento facial completo requer compilação nativa com biblioteca face detection. Marque como habilitado para reservar o slot de autenticação.'),
+          const SizedBox(height: 10),
           _ActionBtn(
-            label: _draft.auth.faceEmbedding?.isNotEmpty ?? false
-                ? 'Atualizar cadastro facial'
-                : 'Cadastrar rosto pela camera',
+            label: 'Salvar nova senha',
             color: AssistantTheme.c2,
-            onTap: _enrollFace,
+            onTap: _changePassword,
           ),
-          Row(children: [
-            const Text('Habilitar facial',
-                style: TextStyle(
-                    color: AssistantTheme.textSecondary,
-                    fontSize: 12,
-                    fontFamily: 'JetBrains Mono')),
-            const Spacer(),
-            Switch(
-              value: _draft.auth.faceEnabled,
-              onChanged: (_draft.auth.faceEmbedding?.isNotEmpty ?? false)
-                  ? (v) => setState(() => _draft.auth.faceEnabled = v)
-                  : null,
-              activeColor: AssistantTheme.c3,
-            ),
-          ]),
+          _InfoBox(
+              'O acesso ao assistente é protegido por usuário e senha, exigidos toda vez que o app inicia sem uma sessão válida.'),
         ]),
       ]);
+
+  Future<void> _changePassword() async {
+    final current = _curPassCtrl.text;
+    final next = _newPassCtrl.text;
+    if (current.isEmpty || next.isEmpty) {
+      _showSnack('Preencha a senha atual e a nova senha.');
+      return;
+    }
+    if (next != _newPassCCtrl.text) {
+      _showSnack('A confirmação de senha não confere.');
+      return;
+    }
+    try {
+      await api.changePassword(currentPassword: current, newPassword: next);
+      _curPassCtrl.clear();
+      _newPassCtrl.clear();
+      _newPassCCtrl.clear();
+      _showSnack('Senha alterada com sucesso.');
+    } catch (e) {
+      _showSnack('Erro ao trocar senha: $e');
+    }
+  }
 
   Widget _buildNotif() => _TabContent(title: 'NOTIFICAÇÕES', children: [
         _SectionCard(title: '✈️ TELEGRAM', children: [
@@ -627,9 +596,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _nameCtrl,
       _userCtrl,
       _personCtrl,
-      _pinCtrl,
-      _pinCCtrl,
-      _voiceCtrl,
+      _curPassCtrl,
+      _newPassCtrl,
+      _newPassCCtrl,
       _tgTokenCtrl,
       _tgChatCtrl,
       _waNumCtrl,

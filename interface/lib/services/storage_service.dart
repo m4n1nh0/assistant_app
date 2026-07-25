@@ -9,35 +9,41 @@ class StorageService {
   );
 
   static Future<void> saveConfig(AppConfig config) async {
-    await _storage.write(key: 'auth_pin', value: config.auth.pin);
-    await _storage.write(key: 'auth_voice', value: config.auth.voicePassphrase);
-    await _storage.write(
-        key: 'auth_face', value: config.auth.faceEmbedding ?? '');
-
     await HiveConfig.write(config.toSafeJson());
   }
 
   static Future<AppConfig?> loadConfig() async {
     final raw = HiveConfig.read();
     if (raw == null) return null;
-
-    var pin = '';
-    var voice = '';
-    String? face;
-    try {
-      pin = await _storage.read(key: 'auth_pin') ?? '';
-      voice = await _storage.read(key: 'auth_voice') ?? '';
-      final storedFace = await _storage.read(key: 'auth_face') ?? '';
-      face = storedFace.isEmpty ? null : storedFace;
-    } catch (_) {}
-
-    if (raw['auth'] is Map) {
-      (raw['auth'] as Map)['pin'] = pin;
-      (raw['auth'] as Map)['voicePassphrase'] = voice;
-      (raw['auth'] as Map)['faceEmbedding'] = face;
-    }
-
     return AppConfig.fromJson(raw);
+  }
+
+  static Future<void> saveAuthToken(String token) async {
+    await _storage.write(key: 'auth_token', value: token);
+  }
+
+  static Future<String?> loadAuthToken() async {
+    try {
+      return await _storage.read(key: 'auth_token');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> clearAuthToken() async {
+    await _storage.delete(key: 'auth_token');
+  }
+
+  static Future<void> saveAuthUsername(String username) async {
+    await _storage.write(key: 'auth_username', value: username);
+  }
+
+  static Future<String?> loadAuthUsername() async {
+    try {
+      return await _storage.read(key: 'auth_username');
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> clearAll() async {

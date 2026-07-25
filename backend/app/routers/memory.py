@@ -14,9 +14,10 @@ from ..models.schemas import (
     MemoryVoiceDecisionRequest,
     MemoryVoiceDecisionResponse,
 )
+from ..core.security import get_current_user
 from ..services import qdrant_service
 
-router = APIRouter(prefix="/memory", tags=["Memory"])
+router = APIRouter(prefix="/memory", tags=["Memory"], dependencies=[Depends(get_current_user)])
 
 VOICE_APPROVAL_EXACT = {
     "sim",

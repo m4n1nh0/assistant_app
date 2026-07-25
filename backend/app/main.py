@@ -14,7 +14,8 @@ from .routers.websocket import router as ws_router
 from .routers.automations import router as automations_router
 from .routers.memory import router as memory_router
 from .routers.routes import (
-    router_auth, router_calendar, router_notif, router_voice, router_health
+    router_auth, router_calendar, router_calendar_public,
+    router_notif, router_voice, router_health,
 )
 from .routers.system import router as system_router
 from .routers.tutor import router as tutor_router
@@ -101,6 +102,7 @@ app.include_router(system_router)
 app.include_router(desktop_router)
 app.include_router(computer_router)
 app.include_router(router_auth)
+app.include_router(router_calendar_public)
 app.include_router(router_calendar)
 app.include_router(router_notif)
 app.include_router(router_voice)

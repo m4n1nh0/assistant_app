@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import ScriptSnippetModel, get_db
+from ..core.security import get_current_user
 
 from ..models.schemas import (
     ComputerActionInfo,
@@ -15,7 +16,7 @@ from ..models.schemas import (
     ScriptShellsResponse,
 )
 from ..services import computer_action_service
-router = APIRouter(prefix="/computer", tags=["Computer"])
+router = APIRouter(prefix="/computer", tags=["Computer"], dependencies=[Depends(get_current_user)])
 
 
 def _script_response(item: ScriptSnippetModel) -> ScriptSnippetResponse:

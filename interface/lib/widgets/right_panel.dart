@@ -60,19 +60,6 @@ class RightPanel extends ConsumerWidget {
                   ),
           ),
           _RpSection(
-            label: 'AUTENTICAÇÃO',
-            child: Column(
-              children: [
-                _AuthRow(
-                    '🎙 Voz', config.auth.voiceEnabled, config.auth.voiceReady),
-                _AuthRow('👤 Facial', config.auth.faceEnabled,
-                    config.auth.faceReady),
-                _AuthRow('🔑 PIN/Frase', config.auth.pinEnabled,
-                    config.auth.pinReady),
-              ],
-            ),
-          ),
-          _RpSection(
             label: 'NOTIFICAÇÕES',
             child: Column(
               children: [
@@ -208,48 +195,6 @@ class _InfoRow extends StatelessWidget {
           ],
         ),
       );
-}
-
-class _AuthRow extends StatelessWidget {
-  final String label;
-  final bool enabled;
-  final bool configured;
-  const _AuthRow(this.label, this.enabled, this.configured);
-
-  @override
-  Widget build(BuildContext context) {
-    final ok = configured;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 5),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        border: Border.all(
-            color: ok
-                ? AssistantTheme.c3.withOpacity(0.25)
-                : AssistantTheme.border),
-        borderRadius: BorderRadius.circular(3),
-        color: ok ? AssistantTheme.c3.withOpacity(0.04) : Colors.transparent,
-      ),
-      child: Row(
-        children: [
-          Text(label,
-              style: TextStyle(
-                  fontFamily: 'JetBrains Mono',
-                  fontSize: 10,
-                  color: ok
-                      ? AssistantTheme.textPrimary
-                      : AssistantTheme.textMuted)),
-          const Spacer(),
-          Text(ok ? 'CONFIG' : 'N/A',
-              style: TextStyle(
-                  fontFamily: 'JetBrains Mono',
-                  fontSize: 9,
-                  letterSpacing: 1,
-                  color: ok ? AssistantTheme.c3 : AssistantTheme.textMuted)),
-        ],
-      ),
-    );
-  }
 }
 
 class _ToggleRow extends StatelessWidget {

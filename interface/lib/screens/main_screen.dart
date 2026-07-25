@@ -6,6 +6,7 @@ import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../services/calendar_service.dart';
 import '../services/notification_service.dart';
+import '../services/storage_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
@@ -39,12 +40,16 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   Future<void> _initScreen() async {
     await _syncBackendStatus();
     _startBackendStatusSync();
-    final config = ref.read(configProvider);
 
-    if (config.auth.hasAny && !ref.read(isAuthenticatedProvider)) {
-      await _showAuth();
-    } else {
-      ref.read(isAuthenticatedProvider.notifier).state = true;
+    if (!ref.read(isAuthenticatedProvider)) {
+      final storedToken = await StorageService.loadAuthToken();
+      api.setToken(storedToken);
+      final username = await api.currentUsername();
+      if (username != null) {
+        ref.read(isAuthenticatedProvider.notifier).state = true;
+      } else {
+        await _showAuth();
+      }
     }
 
     if (ref.read(isAuthenticatedProvider)) {
@@ -108,12 +113,22 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   Future<void> _showAuth() async {
     final config = ref.read(configProvider);
-    final ok = await showDialog<bool>(
+    final needsSetup = await api.needsAuthSetup();
+    final storedUsername = await StorageService.loadAuthUsername() ?? '';
+    if (!mounted) return;
+    final username = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AuthDialog(config: config),
+      builder: (_) => AuthDialog(
+        assistantName: config.assistantName,
+        needsSetup: needsSetup,
+        initialUsername: storedUsername,
+      ),
     );
-    if (ok == true) {
+    if (username != null) {
+      final token = api.token;
+      if (token != null) await StorageService.saveAuthToken(token);
+      await StorageService.saveAuthUsername(username);
       ref.read(isAuthenticatedProvider.notifier).state = true;
     } else {
       await windowManager.close();

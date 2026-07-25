@@ -4,9 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..core.database import get_db
+from ..core.security import get_current_user
 from ..services import qdrant_service
 
-router = APIRouter(prefix="/system", tags=["System"])
+router = APIRouter(prefix="/system", tags=["System"], dependencies=[Depends(get_current_user)])
 settings = get_settings()
 
 

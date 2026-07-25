@@ -7,6 +7,7 @@ from loguru import logger
 
 from ..core.config import get_settings
 from ..core.database import AsyncSessionLocal, ConfigModel
+from ..core.security import decode_token
 from ..models.schemas import ResponseModeEnum, Message
 from ..services import llm_service, notification_service
 from ..services.calendar_service import fetch_all_account_events
@@ -107,7 +108,13 @@ manager = ConnectionManager()
 
 
 @router.websocket("/ws/{session_id}")
-async def websocket_endpoint(ws: WebSocket, session_id: str):
+async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
+    try:
+        decode_token(token)
+    except Exception:
+        await ws.close(code=4401, reason="Não autenticado")
+        return
+
     await manager.connect(ws, session_id)
 
     await manager.send(session_id, {

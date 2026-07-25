@@ -5,7 +5,7 @@ import uuid, json
 from datetime import datetime, timezone
 
 from ..core.database import AsyncSessionLocal, ConversationModel
-from ..core.security import get_user_optional
+from ..core.security import get_user_optional, get_current_user
 from ..core.config import get_settings
 from ..models.schemas import ChatRequest, ChatResponse, LLMResponse, ResponseModeEnum
 from ..services import llm_service
@@ -22,7 +22,7 @@ from ..services.launcher_service import (
     find_shortcut_in_message,
 )
 
-router = APIRouter(prefix="/chat", tags=["Chat"])
+router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
 settings = get_settings()
 
 

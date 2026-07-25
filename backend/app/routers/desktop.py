@@ -1,13 +1,14 @@
 import asyncio
 import sys
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ..core.security import get_current_user
 from ..models.schemas import DesktopWindowContextResponse, DesktopWindowsResponse
 from ..services import desktop_window_service
 from ..services.desktop_window_service import WindowNotFoundError
 
-router = APIRouter(prefix="/desktop", tags=["Desktop"])
+router = APIRouter(prefix="/desktop", tags=["Desktop"], dependencies=[Depends(get_current_user)])
 
 
 def _require_local_client(request: Request) -> None:

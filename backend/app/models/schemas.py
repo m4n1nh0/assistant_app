@@ -52,16 +52,19 @@ class ChatResponse(BaseModel):
     action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction"]] = None
 
 
-class AuthMethod(str, Enum):
-    pin   = "pin"
-    voice = "voice"
-    face  = "face"
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
-class AuthRequest(BaseModel):
-    method: AuthMethod
-    credential: str
-    session_id: str = "default"
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class AuthResponse(BaseModel):
@@ -71,10 +74,8 @@ class AuthResponse(BaseModel):
     expires_in: int = 86400
 
 
-class FaceEnrollResponse(BaseModel):
-    ok: bool
-    template: str
-    message: str = ""
+class AuthStatusResponse(BaseModel):
+    needs_setup: bool
 
 
 class LLMConfig(BaseModel):

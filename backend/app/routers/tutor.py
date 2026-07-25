@@ -8,6 +8,7 @@ from ..core.database import (
     TutorSettingModel,
     get_db,
 )
+from ..core.security import get_current_user
 from ..models.schemas import (
     TutorProfileRequest,
     TutorProfileResponse,
@@ -15,7 +16,7 @@ from ..models.schemas import (
     TutorSettingResponse,
 )
 
-router = APIRouter(prefix="/tutor", tags=["Tutor"])
+router = APIRouter(prefix="/tutor", tags=["Tutor"], dependencies=[Depends(get_current_user)])
 
 
 def _profile_response(tutor: TutorModel, profile: AssistantProfileModel) -> TutorProfileResponse:

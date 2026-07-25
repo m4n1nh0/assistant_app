@@ -16,9 +16,12 @@ from ..models.schemas import (
     AutomationResponse,
     AutomationUpdateRequest,
 )
+from ..core.security import get_current_user
 from ..services import qdrant_service
 
-router = APIRouter(prefix="/automations", tags=["Automations"])
+router = APIRouter(
+    prefix="/automations", tags=["Automations"], dependencies=[Depends(get_current_user)]
+)
 
 
 def _automation_response(item: ApprovedAutomationModel) -> AutomationResponse:

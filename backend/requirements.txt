@@ -35,7 +35,6 @@ speechrecognition==3.16.1
 gtts==2.5.4
 pydub==0.25.1
 Pillow==12.2.0
-opencv-python-headless==4.13.0.92
 
 python-dotenv==1.2.2
 loguru==0.7.3

@@ -1,93 +1,75 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from ..core.security import hash_secret, verify_secret, create_token
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession as _AuthAsyncSession
+from ..core.security import hash_secret, verify_secret, create_token, get_current_user
 from ..core.config import get_settings
-from ..models.schemas import AuthRequest, AuthResponse, AuthMethod, FaceEnrollResponse
-from ..services.face_service import enroll_face, compare_face
+from ..core.database import get_db as _get_auth_db, UserModel
+from ..models.schemas import (
+    LoginRequest, RegisterRequest, ChangePasswordRequest,
+    AuthResponse, AuthStatusResponse,
+)
 
 router_auth = APIRouter(prefix="/auth", tags=["Auth"])
 settings = get_settings()
 
-_auth_store: dict = {}
+
+@router_auth.get("/status", response_model=AuthStatusResponse)
+async def auth_status(db: _AuthAsyncSession = Depends(_get_auth_db)):
+    count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
+    return AuthStatusResponse(needs_setup=count == 0)
 
 
-@router_auth.post("/setup")
-async def setup_auth(pin: str = "", voice_passphrase: str = "", face: bool = False):
-    if pin:
-        _auth_store["pin_hash"] = hash_secret(pin)
-        _auth_store["pin_enabled"] = True
-    if voice_passphrase:
-        _auth_store["voice_passphrase"] = voice_passphrase.lower().strip()
-        _auth_store["voice_enabled"] = True
-    if face:
-        _auth_store["face_enabled"] = True
-    return {"ok": True, "methods": [k for k in ["pin_enabled","voice_enabled","face_enabled"] if _auth_store.get(k)]}
+@router_auth.post("/register", response_model=AuthResponse)
+async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
+    """Creates the first admin account. Only allowed while no user exists yet."""
+    count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
+    if count > 0:
+        raise HTTPException(403, "Já existe uma conta configurada. Faça login.")
+
+    username = body.username.strip()
+    if not username or len(body.password) < 6:
+        raise HTTPException(400, "Usuário obrigatório e senha com pelo menos 6 caracteres.")
+
+    user = UserModel(username=username, password_hash=hash_secret(body.password))
+    db.add(user)
+    await db.commit()
+
+    token = create_token({"sub": username})
+    return AuthResponse(success=True, token=token, message="Conta criada com sucesso")
 
 
-@router_auth.post("/face/enroll", response_model=FaceEnrollResponse)
-async def enroll_face_auth(file: UploadFile = File(...)):
-    image = await file.read()
-    try:
-        template = enroll_face(image)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return FaceEnrollResponse(ok=True, template=template, message="Rosto cadastrado com sucesso")
+@router_auth.post("/login", response_model=AuthResponse)
+async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
+    result = await db.execute(select(UserModel).where(UserModel.username == body.username.strip()))
+    user = result.scalar_one_or_none()
+    if not user or not verify_secret(body.password, user.password_hash):
+        return AuthResponse(success=False, message="Usuário ou senha incorretos")
 
-
-@router_auth.post("/face/verify", response_model=AuthResponse)
-async def verify_face_auth(
-    file: UploadFile = File(...),
-    template: str = Form(...),
-    session_id: str = Form("default"),
-):
-    image = await file.read()
-    try:
-        comparison = compare_face(template, image)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    if not comparison.ok:
-        return AuthResponse(
-            success=False,
-            message=f"Rosto nao reconhecido (distancia {comparison.distance}/{comparison.threshold})",
-        )
-
-    token = create_token({"sub": "user", "session": session_id, "method": "face"})
-    return AuthResponse(success=True, token=token, message="Reconhecimento facial confirmado")
-
-
-@router_auth.post("/verify", response_model=AuthResponse)
-async def verify_auth(body: AuthRequest):
-    has_any = any(_auth_store.get(k) for k in ["pin_enabled", "voice_enabled", "face_enabled"])
-
-    if not has_any:
-        token = create_token({"sub": "user", "session": body.session_id})
-        return AuthResponse(success=True, token=token, message="Autenticação não configurada — acesso livre")
-
-    match body.method:
-        case AuthMethod.pin:
-            if not _auth_store.get("pin_enabled"):
-                raise HTTPException(400, "PIN não configurado")
-            ok = verify_secret(body.credential, _auth_store.get("pin_hash", ""))
-            if not ok:
-                return AuthResponse(success=False, message="PIN incorreto")
-
-        case AuthMethod.voice:
-            if not _auth_store.get("voice_enabled"):
-                raise HTTPException(400, "Auth por voz não configurada")
-            passphrase = _auth_store.get("voice_passphrase", "")
-            said = body.credential.lower().strip()
-            ok = passphrase in said or said in passphrase
-            if not ok:
-                return AuthResponse(success=False, message=f'Frase não reconhecida: "{said}"')
-
-        case AuthMethod.face:
-            return AuthResponse(success=False, message="Use /auth/face/verify para reconhecimento facial")
-
-        case _:
-            raise HTTPException(400, "Método desconhecido")
-
-    token = create_token({"sub": "user", "session": body.session_id, "method": body.method.value})
+    token = create_token({"sub": user.username})
     return AuthResponse(success=True, token=token, message="Autenticado com sucesso")
+
+
+@router_auth.get("/me")
+async def me(user: dict = Depends(get_current_user)):
+    return {"username": user.get("sub")}
+
+
+@router_auth.put("/password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: dict = Depends(get_current_user),
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    result = await db.execute(select(UserModel).where(UserModel.username == user.get("sub")))
+    account = result.scalar_one_or_none()
+    if not account or not verify_secret(body.current_password, account.password_hash):
+        raise HTTPException(400, "Senha atual incorreta")
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "Nova senha precisa ter pelo menos 6 caracteres.")
+
+    account.password_hash = hash_secret(body.new_password)
+    await db.commit()
+    return {"ok": True, "message": "Senha alterada com sucesso"}
 
 
 import json as _json
@@ -107,7 +89,12 @@ from ..services.calendar_service import (
 )
 from ..core.database import get_db, ConfigModel
 
-router_calendar = APIRouter(prefix="/calendar", tags=["Calendar"])
+router_calendar = APIRouter(
+    prefix="/calendar", tags=["Calendar"], dependencies=[Depends(get_current_user)]
+)
+# OAuth callbacks are hit by the browser redirect (Google/Microsoft), without an
+# Authorization header, so they must live on an unauthenticated router.
+router_calendar_public = APIRouter(prefix="/calendar", tags=["Calendar"])
 
 _KEY_GOOGLE = "calendar_google"
 _KEY_MS     = "calendar_microsoft"
@@ -641,7 +628,7 @@ async def google_callback(
     }
 
 
-@router_calendar.get("/google/oauth-callback", name="google_oauth_callback")
+@router_calendar_public.get("/google/oauth-callback", name="google_oauth_callback")
 async def google_oauth_callback(
     request: Request,
     code: str | None = None,
@@ -853,7 +840,7 @@ async def ms_callback(
     }
 
 
-@router_calendar.get("/microsoft/oauth-callback", name="microsoft_oauth_callback")
+@router_calendar_public.get("/microsoft/oauth-callback", name="microsoft_oauth_callback")
 async def microsoft_oauth_callback(
     request: Request,
     code: str | None = None,
@@ -930,7 +917,9 @@ from ..models.schemas import NotifRequest, NotifResult, NotifConfig
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config, save_notif_config
 
-router_notif = APIRouter(prefix="/notifications", tags=["Notifications"])
+router_notif = APIRouter(
+    prefix="/notifications", tags=["Notifications"], dependencies=[Depends(get_current_user)]
+)
 
 
 async def _notif_cfg(db: AsyncSession) -> NotifConfig:
@@ -975,7 +964,9 @@ from fastapi.responses import Response
 from ..services.voice_service import transcribe_audio, text_to_speech
 from ..models.schemas import STTResponse, TTSRequest
 
-router_voice = APIRouter(prefix="/voice", tags=["Voice"])
+router_voice = APIRouter(
+    prefix="/voice", tags=["Voice"], dependencies=[Depends(get_current_user)]
+)
 
 
 @router_voice.post("/transcribe", response_model=STTResponse)

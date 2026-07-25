@@ -21,6 +21,12 @@ class ApiService {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
+  String? get token => _token;
+
+  void setToken(String? token) {
+    _token = token;
+  }
+
   Future<Map<String, dynamic>> health() async {
     final r = await http
         .get(Uri.parse('$baseUrl/health'))
@@ -28,71 +34,84 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
-  Future<bool> authenticate({
-    required String method,
-    required String credential,
-    String sessionId = 'default',
-  }) async {
+  /// Returns true if no account has been created yet on the backend
+  /// (first-run bootstrap), so the UI should show a register form.
+  Future<bool> needsAuthSetup() async {
+    final r = await http
+        .get(Uri.parse('$baseUrl/auth/status'))
+        .timeout(const Duration(seconds: 10));
+    if (r.statusCode >= 400) return false;
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    return data['needs_setup'] == true;
+  }
+
+  Future<AuthResult> register(String username, String password) async {
     final r = await http.post(
-      Uri.parse('$baseUrl/auth/verify'),
+      Uri.parse('$baseUrl/auth/register'),
       headers: _headers,
-      body: jsonEncode({
-        'method': method,
-        'credential': credential,
-        'session_id': sessionId
-      }),
+      body: jsonEncode({'username': username, 'password': password}),
     );
+    return _handleAuthResponse(r);
+  }
+
+  Future<AuthResult> login(String username, String password) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/auth/login'),
+      headers: _headers,
+      body: jsonEncode({'username': username, 'password': password}),
+    );
+    return _handleAuthResponse(r);
+  }
+
+  AuthResult _handleAuthResponse(http.Response r) {
     final data = jsonDecode(r.body) as Map<String, dynamic>;
     if (data['success'] == true) {
       _token = data['token'] as String?;
-      return true;
     }
-    return false;
-  }
-
-  Future<void> setupAuth(
-      {String pin = '', String voicePassphrase = '', bool face = false}) async {
-    await http.post(
-      Uri.parse(
-          '$baseUrl/auth/setup?pin=${Uri.encodeComponent(pin)}&voice_passphrase=${Uri.encodeComponent(voicePassphrase)}&face=$face'),
-      headers: _headers,
-    );
-  }
-
-  Future<String> enrollFace(List<int> imageBytes) async {
-    final request =
-        http.MultipartRequest('POST', Uri.parse('$baseUrl/auth/face/enroll'));
-    request.files.add(
-        http.MultipartFile.fromBytes('file', imageBytes, filename: 'face.jpg'));
-    final response = await request.send();
-    final body = await response.stream.bytesToString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    if (response.statusCode >= 400 || data['ok'] != true) {
-      throw Exception(
-          data['detail'] ?? data['message'] ?? 'Falha ao cadastrar rosto');
-    }
-    return data['template'] as String;
-  }
-
-  Future<AuthFaceResult> verifyFace(
-    String template,
-    List<int> imageBytes, {
-    String sessionId = 'default',
-  }) async {
-    final request =
-        http.MultipartRequest('POST', Uri.parse('$baseUrl/auth/face/verify'));
-    request.fields['template'] = template;
-    request.fields['session_id'] = sessionId;
-    request.files.add(
-        http.MultipartFile.fromBytes('file', imageBytes, filename: 'face.jpg'));
-    final response = await request.send();
-    final body = await response.stream.bytesToString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    return AuthFaceResult(
+    return AuthResult(
       success: data['success'] == true,
       message: data['message']?.toString() ?? '',
       token: data['token'] as String?,
     );
+  }
+
+  /// Validates the current in-memory token against the backend.
+  /// Returns the logged-in username, or null if there is no valid session.
+  Future<String?> currentUsername() async {
+    if (_token == null) return null;
+    try {
+      final r = await http
+          .get(Uri.parse('$baseUrl/auth/me'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode >= 400) return null;
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      return data['username']?.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final r = await http.put(
+      Uri.parse('$baseUrl/auth/password'),
+      headers: _headers,
+      body: jsonEncode({
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      }),
+    );
+    if (r.statusCode >= 400) {
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      throw Exception(data['detail'] ?? 'Falha ao trocar senha');
+    }
+  }
+
+  void logout() {
+    _token = null;
+    disconnectWebSocket();
   }
 
   Future<Map<String, dynamic>> chat({
@@ -858,7 +877,10 @@ class ApiService {
 
   Stream<Map<String, dynamic>> connectWebSocket(String sessionId) {
     _wsStream = StreamController<Map<String, dynamic>>.broadcast();
-    _ws = WebSocketChannel.connect(Uri.parse('$wsUrl/ws/$sessionId'));
+    final tokenQuery =
+        _token != null ? '?token=${Uri.encodeComponent(_token!)}' : '';
+    _ws = WebSocketChannel.connect(
+        Uri.parse('$wsUrl/ws/$sessionId$tokenQuery'));
 
     _ws!.stream.listen(
       (raw) {
@@ -966,12 +988,12 @@ class CalendarAccount {
       );
 }
 
-class AuthFaceResult {
+class AuthResult {
   final bool success;
   final String message;
   final String? token;
 
-  const AuthFaceResult({
+  const AuthResult({
     required this.success,
     required this.message,
     this.token,

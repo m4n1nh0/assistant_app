@@ -13,9 +13,10 @@ from ..models.schemas import (
     ShortcutType,
     ShortcutUpdate,
 )
+from ..core.security import get_current_user
 from ..services.launcher_service import record_launch, suggest_launch_command
 
-router = APIRouter(prefix="/launcher", tags=["Launcher"])
+router = APIRouter(prefix="/launcher", tags=["Launcher"], dependencies=[Depends(get_current_user)])
 
 
 def _to_response(sc: ShortcutModel) -> ShortcutResponse:

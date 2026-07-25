@@ -35,8 +35,6 @@ class AppConfig {
   Map<String, String> llmLabels;
   Map<String, LlmStatus> llmStatuses;
 
-  AuthConfig auth;
-
   NotifConfig notif;
 
   CalendarConfig calendar;
@@ -59,7 +57,6 @@ class AppConfig {
     Map<String, bool>? activeLlms,
     Map<String, String>? llmLabels,
     Map<String, LlmStatus>? llmStatuses,
-    AuthConfig? auth,
     NotifConfig? notif,
     CalendarConfig? calendar,
     this.ttsEnabled = true,
@@ -73,7 +70,6 @@ class AppConfig {
             activeLlms ?? {for (final id in serviceLabels.keys) id: false},
         llmLabels = {...serviceLabels, ...?llmLabels},
         llmStatuses = llmStatuses ?? {},
-        auth = auth ?? AuthConfig(),
         notif = notif ?? NotifConfig(),
         calendar = calendar ?? CalendarConfig();
 
@@ -96,7 +92,6 @@ class AppConfig {
         'llmLabels': llmLabels,
         'llmStatus':
             llmStatuses.map((key, value) => MapEntry(key, value.toJson())),
-        'auth': auth.toJson(),
         'notif': notif.toJson(),
         'calendar': calendar.toJson(),
         'ttsEnabled': ttsEnabled,
@@ -108,16 +103,7 @@ class AppConfig {
         'hotkey': hotkey,
       };
 
-  Map<String, dynamic> toSafeJson() {
-    final data = toJson();
-    data['auth'] = {
-      ...auth.toJson(),
-      'pin': '***',
-      'voicePassphrase': '***',
-      'faceEmbedding': auth.faceEmbedding == null ? null : '***',
-    };
-    return data;
-  }
+  Map<String, dynamic> toSafeJson() => toJson();
 
   factory AppConfig.fromJson(Map<String, dynamic> j) {
     final activeLlms = <String, bool>{};
@@ -135,7 +121,6 @@ class AppConfig {
       activeLlms: activeLlms,
       llmLabels: _stringMap(j['llmLabels']),
       llmStatuses: _llmStatusMap(j['llmStatus'] ?? j['llm_status']),
-      auth: AuthConfig.fromJson(_map(j['auth'])),
       notif: NotifConfig.fromJson(_map(j['notif'])),
       calendar: CalendarConfig.fromJson(_map(j['calendar'])),
       ttsEnabled: j['ttsEnabled'] ?? true,
@@ -250,62 +235,6 @@ class LlmStatus {
   static bool? _nullableBool(Object? value) {
     if (value == null) return null;
     return value == true;
-  }
-}
-
-class AuthConfig {
-  String pin;
-  String voicePassphrase;
-  bool faceEnabled;
-  bool voiceEnabled;
-  bool pinEnabled;
-  String? faceEmbedding;
-
-  AuthConfig({
-    this.pin = '',
-    this.voicePassphrase = '',
-    this.faceEnabled = false,
-    this.voiceEnabled = false,
-    this.pinEnabled = false,
-    this.faceEmbedding,
-  });
-
-  bool get faceReady => faceEnabled && (faceEmbedding?.isNotEmpty ?? false);
-  bool get pinReady => pinEnabled && pin.isNotEmpty;
-  bool get voiceReady => voiceEnabled && voicePassphrase.isNotEmpty;
-  bool get hasAny => pinReady || voiceReady || faceReady;
-
-  Map<String, dynamic> toJson() => {
-        'pin': pin,
-        'voicePassphrase': voicePassphrase,
-        'faceEnabled': faceEnabled,
-        'voiceEnabled': voiceEnabled,
-        'pinEnabled': pinEnabled,
-        'faceEmbedding': faceEmbedding,
-      };
-
-  factory AuthConfig.fromJson(Map<String, dynamic> j) {
-    final rawPin = j['pin'] as String?;
-    final rawVoicePassphrase = j['voicePassphrase'] as String?;
-    final rawFaceEmbedding = j['faceEmbedding'] as String?;
-    final pin = rawPin == '***' ? '' : rawPin ?? '';
-    final voicePassphrase =
-        rawVoicePassphrase == '***' ? '' : rawVoicePassphrase ?? '';
-    final faceEmbedding = rawFaceEmbedding == null ||
-            rawFaceEmbedding == '***' ||
-            rawFaceEmbedding.isEmpty
-        ? null
-        : rawFaceEmbedding;
-
-    return AuthConfig(
-      pin: pin,
-      voicePassphrase: voicePassphrase,
-      faceEnabled:
-          (j['faceEnabled'] ?? false) && (faceEmbedding?.isNotEmpty ?? false),
-      voiceEnabled: (j['voiceEnabled'] ?? false) && voicePassphrase.isNotEmpty,
-      pinEnabled: (j['pinEnabled'] ?? false) && pin.isNotEmpty,
-      faceEmbedding: faceEmbedding,
-    );
   }
 }
 

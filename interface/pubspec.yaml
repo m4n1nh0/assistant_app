@@ -30,8 +30,6 @@ dependencies:
   flutter_tts: ^4.0.2
   audioplayers: ^6.0.0
 
-  camera: ^0.10.5+9
-
   url_launcher: ^6.2.4
   flutter_local_notifications: ^17.1.2
   window_manager: ^0.3.8

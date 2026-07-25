@@ -47,9 +47,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     ref.read(configProvider.notifier).replaceInMemory(config);
     if (!mounted) return;
 
-    if (!config.auth.hasAny) {
-      ref.read(isAuthenticatedProvider.notifier).state = true;
-    }
     Navigator.pushReplacementNamed(context, '/main');
   }
 
