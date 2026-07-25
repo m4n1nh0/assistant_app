@@ -55,7 +55,7 @@ def test_health_reports_configured_and_available_llms_separately(monkeypatch):
         )
 
     monkeypatch.setattr(routes, "_gs3", lambda: fake_settings)
-    monkeypatch.setattr(routes, "get_statuses_fast", fake_get_llm_statuses)
+    monkeypatch.setattr(routes, "get_llm_statuses", fake_get_llm_statuses)
     monkeypatch.setattr(routes, "_load_calendar_config", fake_load_calendar_config)
     monkeypatch.setattr(routes, "load_notif_config", fake_load_notif_config)
     monkeypatch.setattr(routes, "qdrant_status", lambda: {"ok": True})

@@ -101,7 +101,7 @@ sequenceDiagram
     participant SVC as Services
     participant DB as MySQL
     participant MEM as Qdrant
-    participant LLM as Provedor LLM/Ollama
+    participant LLM as Provedor LLM/Ollama/LocalAI
 
     U->>UI: Envia mensagem ou comando por voz
     UI->>API: POST /chat ou WebSocket /ws
@@ -262,9 +262,14 @@ sendo executada localmente.
 
 ### Ollama E LocalAI Na Railway
 
-O backend reconhece Ollama e LocalAI como provedores separados. Para os
-servicos no mesmo projeto e ambiente da Railway, configure no servico do
-backend:
+O backend trata Ollama e LocalAI como provedores separados:
+
+| Provedor | Porta | Verificacao | Chat |
+|----------|-------|-------------|------|
+| Ollama | `11434` | `/api/tags` | `/api/chat` |
+| LocalAI | `8080` | `/v1/models` | `/v1/chat/completions` |
+
+Crie estas variaveis **no servico do backend**:
 
 ```dotenv
 OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PRIVATE_DOMAIN}}:11434
@@ -275,15 +280,50 @@ LOCALAI_MODEL=
 LOCALAI_API_KEY=
 ```
 
-Tambem e aceito `LOCALAI_BASE_URL=localai.railway.internal`; o backend inclui
-automaticamente `http://` e a porta `8080`. Se `LOCALAI_MODEL` ficar vazio, o
-primeiro modelo retornado por `/v1/models` sera usado. Defina
-`LOCALAI_API_KEY` no backend apenas se a autenticacao por API key estiver
+O nome `localai` dentro da referencia deve ser igual ao nome do servico na
+Railway. Tambem e aceito `LOCALAI_BASE_URL=localai.railway.internal`; o backend
+inclui automaticamente `http://` e a porta `8080`. URLs do Ollama sem esquema
+tambem sao normalizadas.
+
+No **servico LocalAI**, configure:
+
+```dotenv
+LOCALAI_ADDRESS=:8080
+```
+
+`LOCALAI_MODEL` deve ser o `id` retornado por `/v1/models`. Quando a variavel
+fica vazia, o backend escolhe o primeiro modelo retornado. A mensagem
+`Agent pool started` confirma que o pool de agentes iniciou, mas o provedor so
+fica disponivel no app depois que `/v1/models` retorna pelo menos um modelo.
+Use `LOCALAI_API_KEY` no backend apenas se a autenticacao por API key estiver
 habilitada no LocalAI.
 
-No servico LocalAI, use `LOCALAI_ADDRESS=:8080` para que a API aceite conexoes
-de outros containers. O dominio privado somente funciona entre servicos do
-mesmo projeto e ambiente da Railway.
+Depois do redeploy, consulte `GET /health` no backend. O resultado esperado
+inclui `localai` em `available_llms` e um status semelhante a:
+
+```json
+{
+  "llm_status": {
+    "localai": {
+      "configured": true,
+      "online": true,
+      "available": true,
+      "status": "online"
+    }
+  }
+}
+```
+
+O endpoint detalhado aguarda a verificação dos provedores. Para o healthcheck
+de liveness da Railway, use `GET /health/live`.
+
+Os dominios `*.railway.internal` so podem ser acessados por outros servicos do
+mesmo projeto e ambiente. Ollama e LocalAI nao precisam de dominio publico; a
+interface conversa com o backend, e o backend acessa os provedores pela rede
+privada.
+
+Referencias: [Private Networking da Railway](https://docs.railway.com/private-networking)
+e [API OpenAI-compatible do LocalAI](https://localai.io/basics/getting_started/index.html).
 
 ## Testes E Qualidade
 
@@ -311,5 +351,7 @@ Uso comercial exige permissao previa por escrito. Consulte [LICENSE](LICENSE).
 
 ## Documentacao Complementar
 
-- `backend/README.md`: endpoints, WebSocket e detalhes do servidor.
-- `interface/README.md`: execucao e estrutura da aplicacao Flutter.
+- [backend/README.md](backend/README.md): endpoints, provedores locais,
+  Railway, WebSocket e detalhes do servidor.
+- [interface/README.md](interface/README.md): execucao, status dos provedores e
+  estrutura da aplicacao Flutter.

@@ -989,7 +989,7 @@ from fastapi import APIRouter
 from ..models.schemas import HealthResponse
 from ..core.config import get_settings as _gs3
 from ..services.qdrant_service import status as qdrant_status
-from ..services.llm_status_service import get_statuses_fast
+from ..services.llm_status_service import get_llm_statuses
 
 router_health = APIRouter(tags=["Health"])
 _start = time.time()
@@ -998,7 +998,7 @@ _start = time.time()
 @router_health.get("/health", response_model=HealthResponse)
 async def health():
     s = _gs3()
-    llm_status = await get_statuses_fast()
+    llm_status = await get_llm_statuses()
     available_llms = [
         llm for llm in s.active_llms
         if llm_status.get(llm) is not None and llm_status[llm].available

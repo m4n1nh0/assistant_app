@@ -44,10 +44,105 @@ docker-compose logs -f backend
 docker-compose down
 ```
 
-O ambiente Docker sobe três serviços: backend, MySQL e Qdrant. O MySQL guarda
-configurações, identificação do tutor, aprovações, automações e auditoria. O
-Qdrant guarda memórias aprovadas para preferências, comportamento, instruções e
-automações.
+O ambiente Docker sobe quatro serviços: backend, MySQL, Qdrant e Ollama. O
+MySQL guarda configurações, identificação do tutor, aprovações, automações e
+auditoria. O Qdrant guarda memórias aprovadas para preferências, comportamento,
+instruções e automações. A imagem do Ollama baixa `llama3.2:3b`; mantenha
+`OLLAMA_MODEL=llama3.2:3b` no `backend/.env` para usar esse modelo no compose.
+
+---
+
+## Provedores Locais De LLM
+
+O backend suporta dois provedores locais independentes:
+
+| ID no chat | Provedor | API de status | API de chat |
+|------------|----------|---------------|-------------|
+| `llama` | Ollama | `GET /api/tags` | `POST /api/chat` |
+| `localai` | LocalAI | `GET /v1/models` | `POST /v1/chat/completions` |
+
+Variáveis reconhecidas:
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | URL raiz da API Ollama |
+| `OLLAMA_MODEL` | `llama3` | Nome exato do modelo Ollama |
+| `LOCALAI_BASE_URL` | vazio | URL raiz do LocalAI; habilita o provedor |
+| `LOCALAI_MODEL` | vazio | ID do modelo; vazio seleciona o primeiro de `/v1/models` |
+| `LOCALAI_API_KEY` | vazio | Chave opcional enviada como Bearer token |
+
+As URLs podem ser informadas com ou sem `http://`. Para hosts internos da
+Railway sem porta, o backend usa `11434` para Ollama e `8080` para LocalAI. Uma
+URL LocalAI que já termina em `/v1` também é aceita sem duplicar esse prefixo.
+
+### Railway
+
+No serviço do **backend**, configure:
+
+```dotenv
+OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PRIVATE_DOMAIN}}:11434
+OLLAMA_MODEL=llama3.2:3b
+
+LOCALAI_BASE_URL=http://${{localai.RAILWAY_PRIVATE_DOMAIN}}:8080
+LOCALAI_MODEL=
+LOCALAI_API_KEY=
+```
+
+Se preferir o hostname direto, o valor abaixo é equivalente:
+
+```dotenv
+LOCALAI_BASE_URL=localai.railway.internal
+```
+
+No serviço do **LocalAI**, deixe a API acessível a outros containers:
+
+```dotenv
+LOCALAI_ADDRESS=:8080
+```
+
+Não confunda as variáveis dos dois serviços: `LOCALAI_BASE_URL` desta aplicação
+deve ser cadastrada no backend. No processo do LocalAI, a variável de bind é
+`LOCALAI_ADDRESS`.
+
+O hostname da referência (`localai` no exemplo) deve corresponder ao nome real
+do serviço Railway. Os serviços precisam estar no mesmo projeto e ambiente.
+Não é necessário criar domínio público para Ollama ou LocalAI.
+
+Referências: [rede privada da Railway](https://docs.railway.com/private-networking)
+e [API compatível com OpenAI do LocalAI](https://localai.io/basics/getting_started/index.html).
+
+### Modelo E Diagnóstico
+
+O LocalAI precisa retornar pelo menos um modelo em `GET /v1/models`. O log
+`Agent pool started (standalone/LocalAGI mode)` informa que o pool iniciou, mas
+não garante que um modelo de inferência esteja instalado.
+
+Após o redeploy, consulte:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Na primeira chamada, `/health` aguarda as verificações dos provedores para não
+devolver um estado provisório `checking`. Configure o healthcheck da
+infraestrutura em `/health/live`, que responde sem consultar os LLMs.
+
+Em produção, substitua a URL pela URL pública do backend. Confira os campos:
+
+- `active_llms`: provedores configurados;
+- `available_llms`: provedores configurados e realmente disponíveis;
+- `llm_status.localai.error`: motivo de indisponibilidade do LocalAI;
+- `llm_status.llama.error`: motivo de indisponibilidade do Ollama.
+
+Erros comuns:
+
+| Erro | Verificação |
+|------|-------------|
+| Falha de conexão | Serviço ativo, mesmo ambiente Railway, porta e `LOCALAI_ADDRESS` |
+| `Modelo ... não encontrado` | Valor de `LOCALAI_MODEL` deve existir em `/v1/models` |
+| `Nenhum modelo disponível` | Instalar/carregar um modelo no LocalAI |
+| HTTP 401 | Replicar a chave do LocalAI em `LOCALAI_API_KEY` no backend |
+| Ollama offline | Conferir `OLLAMA_BASE_URL`, porta `11434` e `OLLAMA_MODEL` |
 
 ### Seed de demonstração
 
@@ -84,7 +179,8 @@ O `--reset` remove apenas registros identificados pelo seed de demonstração.
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/` | Info do servidor |
-| GET | `/health` | Status |
+| GET | `/health` | Status completo, incluindo disponibilidade dos LLMs |
+| GET | `/health/live` | Liveness check sem consultar dependências |
 | GET | `/system/storage/status` | Status do MySQL e Qdrant |
 
 ### Auth
@@ -162,8 +258,8 @@ Conecte em: `ws://localhost:8000/ws/{session_id}`
 // Conversa completa
 { "type": "chat", "payload": { "message": "Olá", "mode": "single", "llm": "claude", "history": [] } }
 
-// Conversa com streaming
-{ "type": "chat_stream", "payload": { "message": "Olá", "llm": "gpt" } }
+// Conversa com streaming (também aceita "llama" e "localai")
+{ "type": "chat_stream", "payload": { "message": "Olá", "llm": "localai" } }
 
 // Transcrever áudio (base64)
 { "type": "voice_transcribe", "payload": { "audio_b64": "...", "language": "pt" } }
@@ -228,7 +324,8 @@ backend/
 │   ├── models/
 │   │   └── schemas.py       # Pydantic schemas (request/response)
 │   ├── services/
-│   │   ├── llm_service.py   # motores de resposta
+│   │   ├── llm_service.py   # chamadas e streaming dos provedores de LLM
+│   │   ├── llm_status_service.py  # disponibilidade e modelos dos LLMs
 │   │   ├── calendar_service.py  # Google + Microsoft OAuth
 │   │   ├── notification_service.py  # Telegram + WhatsApp
 │   │   └── voice_service.py  # transcrição + síntese de voz
