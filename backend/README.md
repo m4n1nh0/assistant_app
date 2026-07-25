@@ -49,6 +49,33 @@ configurações, identificação do tutor, aprovações, automações e auditori
 Qdrant guarda memórias aprovadas para preferências, comportamento, instruções e
 automações.
 
+### Seed de demonstração
+
+Para alimentar uma base nova durante um deploy de teste, configure a seguinte
+variável no serviço web:
+
+```env
+DATABASE_SEED=demo-v1
+```
+
+O backend executa o seed depois de inicializar o banco e grava um marcador na
+mesma transação. Reinicializações posteriores detectam esse marcador e não
+duplicam os dados. Um valor desconhecido ou uma falha no seed interrompe o
+startup para que o deploy não fique disponível com dados incompletos.
+
+O seed não cria credenciais administrativas. Depois do deploy, cadastre
+imediatamente o primeiro usuário pela interface e remova `DATABASE_SEED` do
+serviço. A remoção não apaga os dados já inseridos.
+
+Para executar ou recriar os dados manualmente:
+
+```bash
+python seed_dev.py
+python seed_dev.py --reset
+```
+
+O `--reset` remove apenas registros identificados pelo seed de demonstração.
+
 ---
 
 ## Endpoints REST

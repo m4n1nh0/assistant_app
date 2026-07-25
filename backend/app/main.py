@@ -8,6 +8,7 @@ import sys
 
 from .core.config import get_settings
 from .core.database import init_db
+from .core.database_seed import apply_database_seed, database_seed_requested
 from .utils.scheduler import start_scheduler, stop_scheduler
 from .routers.chat import router as chat_router
 from .routers.websocket import router as ws_router
@@ -54,10 +55,20 @@ logging.getLogger("uvicorn.access").addFilter(_HealthAccessLogFilter())
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Backend starting...")
+    seed_requested = database_seed_requested(settings.database_seed)
     try:
         await init_db()
         logger.info("Database initialized")
+        if seed_requested:
+            seed_applied = await apply_database_seed(settings.database_seed)
+            if seed_applied:
+                logger.info(f"Database seed applied: {settings.database_seed}")
+            else:
+                logger.info(f"Database seed already applied: {settings.database_seed}")
     except Exception as e:
+        if seed_requested:
+            logger.exception(f"Database seed failed: {e}")
+            raise
         logger.warning(f"Database unavailable (funcoes de historico desativadas): {e}")
     try:
         ensure_collections()

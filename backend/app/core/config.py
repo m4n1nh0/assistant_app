@@ -106,6 +106,10 @@ class Settings(BaseSettings):
         default="mysql+aiomysql://assistant:assistant@localhost:3306/assistant",
         validation_alias="DATABASE_URL",
     )
+    database_seed: str = Field(
+        default="",
+        validation_alias="DATABASE_SEED",
+    )
     qdrant_url: str = Field(
         default="http://localhost:6333",
         validation_alias="QDRANT_URL",
