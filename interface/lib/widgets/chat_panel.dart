@@ -3291,6 +3291,7 @@ class _ChatHeader extends StatelessWidget {
       'openrouter': AssistantTheme.c2,
       'deepseek': AssistantTheme.cHF,
       'grok': AssistantTheme.c5,
+      'localai': AssistantTheme.c3,
       'llama': AssistantTheme.c2,
       'hf': AssistantTheme.cHF,
     };

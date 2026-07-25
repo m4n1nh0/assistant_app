@@ -169,15 +169,18 @@ async def call_openai_compatible(
     history: List[Message],
     system_prompt: str,
     extra_headers: Optional[dict] = None,
+    require_api_key: bool = True,
 ) -> LLMResponse:
-    if not api_key:
+    if require_api_key and not api_key:
         return LLMResponse(llm=service_id, content="Credencial não configurada", is_error=True)
     try:
         start = time.monotonic()
         messages = [{"role": "system", "content": system_prompt}] + \
                    _format_history(history) + \
                    [{"role": "user", "content": message}]
-        headers = {"Authorization": f"Bearer {api_key}", **(extra_headers or {})}
+        headers = dict(extra_headers or {})
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
             resp = await client.post(
                 url,
@@ -343,6 +346,108 @@ async def call_grok(
         return LLMResponse(llm="grok", content=message, is_error=True)
 
 
+def _localai_headers() -> dict[str, str]:
+    if not settings.localai_api_key:
+        return {}
+    return {"Authorization": f"Bearer {settings.localai_api_key}"}
+
+
+async def _resolve_localai_model(client: httpx.AsyncClient) -> str:
+    configured = settings.localai_model.strip()
+    if configured:
+        return configured
+
+    resp = await client.get(
+        f"{settings.localai_v1_base_url}/models",
+        headers=_localai_headers(),
+    )
+    data = _json_response(resp)
+    if resp.is_error:
+        detail = data.get("error", data) if isinstance(data, dict) else data
+        raise Exception(_error_message(detail))
+    raw_models = data.get("data", []) if isinstance(data, dict) else []
+    for model in raw_models:
+        if isinstance(model, dict) and model.get("id"):
+            return str(model["id"])
+    raise Exception("Nenhum modelo disponivel no LocalAI")
+
+
+async def call_localai(
+    message: str, history: List[Message], system_prompt: str
+) -> LLMResponse:
+    if not settings.localai_base_url:
+        return LLMResponse(
+            llm="localai",
+            content="LOCALAI_BASE_URL nao configurada",
+            is_error=True,
+        )
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
+            model = await _resolve_localai_model(client)
+        return await call_openai_compatible(
+            "localai",
+            settings.localai_api_key,
+            f"{settings.localai_v1_base_url}/chat/completions",
+            model,
+            message,
+            history,
+            system_prompt,
+            require_api_key=False,
+        )
+    except Exception as e:
+        error = _log_llm_error("localai", e)
+        return LLMResponse(
+            llm="localai",
+            content=f"Servico LocalAI indisponivel: {error}",
+            is_error=True,
+        )
+
+
+async def stream_localai(
+    message: str, history: List[Message], system_prompt: str
+) -> AsyncIterator[str]:
+    if not settings.localai_base_url:
+        raise Exception("LOCALAI_BASE_URL nao configurada")
+
+    messages = [{"role": "system", "content": system_prompt}] + \
+               _format_history(history) + [{"role": "user", "content": message}]
+    async with httpx.AsyncClient(timeout=180) as client:
+        model = await _resolve_localai_model(client)
+        async with client.stream(
+            "POST",
+            f"{settings.localai_v1_base_url}/chat/completions",
+            headers=_localai_headers(),
+            json={
+                "model": model,
+                "max_tokens": 2000,
+                "messages": messages,
+                "stream": True,
+            },
+        ) as response:
+            if response.is_error:
+                await response.aread()
+                data = _json_response(response)
+                detail = data.get("error", data) if isinstance(data, dict) else data
+                raise Exception(_error_message(detail))
+
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices", []) if isinstance(chunk, dict) else []
+                if not choices or not isinstance(choices[0], dict):
+                    continue
+                delta = choices[0].get("delta") or {}
+                if isinstance(delta, dict) and delta.get("content"):
+                    yield str(delta["content"])
+
+
 async def call_llama(
     message: str, history: List[Message], system_prompt: str
 ) -> LLMResponse:
@@ -442,6 +547,7 @@ LLM_CALLERS = {
     "deepseek": call_deepseek,
     "gemini": call_gemini,
     "grok":   call_grok,
+    "localai": call_localai,
     "llama":  call_llama,
     "hf":     call_hf,
 }
@@ -449,6 +555,7 @@ LLM_CALLERS = {
 LLM_STREAMERS = {
     "claude": stream_claude,
     "gpt":    stream_gpt,
+    "localai": stream_localai,
     "llama":  stream_llama,
 }
 

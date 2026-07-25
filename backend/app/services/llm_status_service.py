@@ -25,6 +25,7 @@ _PROVIDER_ORDER = [
     "gemini",
     "grok",
     "hf",
+    "localai",
     "llama",
 ]
 
@@ -47,6 +48,7 @@ async def get_llm_statuses(force: bool = False) -> dict[str, LLMStatus]:
             _check_gemini(client),
             _check_grok(client),
             _check_hf(client),
+            _check_localai(client),
             _check_llama(client),
         )
 
@@ -109,6 +111,7 @@ def _provider_key(provider: str) -> str:
         "gemini": settings.gemini_api_key,
         "grok": settings.grok_api_key,
         "hf": settings.huggingface_api_key,
+        "localai": settings.localai_base_url,
         "llama": "local",  # always "configured" (local Ollama)
     }.get(provider, "")
 
@@ -118,12 +121,17 @@ def _label(provider: str) -> str:
 
 
 def _missing(provider: str) -> LLMStatus:
+    error = (
+        "LOCALAI_BASE_URL nao configurada"
+        if provider == "localai"
+        else "Credencial nao configurada"
+    )
     return LLMStatus(
         id=provider,
         label=_label(provider),
         configured=False,
         status="missing_key",
-        error="Credencial nao configurada",
+        error=error,
     )
 
 
@@ -345,6 +353,60 @@ async def _check_hf(client: httpx.AsyncClient) -> LLMStatus:
         key=settings.huggingface_api_key,
         headers={"Authorization": f"Bearer {settings.huggingface_api_key}"},
     )
+
+
+async def _check_localai(client: httpx.AsyncClient) -> LLMStatus:
+    if not settings.localai_base_url:
+        return _missing("localai")
+
+    headers = (
+        {"Authorization": f"Bearer {settings.localai_api_key}"}
+        if settings.localai_api_key
+        else None
+    )
+    try:
+        resp = await client.get(
+            f"{settings.localai_v1_base_url}/models",
+            headers=headers,
+        )
+        if resp.is_error:
+            return _status(
+                "localai",
+                configured=True,
+                online=False,
+                error=_response_error(resp),
+            )
+
+        data = _safe_json(resp)
+        raw_models = data.get("data", []) if isinstance(data, dict) else []
+        model_ids = [
+            str(model.get("id", ""))
+            for model in raw_models
+            if isinstance(model, dict) and model.get("id")
+        ]
+        wanted = settings.localai_model.strip()
+        if wanted and wanted not in model_ids:
+            return _status(
+                "localai",
+                configured=True,
+                online=False,
+                error=f"Modelo local '{wanted}' nao encontrado no LocalAI",
+            )
+        if not wanted and not model_ids:
+            return _status(
+                "localai",
+                configured=True,
+                online=False,
+                error="Nenhum modelo disponivel no LocalAI",
+            )
+        return _status("localai", configured=True, online=True)
+    except Exception as exc:
+        return _status(
+            "localai",
+            configured=True,
+            online=False,
+            error=_exception_error(exc),
+        )
 
 
 async def _check_llama(client: httpx.AsyncClient) -> LLMStatus:

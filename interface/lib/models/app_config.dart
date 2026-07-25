@@ -8,6 +8,7 @@ class AppConfig {
     'deepseek': 'DeepSeek',
     'gemini': 'Gemini',
     'grok': 'Grok',
+    'localai': 'LocalAI',
     'llama': 'Ollama',
     'hf': 'Hugging Face',
   };

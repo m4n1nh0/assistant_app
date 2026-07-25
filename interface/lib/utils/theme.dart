@@ -30,6 +30,7 @@ class AssistantTheme {
     'deepseek': cHF,
     'gemini': c1,
     'grok': c5,
+    'localai': c3,
     'llama': c2,
     'hf': cHF,
   };

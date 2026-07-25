@@ -12,6 +12,7 @@ class LLMEnum(str, Enum):
     deepseek = "deepseek"
     gemini = "gemini"
     grok   = "grok"
+    localai = "localai"
     llama  = "llama"
     hf     = "hf"
 
@@ -95,6 +96,9 @@ class LLMConfig(BaseModel):
     huggingface_model: str = "mistralai/Mistral-7B-Instruct-v0.3"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3"
+    localai_base_url: str = ""
+    localai_api_key: str = ""
+    localai_model: str = ""
 
 
 class AuthConfig(BaseModel):

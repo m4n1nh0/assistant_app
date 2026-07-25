@@ -79,7 +79,8 @@ async def _llm_unavailable_response(llm: str | None = None) -> LLMResponse:
         llm="backend",
         content=(
             "Nenhum agente de IA esta disponivel agora. "
-            "Para provedores em nuvem, verifique chave/saldo; para Ollama, verifique o container e o modelo local."
+            "Para provedores em nuvem, verifique chave/saldo; para Ollama ou "
+            "LocalAI, verifique o container, a URL interna e o modelo local."
         ),
         is_error=True,
     )

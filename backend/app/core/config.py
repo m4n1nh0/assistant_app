@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from typing import Dict, List
 from functools import lru_cache
 
@@ -39,11 +39,11 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/auto"
     deepseek_model: str = "deepseek-chat"
     huggingface_model: str = "mistralai/Mistral-7B-Instruct-v0.3"
-    ollama_base_url: str = Field(
-        default="http://localhost:11434",
-        validation_alias=AliasChoices("LOCALAI_BASE_URL", "OLLAMA_BASE_URL"),
-    )
+    ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3"
+    localai_base_url: str = ""
+    localai_api_key: str = ""
+    localai_model: str = ""
 
     jwt_secret: str = "change-me-jwt"
     jwt_algorithm: str = "HS256"
@@ -134,9 +134,26 @@ class Settings(BaseSettings):
     openai_tts_voice: str = "nova"
     openai_tts_speed: float = 0.95
 
+    @field_validator("ollama_base_url", mode="before")
+    @classmethod
+    def normalize_ollama_base_url(cls, value: object) -> str:
+        return _normalize_http_base_url(value, default_port=11434)
+
+    @field_validator("localai_base_url", mode="before")
+    @classmethod
+    def normalize_localai_base_url(cls, value: object) -> str:
+        return _normalize_http_base_url(value, default_port=8080)
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.cors_origins.split(",")]
+
+    @property
+    def localai_v1_base_url(self) -> str:
+        base_url = self.localai_base_url.rstrip("/")
+        if not base_url or base_url.endswith("/v1"):
+            return base_url
+        return f"{base_url}/v1"
 
     @property
     def active_llms(self) -> List[str]:
@@ -149,6 +166,7 @@ class Settings(BaseSettings):
         if self.gemini_api_key:                            active.append("gemini")
         if self.grok_api_key:                              active.append("grok")
         if self.huggingface_api_key:                       active.append("hf")
+        if self.localai_base_url:                          active.append("localai")
         active.append("llama")
         return active
 
@@ -183,6 +201,7 @@ class Settings(BaseSettings):
             "deepseek": _label_model("DeepSeek", self.deepseek_model),
             "gemini": "Gemini 1.5 Flash",
             "grok": grok_label,
+            "localai": _label_model("LocalAI", self.localai_model or "automatico"),
             "llama": f"Ollama ({self.ollama_model})",
             "hf": f"Hugging Face ({self.huggingface_model})",
         }
@@ -195,4 +214,36 @@ def get_settings() -> Settings:
 
 def _label_model(provider: str, model: str) -> str:
     return provider if not model else f"{provider} ({model})"
+
+
+def _normalize_http_base_url(value: object, *, default_port: int) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return ""
+
+    had_scheme = "://" in raw
+    normalized = raw if had_scheme else f"http://{raw}"
+
+    # Railway private domains need plain HTTP and the service's listening port.
+    # Also add the conventional port when a bare hostname was supplied.
+    from urllib.parse import urlsplit, urlunsplit
+
+    parsed = urlsplit(normalized)
+    hostname = (parsed.hostname or "").lower()
+    should_add_port = (
+        parsed.port is None
+        and (
+            not had_scheme
+            or hostname.endswith(".railway.internal")
+            or hostname in {"localhost", "127.0.0.1", "::1"}
+        )
+    )
+    netloc = parsed.netloc
+    if should_add_port:
+        if ":" in hostname and not netloc.startswith("["):
+            netloc = f"[{hostname}]:{default_port}"
+        else:
+            netloc = f"{netloc}:{default_port}"
+
+    return urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", ""))
 

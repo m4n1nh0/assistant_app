@@ -151,3 +151,59 @@ def test_check_grok_uses_configured_chat_base_url(monkeypatch):
         "url": "https://api.groq.com/openai/v1/models",
         "key": "gsk_valid_test",
     }
+
+
+def test_check_localai_detects_model_without_requiring_api_key(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://localai.railway.internal:8080/v1/models"
+        assert "authorization" not in request.headers
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "qwen3-4b", "object": "model"}]},
+        )
+
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(
+            localai_base_url="http://localai.railway.internal:8080",
+            localai_v1_base_url="http://localai.railway.internal:8080/v1",
+            localai_api_key="",
+            localai_model="qwen3-4b",
+            llm_labels={"localai": "LocalAI (qwen3-4b)"},
+        ),
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        status = run(service._check_localai(client))
+    finally:
+        run(client.aclose())
+
+    assert status.available is True
+    assert status.online is True
+
+
+def test_check_localai_reports_configured_model_not_found(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "other-model"}]})
+
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(
+            localai_base_url="http://localai:8080",
+            localai_v1_base_url="http://localai:8080/v1",
+            localai_api_key="secret",
+            localai_model="wanted-model",
+            llm_labels={"localai": "LocalAI (wanted-model)"},
+        ),
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        status = run(service._check_localai(client))
+    finally:
+        run(client.aclose())
+
+    assert status.available is False
+    assert status.configured is True
+    assert "wanted-model" in (status.error or "")

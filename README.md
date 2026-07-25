@@ -66,7 +66,7 @@ flowchart LR
     Services --> Vector[(Qdrant)]
     Services --> Scheduler[APScheduler]
     Services --> LLMs[LLMs em nuvem]
-    Services --> Ollama[Ollama local]
+    Services --> Ollama[Ollama / LocalAI]
     Services --> Calendar[Google / Microsoft Calendar]
     Services --> Notify[Telegram / WhatsApp]
     Services --> Voice[STT / TTS]
@@ -84,8 +84,8 @@ flowchart LR
 - **Banco relacional**: MySQL via SQLAlchemy async para conversas,
   configuracoes, perfis, atalhos, auditoria e automacoes aprovadas.
 - **Memoria vetorial**: Qdrant para memorias revisadas e aprovadas.
-- **LLMs**: provedores em nuvem configurados por `.env` e modelo local via
-  Ollama.
+- **LLMs**: provedores em nuvem configurados por `.env` e modelos locais via
+  Ollama ou LocalAI.
 - **Scheduler**: APScheduler para sincronizacao periodica de calendario e envio
   de lembretes.
 
@@ -259,6 +259,31 @@ docker-compose up -d
 
 O compose sobe MySQL, Qdrant, Ollama e backend. A interface Flutter continua
 sendo executada localmente.
+
+### Ollama E LocalAI Na Railway
+
+O backend reconhece Ollama e LocalAI como provedores separados. Para os
+servicos no mesmo projeto e ambiente da Railway, configure no servico do
+backend:
+
+```dotenv
+OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PRIVATE_DOMAIN}}:11434
+OLLAMA_MODEL=llama3.2:3b
+
+LOCALAI_BASE_URL=http://${{localai.RAILWAY_PRIVATE_DOMAIN}}:8080
+LOCALAI_MODEL=
+LOCALAI_API_KEY=
+```
+
+Tambem e aceito `LOCALAI_BASE_URL=localai.railway.internal`; o backend inclui
+automaticamente `http://` e a porta `8080`. Se `LOCALAI_MODEL` ficar vazio, o
+primeiro modelo retornado por `/v1/models` sera usado. Defina
+`LOCALAI_API_KEY` no backend apenas se a autenticacao por API key estiver
+habilitada no LocalAI.
+
+No servico LocalAI, use `LOCALAI_ADDRESS=:8080` para que a API aceite conexoes
+de outros containers. O dominio privado somente funciona entre servicos do
+mesmo projeto e ambiente da Railway.
 
 ## Testes E Qualidade
 

@@ -161,6 +161,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       'openrouter': 'OpenRouter',
       'deepseek': 'DeepSeek',
       'grok': 'Grok',
+      'localai': 'LocalAI',
       'llama': 'Ollama',
       'hf': 'Hugging Face',
     };
