@@ -42,7 +42,7 @@ assistant_app/
 |   `-- test/                testes da interface
 |
 |-- ollama/                  imagem auxiliar para modelo local
-|-- docker-compose.yml       MySQL, Qdrant, Ollama e backend
+|-- docker-compose.yml       MySQL, Qdrant, Redis, Ollama e backend
 |-- setup.bat
 `-- setup.sh
 ```
@@ -88,6 +88,9 @@ flowchart LR
   Ollama ou LocalAI.
 - **Scheduler**: APScheduler para sincronizacao periodica de calendario e envio
   de lembretes.
+- **Rate limiting**: Redis + fastapi-limiter, com limite geral e um mais
+  rigido por IP nas rotas de autenticacao. Se o Redis cair, o backend segue no
+  ar sem aplicar limite.
 
 ## Diagrama De Fluxo Da Aplicacao
 
@@ -237,14 +240,15 @@ REGISTRATION_ADMIN_EMAIL=admin@example.com
 REGISTRATION_TOKEN_EXPIRE_MINUTES=30
 REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS=60
 
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=usuario-smtp
-SMTP_PASSWORD=senha-smtp
 SMTP_FROM=assistente@example.com
-SMTP_STARTTLS=true
-SMTP_USE_SSL=false
+BREVO_API_KEY=chave-da-api-brevo
 ```
+
+O envio usa a API HTTP transacional do Brevo (`api.brevo.com`), não SMTP puro:
+varios PaaS (Railway incluso) bloqueiam saida nas portas SMTP, e a API evita
+esse problema por rodar sobre HTTPS. O remetente em `SMTP_FROM` precisa estar
+validado na conta Brevo (remetente individual ou dominio autenticado), senão o
+envio é aceito pela API mas rejeitado depois, silenciosamente.
 
 Na primeira abertura, o admin solicita o token enviado para
 `REGISTRATION_ADMIN_EMAIL`. Depois, em **Configurações > Autenticação**, informa
@@ -290,8 +294,8 @@ Na raiz do projeto:
 docker-compose up -d
 ```
 
-O compose sobe MySQL, Qdrant, Ollama e backend. A interface Flutter continua
-sendo executada localmente.
+O compose sobe MySQL, Qdrant, Redis, Ollama e backend. A interface Flutter
+continua sendo executada localmente.
 
 ### Ollama E LocalAI Na Railway
 

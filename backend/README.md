@@ -44,11 +44,13 @@ docker-compose logs -f backend
 docker-compose down
 ```
 
-O ambiente Docker sobe quatro serviços: backend, MySQL, Qdrant e Ollama. O
-MySQL guarda configurações, identificação do tutor, aprovações, automações e
+O ambiente Docker sobe cinco serviços: backend, MySQL, Qdrant, Redis e Ollama.
+O MySQL guarda configurações, identificação do tutor, aprovações, automações e
 auditoria. O Qdrant guarda memórias aprovadas para preferências, comportamento,
-instruções e automações. A imagem do Ollama baixa `llama3.2:3b`; mantenha
-`OLLAMA_MODEL=llama3.2:3b` no `backend/.env` para usar esse modelo no compose.
+instruções e automações. O Redis guarda os contadores do rate limiting por IP
+(`fastapi-limiter`); sem ele o backend sobe normalmente, só sem esse limite. A
+imagem do Ollama baixa `llama3.2:3b`; mantenha `OLLAMA_MODEL=llama3.2:3b` no
+`backend/.env` para usar esse modelo no compose.
 
 ---
 
@@ -169,25 +171,29 @@ REGISTRATION_ADMIN_EMAIL=admin@example.com
 REGISTRATION_TOKEN_EXPIRE_MINUTES=30
 REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS=60
 
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=usuario-smtp
-SMTP_PASSWORD=senha-smtp
 SMTP_FROM=assistente@example.com
-SMTP_STARTTLS=true
-SMTP_USE_SSL=false
+BREVO_API_KEY=chave-da-api-brevo
 ```
+
+O envio é feito pela API HTTP transacional do Brevo (`POST
+api.brevo.com/v3/smtp/email`), não por SMTP puro: PaaS como o Railway costumam
+bloquear saída nas portas SMTP (25/465/587), e a API contorna isso por rodar
+sobre HTTPS. `SMTP_FROM` precisa estar validado na conta Brevo (remetente
+individual verificado ou domínio autenticado via DNS) — caso contrário a API
+aceita o pedido normalmente, mas o envio é rejeitado depois, sem erro visível
+na chamada. Para depurar isso sem gastar um envio real, `GET
+/auth/smtp-check?secret=<JWT_SECRET>` testa a chave da API Brevo (rota oculta
+do `/docs`).
 
 No bootstrap, a interface chama `POST /auth/registration-token` e o token é
 enviado exclusivamente para `REGISTRATION_ADMIN_EMAIL`. Depois do login, o
 admin usa `POST /auth/invitations` com o e-mail do convidado. O backend gera um
 token aleatório de uso único, salva somente seu hash HMAC e envia o valor
-original ao destinatário. Enquanto um convite válido para aquele e-mail estiver
-ativo, uma nova emissão é recusada para evitar spam e substituição do token.
-
-Para SMTP com SSL direto, normalmente na porta `465`, use
-`SMTP_USE_SSL=true` e `SMTP_STARTTLS=false`. O e-mail administrativo aparece
-na interface apenas de forma mascarada.
+original ao destinatário. Um novo pedido para o mesmo e-mail revoga o convite
+anterior (mesmo que ainda válido) e emite outro; só é bloqueado dentro da
+janela de `REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS` (padrão 60s), como
+proteção contra spam. O e-mail administrativo aparece na interface apenas de
+forma mascarada.
 
 Cada usuário é vinculado a um perfil `tutor` próprio. Identificadores enviados
 pelo cliente não definem propriedade: o backend usa `uid` e `tutor_id`
@@ -222,6 +228,26 @@ python seed_dev.py --reset
 ```
 
 O `--reset` remove apenas registros identificados pelo seed de demonstração.
+
+### Rate Limiting E Logs De Requisição
+
+As rotas públicas de autenticação (`/auth/login`, `/auth/register`,
+`/auth/registration-token`) têm dois limites de requisição por IP empilhados,
+via `fastapi-limiter` + Redis:
+
+- geral: 20 requisições/minuto;
+- rajada: 5 requisições/10s (janela mais curta, pega picos que o limite geral
+  ainda não bloquearia).
+
+`/auth/invitations` (protegida por admin) tem um limite único de 30/min. O IP
+usado é o primeiro valor de `X-Forwarded-For` (real atrás do proxy da
+Railway), com fallback pro IP do socket. Configure `REDIS_URL` (padrão
+`redis://localhost:6379/0`); se o Redis estiver indisponível no startup, o
+backend loga um aviso e segue no ar sem aplicar limite algum, em vez de falhar.
+
+Toda requisição HTTP é logada via middleware (IP, método, path, status e
+duração), inclusive quando a rota estoura uma exceção não tratada — útil para
+depurar 500s em produção sem precisar reproduzir localmente.
 
 ---
 
@@ -378,7 +404,9 @@ backend/
 │   ├── core/
 │   │   ├── config.py        # Pydantic settings (.env)
 │   │   ├── database.py      # SQLAlchemy async + modelos
-│   │   └── security.py      # JWT + bcrypt
+│   │   ├── security.py      # JWT + bcrypt
+│   │   ├── net.py           # IP real do cliente (X-Forwarded-For)
+│   │   └── rate_limit.py    # dependência de rate limit por IP (Redis)
 │   ├── models/
 │   │   └── schemas.py       # Pydantic schemas (request/response)
 │   ├── services/
