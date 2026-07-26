@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
+import '../services/api_service.dart';
 
 final configProvider = StateNotifierProvider<ConfigNotifier, AppConfig>((ref) {
   return ConfigNotifier();
@@ -28,20 +29,24 @@ class ConfigNotifier extends StateNotifier<AppConfig> {
     if (raw != null) {
       state = AppConfig.fromJson(raw);
     }
+    api.configure(state.backendUrl);
   }
 
   void loadForCurrentUser() {
     final raw = HiveConfig.read();
     state = raw == null ? AppConfig() : AppConfig.fromJson(raw);
+    api.configure(state.backendUrl);
   }
 
   Future<void> save(AppConfig config) async {
     state = config;
+    api.configure(state.backendUrl);
     await HiveConfig.write(config.toSafeJson());
   }
 
   void replaceInMemory(AppConfig config) {
     state = config;
+    api.configure(state.backendUrl);
   }
 
   Future<void> update(AppConfig Function(AppConfig) updater) async {

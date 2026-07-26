@@ -47,11 +47,17 @@ flutter run -d linux
 
 ## Backend
 
-A interface usa `localhost:8000` por padrao. Para apontar para outro host ou
-porta, use `--dart-define`:
+A interface usa `http://localhost:8000` por padrão e guarda o endereço do
+backend localmente (Hive), editável em **Configurações > Sistema > Conexão
+com o backend** — não precisa recompilar pra trocar entre um backend local e
+um em produção (ex. Railway). O botão "Aplicar e testar" salva o endereço e
+chama `/health` na hora pra confirmar que respondeu.
+
+Para mudar o padrão de fábrica usado antes da primeira configuração (útil em
+builds de CI/distribuição), use `--dart-define`:
 
 ```bash
-flutter run -d windows --dart-define=APP_BACKEND_HOST=127.0.0.1 --dart-define=APP_BACKEND_PORT=8000
+flutter run -d windows --dart-define=APP_BACKEND_URL=https://seu-app.host.app
 ```
 
 Antes de abrir a interface, suba o backend na raiz do projeto:

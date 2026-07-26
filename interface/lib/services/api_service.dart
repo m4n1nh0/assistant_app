@@ -5,16 +5,39 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/app_config.dart';
 
 class ApiService {
-  final String baseUrl;
-  final String wsUrl;
+  String baseUrl;
+  String wsUrl;
   String? _token;
 
   WebSocketChannel? _ws;
   StreamController<Map<String, dynamic>>? _wsStream;
 
-  ApiService({String host = 'localhost', int port = 8000})
-      : baseUrl = 'http://$host:$port',
-        wsUrl = 'ws://$host:$port';
+  ApiService({String backendUrl = AppConfig.defaultBackendUrl})
+      : baseUrl = _normalizeHttpUrl(backendUrl),
+        wsUrl = _toWsUrl(_normalizeHttpUrl(backendUrl));
+
+  /// Reponta o cliente para outro backend em runtime (chamado ao carregar ou
+  /// salvar as configurações). Sobrescreve [baseUrl] e [wsUrl].
+  void configure(String backendUrl) {
+    baseUrl = _normalizeHttpUrl(backendUrl);
+    wsUrl = _toWsUrl(baseUrl);
+  }
+
+  static String _normalizeHttpUrl(String value) {
+    var v = value.trim();
+    if (v.isEmpty) return AppConfig.defaultBackendUrl;
+    if (!v.contains('://')) v = 'http://$v';
+    while (v.endsWith('/')) {
+      v = v.substring(0, v.length - 1);
+    }
+    return v;
+  }
+
+  static String _toWsUrl(String httpUrl) {
+    if (httpUrl.startsWith('https://')) return 'wss://${httpUrl.substring(8)}';
+    if (httpUrl.startsWith('http://')) return 'ws://${httpUrl.substring(7)}';
+    return httpUrl;
+  }
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
@@ -998,11 +1021,7 @@ class ApiService {
   }
 }
 
-final api = ApiService(
-  host: const String.fromEnvironment('APP_BACKEND_HOST',
-      defaultValue: 'localhost'),
-  port: int.fromEnvironment('APP_BACKEND_PORT', defaultValue: 8000),
-);
+final api = ApiService();
 
 class CalendarConnectResult {
   final String authUrl;

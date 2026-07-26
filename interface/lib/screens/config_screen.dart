@@ -36,6 +36,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _msClientCtrl = TextEditingController();
   final _msSecretCtrl = TextEditingController();
   final _msTenantCtrl = TextEditingController();
+  final _backendUrlCtrl = TextEditingController();
+  bool _backendTestBusy = false;
   Map<String, List<CalendarAccount>> _calendarAccounts = const {
     'google': [],
     'microsoft': [],
@@ -69,6 +71,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _msTenantCtrl.text = _draft.calendar.msTenantId.isEmpty
         ? 'common'
         : _draft.calendar.msTenantId;
+    _backendUrlCtrl.text = _draft.backendUrl;
   }
 
   void _populateNotifFields() {
@@ -197,6 +200,28 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     if (mounted) {
       ref.read(isAuthenticatedProvider.notifier).state = false;
       Navigator.pushReplacementNamed(context, '/main');
+    }
+  }
+
+  Future<void> _applyBackendUrl() async {
+    final typed = _backendUrlCtrl.text.trim();
+    if (typed.isEmpty) {
+      _showSnack('Informe o endereço do backend.');
+      return;
+    }
+    setState(() => _backendTestBusy = true);
+    api.configure(typed);
+    _draft.backendUrl = api.baseUrl;
+    _backendUrlCtrl.text = api.baseUrl;
+    await StorageService.saveConfig(_draft);
+    ref.read(configProvider.notifier).replaceInMemory(_draft);
+    try {
+      await api.health().timeout(const Duration(seconds: 8));
+      _showSnack('Conectado em ${api.baseUrl}');
+    } catch (e) {
+      _showSnack('Backend salvo, mas não respondeu em ${api.baseUrl}: $e');
+    } finally {
+      if (mounted) setState(() => _backendTestBusy = false);
     }
   }
 
@@ -635,6 +660,14 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       ]);
 
   Widget _buildSystem() => _TabContent(title: 'SISTEMA', children: [
+        _SectionCard(title: '🌐 CONEXÃO COM O BACKEND', children: [
+          _Field('ENDEREÇO DO BACKEND', _backendUrlCtrl,
+              hint: 'http://localhost:8000 ou https://seu-app.up.railway.app'),
+          _ActionBtn(
+            label: _backendTestBusy ? 'TESTANDO...' : 'APLICAR E TESTAR',
+            onTap: _backendTestBusy ? () {} : _applyBackendUrl,
+          ),
+        ]),
         _SectionCard(title: '🖥 PREFERÊNCIAS', children: [
           _Toggle('Iniciar minimizado', _draft.startMinimized,
               (v) => setState(() => _draft.startMinimized = v)),
@@ -718,6 +751,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _msClientCtrl,
       _msSecretCtrl,
       _msTenantCtrl,
+      _backendUrlCtrl,
     ]) {
       c.dispose();
     }

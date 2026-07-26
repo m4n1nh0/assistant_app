@@ -47,6 +47,10 @@ class AppConfig {
   bool startMinimized;
   bool autoLaunch;
   String hotkey;
+  String backendUrl;
+
+  static const defaultBackendUrl =
+      String.fromEnvironment('APP_BACKEND_URL', defaultValue: 'http://localhost:8000');
 
   AppConfig({
     this.assistantName = 'Assistente',
@@ -67,7 +71,11 @@ class AppConfig {
     this.startMinimized = false,
     this.autoLaunch = false,
     this.hotkey = 'ctrl+shift+space',
-  })  : activeLlms =
+    String? backendUrl,
+  })  : backendUrl = (backendUrl == null || backendUrl.trim().isEmpty)
+            ? defaultBackendUrl
+            : backendUrl,
+        activeLlms =
             activeLlms ?? {for (final id in serviceLabels.keys) id: false},
         llmLabels = {...serviceLabels, ...?llmLabels},
         llmStatuses = llmStatuses ?? {},
@@ -102,6 +110,7 @@ class AppConfig {
         'startMinimized': startMinimized,
         'autoLaunch': autoLaunch,
         'hotkey': hotkey,
+        'backendUrl': backendUrl,
       };
 
   Map<String, dynamic> toSafeJson() => toJson();
@@ -131,6 +140,7 @@ class AppConfig {
       startMinimized: j['startMinimized'] ?? false,
       autoLaunch: j['autoLaunch'] ?? false,
       hotkey: j['hotkey'] ?? 'ctrl+shift+space',
+      backendUrl: j['backendUrl']?.toString(),
     );
   }
 
