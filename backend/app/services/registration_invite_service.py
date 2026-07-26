@@ -2,11 +2,9 @@ import asyncio
 import hashlib
 import hmac
 import secrets
-import smtplib
-import time
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 
+import httpx
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +14,9 @@ from ..core.database import RegistrationInviteModel
 
 settings = get_settings()
 _issue_lock = asyncio.Lock()
+
+BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
+BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
 
 
 class RegistrationDeliveryError(Exception):
@@ -58,9 +59,6 @@ def mask_email(email: str) -> str:
 
 def registration_delivery_configured(recipient_email: str | None = None) -> bool:
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
-    credentials_match = bool(settings.smtp_username.strip()) == bool(
-        settings.smtp_password
-    )
     recipient = (
         recipient_email
         if recipient_email is not None
@@ -68,13 +66,12 @@ def registration_delivery_configured(recipient_email: str | None = None) -> bool
     )
     return bool(
         recipient.strip()
-        and settings.smtp_host.strip()
+        and settings.brevo_api_key.strip()
         and sender
-        and credentials_match
     )
 
 
-def _send_registration_email(
+async def _send_registration_email(
     token: str,
     expires_at: datetime,
     recipient_email: str | None = None,
@@ -86,60 +83,50 @@ def _send_registration_email(
     ).strip()
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
 
-    message = EmailMessage()
-    message["Subject"] = "Convite para cadastro no Assistente"
-    message["From"] = sender
-    message["To"] = recipient
-    message.set_content(
-        "Voce recebeu um convite para criar uma conta no Assistente.\n\n"
-        f"Token de uso unico:\n{token}\n\n"
-        f"Valido ate {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}.\n\n"
-        "Se voce nao solicitou este token, ignore este email."
-    )
-
-    smtp_type = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
-    with smtp_type(
-        settings.smtp_host.strip(),
-        settings.smtp_port,
-        timeout=20,
-    ) as smtp:
-        if not settings.smtp_use_ssl and settings.smtp_starttls:
-            smtp.starttls()
-        if settings.smtp_username.strip():
-            smtp.login(settings.smtp_username.strip(), settings.smtp_password)
-        smtp.send_message(message)
-
-
-def smtp_connection_diagnostic() -> dict:
-    """One-off SMTP connectivity check for deploy troubleshooting. Sends no email."""
-    result = {
-        "host": settings.smtp_host.strip(),
-        "port": settings.smtp_port,
-        "use_ssl": settings.smtp_use_ssl,
-        "starttls": settings.smtp_starttls,
-        "connected": False,
-        "starttls_ok": False,
-        "auth_ok": False,
-        "success": False,
+    payload = {
+        "sender": {"email": sender},
+        "to": [{"email": recipient}],
+        "subject": "Convite para cadastro no Assistente",
+        "textContent": (
+            "Voce recebeu um convite para criar uma conta no Assistente.\n\n"
+            f"Token de uso unico:\n{token}\n\n"
+            f"Valido ate {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}.\n\n"
+            "Se voce nao solicitou este token, ignore este email."
+        ),
     }
-    started = time.monotonic()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            BREVO_SEND_URL,
+            headers={
+                "api-key": settings.brevo_api_key.strip(),
+                "content-type": "application/json",
+                "accept": "application/json",
+            },
+            json=payload,
+        )
+    response.raise_for_status()
+
+
+async def brevo_api_diagnostic() -> dict:
+    """One-off connectivity check for the Brevo API key. Sends no email."""
+    result = {"api_key_set": bool(settings.brevo_api_key.strip()), "success": False}
     try:
-        smtp_type = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
-        with smtp_type(
-            settings.smtp_host.strip(), settings.smtp_port, timeout=10
-        ) as smtp:
-            result["connected"] = True
-            if not settings.smtp_use_ssl and settings.smtp_starttls:
-                smtp.starttls()
-                result["starttls_ok"] = True
-            if settings.smtp_username.strip():
-                smtp.login(settings.smtp_username.strip(), settings.smtp_password)
-                result["auth_ok"] = True
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                BREVO_ACCOUNT_URL,
+                headers={
+                    "api-key": settings.brevo_api_key.strip(),
+                    "accept": "application/json",
+                },
+            )
+        result["status_code"] = response.status_code
+        response.raise_for_status()
         result["success"] = True
+        result["email"] = response.json().get("email")
     except Exception as exc:
         result["error_type"] = type(exc).__name__
         result["error_message"] = str(exc)
-    result["elapsed_seconds"] = round(time.monotonic() - started, 2)
     return result
 
 
@@ -225,14 +212,9 @@ async def _issue_registration_token(
     try:
         await db.flush()
         if recipient_email is None:
-            await asyncio.to_thread(_send_registration_email, token, expires_at)
+            await _send_registration_email(token, expires_at)
         else:
-            await asyncio.to_thread(
-                _send_registration_email,
-                token,
-                expires_at,
-                recipient,
-            )
+            await _send_registration_email(token, expires_at, recipient)
         await db.commit()
     except Exception as exc:
         await db.rollback()

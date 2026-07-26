@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_starttls: bool = True
     smtp_use_ssl: bool = False
+    brevo_api_key: str = ""
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

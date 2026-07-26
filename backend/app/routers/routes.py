@@ -1,4 +1,3 @@
-import asyncio
 import hmac
 from datetime import datetime, timedelta, timezone
 
@@ -35,7 +34,7 @@ from ..services.registration_invite_service import (
     lock_registration_invite,
     mask_email,
     registration_delivery_configured,
-    smtp_connection_diagnostic,
+    brevo_api_diagnostic,
 )
 
 router_auth = APIRouter(prefix="/auth", tags=["Auth"])
@@ -64,10 +63,10 @@ async def auth_status(db: _AuthAsyncSession = Depends(_get_auth_db)):
 
 @router_auth.get("/smtp-check", include_in_schema=False)
 async def smtp_check(secret: str = ""):
-    """Temporary deploy diagnostic: tests SMTP connectivity without sending mail."""
+    """Temporary deploy diagnostic: tests the Brevo API key without sending mail."""
     if not secret or not hmac.compare_digest(secret, settings.jwt_secret):
         raise HTTPException(404)
-    return await asyncio.to_thread(smtp_connection_diagnostic)
+    return await brevo_api_diagnostic()
 
 
 @router_auth.post(

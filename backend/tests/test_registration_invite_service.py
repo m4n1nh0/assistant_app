@@ -56,13 +56,9 @@ def invite_settings(**overrides):
         "registration_admin_email": "admin@example.com",
         "registration_token_expire_minutes": 30,
         "registration_token_request_cooldown_seconds": 60,
-        "smtp_host": "smtp.example.com",
-        "smtp_port": 587,
         "smtp_username": "mailer",
-        "smtp_password": "password",
         "smtp_from": "assistant@example.com",
-        "smtp_starttls": True,
-        "smtp_use_ssl": False,
+        "brevo_api_key": "brevo-key",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -74,16 +70,14 @@ def test_masks_admin_email_without_exposing_full_address():
     assert service.mask_email("invalid") == ""
 
 
-def test_delivery_requires_recipient_host_sender_and_matching_credentials(
-    monkeypatch,
-):
+def test_delivery_requires_recipient_sender_and_api_key(monkeypatch):
     monkeypatch.setattr(service, "settings", invite_settings())
     assert service.registration_delivery_configured() is True
 
     monkeypatch.setattr(
         service,
         "settings",
-        invite_settings(smtp_password=""),
+        invite_settings(brevo_api_key=""),
     )
     assert service.registration_delivery_configured() is False
 
@@ -98,12 +92,12 @@ def test_issue_token_stores_only_digest_and_revokes_previous(monkeypatch):
     )
     delivered = {}
 
-    async def fake_to_thread(_func, token, expires_at):
+    async def fake_send(token, expires_at, recipient_email=None):
         delivered["token"] = token
         delivered["expires_at"] = expires_at
 
     monkeypatch.setattr(service, "settings", invite_settings())
-    monkeypatch.setattr(service.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(service, "_send_registration_email", fake_send)
 
     email_hint, expires_at = run(service.issue_registration_token(db))
 
@@ -149,37 +143,37 @@ def test_active_token_prevents_email_spam_and_token_replacement(monkeypatch):
     assert db.added == []
 
 
-def test_smtp_delivery_uses_admin_recipient_and_tls(monkeypatch):
+def test_api_delivery_posts_to_brevo_with_admin_recipient(monkeypatch):
     captured = {}
 
-    class FakeSmtp:
-        def __init__(self, host, port, timeout):
-            captured.update(host=host, port=port, timeout=timeout)
+    class FakeResponse:
+        status_code = 201
 
-        def __enter__(self):
+        def raise_for_status(self):
+            pass
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, _exc_type, _exc, _traceback):
+        async def __aexit__(self, _exc_type, _exc, _traceback):
             return False
 
-        def starttls(self):
-            captured["starttls"] = True
-
-        def login(self, username, password):
-            captured["login"] = (username, password)
-
-        def send_message(self, message):
-            captured["message"] = message
+        async def post(self, url, headers, json):
+            captured.update(url=url, headers=headers, json=json)
+            return FakeResponse()
 
     monkeypatch.setattr(service, "settings", invite_settings())
-    monkeypatch.setattr(service.smtplib, "SMTP", FakeSmtp)
+    monkeypatch.setattr(service.httpx, "AsyncClient", FakeAsyncClient)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
 
-    service._send_registration_email("one-time-token", expires_at)
+    run(service._send_registration_email("one-time-token", expires_at))
 
-    assert captured["host"] == "smtp.example.com"
-    assert captured["port"] == 587
-    assert captured["starttls"] is True
-    assert captured["login"] == ("mailer", "password")
-    assert captured["message"]["To"] == "admin@example.com"
-    assert "one-time-token" in captured["message"].get_content()
+    assert captured["url"] == service.BREVO_SEND_URL
+    assert captured["headers"]["api-key"] == "brevo-key"
+    assert captured["json"]["sender"]["email"] == "assistant@example.com"
+    assert captured["json"]["to"] == [{"email": "admin@example.com"}]
+    assert "one-time-token" in captured["json"]["textContent"]
