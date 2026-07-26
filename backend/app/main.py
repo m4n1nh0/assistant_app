@@ -81,8 +81,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Qdrant unavailable: {e}")
     try:
+        redis_url = settings.redis_url.strip()
+        if redis_url and "://" not in redis_url:
+            redis_url = f"redis://{redis_url}"
         redis_connection = redis_asyncio.from_url(
-            settings.redis_url, encoding="utf-8", decode_responses=True
+            redis_url, encoding="utf-8", decode_responses=True
         )
         await redis_connection.ping()
         await FastAPILimiter.init(redis_connection, identifier=client_ip_identifier)

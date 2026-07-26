@@ -15,6 +15,10 @@ redis==8.0.1
 
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4 reads bcrypt.__about__ (removed in bcrypt>=4.1) and relies on
+# the pre-4.x 72-byte truncation behavior for its internal self-test; pin
+# below that or hash_secret()/verify_secret() crash on every call.
+bcrypt==4.0.1
 pydantic[email]==2.13.4
 pydantic-settings==2.14.1
 cryptography==48.0.0
