@@ -14,6 +14,7 @@ from .core.database import init_db
 from .core.database_seed import apply_database_seed, database_seed_requested
 from .core.net import client_ip, client_ip_identifier
 from .core.rate_limit import mark_ready as mark_rate_limiter_ready
+from .core.redis_client import set_client as set_redis_client
 from .utils.scheduler import start_scheduler, stop_scheduler
 from .routers.chat import router as chat_router
 from .routers.websocket import router as ws_router
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
         )
         await redis_connection.ping()
         await FastAPILimiter.init(redis_connection, identifier=client_ip_identifier)
+        set_redis_client(redis_connection)
         mark_rate_limiter_ready(True)
         logger.info("Rate limiter ready (Redis)")
     except Exception as e:
@@ -102,6 +104,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
     if FastAPILimiter.redis is not None:
         await FastAPILimiter.close()
+    set_redis_client(None)
     logger.info("Backend stopped")
 
 

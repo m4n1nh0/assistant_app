@@ -11,6 +11,8 @@ from ..core.security import resolve_token_user
 from ..models.schemas import ResponseModeEnum, Message
 from ..services import llm_service, notification_service
 from ..services.calendar_service import fetch_all_account_events
+from ..services.llm_status_service import get_ready_llms
+from ..services.llm_routing_service import pick_auto_llm
 from ..services.runtime_config_service import load_notif_config
 from ..services.voice_service import transcribe_audio, text_to_speech
 
@@ -234,7 +236,7 @@ async def _handle_chat(session_id: str, payload: dict):
     llm_id   = payload.get("llm")
     history  = _parse_history(payload.get("history", []))
     sys_p    = _build_system(payload)
-    active   = settings.active_llms
+    active   = await get_ready_llms()
 
     if not message:
         await _send_error(session_id, "Mensagem vazia")
@@ -253,7 +255,7 @@ async def _handle_chat(session_id: str, payload: dict):
                 r = await llm_service.dispatch_chain(llms, message, history, sys_p)
                 responses = [r]
             case _:
-                llm = llm_id or (active[0] if active else "claude")
+                llm = llm_id or (await pick_auto_llm(active) if active else "claude")
                 r = await llm_service.dispatch_single(llm, message, history, sys_p)
                 responses = [r]
 
@@ -273,9 +275,9 @@ async def _handle_chat_stream(session_id: str, payload: dict):
     llm_id  = payload.get("llm")
     history = _parse_history(payload.get("history", []))
     sys_p   = _build_system(payload)
-    active  = settings.active_llms
+    active  = await get_ready_llms()
 
-    llm = llm_id or (active[0] if active else "claude")
+    llm = llm_id or (await pick_auto_llm(active) if active else "claude")
     streamer = await llm_service.get_streamer(llm)
 
     if not streamer:

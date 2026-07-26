@@ -2,6 +2,8 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.services import launcher_service
 
 
@@ -272,6 +274,44 @@ def test_build_project_open_action_for_pycharm_project():
 def test_build_project_open_action_ignores_capability_question():
     action = launcher_service.build_project_open_action(
         "consegue abrir algum projeto no pycharm se eu disser o nome?"
+    )
+
+    assert action is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "abra o projeto assistant_app no vscode",
+        "abra o projeto assistant_app no vs code",
+        "abra o projeto assistant_app no visual studio code",
+        "abra o projeto assistant_app no code",
+    ],
+)
+def test_build_project_open_action_recognizes_vscode_spellings(message):
+    action = launcher_service.build_project_open_action(message)
+
+    assert action is not None
+    assert action.name == "assistant_app no VS Code"
+    payload = json.loads(action.target)
+    assert payload["runner"] == "openProjectInIde"
+    assert payload["ide"] == "vscode"
+    assert payload["project_query"] == "assistant_app"
+
+
+def test_build_project_open_action_keeps_ide_mentioned_first():
+    action = launcher_service.build_project_open_action(
+        "abra o projeto assistant_app no vscode, nao no pycharm"
+    )
+
+    assert action is not None
+    assert json.loads(action.target)["ide"] == "vscode"
+
+
+def test_bare_code_word_alone_does_not_trigger_vscode():
+    """"code" only means VS Code right after a preposition, otherwise it is prose."""
+    action = launcher_service.build_project_open_action(
+        "mostrar o code review do projeto assistant_app"
     )
 
     assert action is None

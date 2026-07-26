@@ -1,12 +1,15 @@
 import asyncio
+import json
 import re
 import time
 from typing import Any
 from urllib.parse import quote
 
 import httpx
+from loguru import logger
 
 from ..core.config import get_settings
+from ..core.redis_client import get_client as get_redis_client
 from ..models.schemas import LLMStatus
 
 settings = get_settings()
@@ -16,6 +19,8 @@ _FAILED_CACHE_TTL_SECONDS = 30
 _cache: dict[str, LLMStatus] | None = None
 _cache_at = 0.0
 _refresh_task: asyncio.Task | None = None
+
+_REDIS_KEY = "assistant:llm_status"
 
 _PROVIDER_ORDER = [
     "claude",
@@ -38,6 +43,13 @@ async def get_llm_statuses(force: bool = False) -> dict[str, LLMStatus]:
     if not force and _cache is not None and _is_cache_fresh(_cache, now):
         return _cache
 
+    if not force:
+        shared = await _read_shared_cache()
+        if shared is not None:
+            _cache = shared
+            _cache_at = now
+            return _cache
+
     timeout = httpx.Timeout(8.0, connect=4.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         results = await asyncio.gather(
@@ -55,7 +67,43 @@ async def get_llm_statuses(force: bool = False) -> dict[str, LLMStatus]:
 
     _cache = {status.id: status for status in results}
     _cache_at = time.monotonic()
+    await _write_shared_cache(_cache)
     return _cache
+
+
+async def _read_shared_cache() -> dict[str, LLMStatus] | None:
+    client = get_redis_client()
+    if client is None:
+        return None
+    try:
+        raw = await client.get(_REDIS_KEY)
+        if not raw:
+            return None
+        return {
+            provider: LLMStatus.model_validate(data)
+            for provider, data in json.loads(raw).items()
+        }
+    except Exception as e:
+        logger.debug(f"LLM status Redis read skipped: {e}")
+        return None
+
+
+async def _write_shared_cache(cache: dict[str, LLMStatus]) -> None:
+    client = get_redis_client()
+    if client is None:
+        return
+    ttl = (
+        _CACHE_TTL_SECONDS
+        if any(status.available for status in cache.values())
+        else _FAILED_CACHE_TTL_SECONDS
+    )
+    try:
+        payload = json.dumps(
+            {provider: status.model_dump(mode="json") for provider, status in cache.items()}
+        )
+        await client.set(_REDIS_KEY, payload, ex=ttl)
+    except Exception as e:
+        logger.debug(f"LLM status Redis write skipped: {e}")
 
 
 async def get_available_llms(force: bool = False) -> list[str]:
@@ -65,6 +113,12 @@ async def get_available_llms(force: bool = False) -> list[str]:
         for provider in _PROVIDER_ORDER
         if statuses.get(provider) is not None and statuses[provider].available
     ]
+
+
+async def get_ready_llms() -> list[str]:
+    """Configured llms (settings.active_llms order) that are actually available right now."""
+    available = set(await get_available_llms())
+    return [llm for llm in settings.active_llms if llm in available]
 
 
 async def get_statuses_fast() -> dict[str, LLMStatus]:

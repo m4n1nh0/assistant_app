@@ -125,12 +125,20 @@ if (Test-Path -LiteralPath $target) {
     throw Exception('executor de comando nao suportado: $runner');
   }
 
+  /// IDEs the assistant can open a project folder with. Keys match the `ide`
+  /// field the backend sends in the openProjectInIde payload.
+  static const ideLabels = <String, String>{
+    'pycharm': 'PyCharm',
+    'vscode': 'VS Code',
+  };
+
   static Future<void> openProjectInIde({
     required String ide,
     required String projectQuery,
   }) async {
     final normalizedIde = ide.trim().toLowerCase();
-    if (normalizedIde != 'pycharm') {
+    final label = ideLabels[normalizedIde];
+    if (label == null) {
       throw Exception('IDE nao suportada: $ide');
     }
 
@@ -139,9 +147,9 @@ if (Test-Path -LiteralPath $target) {
       throw Exception('projeto nao encontrado: $projectQuery');
     }
 
-    final executable = await _resolvePyCharmExecutable();
+    final executable = await _resolveIdeExecutable(normalizedIde);
     if (executable == null || executable.trim().isEmpty) {
-      throw Exception('PyCharm nao encontrado neste computador');
+      throw Exception('$label nao encontrado neste computador');
     }
 
     if (Platform.isWindows) {
@@ -172,6 +180,45 @@ Start-Process -FilePath $ide -ArgumentList @($project)
     }
 
     await _runChecked(executable, [project.path]);
+  }
+
+  static Future<String?> _resolveIdeExecutable(String ide) {
+    switch (ide) {
+      case 'pycharm':
+        return _resolvePyCharmExecutable();
+      case 'vscode':
+        return _resolveVsCodeExecutable();
+      default:
+        return Future.value(null);
+    }
+  }
+
+  static Future<String?> _resolveVsCodeExecutable() async {
+    if (Platform.isWindows) {
+      final env = Platform.environment;
+      // Code.exe takes the folder as a plain argument; code.cmd would work too
+      // but flashes a console window, so it is only the fallback.
+      final candidates = [
+        if (env['LOCALAPPDATA'] != null)
+          '${env['LOCALAPPDATA']}\\Programs\\Microsoft VS Code\\Code.exe',
+        if (env['ProgramFiles'] != null)
+          '${env['ProgramFiles']}\\Microsoft VS Code\\Code.exe',
+        if (env['ProgramFiles(x86)'] != null)
+          '${env['ProgramFiles(x86)']}\\Microsoft VS Code\\Code.exe',
+      ];
+      for (final candidate in candidates) {
+        if (await File(candidate).exists()) return candidate;
+      }
+      return _whereFirst(['code.exe', 'code.cmd']);
+    }
+
+    if (Platform.isMacOS) {
+      const app =
+          '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code';
+      if (await File(app).exists()) return app;
+    }
+
+    return _whereFirst(['code']);
   }
 
   static Future<String?> _resolvePyCharmExecutable() async {

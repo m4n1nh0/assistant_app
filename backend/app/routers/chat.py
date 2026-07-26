@@ -11,7 +11,8 @@ from ..models.schemas import ChatRequest, ChatResponse, LLMResponse, ResponseMod
 from ..services import llm_service
 from ..services.computer_action_service import build_computer_action
 from ..services.coding_action_service import build_coding_action
-from ..services.llm_status_service import get_available_llms, get_llm_statuses
+from ..services.llm_status_service import get_llm_statuses, get_ready_llms
+from ..services.llm_routing_service import pick_auto_llm
 from ..services.launcher_service import (
     build_auto_registration_from_launch,
     build_launch_action,
@@ -58,11 +59,6 @@ def _desktop_interface_guidance() -> str:
         "Quando a mensagem ja trouxer 'Contexto da janela escolhida pelo usuario', 'Contexto local do workspace' ou resultado local, use esses dados como contexto real. "
         "Quando sugerir alteracoes de codigo, prefira passos pequenos, comandos de teste claros e, se for editar arquivos, descreva exatamente os arquivos e trechos a alterar."
     )
-
-
-async def _chat_ready_llms() -> list[str]:
-    available = set(await get_available_llms())
-    return [llm for llm in settings.active_llms if llm in available]
 
 
 async def _llm_unavailable_response(llm: str | None = None) -> LLMResponse:
@@ -122,7 +118,7 @@ async def chat(
 ):
     cfg = user
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
-    active = await _chat_ready_llms()
+    active = await get_ready_llms()
 
     tutor_id = cfg.get("tutor_id") or "default"
     action = None
@@ -188,7 +184,7 @@ async def chat(
                         responses = [resp]
 
             case _:
-                llm = body.llm.value if body.llm else (active[0] if active else "")
+                llm = body.llm.value if body.llm else (await pick_auto_llm(active) if active else "")
                 if not llm:
                     responses = [await _llm_unavailable_response()]
                 elif llm not in active:
@@ -232,8 +228,8 @@ async def chat_stream(
 ):
     cfg = user
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
-    active = await _chat_ready_llms()
-    llm = body.llm.value if body.llm else (active[0] if active else "")
+    active = await get_ready_llms()
+    llm = body.llm.value if body.llm else (await pick_auto_llm(active) if active else "")
     if not llm or llm not in active:
         resp = await _llm_unavailable_response(llm or None)
 

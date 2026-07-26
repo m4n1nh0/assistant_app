@@ -77,6 +77,30 @@ As URLs podem ser informadas com ou sem `http://`. Para hosts internos da
 Railway sem porta, o backend usa `11434` para Ollama e `8080` para LocalAI. Uma
 URL LocalAI que já termina em `/v1` também é aceita sem duplicar esse prefixo.
 
+### Escolha Automática Do Provedor
+
+Quando o cliente não informa `llm` na requisição de chat — o caso normal, já
+que a interface só envia esse campo quando o usuário escolhe um provedor
+explicitamente — o backend seleciona sozinho entre os provedores disponíveis,
+nesta ordem de prioridade:
+
+1. provedores locais/gratuitos (`llama`, `localai`);
+2. provedores pagos com crédito confirmado (`balance_ok=true`, hoje só
+   `openrouter` e `deepseek` expõem saldo);
+3. provedores pagos sem sinal de saldo.
+
+Empates dentro do mesmo nível seguem a ordem de `active_llms`. Provedores sem
+crédito ou offline nunca entram na disputa, porque já são excluídos de
+`available_llms`. Isso vale para `POST /chat/`, `POST /chat/stream` e o
+WebSocket; os modos `multi` e `chain` continuam usando a lista inteira.
+
+Os status de disponibilidade e saldo são cacheados no Redis
+(chave `assistant:llm_status`, mesmo TTL do cache em memória: 300s quando há
+algum provedor disponível, 30s quando todos falharam). Assim um processo que
+sobe do zero aproveita a varredura feita por outro em vez de refazer as dez
+verificações — duas delas batem em API de saldo. Sem Redis, cada processo
+mantém apenas o cache local, sem erro.
+
 ### Railway
 
 No serviço do **backend**, configure:

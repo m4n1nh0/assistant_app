@@ -39,11 +39,57 @@ _REGISTER_COMMAND_RE = re.compile(
 )
 
 _PROJECT_TERMS_RE = re.compile(r"\b(projeto|project|repo|repositorio)\b", re.IGNORECASE)
-_PYCHARM_RE = re.compile(r"\b(py\s*charm|pycharm)\b", re.IGNORECASE)
 _QUESTION_PROJECT_RE = re.compile(
     r"\b(algum|qualquer|nome\s+do\s+projeto|se\s+eu|se\s+te|disser|dizer)\b",
     re.IGNORECASE,
 )
+
+_IDE_PREPOSITIONS = r"no|na|com|pelo|pela|em|usando|via"
+
+
+class _IdeSpec:
+    """How one IDE is recognized in a message and stripped from the project name.
+
+    `detect` decides whether the message asks for this IDE; `strip` removes every
+    mention of it while extracting the project name. They differ when a name is
+    ambiguous on its own — "code" only counts as VS Code right after a
+    preposition ("no code"), otherwise it is ordinary prose.
+    """
+
+    def __init__(self, ide_id: str, label: str, detect: str, strip: str):
+        self.ide_id = ide_id
+        self.label = label
+        self.detect = re.compile(detect, re.IGNORECASE)
+        self.strip = strip
+
+
+_IDE_SPECS: tuple[_IdeSpec, ...] = (
+    _IdeSpec(
+        ide_id="pycharm",
+        label="PyCharm",
+        detect=r"\bpy\s*charm\b",
+        strip=r"py\s*charm",
+    ),
+    _IdeSpec(
+        ide_id="vscode",
+        label="VS Code",
+        detect=(
+            r"\b(?:vs\s*code|visual\s+studio\s+code)\b"
+            rf"|\b(?:{_IDE_PREPOSITIONS})\s+code\b"
+        ),
+        strip=r"vs\s*code|visual\s+studio\s+code|code",
+    ),
+)
+
+
+def _detect_ide(text: str) -> Optional[_IdeSpec]:
+    """Returns the IDE mentioned earliest in the message, or None."""
+    best: Optional[tuple[int, _IdeSpec]] = None
+    for spec in _IDE_SPECS:
+        match = spec.detect.search(text)
+        if match and (best is None or match.start() < best[0]):
+            best = (match.start(), spec)
+    return best[1] if best else None
 
 _URL_RE = re.compile(
     r"\b((?:https?://|www\.)[^\s,;]+|"
@@ -325,12 +371,13 @@ def build_project_open_action(message: str) -> Optional[LaunchAction]:
         return None
 
     folded = _fold(message)
-    if not _PYCHARM_RE.search(folded):
+    ide = _detect_ide(folded)
+    if ide is None:
         return None
     if _QUESTION_PROJECT_RE.search(folded):
         return None
 
-    project_name = _extract_project_name_for_ide(message)
+    project_name = _extract_project_name_for_ide(message, ide)
     if not project_name:
         return None
 
@@ -339,7 +386,7 @@ def build_project_open_action(message: str) -> Optional[LaunchAction]:
             "version": 1,
             "platform": "desktop",
             "runner": "openProjectInIde",
-            "ide": "pycharm",
+            "ide": ide.ide_id,
             "project_query": project_name,
         },
         ensure_ascii=True,
@@ -347,26 +394,27 @@ def build_project_open_action(message: str) -> Optional[LaunchAction]:
     return LaunchAction(
         type="open_project",
         shortcut_id="",
-        name=f"{project_name} no PyCharm",
+        name=f"{project_name} no {ide.label}",
         target=payload,
         target_type=ShortcutType.command,
     )
 
 
-def _extract_project_name_for_ide(message: str) -> str:
+def _extract_project_name_for_ide(message: str, ide: _IdeSpec) -> str:
     text = re.sub(r"\s+", " ", _trim_quotes(message)).strip()
     folded = _fold(text)
     launch_match = _LAUNCH_RE.search(folded)
     if launch_match:
         text = text[launch_match.end() :].strip(" ,;:-")
 
+    name = ide.strip
     patterns = (
-        r"(?:projeto|project|repo|repositorio)\s+(.+?)\s+"
-        r"(?:no|na|com|pelo|pela|em|usando|via)\s+(?:py\s*charm|pycharm)\b",
-        r"(?:no|na|com|pelo|pela|em|usando|via)\s+(?:py\s*charm|pycharm)\s+"
-        r"(?:o|a|um|uma)?\s*(?:projeto|project|repo|repositorio)?\s+(.+)$",
-        r"(?:py\s*charm|pycharm)\s+"
-        r"(?:o|a|um|uma)?\s*(?:projeto|project|repo|repositorio)?\s+(.+)$",
+        rf"(?:projeto|project|repo|repositorio)\s+(.+?)\s+"
+        rf"(?:{_IDE_PREPOSITIONS})\s+(?:{name})\b",
+        rf"(?:{_IDE_PREPOSITIONS})\s+(?:{name})\s+"
+        rf"(?:o|a|um|uma)?\s*(?:projeto|project|repo|repositorio)?\s+(.+)$",
+        rf"(?:{name})\s+"
+        rf"(?:o|a|um|uma)?\s*(?:projeto|project|repo|repositorio)?\s+(.+)$",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -374,12 +422,12 @@ def _extract_project_name_for_ide(message: str) -> str:
             return _clean_project_name(match.group(1))
 
     cleaned = re.sub(
-        r"\b(?:no|na|com|pelo|pela|em|usando|via)\s+(?:py\s*charm|pycharm)\b",
+        rf"\b(?:{_IDE_PREPOSITIONS})\s+(?:{name})\b",
         "",
         text,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"\b(?:py\s*charm|pycharm)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(rf"\b(?:{name})\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
         r"^(?:o|a|um|uma)?\s*(?:projeto|project|repo|repositorio)\s+",
         "",
@@ -404,9 +452,23 @@ def _clean_project_name(raw: str) -> str:
         return ""
     if _QUESTION_PROJECT_RE.search(folded):
         return ""
-    if folded in {"projeto", "project", "repo", "repositorio", "pycharm"}:
+    if folded in _NON_PROJECT_NAMES:
         return ""
     return cleaned
+
+
+_NON_PROJECT_NAMES = {
+    "projeto",
+    "project",
+    "repo",
+    "repositorio",
+    "pycharm",
+    "py charm",
+    "vscode",
+    "vs code",
+    "visual studio code",
+    "code",
+}
 
 
 async def find_shortcut_in_message(

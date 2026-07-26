@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -121,6 +122,100 @@ def test_get_available_llms_keeps_provider_order(monkeypatch):
     monkeypatch.setattr(service, "get_llm_statuses", fake_get_llm_statuses)
 
     assert run(service.get_available_llms(force=True)) == ["gpt", "hf"]
+
+
+class FakeRedis:
+    def __init__(self, stored=None):
+        self.stored = stored
+        self.writes = []
+        self.fail = False
+
+    async def get(self, key):
+        if self.fail:
+            raise ConnectionError("redis down")
+        return self.stored
+
+    async def set(self, key, value, ex=None):
+        if self.fail:
+            raise ConnectionError("redis down")
+        self.writes.append((key, value, ex))
+        self.stored = value
+
+
+def cold_memory_cache(monkeypatch):
+    monkeypatch.setattr(service, "_cache", None)
+    monkeypatch.setattr(service, "_cache_at", 0.0)
+
+
+def block_network_checks(monkeypatch):
+    """Fail loudly if any provider check runs — used to prove the cache short-circuits."""
+    async def _boom(client):
+        raise AssertionError("provider check should not run when shared cache is warm")
+
+    for provider in service._PROVIDER_ORDER:
+        monkeypatch.setattr(service, f"_check_{provider}", _boom)
+
+
+def test_shared_cache_hit_skips_all_provider_checks(monkeypatch):
+    cold_memory_cache(monkeypatch)
+    block_network_checks(monkeypatch)
+    stored = json.dumps(
+        {
+            "gpt": LLMStatus(
+                id="gpt",
+                label="GPT",
+                configured=True,
+                online=True,
+                available=True,
+                status="online",
+            ).model_dump(mode="json")
+        }
+    )
+    monkeypatch.setattr(service, "get_redis_client", lambda: FakeRedis(stored=stored))
+
+    statuses = run(service.get_llm_statuses())
+
+    assert list(statuses) == ["gpt"]
+    assert statuses["gpt"].available is True
+
+
+def test_refresh_writes_shared_cache_with_availability_based_ttl(monkeypatch):
+    cold_memory_cache(monkeypatch)
+    redis = FakeRedis()
+    monkeypatch.setattr(service, "get_redis_client", lambda: redis)
+
+    available = {"gpt": service._status("gpt", configured=True, online=True)}
+    offline = {"gpt": service._status("gpt", configured=True, online=False)}
+
+    run(service._write_shared_cache(available))
+    run(service._write_shared_cache(offline))
+
+    assert redis.writes[0][2] == service._CACHE_TTL_SECONDS
+    assert redis.writes[1][2] == service._FAILED_CACHE_TTL_SECONDS
+
+
+def test_redis_failure_does_not_break_status_lookup(monkeypatch):
+    cold_memory_cache(monkeypatch)
+    redis = FakeRedis()
+    redis.fail = True
+    monkeypatch.setattr(service, "get_redis_client", lambda: redis)
+
+    assert run(service._read_shared_cache()) is None
+    run(service._write_shared_cache({"gpt": service._status("gpt", configured=True, online=True)}))
+
+
+def test_get_ready_llms_intersects_configured_with_available(monkeypatch):
+    async def fake_get_available_llms(force=False):
+        return ["llama", "gpt"]
+
+    monkeypatch.setattr(service, "get_available_llms", fake_get_available_llms)
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(active_llms=["claude", "gpt", "llama"]),
+    )
+
+    assert run(service.get_ready_llms()) == ["gpt", "llama"]
 
 
 def test_check_grok_uses_configured_chat_base_url(monkeypatch):

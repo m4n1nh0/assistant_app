@@ -9,21 +9,6 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_chat_ready_llms_uses_online_status_but_keeps_config_order(monkeypatch):
-    fake_settings = SimpleNamespace(
-        active_llms=["gemini", "gpt", "hf"],
-        llm_labels={},
-    )
-
-    async def fake_available_llms():
-        return ["hf", "gpt"]
-
-    monkeypatch.setattr(chat_router, "settings", fake_settings)
-    monkeypatch.setattr(chat_router, "get_available_llms", fake_available_llms)
-
-    assert run(chat_router._chat_ready_llms()) == ["gpt", "hf"]
-
-
 def test_unavailable_response_includes_provider_label_and_error(monkeypatch):
     fake_settings = SimpleNamespace(
         active_llms=[],
