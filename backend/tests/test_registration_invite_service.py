@@ -126,21 +126,49 @@ def test_lock_registration_invite_rejects_expired_token(monkeypatch):
     assert invite is None
 
 
-def test_active_token_prevents_email_spam_and_token_replacement(monkeypatch):
-    active = SimpleNamespace(
+def test_request_within_cooldown_window_is_rejected(monkeypatch):
+    latest = SimpleNamespace(
         used_at=None,
         revoked_at=None,
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=20),
-        created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=10),
     )
-    db = FakeDb([FakeResult(scalar=active)])
+    db = FakeDb([FakeResult(scalar=latest)])
     monkeypatch.setattr(service, "settings", invite_settings())
 
     with pytest.raises(service.RegistrationTokenCooldownError) as exc_info:
         run(service.issue_registration_token(db))
 
-    assert exc_info.value.retry_after_seconds > 60
+    assert exc_info.value.retry_after_seconds <= 60
     assert db.added == []
+
+
+def test_still_active_token_is_revoked_and_replaced_after_cooldown(monkeypatch):
+    previous = SimpleNamespace(
+        used_at=None,
+        revoked_at=None,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=20),
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    db = FakeDb(
+        [
+            FakeResult(scalar=previous),
+            FakeResult(rows=[previous]),
+        ]
+    )
+
+    async def fake_send(token, expires_at, recipient_email=None):
+        pass
+
+    monkeypatch.setattr(service, "settings", invite_settings())
+    monkeypatch.setattr(service, "_send_registration_email", fake_send)
+
+    email_hint, _expires_at = run(service.issue_registration_token(db))
+
+    assert email_hint == "ad***@example.com"
+    assert previous.revoked_at is not None
+    assert len(db.added) == 1
+    assert db.committed is True
 
 
 def test_api_delivery_posts_to_brevo_with_admin_recipient(monkeypatch):

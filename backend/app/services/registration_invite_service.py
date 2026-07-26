@@ -171,14 +171,6 @@ async def _issue_registration_token(
     )
     latest = latest_result.scalar_one_or_none()
     cooldown = max(0, settings.registration_token_request_cooldown_seconds)
-    if (
-        latest is not None
-        and latest.used_at is None
-        and latest.revoked_at is None
-        and as_utc(latest.expires_at) > now
-    ):
-        remaining = (as_utc(latest.expires_at) - now).total_seconds()
-        raise RegistrationTokenCooldownError(max(1, int(remaining)))
     if latest is not None and cooldown:
         elapsed = (now - as_utc(latest.created_at)).total_seconds()
         if elapsed < cooldown:
