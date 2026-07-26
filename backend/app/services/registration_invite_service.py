@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import secrets
 import smtplib
+import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
@@ -107,6 +108,39 @@ def _send_registration_email(
         if settings.smtp_username.strip():
             smtp.login(settings.smtp_username.strip(), settings.smtp_password)
         smtp.send_message(message)
+
+
+def smtp_connection_diagnostic() -> dict:
+    """One-off SMTP connectivity check for deploy troubleshooting. Sends no email."""
+    result = {
+        "host": settings.smtp_host.strip(),
+        "port": settings.smtp_port,
+        "use_ssl": settings.smtp_use_ssl,
+        "starttls": settings.smtp_starttls,
+        "connected": False,
+        "starttls_ok": False,
+        "auth_ok": False,
+        "success": False,
+    }
+    started = time.monotonic()
+    try:
+        smtp_type = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
+        with smtp_type(
+            settings.smtp_host.strip(), settings.smtp_port, timeout=10
+        ) as smtp:
+            result["connected"] = True
+            if not settings.smtp_use_ssl and settings.smtp_starttls:
+                smtp.starttls()
+                result["starttls_ok"] = True
+            if settings.smtp_username.strip():
+                smtp.login(settings.smtp_username.strip(), settings.smtp_password)
+                result["auth_ok"] = True
+        result["success"] = True
+    except Exception as exc:
+        result["error_type"] = type(exc).__name__
+        result["error_message"] = str(exc)
+    result["elapsed_seconds"] = round(time.monotonic() - started, 2)
+    return result
 
 
 async def issue_registration_token(
