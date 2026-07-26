@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     smtp_use_ssl: bool = False
     brevo_api_key: str = ""
+    redis_url: str = "redis://localhost:6379/0"
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

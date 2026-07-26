@@ -29,6 +29,21 @@ services:
     volumes:
       - assistant_qdrant:/qdrant/storage
 
+  redis:
+    image: redis:7-alpine
+    container_name: assistant-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - assistant_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   ollama:
     build:
       context: ./ollama
@@ -66,6 +81,7 @@ services:
       - DATABASE_URL=mysql+aiomysql://assistant:assistant@mysql:3306/assistant
       - QDRANT_URL=http://qdrant:6333
       - OLLAMA_BASE_URL=http://ollama:11434
+      - REDIS_URL=redis://redis:6379/0
     env_file:
       - path: ./backend/.env
         required: false
@@ -74,6 +90,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      redis:
+        condition: service_healthy
       ollama:
         condition: service_started
     healthcheck:
@@ -88,4 +106,5 @@ volumes:
   assistant_logs:
   assistant_mysql:
   assistant_qdrant:
+  assistant_redis:
   assistant_ollama:

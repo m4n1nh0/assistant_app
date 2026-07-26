@@ -15,6 +15,7 @@ from ..core.security import (
     verify_secret,
 )
 from ..core.config import get_settings
+from ..core.rate_limit import rate_limit
 from ..core.database import (
     AssistantProfileModel,
     TutorModel,
@@ -39,6 +40,13 @@ from ..services.registration_invite_service import (
 
 router_auth = APIRouter(prefix="/auth", tags=["Auth"])
 settings = get_settings()
+
+# General per-IP ceiling plus a tighter, shorter-window burst guard, stacked on
+# endpoints that are public and prone to abuse (token spam, brute force).
+_public_auth_rate_limit = [
+    Depends(rate_limit(times=20, seconds=60)),
+    Depends(rate_limit(times=5, seconds=10)),
+]
 
 
 @router_auth.get("/status", response_model=AuthStatusResponse)
@@ -72,6 +80,7 @@ async def smtp_check(secret: str = ""):
 @router_auth.post(
     "/registration-token",
     response_model=RegistrationTokenResponse,
+    dependencies=_public_auth_rate_limit,
 )
 async def request_registration_token(
     db: _AuthAsyncSession = Depends(_get_auth_db),
@@ -101,7 +110,11 @@ async def request_registration_token(
     )
 
 
-@router_auth.post("/register", response_model=AuthResponse)
+@router_auth.post(
+    "/register",
+    response_model=AuthResponse,
+    dependencies=_public_auth_rate_limit,
+)
 async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
     """Creates the first admin or a user holding an admin-issued invite."""
     count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
@@ -180,7 +193,11 @@ async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_a
     return AuthResponse(success=True, token=token, message="Conta criada com sucesso")
 
 
-@router_auth.post("/login", response_model=AuthResponse)
+@router_auth.post(
+    "/login",
+    response_model=AuthResponse,
+    dependencies=_public_auth_rate_limit,
+)
 async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
     result = await db.execute(select(UserModel).where(UserModel.username == body.username.strip()))
     user = result.scalar_one_or_none()
@@ -206,7 +223,11 @@ async def me(user: dict = Depends(get_current_user)):
     }
 
 
-@router_auth.post("/invitations", response_model=AdminInviteResponse)
+@router_auth.post(
+    "/invitations",
+    response_model=AdminInviteResponse,
+    dependencies=[Depends(rate_limit(times=30, seconds=60))],
+)
 async def create_user_invitation(
     body: AdminInviteRequest,
     admin: dict = Depends(require_admin),

@@ -10,6 +10,8 @@ huggingface-hub==1.15.0
 
 httpx==0.28.1
 aiohttp==3.13.5
+fastapi-limiter==0.1.6
+redis==8.0.1
 
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4

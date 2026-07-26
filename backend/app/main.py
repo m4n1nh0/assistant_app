@@ -1,14 +1,19 @@
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi_limiter import FastAPILimiter
 from loguru import logger
 import logging
+import redis.asyncio as redis_asyncio
 import sys
 
 from .core.config import get_settings
 from .core.database import init_db
 from .core.database_seed import apply_database_seed, database_seed_requested
+from .core.net import client_ip, client_ip_identifier
+from .core.rate_limit import mark_ready as mark_rate_limiter_ready
 from .utils.scheduler import start_scheduler, stop_scheduler
 from .routers.chat import router as chat_router
 from .routers.websocket import router as ws_router
@@ -75,12 +80,25 @@ async def lifespan(app: FastAPI):
         logger.info("Qdrant collections ready")
     except Exception as e:
         logger.warning(f"Qdrant unavailable: {e}")
+    try:
+        redis_connection = redis_asyncio.from_url(
+            settings.redis_url, encoding="utf-8", decode_responses=True
+        )
+        await redis_connection.ping()
+        await FastAPILimiter.init(redis_connection, identifier=client_ip_identifier)
+        mark_rate_limiter_ready(True)
+        logger.info("Rate limiter ready (Redis)")
+    except Exception as e:
+        mark_rate_limiter_ready(False)
+        logger.warning(f"Rate limiter unavailable (Redis): {e}")
     start_scheduler()
     logger.info("Scheduler started")
     logger.info(f"Active services: {settings.active_llms}")
     logger.info(f"Listening on {settings.host}:{settings.port}")
     yield
     stop_scheduler()
+    if FastAPILimiter.redis is not None:
+        await FastAPILimiter.close()
     logger.info("Backend stopped")
 
 
@@ -101,6 +119,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started) * 1000
+        logger.exception(
+            f"{client_ip(request)} | {request.method} {request.url.path} "
+            f"-> 500 ({duration_ms:.1f}ms)"
+        )
+        raise
+    if request.url.path not in ("/health", "/health/live"):
+        duration_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            f"{client_ip(request)} | {request.method} {request.url.path} "
+            f"-> {response.status_code} ({duration_ms:.1f}ms)"
+        )
+    return response
+
 
 app.include_router(router_health)
 app.include_router(chat_router)
