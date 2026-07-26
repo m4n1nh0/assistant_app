@@ -1,12 +1,23 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as _AuthAsyncSession
 from ..core.security import hash_secret, verify_secret, create_token, get_current_user
 from ..core.config import get_settings
 from ..core.database import get_db as _get_auth_db, UserModel
 from ..models.schemas import (
     LoginRequest, RegisterRequest, ChangePasswordRequest,
-    AuthResponse, AuthStatusResponse,
+    AuthResponse, AuthStatusResponse, RegistrationTokenResponse,
+)
+from ..services.registration_invite_service import (
+    RegistrationDeliveryError,
+    RegistrationTokenCooldownError,
+    issue_registration_token,
+    lock_registration_invite,
+    mask_email,
+    registration_delivery_configured,
 )
 
 router_auth = APIRouter(prefix="/auth", tags=["Auth"])
@@ -16,12 +27,57 @@ settings = get_settings()
 @router_auth.get("/status", response_model=AuthStatusResponse)
 async def auth_status(db: _AuthAsyncSession = Depends(_get_auth_db)):
     count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
-    return AuthStatusResponse(needs_setup=count == 0)
+    needs_setup = count == 0
+    requires_token = needs_setup and settings.registration_invite_required
+    return AuthStatusResponse(
+        needs_setup=needs_setup,
+        registration_requires_token=requires_token,
+        registration_delivery_configured=(
+            requires_token and registration_delivery_configured()
+        ),
+        admin_email_hint=(
+            mask_email(settings.registration_admin_email)
+            if requires_token
+            else None
+        ),
+    )
+
+
+@router_auth.post(
+    "/registration-token",
+    response_model=RegistrationTokenResponse,
+)
+async def request_registration_token(
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    if not settings.registration_invite_required:
+        raise HTTPException(400, "Cadastro por convite nao esta habilitado.")
+
+    count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
+    if count > 0:
+        raise HTTPException(403, "Cadastro encerrado. Ja existe uma conta.")
+
+    try:
+        email_hint, _expires_at = await issue_registration_token(db)
+    except RegistrationTokenCooldownError as exc:
+        raise HTTPException(
+            429,
+            str(exc),
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+    except RegistrationDeliveryError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+    return RegistrationTokenResponse(
+        success=True,
+        message="Token enviado ao email administrativo configurado.",
+        admin_email_hint=email_hint,
+    )
 
 
 @router_auth.post("/register", response_model=AuthResponse)
 async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
-    """Creates the first admin account. Only allowed while no user exists yet."""
+    """Creates the first admin account, optionally requiring an emailed invite."""
     count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
     if count > 0:
         raise HTTPException(403, "Já existe uma conta configurada. Faça login.")
@@ -30,11 +86,26 @@ async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_a
     if not username or len(body.password) < 6:
         raise HTTPException(400, "Usuário obrigatório e senha com pelo menos 6 caracteres.")
 
+    invite = None
+    if settings.registration_invite_required:
+        invite = await lock_registration_invite(db, body.registration_token)
+        if invite is None:
+            raise HTTPException(
+                403,
+                "Token administrativo invalido, expirado ou ja utilizado.",
+            )
+
     user = UserModel(username=username, password_hash=hash_secret(body.password))
     db.add(user)
-    await db.commit()
+    if invite is not None:
+        invite.used_at = datetime.now(timezone.utc)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "Nome de usuario ja cadastrado.") from exc
 
-    token = create_token({"sub": username})
+    token = create_token({"sub": username, "role": "admin"})
     return AuthResponse(success=True, token=token, message="Conta criada com sucesso")
 
 
@@ -45,13 +116,13 @@ async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db
     if not user or not verify_secret(body.password, user.password_hash):
         return AuthResponse(success=False, message="Usuário ou senha incorretos")
 
-    token = create_token({"sub": user.username})
+    token = create_token({"sub": user.username, "role": "admin"})
     return AuthResponse(success=True, token=token, message="Autenticado com sucesso")
 
 
 @router_auth.get("/me")
 async def me(user: dict = Depends(get_current_user)):
-    return {"username": user.get("sub")}
+    return {"username": user.get("sub"), "role": user.get("role", "admin")}
 
 
 @router_auth.put("/password")

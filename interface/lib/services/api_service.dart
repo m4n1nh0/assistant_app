@@ -34,22 +34,48 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
-  /// Returns true if no account has been created yet on the backend
-  /// (first-run bootstrap), so the UI should show a register form.
-  Future<bool> needsAuthSetup() async {
+  /// Returns first-run registration requirements from the backend.
+  Future<AuthSetupStatus> authStatus() async {
     final r = await http
         .get(Uri.parse('$baseUrl/auth/status'))
         .timeout(const Duration(seconds: 10));
-    if (r.statusCode >= 400) return false;
+    if (r.statusCode >= 400) {
+      return const AuthSetupStatus(needsSetup: false);
+    }
     final data = jsonDecode(r.body) as Map<String, dynamic>;
-    return data['needs_setup'] == true;
+    return AuthSetupStatus.fromJson(data);
   }
 
-  Future<AuthResult> register(String username, String password) async {
+  Future<bool> needsAuthSetup() async => (await authStatus()).needsSetup;
+
+  Future<String> requestRegistrationToken() async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/auth/registration-token'),
+      headers: _headers,
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) {
+      throw Exception(
+        data['detail']?.toString() ?? 'Falha ao enviar token administrativo',
+      );
+    }
+    return data['message']?.toString() ??
+        'Token enviado ao email administrativo.';
+  }
+
+  Future<AuthResult> register(
+    String username,
+    String password, {
+    String registrationToken = '',
+  }) async {
     final r = await http.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: _headers,
-      body: jsonEncode({'username': username, 'password': password}),
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+        'registration_token': registrationToken,
+      }),
     );
     return _handleAuthResponse(r);
   }
@@ -70,7 +96,7 @@ class ApiService {
     }
     return AuthResult(
       success: data['success'] == true,
-      message: data['message']?.toString() ?? '',
+      message: (data['message'] ?? data['detail'])?.toString() ?? '',
       token: data['token'] as String?,
     );
   }
@@ -879,8 +905,8 @@ class ApiService {
     _wsStream = StreamController<Map<String, dynamic>>.broadcast();
     final tokenQuery =
         _token != null ? '?token=${Uri.encodeComponent(_token!)}' : '';
-    _ws = WebSocketChannel.connect(
-        Uri.parse('$wsUrl/ws/$sessionId$tokenQuery'));
+    _ws =
+        WebSocketChannel.connect(Uri.parse('$wsUrl/ws/$sessionId$tokenQuery'));
 
     _ws!.stream.listen(
       (raw) {
@@ -998,6 +1024,29 @@ class AuthResult {
     required this.message,
     this.token,
   });
+}
+
+class AuthSetupStatus {
+  final bool needsSetup;
+  final bool registrationRequiresToken;
+  final bool registrationDeliveryConfigured;
+  final String adminEmailHint;
+
+  const AuthSetupStatus({
+    required this.needsSetup,
+    this.registrationRequiresToken = false,
+    this.registrationDeliveryConfigured = false,
+    this.adminEmailHint = '',
+  });
+
+  factory AuthSetupStatus.fromJson(Map<String, dynamic> json) =>
+      AuthSetupStatus(
+        needsSetup: json['needs_setup'] == true,
+        registrationRequiresToken: json['registration_requires_token'] == true,
+        registrationDeliveryConfigured:
+            json['registration_delivery_configured'] == true,
+        adminEmailHint: json['admin_email_hint']?.toString() ?? '',
+      );
 }
 
 class DesktopWindowInfo {

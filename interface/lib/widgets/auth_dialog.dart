@@ -5,12 +5,18 @@ import '../utils/theme.dart';
 class AuthDialog extends StatefulWidget {
   final String assistantName;
   final bool needsSetup;
+  final bool registrationRequiresToken;
+  final bool registrationDeliveryConfigured;
+  final String adminEmailHint;
   final String initialUsername;
 
   const AuthDialog({
     super.key,
     required this.assistantName,
     required this.needsSetup,
+    this.registrationRequiresToken = false,
+    this.registrationDeliveryConfigured = false,
+    this.adminEmailHint = '',
     this.initialUsername = '',
   });
 
@@ -22,8 +28,11 @@ class _AuthDialogState extends State<AuthDialog> {
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _passCCtrl = TextEditingController();
+  final _registrationTokenCtrl = TextEditingController();
   String _status = '';
+  bool _statusIsError = true;
   bool _processing = false;
+  bool _requestingToken = false;
 
   @override
   void initState() {
@@ -36,10 +45,14 @@ class _AuthDialogState extends State<AuthDialog> {
     _userCtrl.dispose();
     _passCtrl.dispose();
     _passCCtrl.dispose();
+    _registrationTokenCtrl.dispose();
     super.dispose();
   }
 
-  void _setStatus(String msg) => setState(() => _status = msg);
+  void _setStatus(String msg, {bool isError = true}) => setState(() {
+        _status = msg;
+        _statusIsError = isError;
+      });
 
   Future<void> _submit() async {
     if (_processing) return;
@@ -54,26 +67,53 @@ class _AuthDialogState extends State<AuthDialog> {
       _setStatus('As senhas não coincidem.');
       return;
     }
+    if (widget.needsSetup &&
+        widget.registrationRequiresToken &&
+        _registrationTokenCtrl.text.trim().isEmpty) {
+      _setStatus('Informe o token administrativo enviado por email.');
+      return;
+    }
 
     setState(() => _processing = true);
     _setStatus('');
     try {
       final result = widget.needsSetup
-          ? await api.register(username, password)
+          ? await api.register(
+              username,
+              password,
+              registrationToken: _registrationTokenCtrl.text.trim(),
+            )
           : await api.login(username, password);
       if (!mounted) return;
       if (result.success) {
         Navigator.of(context).pop(username);
       } else {
         setState(() => _processing = false);
-        _setStatus(result.message.isEmpty
-            ? 'Falha ao autenticar.'
-            : result.message);
+        _setStatus(
+            result.message.isEmpty ? 'Falha ao autenticar.' : result.message);
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _processing = false);
       _setStatus('Erro ao conectar com o backend: $e');
+    }
+  }
+
+  Future<void> _requestRegistrationToken() async {
+    if (_requestingToken || !widget.registrationDeliveryConfigured) return;
+    setState(() => _requestingToken = true);
+    _setStatus('');
+    try {
+      final message = await api.requestRegistrationToken();
+      if (!mounted) return;
+      _setStatus(message, isError: false);
+    } catch (e) {
+      if (!mounted) return;
+      _setStatus(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) {
+        setState(() => _requestingToken = false);
+      }
     }
   }
 
@@ -163,6 +203,48 @@ class _AuthDialogState extends State<AuthDialog> {
                       onSubmitted: (_) => _submit(),
                     ),
                   ],
+                  if (widget.needsSetup &&
+                      widget.registrationRequiresToken) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      widget.registrationDeliveryConfigured
+                          ? 'Solicite o token enviado para '
+                              '${widget.adminEmailHint}.'
+                          : 'O envio do token administrativo ainda não foi '
+                              'configurado no backend.',
+                      style: const TextStyle(
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: 10,
+                        color: AssistantTheme.textSecondary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    _AuthBtn(
+                      icon: '✉',
+                      label: _requestingToken
+                          ? 'ENVIANDO...'
+                          : 'ENVIAR TOKEN AO ADMIN',
+                      color: AssistantTheme.c1,
+                      onTap: _requestingToken ||
+                              !widget.registrationDeliveryConfigured
+                          ? null
+                          : _requestRegistrationToken,
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _registrationTokenCtrl,
+                      style: const TextStyle(
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: 13,
+                        color: AssistantTheme.textPrimary,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Token administrativo',
+                      ),
+                      onSubmitted: (_) => _submit(),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   _AuthBtn(
                     icon: '›',
@@ -178,10 +260,12 @@ class _AuthDialogState extends State<AuthDialog> {
                     const SizedBox(height: 8),
                     Text(
                       _status,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'JetBrains Mono',
                         fontSize: 11,
-                        color: AssistantTheme.danger,
+                        color: _statusIsError
+                            ? AssistantTheme.danger
+                            : AssistantTheme.c3,
                       ),
                       textAlign: TextAlign.center,
                     ),

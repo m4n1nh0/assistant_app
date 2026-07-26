@@ -225,6 +225,31 @@ Preencha apenas o que for necessario para rodar localmente. Credenciais de
 notificacao e OAuth de calendario devem ser configuradas pela tela da aplicacao,
 pois sao salvas no banco.
 
+### Proteção Do Primeiro Cadastro
+
+O backend já bloqueia o cadastro depois que a primeira conta é criada. Para
+exigir autorização administrativa também nessa primeira criação, configure no
+serviço do backend:
+
+```dotenv
+REGISTRATION_INVITE_REQUIRED=true
+REGISTRATION_ADMIN_EMAIL=admin@example.com
+REGISTRATION_TOKEN_EXPIRE_MINUTES=30
+REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS=60
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=usuario-smtp
+SMTP_PASSWORD=senha-smtp
+SMTP_FROM=assistente@example.com
+SMTP_STARTTLS=true
+SMTP_USE_SSL=false
+```
+
+Na tela inicial, o usuário solicita o token. O backend envia o convite somente
+ao e-mail administrativo configurado, mostra no app apenas o endereço mascarado
+e aceita o token uma única vez. O banco armazena apenas o hash HMAC do token.
+
 ## Execucao Local
 
 ### Backend

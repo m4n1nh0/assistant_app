@@ -82,6 +82,22 @@ class UserModel(Base):
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class RegistrationInviteModel(Base):
+    __tablename__ = "registration_invites"
+    id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    token_hash      = Column(String(64), nullable=False, unique=True, index=True)
+    recipient_email = Column(String(255), nullable=False)
+    expires_at      = Column(DateTime, nullable=False, index=True)
+    used_at         = Column(DateTime, nullable=True)
+    revoked_at      = Column(DateTime, nullable=True)
+    created_at      = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+
 class TutorModel(Base):
     __tablename__ = "tutors"
     id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))

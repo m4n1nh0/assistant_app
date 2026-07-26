@@ -61,6 +61,7 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str
     password: str
+    registration_token: str = ""
 
 
 class ChangePasswordRequest(BaseModel):
@@ -77,6 +78,15 @@ class AuthResponse(BaseModel):
 
 class AuthStatusResponse(BaseModel):
     needs_setup: bool
+    registration_requires_token: bool = False
+    registration_delivery_configured: bool = False
+    admin_email_hint: Optional[str] = None
+
+
+class RegistrationTokenResponse(BaseModel):
+    success: bool
+    message: str
+    admin_email_hint: Optional[str] = None
 
 
 class LLMConfig(BaseModel):

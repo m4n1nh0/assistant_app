@@ -113,7 +113,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   Future<void> _showAuth() async {
     final config = ref.read(configProvider);
-    final needsSetup = await api.needsAuthSetup();
+    final authStatus = await api.authStatus();
     final storedUsername = await StorageService.loadAuthUsername() ?? '';
     if (!mounted) return;
     final username = await showDialog<String>(
@@ -121,7 +121,11 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       barrierDismissible: false,
       builder: (_) => AuthDialog(
         assistantName: config.assistantName,
-        needsSetup: needsSetup,
+        needsSetup: authStatus.needsSetup,
+        registrationRequiresToken: authStatus.registrationRequiresToken,
+        registrationDeliveryConfigured:
+            authStatus.registrationDeliveryConfigured,
+        adminEmailHint: authStatus.adminEmailHint,
         initialUsername: storedUsername,
       ),
     );

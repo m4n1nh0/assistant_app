@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-jwt"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
+    registration_invite_required: bool = False
+    registration_admin_email: str = ""
+    registration_token_expire_minutes: int = 30
+    registration_token_request_cooldown_seconds: int = 60
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    smtp_use_ssl: bool = False
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

@@ -157,6 +157,38 @@ Erros comuns:
 | HTTP 401 | Replicar a chave do LocalAI em `LOCALAI_API_KEY` no backend |
 | Ollama offline | Conferir `OLLAMA_BASE_URL`, porta `11434` e `OLLAMA_MODEL` |
 
+### Cadastro Administrativo Por Email
+
+Por padrão, o backend mantém o comportamento legado: somente a primeira conta
+pode ser criada e qualquer segundo `POST /auth/register` é bloqueado. Para
+proteger também a criação dessa primeira conta, habilite o convite
+administrativo:
+
+```dotenv
+REGISTRATION_INVITE_REQUIRED=true
+REGISTRATION_ADMIN_EMAIL=admin@example.com
+REGISTRATION_TOKEN_EXPIRE_MINUTES=30
+REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS=60
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=usuario-smtp
+SMTP_PASSWORD=senha-smtp
+SMTP_FROM=assistente@example.com
+SMTP_STARTTLS=true
+SMTP_USE_SSL=false
+```
+
+A interface chama `POST /auth/registration-token`. O backend gera um token
+aleatório de uso único, salva somente seu hash HMAC, envia o valor original
+exclusivamente para `REGISTRATION_ADMIN_EMAIL` e exige o token em
+`POST /auth/register`. Enquanto um token válido estiver ativo, novas
+solicitações são recusadas para evitar spam e substituição do convite.
+
+Para SMTP com SSL direto, normalmente na porta `465`, use
+`SMTP_USE_SSL=true` e `SMTP_STARTTLS=false`. O e-mail administrativo aparece
+na interface apenas de forma mascarada.
+
 ### Seed de demonstração
 
 Para alimentar uma base nova durante um deploy de teste, configure a seguinte
@@ -199,8 +231,12 @@ O `--reset` remove apenas registros identificados pelo seed de demonstração.
 ### Auth
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| POST | `/auth/setup` | Configurar PIN/voz/face |
-| POST | `/auth/verify` | Autenticar e obter JWT |
+| GET | `/auth/status` | Estado do primeiro cadastro e entrega do convite |
+| POST | `/auth/registration-token` | Enviar token único ao e-mail administrativo |
+| POST | `/auth/register` | Criar a primeira conta administrativa |
+| POST | `/auth/login` | Autenticar e obter JWT |
+| GET | `/auth/me` | Consultar a sessão autenticada |
+| PUT | `/auth/password` | Alterar a senha da conta |
 
 ### Chat
 | Método | Rota | Descrição |
