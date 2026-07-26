@@ -149,9 +149,13 @@ async def _reject_item(
 
 
 @router.post("/review", response_model=MemoryReviewResponse)
-async def propose_memory(body: MemoryReviewCreate, db: AsyncSession = Depends(get_db)):
+async def propose_memory(
+    body: MemoryReviewCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     item = MemoryReviewModel(
-        tutor_id=body.tutor_id,
+        tutor_id=user["tutor_id"],
         category=body.category,
         content=body.content,
         source=body.source,
@@ -168,8 +172,10 @@ async def propose_memory(body: MemoryReviewCreate, db: AsyncSession = Depends(ge
 async def list_memory_reviews(
     tutor_id: str,
     status: str = Query("pending"),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    tutor_id = user["tutor_id"]
     result = await db.execute(
         select(MemoryReviewModel)
         .where(
@@ -185,10 +191,11 @@ async def list_memory_reviews(
 async def approve_memory(
     memory_id: str,
     body: MemoryDecisionRequest = MemoryDecisionRequest(),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     item = await db.get(MemoryReviewModel, memory_id)
-    if item is None:
+    if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Memória não encontrada")
     item = await _approve_item(item, db, body.reviewer_note)
     return _memory_response(item)
@@ -198,10 +205,11 @@ async def approve_memory(
 async def reject_memory(
     memory_id: str,
     body: MemoryDecisionRequest = MemoryDecisionRequest(),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     item = await db.get(MemoryReviewModel, memory_id)
-    if item is None:
+    if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Memória não encontrada")
     item = await _reject_item(item, db, body.reviewer_note)
     return _memory_response(item)
@@ -211,10 +219,11 @@ async def reject_memory(
 async def decide_memory_by_voice(
     memory_id: str,
     body: MemoryVoiceDecisionRequest,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     item = await db.get(MemoryReviewModel, memory_id)
-    if item is None:
+    if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Memória não encontrada")
 
     decision = _voice_decision(body.transcript)
@@ -247,7 +256,9 @@ async def search_memory(
     q: str,
     category: str | None = None,
     limit: int = Query(5, ge=1, le=25),
+    user: dict = Depends(get_current_user),
 ):
+    tutor_id = user["tutor_id"]
     return qdrant_service.search_memory(
         tutor_id=tutor_id,
         query=q,

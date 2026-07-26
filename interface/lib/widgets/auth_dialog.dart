@@ -5,6 +5,7 @@ import '../utils/theme.dart';
 class AuthDialog extends StatefulWidget {
   final String assistantName;
   final bool needsSetup;
+  final bool inviteRegistrationEnabled;
   final bool registrationRequiresToken;
   final bool registrationDeliveryConfigured;
   final String adminEmailHint;
@@ -14,6 +15,7 @@ class AuthDialog extends StatefulWidget {
     super.key,
     required this.assistantName,
     required this.needsSetup,
+    this.inviteRegistrationEnabled = true,
     this.registrationRequiresToken = false,
     this.registrationDeliveryConfigured = false,
     this.adminEmailHint = '',
@@ -33,11 +35,18 @@ class _AuthDialogState extends State<AuthDialog> {
   bool _statusIsError = true;
   bool _processing = false;
   bool _requestingToken = false;
+  late bool _registerMode;
+
+  bool get _isRegister => widget.needsSetup || _registerMode;
+  bool get _needsToken =>
+      _isRegister &&
+      (widget.needsSetup ? widget.registrationRequiresToken : true);
 
   @override
   void initState() {
     super.initState();
     _userCtrl.text = widget.initialUsername;
+    _registerMode = widget.needsSetup;
   }
 
   @override
@@ -63,21 +72,19 @@ class _AuthDialogState extends State<AuthDialog> {
       _setStatus('Preencha usuário e senha.');
       return;
     }
-    if (widget.needsSetup && password != _passCCtrl.text) {
+    if (_isRegister && password != _passCCtrl.text) {
       _setStatus('As senhas não coincidem.');
       return;
     }
-    if (widget.needsSetup &&
-        widget.registrationRequiresToken &&
-        _registrationTokenCtrl.text.trim().isEmpty) {
-      _setStatus('Informe o token administrativo enviado por email.');
+    if (_needsToken && _registrationTokenCtrl.text.trim().isEmpty) {
+      _setStatus('Informe o token de convite enviado por email.');
       return;
     }
 
     setState(() => _processing = true);
     _setStatus('');
     try {
-      final result = widget.needsSetup
+      final result = _isRegister
           ? await api.register(
               username,
               password,
@@ -158,7 +165,7 @@ class _AuthDialogState extends State<AuthDialog> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    widget.needsSetup
+                    _isRegister
                         ? 'Crie a conta de acesso ao assistente'
                         : 'Entre com usuário e senha para continuar',
                     style: const TextStyle(
@@ -187,9 +194,9 @@ class _AuthDialogState extends State<AuthDialog> {
                         fontSize: 13,
                         color: AssistantTheme.textPrimary),
                     decoration: const InputDecoration(hintText: 'Senha'),
-                    onSubmitted: (_) => widget.needsSetup ? null : _submit(),
+                    onSubmitted: (_) => _isRegister ? null : _submit(),
                   ),
-                  if (widget.needsSetup) ...[
+                  if (_isRegister) ...[
                     const SizedBox(height: 10),
                     TextField(
                       controller: _passCCtrl,
@@ -203,15 +210,16 @@ class _AuthDialogState extends State<AuthDialog> {
                       onSubmitted: (_) => _submit(),
                     ),
                   ],
-                  if (widget.needsSetup &&
-                      widget.registrationRequiresToken) ...[
+                  if (_needsToken) ...[
                     const SizedBox(height: 14),
                     Text(
-                      widget.registrationDeliveryConfigured
-                          ? 'Solicite o token enviado para '
-                              '${widget.adminEmailHint}.'
-                          : 'O envio do token administrativo ainda não foi '
-                              'configurado no backend.',
+                      widget.needsSetup
+                          ? (widget.registrationDeliveryConfigured
+                              ? 'Solicite o token enviado para '
+                                  '${widget.adminEmailHint}.'
+                              : 'O envio do token administrativo ainda não foi '
+                                  'configurado no backend.')
+                          : 'Use o token recebido no email de convite.',
                       style: const TextStyle(
                         fontFamily: 'JetBrains Mono',
                         fontSize: 10,
@@ -220,18 +228,20 @@ class _AuthDialogState extends State<AuthDialog> {
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
-                    _AuthBtn(
-                      icon: '✉',
-                      label: _requestingToken
-                          ? 'ENVIANDO...'
-                          : 'ENVIAR TOKEN AO ADMIN',
-                      color: AssistantTheme.c1,
-                      onTap: _requestingToken ||
-                              !widget.registrationDeliveryConfigured
-                          ? null
-                          : _requestRegistrationToken,
-                    ),
-                    const SizedBox(height: 10),
+                    if (widget.needsSetup) ...[
+                      _AuthBtn(
+                        icon: '✉',
+                        label: _requestingToken
+                            ? 'ENVIANDO...'
+                            : 'ENVIAR TOKEN AO ADMIN',
+                        color: AssistantTheme.c1,
+                        onTap: _requestingToken ||
+                                !widget.registrationDeliveryConfigured
+                            ? null
+                            : _requestRegistrationToken,
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     TextField(
                       controller: _registrationTokenCtrl,
                       style: const TextStyle(
@@ -240,7 +250,7 @@ class _AuthDialogState extends State<AuthDialog> {
                         color: AssistantTheme.textPrimary,
                       ),
                       decoration: const InputDecoration(
-                        hintText: 'Token administrativo',
+                        hintText: 'Token de convite',
                       ),
                       onSubmitted: (_) => _submit(),
                     ),
@@ -250,12 +260,34 @@ class _AuthDialogState extends State<AuthDialog> {
                     icon: '›',
                     label: _processing
                         ? 'AGUARDE...'
-                        : widget.needsSetup
+                        : _isRegister
                             ? 'CRIAR CONTA'
                             : 'ENTRAR',
                     color: AssistantTheme.c3,
                     onTap: _processing ? null : _submit,
                   ),
+                  if (!widget.needsSetup &&
+                      widget.inviteRegistrationEnabled) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _processing
+                          ? null
+                          : () => setState(() {
+                                _registerMode = !_registerMode;
+                                _status = '';
+                              }),
+                      child: Text(
+                        _registerMode
+                            ? 'JÁ TENHO CONTA'
+                            : 'CRIAR CONTA COM CONVITE',
+                        style: const TextStyle(
+                          fontFamily: 'JetBrains Mono',
+                          fontSize: 10,
+                          color: AssistantTheme.c1,
+                        ),
+                      ),
+                    ),
+                  ],
                   if (_status.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(

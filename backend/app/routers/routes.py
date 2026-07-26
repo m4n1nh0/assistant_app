@@ -1,14 +1,29 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as _AuthAsyncSession
-from ..core.security import hash_secret, verify_secret, create_token, get_current_user
+from ..core.security import (
+    account_token,
+    create_token,
+    decode_token,
+    get_current_user,
+    hash_secret,
+    require_admin,
+    verify_secret,
+)
 from ..core.config import get_settings
-from ..core.database import get_db as _get_auth_db, UserModel
+from ..core.database import (
+    AssistantProfileModel,
+    TutorModel,
+    UserModel,
+    get_db as _get_auth_db,
+    seed_admin_notification_config,
+)
 from ..models.schemas import (
     LoginRequest, RegisterRequest, ChangePasswordRequest,
+    AdminInviteRequest, AdminInviteResponse, AdminUserResponse,
     AuthResponse, AuthStatusResponse, RegistrationTokenResponse,
 )
 from ..services.registration_invite_service import (
@@ -31,6 +46,7 @@ async def auth_status(db: _AuthAsyncSession = Depends(_get_auth_db)):
     requires_token = needs_setup and settings.registration_invite_required
     return AuthStatusResponse(
         needs_setup=needs_setup,
+        invite_registration_enabled=True,
         registration_requires_token=requires_token,
         registration_delivery_configured=(
             requires_token and registration_delivery_configured()
@@ -77,26 +93,71 @@ async def request_registration_token(
 
 @router_auth.post("/register", response_model=AuthResponse)
 async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
-    """Creates the first admin account, optionally requiring an emailed invite."""
+    """Creates the first admin or a user holding an admin-issued invite."""
     count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
-    if count > 0:
-        raise HTTPException(403, "Já existe uma conta configurada. Faça login.")
 
     username = body.username.strip()
     if not username or len(body.password) < 6:
-        raise HTTPException(400, "Usuário obrigatório e senha com pelo menos 6 caracteres.")
+        raise HTTPException(
+            400,
+            "Usuario obrigatorio e senha com pelo menos 6 caracteres.",
+        )
 
     invite = None
-    if settings.registration_invite_required:
+    invite_required = count > 0 or settings.registration_invite_required
+    if invite_required:
         invite = await lock_registration_invite(db, body.registration_token)
         if invite is None:
             raise HTTPException(
                 403,
-                "Token administrativo invalido, expirado ou ja utilizado.",
+                "Convite invalido, expirado ou ja utilizado.",
             )
 
-    user = UserModel(username=username, password_hash=hash_secret(body.password))
+    role = "admin" if count == 0 else "user"
+    email = None
+    if invite is not None:
+        role = "admin" if count == 0 else (invite.role or "user")
+        email = invite.recipient_email.strip().lower()
+        existing_email = (
+            await db.execute(select(UserModel).where(UserModel.email == email))
+        ).scalar_one_or_none()
+        if existing_email is not None:
+            raise HTTPException(409, "Este convite ja possui uma conta cadastrada.")
+
+    tutor = None
+    if count == 0:
+        tutor = (
+            await db.execute(
+                select(TutorModel)
+                .order_by(TutorModel.created_at, TutorModel.id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if tutor is None:
+        tutor = TutorModel(display_name=username, email=email)
+        db.add(tutor)
+        await db.flush()
+    profile = (
+        await db.execute(
+            select(AssistantProfileModel).where(
+                AssistantProfileModel.tutor_id == tutor.id
+            )
+        )
+    ).scalar_one_or_none()
+    if profile is None:
+        db.add(AssistantProfileModel(tutor_id=tutor.id))
+
+    user = UserModel(
+        username=username,
+        email=email,
+        role=role,
+        tutor_id=tutor.id,
+        password_hash=hash_secret(body.password),
+    )
     db.add(user)
+    await db.flush()
+    if role == "admin":
+        await seed_admin_notification_config(db, user.id)
     if invite is not None:
         invite.used_at = datetime.now(timezone.utc)
     try:
@@ -105,7 +166,7 @@ async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_a
         await db.rollback()
         raise HTTPException(409, "Nome de usuario ja cadastrado.") from exc
 
-    token = create_token({"sub": username, "role": "admin"})
+    token = account_token(user)
     return AuthResponse(success=True, token=token, message="Conta criada com sucesso")
 
 
@@ -113,16 +174,93 @@ async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_a
 async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
     result = await db.execute(select(UserModel).where(UserModel.username == body.username.strip()))
     user = result.scalar_one_or_none()
-    if not user or not verify_secret(body.password, user.password_hash):
+    if (
+        not user
+        or not user.is_active
+        or not verify_secret(body.password, user.password_hash)
+    ):
         return AuthResponse(success=False, message="Usuário ou senha incorretos")
 
-    token = create_token({"sub": user.username, "role": "admin"})
+    token = account_token(user)
     return AuthResponse(success=True, token=token, message="Autenticado com sucesso")
 
 
 @router_auth.get("/me")
 async def me(user: dict = Depends(get_current_user)):
-    return {"username": user.get("sub"), "role": user.get("role", "admin")}
+    return {
+        "id": user.get("uid"),
+        "username": user.get("sub"),
+        "email": user.get("email"),
+        "role": user.get("role", "user"),
+        "tutor_id": user.get("tutor_id"),
+    }
+
+
+@router_auth.post("/invitations", response_model=AdminInviteResponse)
+async def create_user_invitation(
+    body: AdminInviteRequest,
+    admin: dict = Depends(require_admin),
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    email = body.email.strip().lower()
+    local, separator, domain = email.partition("@")
+    if not separator or not local or "." not in domain:
+        raise HTTPException(400, "Informe um email valido.")
+    existing = (
+        await db.execute(select(UserModel).where(UserModel.email == email))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(409, "Ja existe uma conta para este email.")
+
+    try:
+        email_hint, expires_at = await issue_registration_token(
+            db,
+            recipient_email=email,
+            invited_by=admin["uid"],
+            role="user",
+        )
+    except RegistrationTokenCooldownError as exc:
+        raise HTTPException(
+            429,
+            str(exc),
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+    except RegistrationDeliveryError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return AdminInviteResponse(
+        success=True,
+        message="Convite enviado por email.",
+        email_hint=email_hint,
+        expires_at=expires_at,
+    )
+
+
+@router_auth.get("/users", response_model=list[AdminUserResponse])
+async def list_users(
+    _admin: dict = Depends(require_admin),
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    users = (
+        (
+            await db.execute(
+                select(UserModel).order_by(UserModel.created_at, UserModel.username)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        AdminUserResponse(
+            id=item.id,
+            username=item.username,
+            email=item.email,
+            role=item.role or "user",
+            tutor_id=item.tutor_id,
+            is_active=bool(item.is_active),
+            created_at=item.created_at,
+        )
+        for item in users
+    ]
 
 
 @router_auth.put("/password")
@@ -158,7 +296,7 @@ from ..services.calendar_service import (
     get_google_auth_url, get_microsoft_auth_url,
     exchange_google_code, exchange_microsoft_code,
 )
-from ..core.database import get_db, ConfigModel
+from ..core.database import get_db, ConfigModel, scoped_config_key
 
 router_calendar = APIRouter(
     prefix="/calendar", tags=["Calendar"], dependencies=[Depends(get_current_user)]
@@ -175,10 +313,13 @@ _KEY_GOOGLE_ACCOUNTS = "calendar_google_accounts"
 _KEY_MS_ACCOUNTS = "calendar_microsoft_accounts"
 
 
-async def _load_calendar_config(db: AsyncSession) -> CalendarConfig:
+async def _load_calendar_config(
+    db: AsyncSession,
+    user_id: str,
+) -> CalendarConfig:
     """Loads connected calendar accounts from the database."""
-    google_accounts = await _load_google_accounts(db)
-    ms_accounts = await _load_microsoft_accounts(db)
+    google_accounts = await _load_google_accounts(db, user_id)
+    ms_accounts = await _load_microsoft_accounts(db, user_id)
     g = google_accounts[0] if google_accounts else {}
     ms = ms_accounts[0] if ms_accounts else {}
 
@@ -195,7 +336,13 @@ async def _load_calendar_config(db: AsyncSession) -> CalendarConfig:
     )
 
 
-async def _save_config(db: AsyncSession, key: str, data: dict) -> None:
+async def _save_config(
+    db: AsyncSession,
+    key: str,
+    data: dict,
+    user_id: str,
+) -> None:
+    key = scoped_config_key(user_id, key)
     row = await db.get(ConfigModel, key)
     if row:
         stored = _json.loads(row.value)
@@ -206,14 +353,21 @@ async def _save_config(db: AsyncSession, key: str, data: dict) -> None:
     await db.commit()
 
 
-async def _delete_config(db: AsyncSession, key: str) -> None:
+async def _delete_config(db: AsyncSession, key: str, user_id: str) -> None:
+    key = scoped_config_key(user_id, key)
     row = await db.get(ConfigModel, key)
     if row:
         await db.delete(row)
         await db.commit()
 
 
-async def _replace_config(db: AsyncSession, key: str, data: dict) -> None:
+async def _replace_config(
+    db: AsyncSession,
+    key: str,
+    data: dict,
+    user_id: str,
+) -> None:
+    key = scoped_config_key(user_id, key)
     row = await db.get(ConfigModel, key)
     value = _json.dumps(data, ensure_ascii=False)
     if row:
@@ -232,10 +386,16 @@ def _json_value(row: ConfigModel | None, fallback):
         return fallback
 
 
-async def _load_google_oauth_app(db: AsyncSession) -> dict:
-    data = _json_value(await db.get(ConfigModel, _KEY_GOOGLE_APP), {})
-    legacy = _json_value(await db.get(ConfigModel, _KEY_GOOGLE), {})
-    accounts = await _load_account_store(db, _KEY_GOOGLE_ACCOUNTS)
+async def _load_google_oauth_app(db: AsyncSession, user_id: str) -> dict:
+    data = _json_value(
+        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_GOOGLE_APP)),
+        {},
+    )
+    legacy = _json_value(
+        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_GOOGLE)),
+        {},
+    )
+    accounts = await _load_account_store(db, _KEY_GOOGLE_ACCOUNTS, user_id)
     account = next(
         (
             item
@@ -264,18 +424,25 @@ async def _save_google_oauth_app(
     db: AsyncSession,
     client_id: str,
     client_secret: str,
+    user_id: str,
 ) -> None:
     await _replace_config(db, _KEY_GOOGLE_APP, {
         "client_id": client_id,
         "client_secret": client_secret,
         "updated_at": _now_iso(),
-    })
+    }, user_id)
 
 
-async def _load_microsoft_oauth_app(db: AsyncSession) -> dict:
-    data = _json_value(await db.get(ConfigModel, _KEY_MS_APP), {})
-    legacy = _json_value(await db.get(ConfigModel, _KEY_MS), {})
-    accounts = await _load_account_store(db, _KEY_MS_ACCOUNTS)
+async def _load_microsoft_oauth_app(db: AsyncSession, user_id: str) -> dict:
+    data = _json_value(
+        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_MS_APP)),
+        {},
+    )
+    legacy = _json_value(
+        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_MS)),
+        {},
+    )
+    accounts = await _load_account_store(db, _KEY_MS_ACCOUNTS, user_id)
     account = next(
         (
             item
@@ -311,16 +478,22 @@ async def _save_microsoft_oauth_app(
     client_id: str,
     client_secret: str,
     tenant_id: str,
+    user_id: str,
 ) -> None:
     await _replace_config(db, _KEY_MS_APP, {
         "client_id": client_id,
         "client_secret": client_secret,
         "tenant_id": tenant_id or "common",
         "updated_at": _now_iso(),
-    })
+    }, user_id)
 
 
-async def _load_account_store(db: AsyncSession, key: str) -> list[dict]:
+async def _load_account_store(
+    db: AsyncSession,
+    key: str,
+    user_id: str,
+) -> list[dict]:
+    key = scoped_config_key(user_id, key)
     data = _json_value(await db.get(ConfigModel, key), {"accounts": []})
     if isinstance(data, list):
         accounts = data
@@ -331,8 +504,13 @@ async def _load_account_store(db: AsyncSession, key: str) -> list[dict]:
     return [item for item in accounts if isinstance(item, dict)]
 
 
-async def _save_account_store(db: AsyncSession, key: str, accounts: list[dict]) -> None:
-    await _replace_config(db, key, {"accounts": accounts})
+async def _save_account_store(
+    db: AsyncSession,
+    key: str,
+    accounts: list[dict],
+    user_id: str,
+) -> None:
+    await _replace_config(db, key, {"accounts": accounts}, user_id)
 
 
 def _new_account_id(provider: str) -> str:
@@ -360,15 +538,16 @@ async def _upsert_account(
     key: str,
     account_id: str,
     changes: dict,
+    user_id: str,
 ) -> dict:
-    accounts = await _load_account_store(db, key)
+    accounts = await _load_account_store(db, key, user_id)
     now = _now_iso()
     for account in accounts:
         if account.get("id") != account_id:
             continue
         account.update(changes)
         account["updated_at"] = now
-        await _save_account_store(db, key, accounts)
+        await _save_account_store(db, key, accounts, user_id)
         return account
 
     account = {
@@ -379,25 +558,34 @@ async def _upsert_account(
         **changes,
     }
     accounts.append(account)
-    await _save_account_store(db, key, accounts)
+    await _save_account_store(db, key, accounts, user_id)
     return account
 
 
-async def _delete_account(db: AsyncSession, key: str, account_id: str) -> bool:
-    accounts = await _load_account_store(db, key)
+async def _delete_account(
+    db: AsyncSession,
+    key: str,
+    account_id: str,
+    user_id: str,
+) -> bool:
+    accounts = await _load_account_store(db, key, user_id)
     remaining = [item for item in accounts if item.get("id") != account_id]
     if len(remaining) == len(accounts):
         return False
-    await _save_account_store(db, key, remaining)
+    await _save_account_store(db, key, remaining, user_id)
     return True
 
 
 async def _load_google_accounts(
     db: AsyncSession,
+    user_id: str,
     include_pending: bool = False,
 ) -> list[dict]:
-    accounts = await _load_account_store(db, _KEY_GOOGLE_ACCOUNTS)
-    legacy = _json_value(await db.get(ConfigModel, _KEY_GOOGLE), {})
+    accounts = await _load_account_store(db, _KEY_GOOGLE_ACCOUNTS, user_id)
+    legacy = _json_value(
+        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_GOOGLE)),
+        {},
+    )
 
     if legacy.get("refresh_token"):
         accounts.append({
@@ -420,10 +608,14 @@ async def _load_google_accounts(
 
 async def _load_microsoft_accounts(
     db: AsyncSession,
+    user_id: str,
     include_pending: bool = False,
 ) -> list[dict]:
-    accounts = await _load_account_store(db, _KEY_MS_ACCOUNTS)
-    legacy = _json_value(await db.get(ConfigModel, _KEY_MS), {})
+    accounts = await _load_account_store(db, _KEY_MS_ACCOUNTS, user_id)
+    legacy = _json_value(
+        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_MS)),
+        {},
+    )
 
     if legacy.get("refresh_token"):
         accounts.append({
@@ -477,6 +669,30 @@ def _oauth_redirect_uri(request: Request, provider: str) -> str:
     return str(request.url_for(route_name))
 
 
+def _oauth_state(user_id: str, provider: str, account_id: str) -> str:
+    return create_token(
+        {
+            "purpose": "calendar_oauth",
+            "uid": user_id,
+            "provider": provider,
+            "account_id": account_id,
+        },
+        expires_delta=timedelta(minutes=15),
+    )
+
+
+def _read_oauth_state(state: str, provider: str) -> tuple[str, str]:
+    payload = decode_token(state)
+    if (
+        payload.get("purpose") != "calendar_oauth"
+        or payload.get("provider") != provider
+        or not payload.get("uid")
+        or not payload.get("account_id")
+    ):
+        raise HTTPException(400, "Estado OAuth invalido.")
+    return str(payload["uid"]), str(payload["account_id"])
+
+
 def _oauth_result_page(title: str, message: str, ok: bool = True) -> HTMLResponse:
     color = "#1edc8f" if ok else "#ff5c7a"
     return HTMLResponse(f"""<!doctype html>
@@ -518,9 +734,12 @@ def _oauth_result_page(title: str, message: str, ok: bool = True) -> HTMLRespons
 # ── Events ────────────────────────────────────────────────────────────────────
 
 @router_calendar.get("/events", response_model=EventsResponse)
-async def get_events(db: AsyncSession = Depends(get_db)):
-    google_accounts = await _load_google_accounts(db)
-    microsoft_accounts = await _load_microsoft_accounts(db)
+async def get_events(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    google_accounts = await _load_google_accounts(db, user["uid"])
+    microsoft_accounts = await _load_microsoft_accounts(db, user["uid"])
     events = await fetch_all_account_events(google_accounts, microsoft_accounts)
     return EventsResponse(events=events, total=len(events))
 
@@ -528,12 +747,19 @@ async def get_events(db: AsyncSession = Depends(get_db)):
 # ── Status ────────────────────────────────────────────────────────────────────
 
 @router_calendar.get("/status")
-async def calendar_status(db: AsyncSession = Depends(get_db)):
+async def calendar_status(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Returns connection status for each calendar provider."""
-    google_accounts = await _load_google_accounts(db, include_pending=True)
-    microsoft_accounts = await _load_microsoft_accounts(db, include_pending=True)
-    google_app = await _load_google_oauth_app(db)
-    microsoft_app = await _load_microsoft_oauth_app(db)
+    google_accounts = await _load_google_accounts(
+        db, user["uid"], include_pending=True
+    )
+    microsoft_accounts = await _load_microsoft_accounts(
+        db, user["uid"], include_pending=True
+    )
+    google_app = await _load_google_oauth_app(db, user["uid"])
+    microsoft_app = await _load_microsoft_oauth_app(db, user["uid"])
     google_connected = [a for a in google_accounts if a.get("refresh_token")]
     microsoft_connected = [a for a in microsoft_accounts if a.get("refresh_token")]
 
@@ -558,9 +784,16 @@ async def calendar_status(db: AsyncSession = Depends(get_db)):
 
 
 @router_calendar.get("/accounts")
-async def calendar_accounts(db: AsyncSession = Depends(get_db)):
-    google_accounts = await _load_google_accounts(db, include_pending=True)
-    microsoft_accounts = await _load_microsoft_accounts(db, include_pending=True)
+async def calendar_accounts(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    google_accounts = await _load_google_accounts(
+        db, user["uid"], include_pending=True
+    )
+    microsoft_accounts = await _load_microsoft_accounts(
+        db, user["uid"], include_pending=True
+    )
     return {
         "google": [_sanitize_account(a, "google") for a in google_accounts],
         "microsoft": [_sanitize_account(a, "microsoft") for a in microsoft_accounts],
@@ -584,21 +817,25 @@ class GoogleOAuthAppRequest(_BM):
 @router_calendar.put("/google/oauth-app")
 async def google_oauth_app(
     body: GoogleOAuthAppRequest,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not body.client_id or not body.client_secret:
         raise HTTPException(400, "client_id e client_secret do Google sao obrigatorios.")
-    await _save_google_oauth_app(db, body.client_id, body.client_secret)
+    await _save_google_oauth_app(
+        db, body.client_id, body.client_secret, user["uid"]
+    )
     return {"ok": True, "message": "Credenciais OAuth do Google salvas no banco."}
 
 
 @router_calendar.get("/google/start")
 async def google_start(
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Starts browser OAuth using the app credentials stored in the database."""
-    app = await _load_google_oauth_app(db)
+    app = await _load_google_oauth_app(db, user["uid"])
     client_id = app.get("client_id", "")
     client_secret = app.get("client_secret", "")
     if not client_id or not client_secret:
@@ -609,15 +846,21 @@ async def google_start(
 
     account_id = _new_account_id("google")
     redirect_uri = _oauth_redirect_uri(request, "google")
-    await _upsert_account(db, _KEY_GOOGLE_ACCOUNTS, account_id, {
-        "label": "Google Calendar",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
-    })
+    await _upsert_account(
+        db,
+        _KEY_GOOGLE_ACCOUNTS,
+        account_id,
+        {
+            "label": "Google Calendar",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+        },
+        user["uid"],
+    )
     url = get_google_auth_url(
         client_id,
-        state=account_id,
+        state=_oauth_state(user["uid"], "google", account_id),
         redirect_uri=redirect_uri,
     )
     return {
@@ -632,21 +875,30 @@ async def google_start(
 async def google_connect(
     body: GoogleConnectRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Saves Google credentials and returns the OAuth URL to open in the browser."""
     account_id = body.account_id or _new_account_id("google")
     redirect_uri = _oauth_redirect_uri(request, "google")
-    await _save_google_oauth_app(db, body.client_id, body.client_secret)
-    await _upsert_account(db, _KEY_GOOGLE_ACCOUNTS, account_id, {
-        "label": body.label or "Google Calendar",
-        "client_id": body.client_id,
-        "client_secret": body.client_secret,
-        "redirect_uri": redirect_uri,
-    })
+    await _save_google_oauth_app(
+        db, body.client_id, body.client_secret, user["uid"]
+    )
+    await _upsert_account(
+        db,
+        _KEY_GOOGLE_ACCOUNTS,
+        account_id,
+        {
+            "label": body.label or "Google Calendar",
+            "client_id": body.client_id,
+            "client_secret": body.client_secret,
+            "redirect_uri": redirect_uri,
+        },
+        user["uid"],
+    )
     url = get_google_auth_url(
         body.client_id,
-        state=account_id,
+        state=_oauth_state(user["uid"], "google", account_id),
         redirect_uri=redirect_uri,
     )
     return {
@@ -665,12 +917,15 @@ class CalendarCallbackRequest(_BM):
 async def google_callback(
     request: Request,
     body: CalendarCallbackRequest = Body(...),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Exchanges the OAuth code for a refresh token and persists it."""
-    accounts = await _load_google_accounts(db, include_pending=True)
+    accounts = await _load_google_accounts(
+        db, user["uid"], include_pending=True
+    )
     account = _find_account(accounts, body.account_id) or {}
-    app = await _load_google_oauth_app(db)
+    app = await _load_google_oauth_app(db, user["uid"])
     account_id = account.get("id") or body.account_id or _new_account_id("google")
     client_id     = account.get("client_id") or app.get("client_id", "")
     client_secret = account.get("client_secret") or app.get("client_secret", "")
@@ -685,13 +940,19 @@ async def google_callback(
         client_secret,
         redirect_uri or "urn:ietf:wg:oauth:2.0:oob",
     )
-    await _upsert_account(db, _KEY_GOOGLE_ACCOUNTS, account_id, {
-        "label": account.get("label") or "Google Calendar",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
-        "refresh_token": refresh,
-    })
+    await _upsert_account(
+        db,
+        _KEY_GOOGLE_ACCOUNTS,
+        account_id,
+        {
+            "label": account.get("label") or "Google Calendar",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "refresh_token": refresh,
+        },
+        user["uid"],
+    )
     return {
         "ok": True,
         "account_id": account_id,
@@ -720,9 +981,14 @@ async def google_oauth_callback(
             ok=False,
         )
     try:
+        user_id, account_id = _read_oauth_state(state or "", "google")
+        account = await db.get(UserModel, user_id)
+        if account is None or not account.is_active:
+            raise HTTPException(401, "Conta do OAuth nao esta ativa.")
         result = await google_callback(
             request=request,
-            body=CalendarCallbackRequest(code=code, account_id=state),
+            body=CalendarCallbackRequest(code=code, account_id=account_id),
+            user={"uid": user_id},
             db=db,
         )
     except Exception as exc:
@@ -738,20 +1004,26 @@ async def google_oauth_callback(
 
 
 @router_calendar.delete("/google/disconnect")
-async def google_disconnect(db: AsyncSession = Depends(get_db)):
-    await _delete_config(db, _KEY_GOOGLE_ACCOUNTS)
-    await _delete_config(db, _KEY_GOOGLE)
+async def google_disconnect(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _delete_config(db, _KEY_GOOGLE_ACCOUNTS, user["uid"])
+    await _delete_config(db, _KEY_GOOGLE, user["uid"])
     return {"ok": True, "message": "Google Calendar desconectado."}
 
 
 @router_calendar.delete("/google/accounts/{account_id}")
 async def google_disconnect_account(
     account_id: str,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    deleted = await _delete_account(db, _KEY_GOOGLE_ACCOUNTS, account_id)
+    deleted = await _delete_account(
+        db, _KEY_GOOGLE_ACCOUNTS, account_id, user["uid"]
+    )
     if account_id == "google_legacy":
-        await _delete_config(db, _KEY_GOOGLE)
+        await _delete_config(db, _KEY_GOOGLE, user["uid"])
         deleted = True
     if not deleted:
         raise HTTPException(404, "Conta Google nÃ£o encontrada.")
@@ -759,13 +1031,25 @@ async def google_disconnect_account(
 
 
 @router_calendar.get("/google/auth-url")
-async def google_auth_url(db: AsyncSession = Depends(get_db)):
-    account = _find_account(await _load_google_accounts(db, include_pending=True), None) or {}
-    app = await _load_google_oauth_app(db)
+async def google_auth_url(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account = _find_account(
+        await _load_google_accounts(db, user["uid"], include_pending=True),
+        None,
+    ) or {}
+    app = await _load_google_oauth_app(db, user["uid"])
     client_id = account.get("client_id") or app.get("client_id", "")
     if not client_id:
         raise HTTPException(400, "Credenciais OAuth do Google não configuradas no banco de dados.")
-    return {"url": get_google_auth_url(client_id, state=account.get("id"))}
+    account_id = account.get("id") or _new_account_id("google")
+    return {
+        "url": get_google_auth_url(
+            client_id,
+            state=_oauth_state(user["uid"], "google", account_id),
+        )
+    }
 
 
 # ── Microsoft ─────────────────────────────────────────────────────────────────
@@ -787,6 +1071,7 @@ class MicrosoftOAuthAppRequest(_BM):
 @router_calendar.put("/microsoft/oauth-app")
 async def microsoft_oauth_app(
     body: MicrosoftOAuthAppRequest,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not body.client_id or not body.client_secret:
@@ -796,6 +1081,7 @@ async def microsoft_oauth_app(
         body.client_id,
         body.client_secret,
         body.tenant_id or "common",
+        user["uid"],
     )
     return {"ok": True, "message": "Credenciais OAuth da Microsoft salvas no banco."}
 
@@ -803,10 +1089,11 @@ async def microsoft_oauth_app(
 @router_calendar.get("/microsoft/start")
 async def ms_start(
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Starts browser OAuth using the app credentials stored in the database."""
-    app = await _load_microsoft_oauth_app(db)
+    app = await _load_microsoft_oauth_app(db, user["uid"])
     client_id = app.get("client_id", "")
     client_secret = app.get("client_secret", "")
     tenant_id = app.get("tenant_id") or "common"
@@ -818,17 +1105,23 @@ async def ms_start(
 
     account_id = _new_account_id("microsoft")
     redirect_uri = _oauth_redirect_uri(request, "microsoft")
-    await _upsert_account(db, _KEY_MS_ACCOUNTS, account_id, {
-        "label": "Microsoft Calendar",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "tenant_id": tenant_id,
-        "redirect_uri": redirect_uri,
-    })
+    await _upsert_account(
+        db,
+        _KEY_MS_ACCOUNTS,
+        account_id,
+        {
+            "label": "Microsoft Calendar",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "tenant_id": tenant_id,
+            "redirect_uri": redirect_uri,
+        },
+        user["uid"],
+    )
     url = get_microsoft_auth_url(
         client_id,
         tenant_id,
-        state=account_id,
+        state=_oauth_state(user["uid"], "microsoft", account_id),
         redirect_uri=redirect_uri,
     )
     return {
@@ -843,24 +1136,37 @@ async def ms_start(
 async def ms_connect(
     body: MicrosoftConnectRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Saves Microsoft credentials and returns the OAuth URL to open in the browser."""
     account_id = body.account_id or _new_account_id("microsoft")
     tenant_id = body.tenant_id or "common"
     redirect_uri = _oauth_redirect_uri(request, "microsoft")
-    await _save_microsoft_oauth_app(db, body.client_id, body.client_secret, tenant_id)
-    await _upsert_account(db, _KEY_MS_ACCOUNTS, account_id, {
-        "label": body.label or "Microsoft Calendar",
-        "client_id":     body.client_id,
-        "client_secret": body.client_secret,
-        "tenant_id":     tenant_id,
-        "redirect_uri":  redirect_uri,
-    })
+    await _save_microsoft_oauth_app(
+        db,
+        body.client_id,
+        body.client_secret,
+        tenant_id,
+        user["uid"],
+    )
+    await _upsert_account(
+        db,
+        _KEY_MS_ACCOUNTS,
+        account_id,
+        {
+            "label": body.label or "Microsoft Calendar",
+            "client_id": body.client_id,
+            "client_secret": body.client_secret,
+            "tenant_id": tenant_id,
+            "redirect_uri": redirect_uri,
+        },
+        user["uid"],
+    )
     url = get_microsoft_auth_url(
         body.client_id,
         tenant_id,
-        state=account_id,
+        state=_oauth_state(user["uid"], "microsoft", account_id),
         redirect_uri=redirect_uri,
     )
     return {
@@ -874,12 +1180,15 @@ async def ms_connect(
 async def ms_callback(
     request: Request,
     body: CalendarCallbackRequest = Body(...),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Exchanges the OAuth code for a refresh token and persists it."""
-    accounts = await _load_microsoft_accounts(db, include_pending=True)
+    accounts = await _load_microsoft_accounts(
+        db, user["uid"], include_pending=True
+    )
     account = _find_account(accounts, body.account_id) or {}
-    app = await _load_microsoft_oauth_app(db)
+    app = await _load_microsoft_oauth_app(db, user["uid"])
     account_id = account.get("id") or body.account_id or _new_account_id("microsoft")
     client_id     = account.get("client_id") or app.get("client_id", "")
     client_secret = account.get("client_secret") or app.get("client_secret", "")
@@ -896,14 +1205,20 @@ async def ms_callback(
         tenant_id,
         redirect_uri or "https://login.microsoftonline.com/common/oauth2/nativeclient",
     )
-    await _upsert_account(db, _KEY_MS_ACCOUNTS, account_id, {
-        "label": account.get("label") or "Microsoft Calendar",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "tenant_id": tenant_id,
-        "redirect_uri": redirect_uri,
-        "refresh_token": refresh,
-    })
+    await _upsert_account(
+        db,
+        _KEY_MS_ACCOUNTS,
+        account_id,
+        {
+            "label": account.get("label") or "Microsoft Calendar",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "tenant_id": tenant_id,
+            "redirect_uri": redirect_uri,
+            "refresh_token": refresh,
+        },
+        user["uid"],
+    )
     return {
         "ok": True,
         "account_id": account_id,
@@ -934,9 +1249,14 @@ async def microsoft_oauth_callback(
             ok=False,
         )
     try:
+        user_id, account_id = _read_oauth_state(state or "", "microsoft")
+        account = await db.get(UserModel, user_id)
+        if account is None or not account.is_active:
+            raise HTTPException(401, "Conta do OAuth nao esta ativa.")
         result = await ms_callback(
             request=request,
-            body=CalendarCallbackRequest(code=code, account_id=state),
+            body=CalendarCallbackRequest(code=code, account_id=account_id),
+            user={"uid": user_id},
             db=db,
         )
     except Exception as exc:
@@ -952,20 +1272,26 @@ async def microsoft_oauth_callback(
 
 
 @router_calendar.delete("/microsoft/disconnect")
-async def ms_disconnect(db: AsyncSession = Depends(get_db)):
-    await _delete_config(db, _KEY_MS_ACCOUNTS)
-    await _delete_config(db, _KEY_MS)
+async def ms_disconnect(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _delete_config(db, _KEY_MS_ACCOUNTS, user["uid"])
+    await _delete_config(db, _KEY_MS, user["uid"])
     return {"ok": True, "message": "Microsoft Calendar desconectado."}
 
 
 @router_calendar.delete("/microsoft/accounts/{account_id}")
 async def ms_disconnect_account(
     account_id: str,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    deleted = await _delete_account(db, _KEY_MS_ACCOUNTS, account_id)
+    deleted = await _delete_account(
+        db, _KEY_MS_ACCOUNTS, account_id, user["uid"]
+    )
     if account_id == "microsoft_legacy":
-        await _delete_config(db, _KEY_MS)
+        await _delete_config(db, _KEY_MS, user["uid"])
         deleted = True
     if not deleted:
         raise HTTPException(404, "Conta Microsoft nÃ£o encontrada.")
@@ -973,14 +1299,27 @@ async def ms_disconnect_account(
 
 
 @router_calendar.get("/microsoft/auth-url")
-async def ms_auth_url(db: AsyncSession = Depends(get_db)):
-    account = _find_account(await _load_microsoft_accounts(db, include_pending=True), None) or {}
-    app = await _load_microsoft_oauth_app(db)
+async def ms_auth_url(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account = _find_account(
+        await _load_microsoft_accounts(db, user["uid"], include_pending=True),
+        None,
+    ) or {}
+    app = await _load_microsoft_oauth_app(db, user["uid"])
     client_id = account.get("client_id") or app.get("client_id", "")
     tenant_id = account.get("tenant_id") or app.get("tenant_id") or "common"
     if not client_id:
         raise HTTPException(400, "Credenciais OAuth da Microsoft não configuradas no banco de dados.")
-    return {"url": get_microsoft_auth_url(client_id, tenant_id, state=account.get("id"))}
+    account_id = account.get("id") or _new_account_id("microsoft")
+    return {
+        "url": get_microsoft_auth_url(
+            client_id,
+            tenant_id,
+            state=_oauth_state(user["uid"], "microsoft", account_id),
+        )
+    }
 
 
 from fastapi import APIRouter
@@ -993,38 +1332,55 @@ router_notif = APIRouter(
 )
 
 
-async def _notif_cfg(db: AsyncSession) -> NotifConfig:
-    return await load_notif_config(db)
+async def _notif_cfg(db: AsyncSession, user_id: str) -> NotifConfig:
+    return await load_notif_config(db, user_id=user_id)
 
 
 @router_notif.get("/config", response_model=NotifConfig)
-async def get_notif_config(db: AsyncSession = Depends(get_db)):
-    return await _notif_cfg(db)
+async def get_notif_config(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _notif_cfg(db, user["uid"])
 
 
 @router_notif.put("/config", response_model=NotifConfig)
-async def put_notif_config(body: NotifConfig, db: AsyncSession = Depends(get_db)):
-    return await save_notif_config(db, body)
+async def put_notif_config(
+    body: NotifConfig,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await save_notif_config(db, body, user_id=user["uid"])
 
 
 @router_notif.post("/send", response_model=NotifResult)
-async def send_notif(body: NotifRequest, db: AsyncSession = Depends(get_db)):
-    cfg = await _notif_cfg(db)
+async def send_notif(
+    body: NotifRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    cfg = await _notif_cfg(db, user["uid"])
     return await send_notification(body.message, cfg, body.channels)
 
 
 @router_notif.post("/test/telegram")
-async def test_telegram(db: AsyncSession = Depends(get_db)):
+async def test_telegram(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     from ..services.notification_service import send_telegram
-    cfg = await _notif_cfg(db)
+    cfg = await _notif_cfg(db, user["uid"])
     ok = await send_telegram("✅ Assistente conectado! Notificações ativas.", cfg)
     return {"ok": ok}
 
 
 @router_notif.post("/test/whatsapp")
-async def test_whatsapp(db: AsyncSession = Depends(get_db)):
+async def test_whatsapp(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     from ..services.notification_service import send_whatsapp
-    cfg = await _notif_cfg(db)
+    cfg = await _notif_cfg(db, user["uid"])
     ok = await send_whatsapp("✅ Assistente conectado via WhatsApp!", cfg)
     return {"ok": ok}
 
@@ -1075,17 +1431,6 @@ async def health():
         if llm_status.get(llm) is not None and llm_status[llm].available
     ]
     sources = []
-    notif_cfg = NotifConfig()
-    try:
-        from ..core.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as db:
-            calendar_cfg = await _load_calendar_config(db)
-            notif_cfg = await load_notif_config(db)
-        if calendar_cfg.google_enabled: sources.append("google")
-        if calendar_cfg.ms_enabled:     sources.append("teams")
-        if calendar_cfg.ms_enabled:     sources.append("outlook")
-    except Exception:
-        pass
     return HealthResponse(
         status="ok",
         active_llms=s.active_llms,
@@ -1097,8 +1442,11 @@ async def health():
         llm_status=llm_status,
         calendar_sources=sources,
         notifications={
-            "telegram": notif_cfg.telegram_enabled and bool(notif_cfg.telegram_token),
-            "whatsapp": notif_cfg.wa_enabled and bool(notif_cfg.wa_number),
+            "telegram": bool(
+                getattr(s, "telegram_bot_token", "")
+                and getattr(s, "telegram_chat_id", "")
+            ),
+            "whatsapp": bool(getattr(s, "wa_number", "")),
         },
         storage={
             "database": {"url": s.database_url.split("@")[-1]},

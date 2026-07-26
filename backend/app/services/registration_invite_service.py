@@ -55,29 +55,42 @@ def mask_email(email: str) -> str:
     return f"{visible}{'*' * max(3, len(local) - len(visible))}@{domain}"
 
 
-def registration_delivery_configured() -> bool:
+def registration_delivery_configured(recipient_email: str | None = None) -> bool:
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
     credentials_match = bool(settings.smtp_username.strip()) == bool(
         settings.smtp_password
     )
+    recipient = (
+        recipient_email
+        if recipient_email is not None
+        else settings.registration_admin_email
+    )
     return bool(
-        settings.registration_admin_email.strip()
+        recipient.strip()
         and settings.smtp_host.strip()
         and sender
         and credentials_match
     )
 
 
-def _send_registration_email(token: str, expires_at: datetime) -> None:
-    recipient = settings.registration_admin_email.strip()
+def _send_registration_email(
+    token: str,
+    expires_at: datetime,
+    recipient_email: str | None = None,
+) -> None:
+    recipient = (
+        recipient_email
+        if recipient_email is not None
+        else settings.registration_admin_email
+    ).strip()
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
 
     message = EmailMessage()
-    message["Subject"] = "Token administrativo para cadastro"
+    message["Subject"] = "Convite para cadastro no Assistente"
     message["From"] = sender
     message["To"] = recipient
     message.set_content(
-        "Foi solicitado o cadastro inicial do Assistente.\n\n"
+        "Voce recebeu um convite para criar uma conta no Assistente.\n\n"
         f"Token de uso unico:\n{token}\n\n"
         f"Valido ate {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}.\n\n"
         "Se voce nao solicitou este token, ignore este email."
@@ -96,20 +109,42 @@ def _send_registration_email(token: str, expires_at: datetime) -> None:
         smtp.send_message(message)
 
 
-async def issue_registration_token(db: AsyncSession) -> tuple[str, datetime]:
+async def issue_registration_token(
+    db: AsyncSession,
+    recipient_email: str | None = None,
+    invited_by: str | None = None,
+    role: str | None = None,
+) -> tuple[str, datetime]:
     async with _issue_lock:
-        return await _issue_registration_token(db)
+        return await _issue_registration_token(
+            db,
+            recipient_email=recipient_email,
+            invited_by=invited_by,
+            role=role,
+        )
 
 
-async def _issue_registration_token(db: AsyncSession) -> tuple[str, datetime]:
-    if not registration_delivery_configured():
+async def _issue_registration_token(
+    db: AsyncSession,
+    recipient_email: str | None = None,
+    invited_by: str | None = None,
+    role: str | None = None,
+) -> tuple[str, datetime]:
+    recipient = (
+        recipient_email
+        if recipient_email is not None
+        else settings.registration_admin_email
+    ).strip().lower()
+    invite_role = role or ("user" if invited_by else "admin")
+    if not registration_delivery_configured(recipient):
         raise RegistrationDeliveryError(
-            "Envio de email administrativo nao configurado no backend."
+            "Envio de email de convite nao configurado no backend."
         )
 
     now = utc_now()
     latest_result = await db.execute(
         select(RegistrationInviteModel)
+        .where(RegistrationInviteModel.recipient_email == recipient)
         .order_by(RegistrationInviteModel.created_at.desc())
         .limit(1)
     )
@@ -132,6 +167,7 @@ async def _issue_registration_token(db: AsyncSession) -> tuple[str, datetime]:
 
     active_result = await db.execute(
         select(RegistrationInviteModel).where(
+            RegistrationInviteModel.recipient_email == recipient,
             RegistrationInviteModel.used_at.is_(None),
             RegistrationInviteModel.revoked_at.is_(None),
         )
@@ -145,14 +181,24 @@ async def _issue_registration_token(db: AsyncSession) -> tuple[str, datetime]:
     )
     invite = RegistrationInviteModel(
         token_hash=registration_token_digest(token),
-        recipient_email=settings.registration_admin_email.strip(),
+        recipient_email=recipient,
+        role=invite_role,
+        invited_by=invited_by,
         expires_at=expires_at,
     )
     db.add(invite)
 
     try:
         await db.flush()
-        await asyncio.to_thread(_send_registration_email, token, expires_at)
+        if recipient_email is None:
+            await asyncio.to_thread(_send_registration_email, token, expires_at)
+        else:
+            await asyncio.to_thread(
+                _send_registration_email,
+                token,
+                expires_at,
+                recipient,
+            )
         await db.commit()
     except Exception as exc:
         await db.rollback()
@@ -162,10 +208,9 @@ async def _issue_registration_token(db: AsyncSession) -> tuple[str, datetime]:
         ) from exc
 
     logger.info(
-        "Registration token sent to "
-        f"{mask_email(settings.registration_admin_email)}"
+        f"Registration token sent to {mask_email(recipient)}"
     )
-    return mask_email(settings.registration_admin_email), expires_at
+    return mask_email(recipient), expires_at
 
 
 async def lock_registration_invite(

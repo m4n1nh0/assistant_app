@@ -50,6 +50,7 @@ class StorageService {
     await _storage.deleteAll();
     await HiveConfig.clear();
     await HiveConversations.clearAll();
+    await HiveEvents.saveAll(const []);
   }
 
   static Future<bool> hasConfig() async {

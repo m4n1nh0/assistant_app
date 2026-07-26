@@ -57,10 +57,11 @@ def _audit_response(item: ActionAuditLogModel) -> ActionAuditResponse:
 @router.post("/", response_model=AutomationResponse)
 async def approve_automation(
     body: AutomationApproveRequest,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     item = ApprovedAutomationModel(
-        tutor_id=body.tutor_id,
+        tutor_id=user["tutor_id"],
         title=body.title,
         description=body.description,
         trigger=body.trigger,
@@ -90,7 +91,12 @@ async def approve_automation(
 
 
 @router.get("/", response_model=list[AutomationResponse])
-async def list_automations(tutor_id: str, db: AsyncSession = Depends(get_db)):
+async def list_automations(
+    tutor_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tutor_id = user["tutor_id"]
     result = await db.execute(
         select(ApprovedAutomationModel)
         .where(ApprovedAutomationModel.tutor_id == tutor_id)
@@ -103,10 +109,11 @@ async def list_automations(tutor_id: str, db: AsyncSession = Depends(get_db)):
 async def update_automation(
     automation_id: str,
     body: AutomationUpdateRequest,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     item = await db.get(ApprovedAutomationModel, automation_id)
-    if item is None:
+    if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Automação não encontrada")
 
     if body.enabled is not None:
@@ -122,9 +129,13 @@ async def update_automation(
 
 
 @router.post("/audit", response_model=ActionAuditResponse)
-async def write_audit(body: ActionAuditRequest, db: AsyncSession = Depends(get_db)):
+async def write_audit(
+    body: ActionAuditRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     item = ActionAuditLogModel(
-        tutor_id=body.tutor_id,
+        tutor_id=user["tutor_id"],
         automation_id=body.automation_id,
         action_type=body.action_type,
         status=body.status,
@@ -133,9 +144,11 @@ async def write_audit(body: ActionAuditRequest, db: AsyncSession = Depends(get_d
     )
     db.add(item)
 
-    if body.automation_id and body.status == "executed":
+    if body.automation_id:
         automation = await db.get(ApprovedAutomationModel, body.automation_id)
-        if automation is not None:
+        if automation is None or automation.tutor_id != user["tutor_id"]:
+            raise HTTPException(404, "Automacao nao encontrada")
+        if body.status == "executed":
             automation.last_run_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -147,8 +160,10 @@ async def write_audit(body: ActionAuditRequest, db: AsyncSession = Depends(get_d
 async def list_audit(
     tutor_id: str,
     automation_id: str | None = None,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    tutor_id = user["tutor_id"]
     query = select(ActionAuditLogModel).where(ActionAuditLogModel.tutor_id == tutor_id)
     if automation_id:
         query = query.where(ActionAuditLogModel.automation_id == automation_id)

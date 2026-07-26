@@ -225,11 +225,11 @@ Preencha apenas o que for necessario para rodar localmente. Credenciais de
 notificacao e OAuth de calendario devem ser configuradas pela tela da aplicacao,
 pois sao salvas no banco.
 
-### Proteção Do Primeiro Cadastro
+### Usuários E Convites Administrativos
 
-O backend já bloqueia o cadastro depois que a primeira conta é criada. Para
-exigir autorização administrativa também nessa primeira criação, configure no
-serviço do backend:
+Depois da criação da primeira conta, ela recebe o papel `admin` e todo novo
+cadastro passa a exigir um convite enviado por esse administrador. Para exigir
+autorização por e-mail também na criação do primeiro admin, configure:
 
 ```dotenv
 REGISTRATION_INVITE_REQUIRED=true
@@ -246,9 +246,17 @@ SMTP_STARTTLS=true
 SMTP_USE_SSL=false
 ```
 
-Na tela inicial, o usuário solicita o token. O backend envia o convite somente
-ao e-mail administrativo configurado, mostra no app apenas o endereço mascarado
-e aceita o token uma única vez. O banco armazena apenas o hash HMAC do token.
+Na primeira abertura, o admin solicita o token enviado para
+`REGISTRATION_ADMIN_EMAIL`. Depois, em **Configurações > Autenticação**, informa
+o e-mail de cada novo usuário; o backend envia um convite individual de uso
+único. O banco armazena apenas o hash HMAC dos tokens, com expiração e registro
+de uso.
+
+Cada conta possui um `tutor_id` próprio. O backend deriva esse proprietário do
+JWT e separa conversas, perfil, memórias, automações, atalhos, scripts, agendas,
+notificações e conexões WebSocket. A interface também separa configuração,
+histórico e eventos locais por conta. No primeiro deploy dessa versão, os dados
+legados são vinculados automaticamente ao admin existente.
 
 ## Execucao Local
 

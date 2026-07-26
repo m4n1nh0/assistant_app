@@ -6,8 +6,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 
 from ..core.config import get_settings
-from ..core.database import AsyncSessionLocal, ConfigModel
-from ..core.security import decode_token
+from ..core.database import AsyncSessionLocal, ConfigModel, scoped_config_key
+from ..core.security import resolve_token_user
 from ..models.schemas import ResponseModeEnum, Message
 from ..services import llm_service, notification_service
 from ..services.calendar_service import fetch_all_account_events
@@ -38,12 +38,24 @@ async def _load_account_store(db, key: str) -> list[dict]:
     return [item for item in accounts if isinstance(item, dict)]
 
 
-async def _load_calendar_accounts() -> tuple[list[dict], list[dict]]:
+async def _load_calendar_accounts(
+    user_id: str,
+) -> tuple[list[dict], list[dict]]:
     async with AsyncSessionLocal() as db:
-        google_accounts = await _load_account_store(db, "calendar_google_accounts")
-        microsoft_accounts = await _load_account_store(db, "calendar_microsoft_accounts")
+        google_accounts = await _load_account_store(
+            db, scoped_config_key(user_id, "calendar_google_accounts")
+        )
+        microsoft_accounts = await _load_account_store(
+            db, scoped_config_key(user_id, "calendar_microsoft_accounts")
+        )
 
-        google_legacy = _json_value(await db.get(ConfigModel, "calendar_google"), {})
+        google_legacy = _json_value(
+            await db.get(
+                ConfigModel,
+                scoped_config_key(user_id, "calendar_google"),
+            ),
+            {},
+        )
         if google_legacy.get("refresh_token"):
             google_accounts.append({
                 "id": "google_legacy",
@@ -53,7 +65,13 @@ async def _load_calendar_accounts() -> tuple[list[dict], list[dict]]:
                 "refresh_token": google_legacy.get("refresh_token", ""),
             })
 
-        microsoft_legacy = _json_value(await db.get(ConfigModel, "calendar_microsoft"), {})
+        microsoft_legacy = _json_value(
+            await db.get(
+                ConfigModel,
+                scoped_config_key(user_id, "calendar_microsoft"),
+            ),
+            {},
+        )
         if microsoft_legacy.get("refresh_token"):
             microsoft_accounts.append({
                 "id": "microsoft_legacy",
@@ -74,14 +92,17 @@ class ConnectionManager:
     def __init__(self):
         self.active: Dict[str, WebSocket] = {}
         self.groups: Dict[str, Set[str]] = {}
+        self.connection_users: Dict[str, str] = {}
 
-    async def connect(self, ws: WebSocket, session_id: str):
+    async def connect(self, ws: WebSocket, session_id: str, user_id: str):
         await ws.accept()
         self.active[session_id] = ws
+        self.connection_users[session_id] = user_id
         logger.info(f"WS connected: {session_id}")
 
     def disconnect(self, session_id: str):
         self.active.pop(session_id, None)
+        self.connection_users.pop(session_id, None)
         logger.info(f"WS disconnected: {session_id}")
 
     async def send(self, session_id: str, data: dict):
@@ -103,6 +124,20 @@ class ConnectionManager:
         for sid in dead:
             self.disconnect(sid)
 
+    async def broadcast_user(self, user_id: str, data: dict):
+        dead = []
+        for sid, ws in self.active.items():
+            if self.connection_users.get(sid) != user_id:
+                continue
+            try:
+                await ws.send_text(
+                    json.dumps(data, ensure_ascii=False, default=str)
+                )
+            except Exception:
+                dead.append(sid)
+        for sid in dead:
+            self.disconnect(sid)
+
 
 manager = ConnectionManager()
 
@@ -110,14 +145,16 @@ manager = ConnectionManager()
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
     try:
-        decode_token(token)
+        async with AsyncSessionLocal() as db:
+            user = await resolve_token_user(token, db)
     except Exception:
         await ws.close(code=4401, reason="Não autenticado")
         return
 
-    await manager.connect(ws, session_id)
+    connection_id = f"{user['uid']}:{session_id}"
+    await manager.connect(ws, connection_id, user["uid"])
 
-    await manager.send(session_id, {
+    await manager.send(connection_id, {
         "type": "status",
         "payload": {
             "connected": True,
@@ -133,7 +170,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await _send_error(session_id, "JSON inválido")
+                await _send_error(connection_id, "JSON inválido")
                 continue
 
             msg_type = msg.get("type", "")
@@ -141,27 +178,33 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
 
             match msg_type:
                 case "chat":
-                    await _handle_chat(session_id, payload)
+                    await _handle_chat(connection_id, payload)
                 case "chat_stream":
-                    await _handle_chat_stream(session_id, payload)
+                    await _handle_chat_stream(connection_id, payload)
                 case "voice_transcribe":
-                    await _handle_voice_transcribe(session_id, payload)
+                    await _handle_voice_transcribe(connection_id, payload)
                 case "tts":
-                    await _handle_tts(session_id, payload)
+                    await _handle_tts(connection_id, payload)
                 case "calendar_sync":
-                    await _handle_calendar_sync(session_id, payload)
+                    await _handle_calendar_sync(
+                        connection_id, payload, user["uid"]
+                    )
                 case "notify":
-                    await _handle_notify(session_id, payload)
+                    await _handle_notify(connection_id, payload, user["uid"])
                 case "ping":
-                    await manager.send(session_id, {"type": "pong", "payload": {}})
+                    await manager.send(
+                        connection_id, {"type": "pong", "payload": {}}
+                    )
                 case _:
-                    await _send_error(session_id, f"Tipo desconhecido: {msg_type}")
+                    await _send_error(
+                        connection_id, f"Tipo desconhecido: {msg_type}"
+                    )
 
     except WebSocketDisconnect:
-        manager.disconnect(session_id)
+        manager.disconnect(connection_id)
     except Exception as e:
         logger.error(f"WS error ({session_id}): {e}")
-        manager.disconnect(session_id)
+        manager.disconnect(connection_id)
 
 
 def _build_system(payload: dict) -> str:
@@ -302,8 +345,12 @@ async def _handle_tts(session_id: str, payload: dict):
         await _send_error(session_id, f"TTS falhou: {e}")
 
 
-async def _handle_calendar_sync(session_id: str, payload: dict):
-    google_accounts, microsoft_accounts = await _load_calendar_accounts()
+async def _handle_calendar_sync(
+    session_id: str,
+    payload: dict,
+    user_id: str,
+):
+    google_accounts, microsoft_accounts = await _load_calendar_accounts(user_id)
     try:
         events = await fetch_all_account_events(google_accounts, microsoft_accounts)
         await manager.send(session_id, {
@@ -317,11 +364,15 @@ async def _handle_calendar_sync(session_id: str, payload: dict):
         await _send_error(session_id, f"Calendar sync falhou: {e}")
 
 
-async def _handle_notify(session_id: str, payload: dict):
+async def _handle_notify(
+    session_id: str,
+    payload: dict,
+    user_id: str,
+):
     message  = payload.get("message", "")
     channels = payload.get("channels", ["telegram", "whatsapp"])
 
-    cfg = await load_notif_config()
+    cfg = await load_notif_config(user_id=user_id)
     result = await notification_service.send_notification(message, cfg, channels)
     await manager.send(session_id, {
         "type": "notify_result",
@@ -333,8 +384,12 @@ async def _send_error(session_id: str, detail: str):
     await manager.send(session_id, {"type": "error", "payload": {"detail": detail}})
 
 
-async def broadcast_event_reminder(event_title: str, minutes_left: int):
-    await manager.broadcast({
+async def broadcast_event_reminder(
+    user_id: str,
+    event_title: str,
+    minutes_left: int,
+):
+    await manager.broadcast_user(user_id, {
         "type": "event_reminder",
         "payload": {"title": event_title, "minutes_left": minutes_left},
     })

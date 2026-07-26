@@ -157,12 +157,11 @@ Erros comuns:
 | HTTP 401 | Replicar a chave do LocalAI em `LOCALAI_API_KEY` no backend |
 | Ollama offline | Conferir `OLLAMA_BASE_URL`, porta `11434` e `OLLAMA_MODEL` |
 
-### Cadastro Administrativo Por Email
+### Usuários E Convites Por Email
 
-Por padrão, o backend mantém o comportamento legado: somente a primeira conta
-pode ser criada e qualquer segundo `POST /auth/register` é bloqueado. Para
-proteger também a criação dessa primeira conta, habilite o convite
-administrativo:
+A primeira conta criada recebe o papel `admin`. Depois disso, um novo
+`POST /auth/register` só é aceito com um convite individual emitido pelo admin.
+Para proteger por e-mail também a criação da primeira conta, habilite:
 
 ```dotenv
 REGISTRATION_INVITE_REQUIRED=true
@@ -179,15 +178,23 @@ SMTP_STARTTLS=true
 SMTP_USE_SSL=false
 ```
 
-A interface chama `POST /auth/registration-token`. O backend gera um token
-aleatório de uso único, salva somente seu hash HMAC, envia o valor original
-exclusivamente para `REGISTRATION_ADMIN_EMAIL` e exige o token em
-`POST /auth/register`. Enquanto um token válido estiver ativo, novas
-solicitações são recusadas para evitar spam e substituição do convite.
+No bootstrap, a interface chama `POST /auth/registration-token` e o token é
+enviado exclusivamente para `REGISTRATION_ADMIN_EMAIL`. Depois do login, o
+admin usa `POST /auth/invitations` com o e-mail do convidado. O backend gera um
+token aleatório de uso único, salva somente seu hash HMAC e envia o valor
+original ao destinatário. Enquanto um convite válido para aquele e-mail estiver
+ativo, uma nova emissão é recusada para evitar spam e substituição do token.
 
 Para SMTP com SSL direto, normalmente na porta `465`, use
 `SMTP_USE_SSL=true` e `SMTP_STARTTLS=false`. O e-mail administrativo aparece
 na interface apenas de forma mascarada.
+
+Cada usuário é vinculado a um perfil `tutor` próprio. Identificadores enviados
+pelo cliente não definem propriedade: o backend usa `uid` e `tutor_id`
+resolvidos da conta autenticada. Conversas, memórias, automações, atalhos,
+scripts, agenda, notificações, scheduler e WebSocket são filtrados por esse
+proprietário. Ao iniciar uma base antiga, a migração compatível adiciona as
+colunas necessárias e atribui os dados existentes ao primeiro admin.
 
 ### Seed de demonstração
 
@@ -233,10 +240,12 @@ O `--reset` remove apenas registros identificados pelo seed de demonstração.
 |--------|------|-----------|
 | GET | `/auth/status` | Estado do primeiro cadastro e entrega do convite |
 | POST | `/auth/registration-token` | Enviar token único ao e-mail administrativo |
-| POST | `/auth/register` | Criar a primeira conta administrativa |
+| POST | `/auth/register` | Criar o primeiro admin ou uma conta convidada |
 | POST | `/auth/login` | Autenticar e obter JWT |
 | GET | `/auth/me` | Consultar a sessão autenticada |
 | PUT | `/auth/password` | Alterar a senha da conta |
+| POST | `/auth/invitations` | Admin: enviar convite individual por e-mail |
+| GET | `/auth/users` | Admin: listar contas cadastradas |
 
 ### Chat
 | Método | Rota | Descrição |

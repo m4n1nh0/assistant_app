@@ -1,8 +1,21 @@
 import os
+import json
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import uuid
-from sqlalchemy import Column, String, DateTime, Boolean, Text, Integer, JSON, Float
+from sqlalchemy import (
+    Column,
+    String,
+    DateTime,
+    Boolean,
+    Text,
+    Integer,
+    JSON,
+    Float,
+    inspect,
+    select,
+    text,
+)
 from datetime import datetime, timezone
 from .config import get_settings
 
@@ -49,6 +62,7 @@ class ConversationModel(Base):
     role      = Column(String(32), nullable=False)
     content   = Column(Text, nullable=False)
     llm       = Column(String(80), nullable=True)
+    user_id   = Column(String(64), nullable=True, index=True)
     session   = Column(String(120), nullable=False, index=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     metadata_ = Column("metadata", JSON, default=dict)
@@ -57,6 +71,7 @@ class ConversationModel(Base):
 class CalendarEventModel(Base):
     __tablename__ = "calendar_events"
     id           = Column(String(255), primary_key=True)
+    user_id      = Column(String(64), nullable=True, index=True)
     title        = Column(String(255), nullable=False)
     start_time   = Column(DateTime, nullable=False)
     end_time     = Column(DateTime, nullable=True)
@@ -78,6 +93,10 @@ class UserModel(Base):
     __tablename__ = "users"
     id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     username      = Column(String(120), nullable=False, unique=True, index=True)
+    email         = Column(String(255), nullable=True, unique=True, index=True)
+    role          = Column(String(32), nullable=False, default="user")
+    tutor_id      = Column(String(64), nullable=True, index=True)
+    is_active     = Column(Boolean, nullable=False, default=True)
     password_hash = Column(String(255), nullable=False)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -87,6 +106,8 @@ class RegistrationInviteModel(Base):
     id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     token_hash      = Column(String(64), nullable=False, unique=True, index=True)
     recipient_email = Column(String(255), nullable=False)
+    role            = Column(String(32), nullable=False, default="user")
+    invited_by      = Column(String(64), nullable=True, index=True)
     expires_at      = Column(DateTime, nullable=False, index=True)
     used_at         = Column(DateTime, nullable=True)
     revoked_at      = Column(DateTime, nullable=True)
@@ -239,6 +260,185 @@ class ShortcutLaunchLogModel(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_compatibility_columns)
+    await _backfill_account_ownership()
+
+
+def _add_compatibility_columns(sync_conn) -> None:
+    """Adds columns that create_all cannot add to an existing deployment."""
+    inspector = inspect(sync_conn)
+    tables = set(inspector.get_table_names())
+
+    additions = {
+        "users": {
+            "email": "VARCHAR(255) NULL",
+            "role": "VARCHAR(32) NOT NULL DEFAULT 'user'",
+            "tutor_id": "VARCHAR(64) NULL",
+            "is_active": "BOOLEAN NOT NULL DEFAULT TRUE",
+        },
+        "registration_invites": {
+            "role": "VARCHAR(32) NOT NULL DEFAULT 'user'",
+            "invited_by": "VARCHAR(64) NULL",
+        },
+        "conversations": {
+            "user_id": "VARCHAR(64) NULL",
+        },
+        "calendar_events": {
+            "user_id": "VARCHAR(64) NULL",
+        },
+    }
+    for table_name, columns in additions.items():
+        if table_name not in tables:
+            continue
+        existing = {column["name"] for column in inspector.get_columns(table_name)}
+        for column_name, definition in columns.items():
+            if column_name not in existing:
+                sync_conn.execute(
+                    text(
+                        f"ALTER TABLE {table_name} "
+                        f"ADD COLUMN {column_name} {definition}"
+                    )
+                )
+
+    inspector = inspect(sync_conn)
+    if "users" in tables:
+        indexes = inspector.get_indexes("users")
+        has_unique_email = any(
+            index.get("unique")
+            and index.get("column_names") == ["email"]
+            for index in indexes
+        )
+        if not has_unique_email:
+            sync_conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX uq_users_email "
+                    "ON users (email)"
+                )
+            )
+
+
+def scoped_config_key(user_id: str, key: str) -> str:
+    return f"user:{user_id}:{key}"
+
+
+async def seed_admin_notification_config(
+    db: AsyncSession,
+    user_id: str,
+) -> None:
+    """Copies legacy notification env values only to the administrator."""
+    key = scoped_config_key(user_id, "notif")
+    if await db.get(ConfigModel, key) is not None:
+        return
+    payload = {
+        "telegram_token": settings.telegram_bot_token,
+        "telegram_chat_id": settings.telegram_chat_id,
+        "telegram_enabled": bool(
+            settings.telegram_bot_token and settings.telegram_chat_id
+        ),
+        "wa_provider": settings.wa_provider,
+        "wa_number": settings.wa_number,
+        "wa_token": settings.wa_token,
+        "wa_sid": settings.wa_sid,
+        "wa_enabled": bool(settings.wa_number),
+        "notify_15min": True,
+        "notify_on_time": True,
+        "fallback_enabled": True,
+        "include_link": True,
+    }
+    if not payload["telegram_enabled"] and not payload["wa_enabled"]:
+        return
+    db.add(ConfigModel(key=key, value=json.dumps(payload, ensure_ascii=False)))
+
+
+async def _backfill_account_ownership() -> None:
+    """Preserves the current single-user data when multi-user support is enabled."""
+    async with AsyncSessionLocal() as db:
+        users = list(
+            (
+                await db.execute(
+                    select(UserModel).order_by(UserModel.created_at, UserModel.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not users:
+            return
+
+        admin = users[0]
+        admin.role = "admin"
+        if not admin.email and settings.registration_admin_email:
+            admin.email = settings.registration_admin_email.strip() or None
+
+        tutors = list(
+            (
+                await db.execute(
+                    select(TutorModel).order_by(TutorModel.created_at, TutorModel.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assigned_tutors = {user.tutor_id for user in users if user.tutor_id}
+        reusable_tutors = [
+            tutor for tutor in tutors if tutor.id not in assigned_tutors
+        ]
+
+        for index, user in enumerate(users):
+            if not user.role:
+                user.role = "admin" if index == 0 else "user"
+            if user.is_active is None:
+                user.is_active = True
+            if user.tutor_id:
+                continue
+            if reusable_tutors:
+                tutor = reusable_tutors.pop(0)
+            else:
+                tutor = TutorModel(
+                    display_name=user.username,
+                    email=user.email,
+                )
+                db.add(tutor)
+                await db.flush()
+                db.add(AssistantProfileModel(tutor_id=tutor.id))
+            user.tutor_id = tutor.id
+
+        await db.flush()
+
+        await db.execute(
+            text(
+                "UPDATE conversations SET user_id = :user_id "
+                "WHERE user_id IS NULL"
+            ),
+            {"user_id": admin.id},
+        )
+        await db.execute(
+            text(
+                "UPDATE calendar_events SET user_id = :user_id "
+                "WHERE user_id IS NULL"
+            ),
+            {"user_id": admin.id},
+        )
+
+        legacy_keys = (
+            "notif",
+            "calendar_google",
+            "calendar_microsoft",
+            "calendar_google_app",
+            "calendar_microsoft_app",
+            "calendar_google_accounts",
+            "calendar_microsoft_accounts",
+        )
+        for key in legacy_keys:
+            scoped_key = scoped_config_key(admin.id, key)
+            if await db.get(ConfigModel, scoped_key) is not None:
+                continue
+            legacy = await db.get(ConfigModel, key)
+            if legacy is not None:
+                db.add(ConfigModel(key=scoped_key, value=legacy.value))
+        await db.flush()
+        await seed_admin_notification_config(db, admin.id)
+        await db.commit()
 
 
 async def get_db():

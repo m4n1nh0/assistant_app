@@ -108,6 +108,12 @@ mostra o e-mail administrativo mascarado, solicita o envio do convite e exige o
 token recebido antes de criar a primeira conta. A interface nunca recebe o
 token diretamente da API: ele é entregue somente por e-mail.
 
+Após o primeiro cadastro, a conta administrativa pode convidar usuários em
+**Configurações > Autenticação**. O convidado seleciona **Criar conta com
+convite** na tela de acesso e informa o token recebido. Configuração, histórico
+de conversa e eventos armazenados localmente usam um escopo por conta; os dados
+legados são migrados somente para o primeiro admin.
+
 As credenciais e URLs dos provedores de LLM são configurações de
 infraestrutura do backend e devem ser fornecidas por variáveis de ambiente.
 

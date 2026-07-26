@@ -30,6 +30,11 @@ class ConfigNotifier extends StateNotifier<AppConfig> {
     }
   }
 
+  void loadForCurrentUser() {
+    final raw = HiveConfig.read();
+    state = raw == null ? AppConfig() : AppConfig.fromJson(raw);
+  }
+
   Future<void> save(AppConfig config) async {
     state = config;
     await HiveConfig.write(config.toSafeJson());
@@ -94,6 +99,10 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     HiveConversations.clearAll();
   }
 
+  void switchUser() {
+    state = [];
+  }
+
   List<Map<String, String>> toApiHistory(int last) {
     final recent = state.where((m) => m.role != 'system').toList();
     final slice =
@@ -117,6 +126,10 @@ class EventsNotifier extends StateNotifier<List<CalendarEvent>> {
 
   void setEvents(List<CalendarEvent> events) {
     state = events..sort((a, b) => a.startTime.compareTo(b.startTime));
+  }
+
+  void switchUser() {
+    state = [];
   }
 
   void addEvent(CalendarEvent event) {

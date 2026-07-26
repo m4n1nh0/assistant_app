@@ -3,8 +3,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime, timezone, timedelta
 from loguru import logger
+from sqlalchemy import select
 
-from ..core.database import AsyncSessionLocal, ConfigModel
+from ..core.database import (
+    AsyncSessionLocal,
+    ConfigModel,
+    UserModel,
+    scoped_config_key,
+)
 from ..services.calendar_service import fetch_all_account_events
 from ..services.notification_service import send_notification, build_event_message
 from ..services.runtime_config_service import load_notif_config
@@ -34,12 +40,24 @@ async def _load_account_store(db, key: str) -> list[dict]:
     return [item for item in accounts if isinstance(item, dict)]
 
 
-async def _load_calendar_accounts() -> tuple[list[dict], list[dict]]:
+async def _load_calendar_accounts(
+    user_id: str,
+) -> tuple[list[dict], list[dict]]:
     async with AsyncSessionLocal() as db:
-        google_accounts = await _load_account_store(db, "calendar_google_accounts")
-        microsoft_accounts = await _load_account_store(db, "calendar_microsoft_accounts")
+        google_accounts = await _load_account_store(
+            db, scoped_config_key(user_id, "calendar_google_accounts")
+        )
+        microsoft_accounts = await _load_account_store(
+            db, scoped_config_key(user_id, "calendar_microsoft_accounts")
+        )
 
-        google_legacy = _json_value(await db.get(ConfigModel, "calendar_google"), {})
+        google_legacy = _json_value(
+            await db.get(
+                ConfigModel,
+                scoped_config_key(user_id, "calendar_google"),
+            ),
+            {},
+        )
         if google_legacy.get("refresh_token"):
             google_accounts.append({
                 "id": "google_legacy",
@@ -49,7 +67,13 @@ async def _load_calendar_accounts() -> tuple[list[dict], list[dict]]:
                 "refresh_token": google_legacy.get("refresh_token", ""),
             })
 
-        microsoft_legacy = _json_value(await db.get(ConfigModel, "calendar_microsoft"), {})
+        microsoft_legacy = _json_value(
+            await db.get(
+                ConfigModel,
+                scoped_config_key(user_id, "calendar_microsoft"),
+            ),
+            {},
+        )
         if microsoft_legacy.get("refresh_token"):
             microsoft_accounts.append({
                 "id": "microsoft_legacy",
@@ -66,10 +90,10 @@ async def _load_calendar_accounts() -> tuple[list[dict], list[dict]]:
     )
 
 
-async def _sync_and_notify():
-    google_accounts, microsoft_accounts = await _load_calendar_accounts()
+async def _sync_user(user_id: str):
+    google_accounts, microsoft_accounts = await _load_calendar_accounts(user_id)
 
-    notif_cfg = await load_notif_config()
+    notif_cfg = await load_notif_config(user_id=user_id)
 
     try:
         events = await fetch_all_account_events(google_accounts, microsoft_accounts)
@@ -84,7 +108,7 @@ async def _sync_and_notify():
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
 
-        key_15 = f"{event.id}:15"
+        key_15 = f"{user_id}:{event.id}:15"
         diff_15 = (start - now).total_seconds()
         if 0 < diff_15 <= 900 and key_15 not in _notified:
             _notified.add(key_15)
@@ -94,11 +118,11 @@ async def _sync_and_notify():
 
             try:
                 from ..routers.websocket import broadcast_event_reminder
-                await broadcast_event_reminder(event.title, 15)
+                await broadcast_event_reminder(user_id, event.title, 15)
             except Exception:
                 pass
 
-        key_0 = f"{event.id}:0"
+        key_0 = f"{user_id}:{event.id}:0"
         diff_0 = (start - now).total_seconds()
         if -60 < diff_0 <= 60 and key_0 not in _notified:
             _notified.add(key_0)
@@ -108,12 +132,32 @@ async def _sync_and_notify():
 
             try:
                 from ..routers.websocket import broadcast_event_reminder
-                await broadcast_event_reminder(event.title, 0)
+                await broadcast_event_reminder(user_id, event.title, 0)
             except Exception:
                 pass
 
     if len(_notified) > 1000:
         _notified.clear()
+
+
+async def _sync_and_notify():
+    async with AsyncSessionLocal() as db:
+        users = (
+            (
+                await db.execute(
+                    select(UserModel).where(UserModel.is_active.is_(True))
+                )
+            )
+            .scalars()
+            .all()
+        )
+    for user in users:
+        try:
+            await _sync_user(user.id)
+        except Exception as exc:
+            logger.error(
+                f"Scheduler: sync failed for user {user.id}: {exc}"
+            )
 
 
 def start_scheduler():

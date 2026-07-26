@@ -26,6 +26,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _curPassCtrl = TextEditingController();
   final _newPassCtrl = TextEditingController();
   final _newPassCCtrl = TextEditingController();
+  final _inviteEmailCtrl = TextEditingController();
   final _tgTokenCtrl = TextEditingController();
   final _tgChatCtrl = TextEditingController();
   final _waNumCtrl = TextEditingController();
@@ -40,6 +41,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     'microsoft': [],
   };
   bool _calendarBusy = false;
+  CurrentAccount? _account;
+  List<AdminUser> _users = const [];
+  bool _inviteBusy = false;
 
   @override
   void initState() {
@@ -49,6 +53,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadNotificationConfig();
       _loadCalendarAccounts();
+      _loadAccountManagement();
     });
   }
 
@@ -82,6 +87,35 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         _populateNotifFields();
       });
     } catch (_) {}
+  }
+
+  Future<void> _loadAccountManagement() async {
+    final account = await api.currentAccount();
+    if (!mounted) return;
+    setState(() => _account = account);
+    if (account?.isAdmin != true) return;
+    try {
+      final users = await api.listUsers();
+      if (mounted) setState(() => _users = users);
+    } catch (_) {}
+  }
+
+  Future<void> _inviteUser() async {
+    final email = _inviteEmailCtrl.text.trim();
+    if (email.isEmpty || _inviteBusy) {
+      _showSnack('Informe o email do novo usuario.');
+      return;
+    }
+    setState(() => _inviteBusy = true);
+    try {
+      final message = await api.inviteUser(email);
+      _inviteEmailCtrl.clear();
+      _showSnack(message);
+    } catch (e) {
+      _showSnack(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _inviteBusy = false);
+    }
   }
 
   Future<void> _save() async {
@@ -408,6 +442,72 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           _InfoBox(
               'O acesso ao assistente é protegido por usuário e senha, exigidos toda vez que o app inicia sem uma sessão válida.'),
         ]),
+        _SectionCard(title: '↪ SESSÃO', children: [
+          _ActionBtn(
+            label: 'Trocar usuário',
+            color: AssistantTheme.c2,
+            onTap: _switchUser,
+          ),
+          _InfoBox(
+              'Encerra a sessão atual e abre a tela de login. Os dados locais permanecem separados por conta.'),
+        ]),
+        if (_account?.isAdmin == true)
+          _SectionCard(title: '👥 USUÁRIOS E CONVITES', children: [
+            _InfoBox(
+                'Somente administradores enviam convites. Cada conta recebe conversas, agenda, notificações, memórias e configurações próprias.'),
+            _InlineField(
+              _inviteEmailCtrl,
+              hint: 'Email do novo usuário',
+            ),
+            const SizedBox(height: 10),
+            _ActionBtn(
+              label: _inviteBusy ? 'Enviando...' : 'Enviar convite',
+              color: AssistantTheme.c1,
+              onTap: _inviteUser,
+            ),
+            if (_users.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ..._users.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Icon(
+                        item.isActive
+                            ? Icons.check_circle_outline
+                            : Icons.block_outlined,
+                        size: 14,
+                        color: item.isActive
+                            ? AssistantTheme.c3
+                            : AssistantTheme.danger,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          item.email.isEmpty
+                              ? item.username
+                              : '${item.username} — ${item.email}',
+                          style: const TextStyle(
+                            fontFamily: 'JetBrains Mono',
+                            fontSize: 10.5,
+                            color: AssistantTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        item.role.toUpperCase(),
+                        style: const TextStyle(
+                          fontFamily: 'JetBrains Mono',
+                          fontSize: 9,
+                          color: AssistantTheme.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ]),
       ]);
 
   Future<void> _changePassword() async {
@@ -429,6 +529,15 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _showSnack('Senha alterada com sucesso.');
     } catch (e) {
       _showSnack('Erro ao trocar senha: $e');
+    }
+  }
+
+  Future<void> _switchUser() async {
+    await StorageService.clearAuthToken();
+    api.logout();
+    ref.read(isAuthenticatedProvider.notifier).state = false;
+    if (mounted) {
+      Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
     }
   }
 
@@ -599,6 +708,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _curPassCtrl,
       _newPassCtrl,
       _newPassCCtrl,
+      _inviteEmailCtrl,
       _tgTokenCtrl,
       _tgChatCtrl,
       _waNumCtrl,

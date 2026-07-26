@@ -101,9 +101,8 @@ class ApiService {
     );
   }
 
-  /// Validates the current in-memory token against the backend.
-  /// Returns the logged-in username, or null if there is no valid session.
-  Future<String?> currentUsername() async {
+  /// Validates the current in-memory token and returns its account context.
+  Future<CurrentAccount?> currentAccount() async {
     if (_token == null) return null;
     try {
       final r = await http
@@ -111,10 +110,42 @@ class ApiService {
           .timeout(const Duration(seconds: 10));
       if (r.statusCode >= 400) return null;
       final data = jsonDecode(r.body) as Map<String, dynamic>;
-      return data['username']?.toString();
+      return CurrentAccount.fromJson(data);
     } catch (_) {
       return null;
     }
+  }
+
+  Future<String?> currentUsername() async =>
+      (await currentAccount())?.username;
+
+  Future<String> inviteUser(String email) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/auth/invitations'),
+      headers: _headers,
+      body: jsonEncode({'email': email}),
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) {
+      throw Exception(data['detail']?.toString() ?? 'Falha ao enviar convite');
+    }
+    return data['message']?.toString() ?? 'Convite enviado por email.';
+  }
+
+  Future<List<AdminUser>> listUsers() async {
+    final r = await http.get(
+      Uri.parse('$baseUrl/auth/users'),
+      headers: _headers,
+    );
+    final data = jsonDecode(r.body);
+    if (r.statusCode >= 400) {
+      final detail = data is Map<String, dynamic> ? data['detail'] : null;
+      throw Exception(detail?.toString() ?? 'Falha ao carregar usuarios');
+    }
+    return (data as List<dynamic>)
+        .whereType<Map<String, dynamic>>()
+        .map(AdminUser.fromJson)
+        .toList();
   }
 
   Future<void> changePassword({
@@ -1028,12 +1059,14 @@ class AuthResult {
 
 class AuthSetupStatus {
   final bool needsSetup;
+  final bool inviteRegistrationEnabled;
   final bool registrationRequiresToken;
   final bool registrationDeliveryConfigured;
   final String adminEmailHint;
 
   const AuthSetupStatus({
     required this.needsSetup,
+    this.inviteRegistrationEnabled = true,
     this.registrationRequiresToken = false,
     this.registrationDeliveryConfigured = false,
     this.adminEmailHint = '',
@@ -1042,10 +1075,62 @@ class AuthSetupStatus {
   factory AuthSetupStatus.fromJson(Map<String, dynamic> json) =>
       AuthSetupStatus(
         needsSetup: json['needs_setup'] == true,
+        inviteRegistrationEnabled:
+            json['invite_registration_enabled'] != false,
         registrationRequiresToken: json['registration_requires_token'] == true,
         registrationDeliveryConfigured:
             json['registration_delivery_configured'] == true,
         adminEmailHint: json['admin_email_hint']?.toString() ?? '',
+      );
+}
+
+class CurrentAccount {
+  final String id;
+  final String username;
+  final String email;
+  final String role;
+  final String tutorId;
+
+  const CurrentAccount({
+    required this.id,
+    required this.username,
+    required this.email,
+    required this.role,
+    required this.tutorId,
+  });
+
+  bool get isAdmin => role == 'admin';
+
+  factory CurrentAccount.fromJson(Map<String, dynamic> json) => CurrentAccount(
+        id: json['id']?.toString() ?? '',
+        username: json['username']?.toString() ?? '',
+        email: json['email']?.toString() ?? '',
+        role: json['role']?.toString() ?? 'user',
+        tutorId: json['tutor_id']?.toString() ?? '',
+      );
+}
+
+class AdminUser {
+  final String id;
+  final String username;
+  final String email;
+  final String role;
+  final bool isActive;
+
+  const AdminUser({
+    required this.id,
+    required this.username,
+    required this.email,
+    required this.role,
+    required this.isActive,
+  });
+
+  factory AdminUser.fromJson(Map<String, dynamic> json) => AdminUser(
+        id: json['id']?.toString() ?? '',
+        username: json['username']?.toString() ?? '',
+        email: json['email']?.toString() ?? '',
+        role: json['role']?.toString() ?? 'user',
+        isActive: json['is_active'] == true,
       );
 }
 

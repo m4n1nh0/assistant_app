@@ -8,6 +8,7 @@ import '../services/calendar_service.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../models/app_config.dart';
+import '../models/hive_adapters.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
 import '../widgets/left_panel.dart';
@@ -44,8 +45,9 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
     if (!ref.read(isAuthenticatedProvider)) {
       final storedToken = await StorageService.loadAuthToken();
       api.setToken(storedToken);
-      final username = await api.currentUsername();
-      if (username != null) {
+      final account = await api.currentAccount();
+      if (account != null) {
+        await _activateAccount(account);
         ref.read(isAuthenticatedProvider.notifier).state = true;
       } else {
         await _showAuth();
@@ -56,6 +58,17 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       _startWelcome();
       _startCalendarSync();
     }
+  }
+
+  Future<void> _activateAccount(CurrentAccount account) async {
+    await HiveScope.setCurrent(
+      account.id,
+      migrateLegacy: account.isAdmin,
+    );
+    ref.read(configProvider.notifier).loadForCurrentUser();
+    ref.read(chatProvider.notifier).switchUser();
+    ref.read(eventsProvider.notifier).switchUser();
+    await _syncBackendStatus(attempts: 1);
   }
 
   void _startBackendStatusSync() {
@@ -122,6 +135,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       builder: (_) => AuthDialog(
         assistantName: config.assistantName,
         needsSetup: authStatus.needsSetup,
+        inviteRegistrationEnabled: authStatus.inviteRegistrationEnabled,
         registrationRequiresToken: authStatus.registrationRequiresToken,
         registrationDeliveryConfigured:
             authStatus.registrationDeliveryConfigured,
@@ -133,6 +147,8 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       final token = api.token;
       if (token != null) await StorageService.saveAuthToken(token);
       await StorageService.saveAuthUsername(username);
+      final account = await api.currentAccount();
+      if (account != null) await _activateAccount(account);
       ref.read(isAuthenticatedProvider.notifier).state = true;
     } else {
       await windowManager.close();

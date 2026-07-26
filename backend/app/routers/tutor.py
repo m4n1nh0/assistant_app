@@ -36,27 +36,21 @@ def _profile_response(tutor: TutorModel, profile: AssistantProfileModel) -> Tuto
 
 
 @router.put("/", response_model=TutorProfileResponse)
-async def upsert_tutor(body: TutorProfileRequest, db: AsyncSession = Depends(get_db)):
-    tutor = None
-    if body.id:
-        result = await db.execute(select(TutorModel).where(TutorModel.id == body.id))
-        tutor = result.scalar_one_or_none()
-    if tutor is None and body.email:
-        result = await db.execute(select(TutorModel).where(TutorModel.email == body.email))
-        tutor = result.scalar_one_or_none()
+async def upsert_tutor(
+    body: TutorProfileRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tutor = await db.get(TutorModel, user["tutor_id"])
 
     if tutor is None:
-        tutor_data = dict(
+        tutor = TutorModel(
+            id=user["tutor_id"],
             display_name=body.display_name,
             email=body.email,
             timezone=body.timezone,
             locale=body.locale,
             notes=body.notes,
-        )
-        if body.id:
-            tutor_data["id"] = body.id
-        tutor = TutorModel(
-            **tutor_data,
         )
         db.add(tutor)
         await db.flush()
@@ -89,8 +83,14 @@ async def upsert_tutor(body: TutorProfileRequest, db: AsyncSession = Depends(get
 
 
 @router.get("/{tutor_id}", response_model=TutorProfileResponse)
-async def get_tutor(tutor_id: str, db: AsyncSession = Depends(get_db)):
-    tutor = await db.get(TutorModel, tutor_id)
+async def get_tutor(
+    tutor_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Tutor nao encontrado")
+    tutor = await db.get(TutorModel, user["tutor_id"])
     if tutor is None:
         raise HTTPException(404, "Tutor não encontrado")
 
@@ -112,8 +112,12 @@ async def upsert_setting(
     tutor_id: str,
     key: str,
     body: TutorSettingRequest,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Tutor nao encontrado")
+    tutor_id = user["tutor_id"]
     result = await db.execute(
         select(TutorSettingModel).where(
             TutorSettingModel.tutor_id == tutor_id,
@@ -139,7 +143,14 @@ async def upsert_setting(
 
 
 @router.get("/{tutor_id}/settings", response_model=list[TutorSettingResponse])
-async def list_settings(tutor_id: str, db: AsyncSession = Depends(get_db)):
+async def list_settings(
+    tutor_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Tutor nao encontrado")
+    tutor_id = user["tutor_id"]
     result = await db.execute(
         select(TutorSettingModel).where(TutorSettingModel.tutor_id == tutor_id)
     )

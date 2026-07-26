@@ -108,9 +108,11 @@ async def list_script_shells(request: Request):
 async def list_saved_scripts(
     request: Request,
     tutor_id: str = Query(default="default"),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     _require_local_client(request)
+    tutor_id = user["tutor_id"]
     result = await db.execute(
         select(ScriptSnippetModel)
         .where(ScriptSnippetModel.tutor_id == tutor_id)
@@ -123,6 +125,7 @@ async def list_saved_scripts(
 async def create_saved_script(
     body: ScriptSnippetCreate,
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     _require_local_client(request)
@@ -137,7 +140,7 @@ async def create_saved_script(
     if not script:
         raise HTTPException(400, "Script nao pode ficar vazio")
     item = ScriptSnippetModel(
-        tutor_id=body.tutor_id,
+        tutor_id=user["tutor_id"],
         name=name,
         shell=body.shell.value,
         script=script,
@@ -166,11 +169,12 @@ async def update_saved_script(
     script_id: str,
     body: ScriptSnippetUpdate,
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     _require_local_client(request)
     item = await db.get(ScriptSnippetModel, script_id)
-    if item is None:
+    if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Script nao encontrado")
     name, script, cwd, description = _clean_script_fields(
         name=body.name,
@@ -205,11 +209,12 @@ async def update_saved_script(
 async def delete_saved_script(
     script_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     _require_local_client(request)
     item = await db.get(ScriptSnippetModel, script_id)
-    if item is None:
+    if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Script nao encontrado")
     await db.delete(item)
     await db.commit()

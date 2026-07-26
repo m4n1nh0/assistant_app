@@ -5,7 +5,7 @@ import uuid, json
 from datetime import datetime, timezone
 
 from ..core.database import AsyncSessionLocal, ConversationModel
-from ..core.security import get_user_optional, get_current_user
+from ..core.security import get_current_user
 from ..core.config import get_settings
 from ..models.schemas import ChatRequest, ChatResponse, LLMResponse, ResponseModeEnum
 from ..services import llm_service
@@ -118,9 +118,9 @@ def _coding_action_ack_response(action: dict) -> LLMResponse:
 @router.post("/", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
-    user: dict = Depends(get_user_optional),
+    user: dict = Depends(get_current_user),
 ):
-    cfg = user or {}
+    cfg = user
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await _chat_ready_llms()
 
@@ -202,7 +202,7 @@ async def chat(
         async with AsyncSessionLocal() as s:
             s.add(ConversationModel(
                 id=str(uuid.uuid4()), role="user",
-                content=body.message, session=session_id,
+                content=body.message, session=session_id, user_id=user["uid"],
                 timestamp=datetime.now(timezone.utc),
             ))
             for r in responses:
@@ -210,7 +210,7 @@ async def chat(
                     s.add(ConversationModel(
                         id=str(uuid.uuid4()), role="assistant",
                         content=r.content, llm=r.llm,
-                        session=session_id,
+                        session=session_id, user_id=user["uid"],
                         timestamp=datetime.now(timezone.utc),
                     ))
             await s.commit()
@@ -228,9 +228,9 @@ async def chat(
 @router.post("/stream")
 async def chat_stream(
     body: ChatRequest,
-    user: dict = Depends(get_user_optional),
+    user: dict = Depends(get_current_user),
 ):
-    cfg = user or {}
+    cfg = user
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await _chat_ready_llms()
     llm = body.llm.value if body.llm else (active[0] if active else "")
@@ -269,12 +269,18 @@ async def chat_stream(
 
 
 @router.get("/history/{session_id}")
-async def get_history(session_id: str):
+async def get_history(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+):
     try:
         async with AsyncSessionLocal() as s:
             result = await s.execute(
                 select(ConversationModel)
-                .where(ConversationModel.session == session_id)
+                .where(
+                    ConversationModel.session == session_id,
+                    ConversationModel.user_id == user["uid"],
+                )
                 .order_by(ConversationModel.timestamp)
             )
             rows = result.scalars().all()
@@ -288,11 +294,19 @@ async def get_history(session_id: str):
 
 
 @router.delete("/history/{session_id}")
-async def clear_history(session_id: str):
+async def clear_history(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+):
     from sqlalchemy import delete
     try:
         async with AsyncSessionLocal() as s:
-            await s.execute(delete(ConversationModel).where(ConversationModel.session == session_id))
+            await s.execute(
+                delete(ConversationModel).where(
+                    ConversationModel.session == session_id,
+                    ConversationModel.user_id == user["uid"],
+                )
+            )
             await s.commit()
     except Exception:
         pass

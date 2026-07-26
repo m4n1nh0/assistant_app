@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.models.schemas import CalendarConfig, LLMStatus, NotifConfig
+from app.models.schemas import LLMStatus
 from app.routers import routes
 
 
@@ -17,6 +17,9 @@ def test_health_reports_configured_and_available_llms_separately(monkeypatch):
             "gemini": "Gemini 1.5 Flash",
         },
         database_url="mysql+aiomysql://user:pass@localhost:3306/assistant",
+        telegram_bot_token="telegram-token",
+        telegram_chat_id="chat-id",
+        wa_number="5511999999999",
     )
 
     async def fake_get_llm_statuses():
@@ -40,24 +43,8 @@ def test_health_reports_configured_and_available_llms_separately(monkeypatch):
             ),
         }
 
-    async def fake_load_calendar_config(_db):
-        return CalendarConfig(
-            google_enabled=True,
-            ms_enabled=True,
-        )
-
-    async def fake_load_notif_config(_db):
-        return NotifConfig(
-            telegram_token="telegram-token",
-            telegram_enabled=True,
-            wa_number="5511999999999",
-            wa_enabled=True,
-        )
-
     monkeypatch.setattr(routes, "_gs3", lambda: fake_settings)
     monkeypatch.setattr(routes, "get_llm_statuses", fake_get_llm_statuses)
-    monkeypatch.setattr(routes, "_load_calendar_config", fake_load_calendar_config)
-    monkeypatch.setattr(routes, "load_notif_config", fake_load_notif_config)
     monkeypatch.setattr(routes, "qdrant_status", lambda: {"ok": True})
 
     response = run(routes.health())
@@ -69,7 +56,7 @@ def test_health_reports_configured_and_available_llms_separately(monkeypatch):
         "gemini": "Gemini 1.5 Flash",
     }
     assert response.llm_status["gemini"].error == "API key not valid"
-    assert response.calendar_sources == ["google", "teams", "outlook"]
+    assert response.calendar_sources == []
     assert response.notifications == {
         "telegram": True,
         "whatsapp": True,

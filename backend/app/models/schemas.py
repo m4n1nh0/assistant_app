@@ -78,6 +78,7 @@ class AuthResponse(BaseModel):
 
 class AuthStatusResponse(BaseModel):
     needs_setup: bool
+    invite_registration_enabled: bool = True
     registration_requires_token: bool = False
     registration_delivery_configured: bool = False
     admin_email_hint: Optional[str] = None
@@ -87,6 +88,27 @@ class RegistrationTokenResponse(BaseModel):
     success: bool
     message: str
     admin_email_hint: Optional[str] = None
+
+
+class AdminInviteRequest(BaseModel):
+    email: str
+
+
+class AdminInviteResponse(BaseModel):
+    success: bool
+    message: str
+    email_hint: str
+    expires_at: datetime
+
+
+class AdminUserResponse(BaseModel):
+    id: str
+    username: str
+    email: Optional[str] = None
+    role: str
+    tutor_id: Optional[str] = None
+    is_active: bool
+    created_at: datetime
 
 
 class LLMConfig(BaseModel):

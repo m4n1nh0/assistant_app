@@ -60,7 +60,11 @@ async def suggest_command_endpoint(name: str):
 
 
 @router.post("/shortcuts", response_model=ShortcutResponse, status_code=201)
-async def create_shortcut(body: ShortcutCreate, db: AsyncSession = Depends(get_db)):
+async def create_shortcut(
+    body: ShortcutCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     name = body.name.strip()
     target = body.target.strip()
     aliases = [item.strip() for item in body.aliases if item.strip()]
@@ -69,7 +73,7 @@ async def create_shortcut(body: ShortcutCreate, db: AsyncSession = Depends(get_d
     if not target:
         raise HTTPException(400, "Destino do atalho nao pode ficar vazio")
     sc = ShortcutModel(
-        tutor_id=body.tutor_id,
+        tutor_id=user["tutor_id"],
         name=name,
         type=body.type.value,
         target=target,
@@ -90,8 +94,10 @@ async def list_launches(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     limit: int = Query(default=100, ge=1, le=500),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    tutor_id = user["tutor_id"]
     query = select(ShortcutLaunchLogModel).where(
         ShortcutLaunchLogModel.tutor_id == tutor_id
     )
@@ -111,7 +117,12 @@ async def list_launches(
 
 
 @router.get("/shortcuts", response_model=list[ShortcutResponse])
-async def list_shortcuts(tutor_id: str, db: AsyncSession = Depends(get_db)):
+async def list_shortcuts(
+    tutor_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tutor_id = user["tutor_id"]
     result = await db.execute(
         select(ShortcutModel)
         .where(ShortcutModel.tutor_id == tutor_id)
@@ -124,10 +135,11 @@ async def list_shortcuts(tutor_id: str, db: AsyncSession = Depends(get_db)):
 async def update_shortcut(
     shortcut_id: str,
     body: ShortcutUpdate,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     sc = await db.get(ShortcutModel, shortcut_id)
-    if sc is None:
+    if sc is None or sc.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Atalho não encontrado")
     if body.name is not None:
         name = body.name.strip()
@@ -152,9 +164,13 @@ async def update_shortcut(
 
 
 @router.delete("/shortcuts/{shortcut_id}", status_code=204)
-async def delete_shortcut(shortcut_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_shortcut(
+    shortcut_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     sc = await db.get(ShortcutModel, shortcut_id)
-    if sc is None:
+    if sc is None or sc.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Atalho não encontrado")
     await db.delete(sc)
     await db.commit()
@@ -164,10 +180,14 @@ async def delete_shortcut(shortcut_id: str, db: AsyncSession = Depends(get_db)):
 async def confirm_launched(
     shortcut_id: str,
     body: ShortcutLaunchRequest | None = None,
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Interface calls this after an app/URL launch attempt."""
     body = body or ShortcutLaunchRequest()
+    sc = await db.get(ShortcutModel, shortcut_id)
+    if sc is None or sc.tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Atalho nao encontrado")
     await record_launch(
         shortcut_id,
         db,
@@ -178,7 +198,4 @@ async def confirm_launched(
         result=body.result,
         error=body.error,
     )
-    sc = await db.get(ShortcutModel, shortcut_id)
-    if sc is None:
-        raise HTTPException(404, "Atalho não encontrado")
     return _to_response(sc)
