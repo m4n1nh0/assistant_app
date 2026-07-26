@@ -159,7 +159,8 @@ endpoint.
 Se o LocalAI aparecer como configurado, mas offline:
 
 - confira `llm_status.localai.error`;
-- verifique se `/v1/models` do LocalAI retorna pelo menos um modelo;
+- verifique se `/v1/models` lista o modelo ou se
+  `/api/models/config-json/{modelo}` retorna a configuração instalada;
 - confirme que `LOCALAI_BASE_URL` foi definida no backend, e não na interface;
 - na Railway, confirme que backend e LocalAI estão no mesmo projeto e ambiente.
 

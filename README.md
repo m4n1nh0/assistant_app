@@ -267,7 +267,7 @@ O backend trata Ollama e LocalAI como provedores separados:
 | Provedor | Porta | Verificacao | Chat |
 |----------|-------|-------------|------|
 | Ollama | `11434` | `/api/tags` | `/api/chat` |
-| LocalAI | `8080` | `/v1/models` | `/v1/chat/completions` |
+| LocalAI | `8080` | `/v1/models` e configuração instalada | `/v1/chat/completions` |
 
 Crie estas variaveis **no servico do backend**:
 
@@ -276,7 +276,7 @@ OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PR
 OLLAMA_MODEL=llama3.2:3b
 
 LOCALAI_BASE_URL=http://${{localai.RAILWAY_PRIVATE_DOMAIN}}:8080
-LOCALAI_MODEL=
+LOCALAI_MODEL=minicpm5-1b-claude-opus-fable5-v2-thinking
 LOCALAI_API_KEY=
 ```
 
@@ -289,12 +289,26 @@ No **servico LocalAI**, configure:
 
 ```dotenv
 LOCALAI_ADDRESS=:8080
+LOCALAI_MODELS_PATH=/models
+LOCALAI_BACKENDS_PATH=/models/.backends
+LOCALAI_EXTERNAL_BACKENDS=llama-cpp
+LOCALAI_CONTEXT_SIZE=2048
+LOCALAI_THREADS=4
+LOCALAI_AGENT_POOL_DEFAULT_MODEL=minicpm5-1b-claude-opus-fable5-v2-thinking
+PRELOAD_MODELS=[{"id":"localai@minicpm5-1b-claude-opus-fable5-v2-thinking"}]
 ```
 
-`LOCALAI_MODEL` deve ser o `id` retornado por `/v1/models`. Quando a variavel
+Anexe um Railway Volume ao servico LocalAI com mount path `/models`. Assim o
+GGUF, o YAML e o backend CPU persistem em deploys. Sem esse volume, o preload
+baixa novamente cerca de 1,1 GiB a cada novo container.
+
+`LOCALAI_MODEL` deve ser o `id` instalado no LocalAI. O health check consulta
+`/v1/models` e, para modelos ainda frios, também
+`/api/models/config-json/{modelo}`. Quando a variavel
 fica vazia, o backend escolhe o primeiro modelo retornado. A mensagem
 `Agent pool started` confirma que o pool de agentes iniciou, mas o provedor so
-fica disponivel no app depois que `/v1/models` retorna pelo menos um modelo.
+fica disponivel no app depois que o modelo aparece no catalogo ou sua
+configuracao instalada e confirmada.
 Use `LOCALAI_API_KEY` no backend apenas se a autenticacao por API key estiver
 habilitada no LocalAI.
 

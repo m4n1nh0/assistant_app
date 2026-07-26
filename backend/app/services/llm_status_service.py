@@ -2,6 +2,7 @@ import asyncio
 import re
 import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -386,6 +387,19 @@ async def _check_localai(client: httpx.AsyncClient) -> LLMStatus:
         ]
         wanted = settings.localai_model.strip()
         if wanted and wanted not in model_ids:
+            root_url = settings.localai_base_url.rstrip("/")
+            if root_url.endswith("/v1"):
+                root_url = root_url[:-3]
+            config_resp = await client.get(
+                f"{root_url}/api/models/config-json/{quote(wanted, safe='')}",
+                headers=headers,
+            )
+            config_data = _safe_json(config_resp) if not config_resp.is_error else {}
+            if (
+                isinstance(config_data, dict)
+                and str(config_data.get("name", "")) == wanted
+            ):
+                return _status("localai", configured=True, online=True)
             return _status(
                 "localai",
                 configured=True,

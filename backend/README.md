@@ -84,7 +84,7 @@ OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PR
 OLLAMA_MODEL=llama3.2:3b
 
 LOCALAI_BASE_URL=http://${{localai.RAILWAY_PRIVATE_DOMAIN}}:8080
-LOCALAI_MODEL=
+LOCALAI_MODEL=minicpm5-1b-claude-opus-fable5-v2-thinking
 LOCALAI_API_KEY=
 ```
 
@@ -98,7 +98,18 @@ No serviço do **LocalAI**, deixe a API acessível a outros containers:
 
 ```dotenv
 LOCALAI_ADDRESS=:8080
+LOCALAI_MODELS_PATH=/models
+LOCALAI_BACKENDS_PATH=/models/.backends
+LOCALAI_EXTERNAL_BACKENDS=llama-cpp
+LOCALAI_CONTEXT_SIZE=2048
+LOCALAI_THREADS=4
+LOCALAI_AGENT_POOL_DEFAULT_MODEL=minicpm5-1b-claude-opus-fable5-v2-thinking
+PRELOAD_MODELS=[{"id":"localai@minicpm5-1b-claude-opus-fable5-v2-thinking"}]
 ```
+
+Crie um Railway Volume com mount path `/models`. O backend `llama-cpp` fica em
+`/models/.backends`, no mesmo volume do GGUF e do YAML. Sem o volume, os
+arquivos somem com o container e o preload repete o download em cada deploy.
 
 Não confunda as variáveis dos dois serviços: `LOCALAI_BASE_URL` desta aplicação
 deve ser cadastrada no backend. No processo do LocalAI, a variável de bind é
@@ -113,7 +124,9 @@ e [API compatível com OpenAI do LocalAI](https://localai.io/basics/getting_star
 
 ### Modelo E Diagnóstico
 
-O LocalAI precisa retornar pelo menos um modelo em `GET /v1/models`. O log
+O LocalAI normalmente retorna os modelos em `GET /v1/models`. Em versões que
+mantêm o catálogo vazio até a primeira inferência, o health check também
+confirma o `LOCALAI_MODEL` por `GET /api/models/config-json/{modelo}`. O log
 `Agent pool started (standalone/LocalAGI mode)` informa que o pool iniciou, mas
 não garante que um modelo de inferência esteja instalado.
 
@@ -139,7 +152,7 @@ Erros comuns:
 | Erro | Verificação |
 |------|-------------|
 | Falha de conexão | Serviço ativo, mesmo ambiente Railway, porta e `LOCALAI_ADDRESS` |
-| `Modelo ... não encontrado` | Valor de `LOCALAI_MODEL` deve existir em `/v1/models` |
+| `Modelo ... não encontrado` | `LOCALAI_MODEL` deve existir em `/v1/models` ou em `/api/models/config-json/{modelo}` |
 | `Nenhum modelo disponível` | Instalar/carregar um modelo no LocalAI |
 | HTTP 401 | Replicar a chave do LocalAI em `LOCALAI_API_KEY` no backend |
 | Ollama offline | Conferir `OLLAMA_BASE_URL`, porta `11434` e `OLLAMA_MODEL` |

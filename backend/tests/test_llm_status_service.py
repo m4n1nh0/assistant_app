@@ -184,8 +184,11 @@ def test_check_localai_detects_model_without_requiring_api_key(monkeypatch):
 
 
 def test_check_localai_reports_configured_model_not_found(monkeypatch):
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": [{"id": "other-model"}]})
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "other-model"}]})
+        assert request.url.path == "/api/models/config-json/wanted-model"
+        return httpx.Response(404, json={"error": "model configuration not found"})
 
     monkeypatch.setattr(
         service,
@@ -207,3 +210,46 @@ def test_check_localai_reports_configured_model_not_found(monkeypatch):
     assert status.available is False
     assert status.configured is True
     assert "wanted-model" in (status.error or "")
+
+
+def test_check_localai_accepts_configured_cold_model(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer secret"
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": []})
+        assert (
+            request.url.path
+            == "/api/models/config-json/minicpm5-1b-claude-opus-fable5-v2-thinking"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "name": "minicpm5-1b-claude-opus-fable5-v2-thinking",
+                "backend": "llama-cpp",
+            },
+        )
+
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(
+            localai_base_url="http://localai:8080",
+            localai_v1_base_url="http://localai:8080/v1",
+            localai_api_key="secret",
+            localai_model="minicpm5-1b-claude-opus-fable5-v2-thinking",
+            llm_labels={
+                "localai": (
+                    "LocalAI "
+                    "(minicpm5-1b-claude-opus-fable5-v2-thinking)"
+                )
+            },
+        ),
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        status = run(service._check_localai(client))
+    finally:
+        run(client.aclose())
+
+    assert status.available is True
+    assert status.online is True
