@@ -20,6 +20,7 @@ import '../services/local_desktop_context_service.dart';
 import '../services/local_script_service.dart';
 import '../services/local_workspace_service.dart';
 import '../services/llm_service.dart';
+import '../services/neural_tts_service.dart';
 import '../services/shortcut_matching.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
@@ -1187,24 +1188,30 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (preview.trim().isNotEmpty) await _speakText(preview);
   }
 
+  /// Fala a resposta. A sintese acontece aqui na interface (Edge, vozes
+  /// neurais) para nao trafegar o audio de volta do backend, que em producao
+  /// fica remoto. Sem rede, cai no TTS do proprio sistema.
   Future<void> _speakText(String text) async {
     final speech = text.trim();
     if (speech.isEmpty) return;
 
     final config = ref.read(configProvider);
     try {
-      final audioBytes = await api.textToSpeech(
+      final audioBytes = await NeuralTtsService.synthesize(
         speech,
-        language: config.language,
-        speed: 0.95,
-      );
+        voice: NeuralTtsService.resolveVoice(
+          config.ttsVoice,
+          config.assistantGender,
+        ),
+        ratePercent: config.ttsRatePercent,
+        pitchHz: config.ttsPitchHz,
+      ).timeout(const Duration(seconds: 12));
       if (audioBytes.isNotEmpty) {
         await _tts.stop();
         await _backendTtsPlayer.stop();
         _backendTtsActive = true;
         ref.read(isSpeakingProvider.notifier).state = true;
-        await _backendTtsPlayer
-            .play(BytesSource(Uint8List.fromList(audioBytes)));
+        await _backendTtsPlayer.play(BytesSource(audioBytes));
         return;
       }
     } catch (_) {

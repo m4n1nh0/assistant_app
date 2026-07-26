@@ -1,9 +1,11 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_provider.dart';
 import '../services/storage_service.dart';
 import '../services/api_service.dart';
 import '../services/external_launcher_service.dart';
+import '../services/neural_tts_service.dart';
 import '../services/notification_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
@@ -38,6 +40,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _msTenantCtrl = TextEditingController();
   final _backendUrlCtrl = TextEditingController();
   bool _backendTestBusy = false;
+  final _voicePreviewPlayer = AudioPlayer();
+  bool _voiceTestBusy = false;
   Map<String, List<CalendarAccount>> _calendarAccounts = const {
     'google': [],
     'microsoft': [],
@@ -222,6 +226,30 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _showSnack('Backend salvo, mas não respondeu em ${api.baseUrl}: $e');
     } finally {
       if (mounted) setState(() => _backendTestBusy = false);
+    }
+  }
+
+  Future<void> _testVoice() async {
+    setState(() => _voiceTestBusy = true);
+    try {
+      final bytes = await NeuralTtsService.synthesize(
+        'Oi! Sou a ${_nameCtrl.text.trim().isEmpty ? 'assistente' : _nameCtrl.text.trim()}. '
+        'E assim que eu vou falar com voce.',
+        voice: NeuralTtsService.resolveVoice(
+            _draft.ttsVoice, _draft.assistantGender),
+        ratePercent: _draft.ttsRatePercent,
+        pitchHz: _draft.ttsPitchHz,
+      ).timeout(const Duration(seconds: 15));
+      if (bytes.isEmpty) {
+        _showSnack('Nao foi possivel gerar a voz.');
+        return;
+      }
+      await _voicePreviewPlayer.stop();
+      await _voicePreviewPlayer.play(BytesSource(bytes));
+    } catch (e) {
+      _showSnack('Falha ao gerar a voz (precisa de internet): $e');
+    } finally {
+      if (mounted) setState(() => _voiceTestBusy = false);
     }
   }
 
@@ -668,6 +696,40 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
             onTap: _backendTestBusy ? () {} : _applyBackendUrl,
           ),
         ]),
+        _SectionCard(title: '🔊 VOZ DA ASSISTENTE', children: [
+          _Label('VOZ'),
+          _Dropdown(
+            value: NeuralTtsService.resolveVoice(
+                _draft.ttsVoice, _draft.assistantGender),
+            items: NeuralTtsService.voices,
+            onChanged: (v) => setState(() => _draft.ttsVoice = v ?? ''),
+          ),
+          const SizedBox(height: 12),
+          _NumberSetting(
+            label: 'Velocidade (%)',
+            value: _draft.ttsRatePercent,
+            min: -50,
+            max: 50,
+            step: 2,
+            onChanged: (v) => setState(() => _draft.ttsRatePercent = v),
+          ),
+          _NumberSetting(
+            label: 'Tom (Hz)',
+            value: _draft.ttsPitchHz,
+            min: -50,
+            max: 50,
+            step: 5,
+            onChanged: (v) => setState(() => _draft.ttsPitchHz = v),
+          ),
+          _ActionBtn(
+            label: _voiceTestBusy ? 'FALANDO...' : '▶ OUVIR ESTA VOZ',
+            onTap: _voiceTestBusy ? () {} : _testVoice,
+          ),
+          const _InfoBox(
+            'Vozes neurais geradas na propria interface, sem custo e sem passar '
+            'pelo backend. Sem internet, a assistente usa a voz do Windows.',
+          ),
+        ]),
         _SectionCard(title: '🖥 PREFERÊNCIAS', children: [
           _Toggle('Iniciar minimizado', _draft.startMinimized,
               (v) => setState(() => _draft.startMinimized = v)),
@@ -755,6 +817,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     ]) {
       c.dispose();
     }
+    _voicePreviewPlayer.dispose();
     super.dispose();
   }
 }
@@ -966,12 +1029,15 @@ class _NumberSetting extends StatelessWidget {
   final int max;
   final ValueChanged<int> onChanged;
 
+  final int step;
+
   const _NumberSetting({
     required this.label,
     required this.value,
     required this.onChanged,
     this.min = 0,
     this.max = 10,
+    this.step = 1,
   });
 
   @override
@@ -990,7 +1056,9 @@ class _NumberSetting extends StatelessWidget {
             ),
             _MiniStepButton(
               label: '-',
-              onTap: value > min ? () => onChanged(value - 1) : null,
+              onTap: value > min
+                  ? () => onChanged((value - step).clamp(min, max))
+                  : null,
             ),
             SizedBox(
               width: 34,
@@ -1006,7 +1074,9 @@ class _NumberSetting extends StatelessWidget {
             ),
             _MiniStepButton(
               label: '+',
-              onTap: value < max ? () => onChanged(value + 1) : null,
+              onTap: value < max
+                  ? () => onChanged((value + step).clamp(min, max))
+                  : null,
             ),
           ],
         ),

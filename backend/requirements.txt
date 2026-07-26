@@ -37,6 +37,11 @@ alembic==1.18.4
 qdrant-client==1.18.0
 
 faster-whisper==1.2.1
+# Necessarias so quando WHISPER_DEVICE=cuda. O CTranslate2 procura essas DLLs
+# no PATH e nao dentro do site-packages, entao voice_service as registra no
+# carregamento do modelo.
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.24.0.43
 speechrecognition==3.16.1
 gtts==2.5.4
 pydub==0.25.1

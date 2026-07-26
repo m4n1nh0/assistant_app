@@ -49,6 +49,13 @@ class AppConfig {
   String hotkey;
   String backendUrl;
 
+  /// Voz neural usada pela interface. Vazio deixa a escolha pelo genero.
+  String ttsVoice;
+
+  /// Calibracao da voz: velocidade em % e tom em Hz, ambos relativos ao padrao.
+  int ttsRatePercent;
+  int ttsPitchHz;
+
   static const defaultBackendUrl =
       String.fromEnvironment('APP_BACKEND_URL', defaultValue: 'http://localhost:8000');
 
@@ -71,6 +78,9 @@ class AppConfig {
     this.startMinimized = false,
     this.autoLaunch = false,
     this.hotkey = 'ctrl+shift+space',
+    this.ttsVoice = '',
+    this.ttsRatePercent = 0,
+    this.ttsPitchHz = 0,
     String? backendUrl,
   })  : backendUrl = (backendUrl == null || backendUrl.trim().isEmpty)
             ? defaultBackendUrl
@@ -111,6 +121,9 @@ class AppConfig {
         'autoLaunch': autoLaunch,
         'hotkey': hotkey,
         'backendUrl': backendUrl,
+        'ttsVoice': ttsVoice,
+        'ttsRatePercent': ttsRatePercent,
+        'ttsPitchHz': ttsPitchHz,
       };
 
   Map<String, dynamic> toSafeJson() => toJson();
@@ -141,6 +154,9 @@ class AppConfig {
       autoLaunch: j['autoLaunch'] ?? false,
       hotkey: j['hotkey'] ?? 'ctrl+shift+space',
       backendUrl: j['backendUrl']?.toString(),
+      ttsVoice: j['ttsVoice']?.toString() ?? '',
+      ttsRatePercent: _intValue(j['ttsRatePercent'], fallback: 0),
+      ttsPitchHz: _intValue(j['ttsPitchHz'], fallback: 0),
     );
   }
 

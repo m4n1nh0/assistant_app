@@ -39,6 +39,7 @@ dependencies:
   uuid: ^4.3.3
   collection: ^1.18.0
   record: ^6.0.0
+  edge_tts: ^0.1.5
 
 dev_dependencies:
   flutter_test:

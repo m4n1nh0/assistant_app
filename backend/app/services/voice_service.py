@@ -11,12 +11,46 @@ settings = get_settings()
 _whisper_model = None
 
 
+def _register_cuda_libraries() -> None:
+    """Puts the pip-installed CUDA DLLs on PATH so CTranslate2 can find them.
+
+    On Windows the model loads fine without this, but the first transcribe()
+    dies with "cublas64_12.dll is not found" — CTranslate2 resolves those
+    libraries through PATH, and the nvidia-* wheels install them inside
+    site-packages instead.
+    """
+    if os.name != "nt":
+        return
+
+    import glob
+    import site
+
+    roots = list(site.getsitepackages())
+    user_site = site.getusersitepackages()
+    if isinstance(user_site, str):
+        roots.append(user_site)
+
+    found = set()
+    for root in roots:
+        pattern = os.path.join(root, "nvidia", "*", "bin", "*.dll")
+        found.update(os.path.dirname(dll) for dll in glob.glob(pattern))
+
+    missing = [d for d in sorted(found) if d not in os.environ.get("PATH", "")]
+    if missing:
+        os.environ["PATH"] = os.pathsep.join(missing + [os.environ.get("PATH", "")])
+
+
 def _load_whisper():
     global _whisper_model
     if _whisper_model is None:
         try:
+            if settings.whisper_device.strip().lower().startswith("cuda"):
+                _register_cuda_libraries()
             from faster_whisper import WhisperModel
-            logger.info(f"Loading Whisper model: {settings.whisper_model}")
+            logger.info(
+                f"Loading Whisper model: {settings.whisper_model} "
+                f"({settings.whisper_device}/{settings.whisper_compute_type})"
+            )
             _whisper_model = WhisperModel(
                 settings.whisper_model,
                 device=settings.whisper_device,
@@ -68,6 +102,9 @@ def _sync_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
             vad_filter=settings.whisper_vad_filter,
             vad_parameters=vad_parameters if settings.whisper_vad_filter else None,
             condition_on_previous_text=False,
+            # Mesma dica de contexto usada no caminho da OpenAI: ancora nomes de
+            # apps e palavras de ativacao que o modelo costuma transcrever errado.
+            initial_prompt=_stt_prompt(whisper_language or "pt"),
             temperature=0.0,
             no_speech_threshold=0.55,
             compression_ratio_threshold=2.4,
@@ -157,7 +194,7 @@ def _sync_openai_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
         }
         if whisper_language:
             kwargs["language"] = whisper_language
-            kwargs["prompt"] = _openai_stt_prompt(whisper_language)
+            kwargs["prompt"] = _stt_prompt(whisper_language)
 
         with kwargs["file"] as audio_file:
             kwargs["file"] = audio_file
@@ -247,10 +284,26 @@ def _openai_tts_instructions(language: str) -> str:
     )
 
 
-def _openai_stt_prompt(language: str) -> str:
+def _stt_prompt(language: str) -> str:
+    """Ancora o vocabulario que o usuario realmente fala com a assistente.
+
+    Sem essa lista, os termos tecnicos em ingles sao os que mais erram no meio
+    de uma frase em portugues: "vscode" vira "fscode"/"Viscode" e "backend"
+    vira "backing". Citar as palavras exatas aqui corrige a maioria desses
+    casos, e pesa mais do que aumentar o modelo.
+    """
     if language == "pt":
         return (
-            "Transcreva em portugues brasileiro. Preserve nomes de apps, comandos "
-            "curtos, pontuacao simples e palavras de ativacao como Dani ou Dany."
+            "Transcreva em portugues brasileiro comandos falados para um "
+            "assistente de desenvolvimento. Vocabulario recorrente: VS Code, "
+            "vscode, PyCharm, backend, frontend, deploy, commit, branch, "
+            "Railway, Docker, Redis, endpoint, log, script, workspace, "
+            "assistant app. Palavras de ativacao: Dani, Dany. "
+            "Use pontuacao simples e nao traduza nomes de programas."
         )
-    return "Transcribe clearly and preserve short app names, commands, and wake words."
+    return (
+        "Transcribe spoken commands for a development assistant. Recurring "
+        "vocabulary: VS Code, PyCharm, backend, frontend, deploy, commit, "
+        "branch, Railway, Docker, Redis, endpoint, log, script, workspace. "
+        "Wake words: Dani, Dany. Keep program names untranslated."
+    )

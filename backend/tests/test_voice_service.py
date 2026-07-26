@@ -52,6 +52,45 @@ def test_sync_transcribe_uses_vad_and_beam_search(monkeypatch):
     assert seen["kwargs"]["vad_filter"] is True
     assert seen["kwargs"]["vad_parameters"] == {"min_silence_duration_ms": 450}
     assert seen["kwargs"]["condition_on_previous_text"] is False
+    # O prompt de vocabulario tambem vale para o Whisper local, nao so para a
+    # OpenAI: sem ele, termos como "vscode" saem transcritos errado.
+    assert "vscode" in seen["kwargs"]["initial_prompt"].lower()
+
+
+def test_stt_prompt_anchors_technical_vocabulary():
+    pt = voice_service._stt_prompt("pt")
+    for termo in ("VS Code", "backend", "Railway", "Docker", "Dani"):
+        assert termo in pt
+
+    en = voice_service._stt_prompt("en")
+    assert "VS Code" in en
+
+
+def test_cuda_libraries_are_registered_only_for_cuda_device(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(
+        voice_service, "_register_cuda_libraries", lambda: chamadas.append(True)
+    )
+    monkeypatch.setattr(voice_service, "_whisper_model", None)
+
+    class FakeWhisper:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=FakeWhisper),
+    )
+
+    monkeypatch.setattr(voice_service.settings, "whisper_device", "cpu")
+    voice_service._load_whisper()
+    assert chamadas == []
+
+    monkeypatch.setattr(voice_service, "_whisper_model", None)
+    monkeypatch.setattr(voice_service.settings, "whisper_device", "cuda")
+    voice_service._load_whisper()
+    assert chamadas == [True]
 
 
 def test_sync_tts_prefers_openai_voice_when_configured(monkeypatch):
