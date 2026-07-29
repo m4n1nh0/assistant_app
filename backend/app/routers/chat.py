@@ -7,21 +7,11 @@ from datetime import datetime, timezone
 from ..core.database import AsyncSessionLocal, ConversationModel
 from ..core.security import get_current_user
 from ..core.config import get_settings
-from ..models.schemas import ChatRequest, ChatResponse, LLMResponse, ResponseModeEnum
+from ..models.schemas import ChatRequest, ChatResponse, LLMResponse
 from ..services import llm_service
-from ..services.computer_action_service import build_computer_action
-from ..services.coding_action_service import build_coding_action
+from ..services.chat_graph_service import run_chat_graph
 from ..services.llm_status_service import get_llm_statuses, get_ready_llms
 from ..services.llm_routing_service import pick_auto_llm
-from ..services.launcher_service import (
-    build_auto_registration_from_launch,
-    build_launch_action,
-    build_launch_context,
-    build_project_open_action,
-    build_registration_context,
-    build_shortcut_registration_action,
-    find_shortcut_in_message,
-)
 
 router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
 settings = get_settings()
@@ -82,35 +72,6 @@ async def _llm_unavailable_response(llm: str | None = None) -> LLMResponse:
     )
 
 
-def _registration_ack_response(action) -> LLMResponse:
-    target_text = "encontrando o app no computador" if not action.target else "usando o destino informado"
-    return LLMResponse(
-        llm="backend",
-        content=f"Vou cadastrar o atalho {action.name} {target_text}.",
-    )
-
-
-def _project_open_ack_response(action) -> LLMResponse:
-    return LLMResponse(
-        llm="backend",
-        content=f"Vou abrir {action.name}.",
-    )
-
-
-def _computer_action_ack_response(action: dict) -> LLMResponse:
-    return LLMResponse(
-        llm="backend",
-        content=f"Vou executar {action['name']} no computador e analisar o resultado.",
-    )
-
-
-def _coding_action_ack_response(action: dict) -> LLMResponse:
-    return LLMResponse(
-        llm="backend",
-        content=f"Vou pedir para a interface inspecionar o workspace local: {action['name']}.",
-    )
-
-
 @router.post("/", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
@@ -121,77 +82,17 @@ async def chat(
     active = await get_ready_llms()
 
     tutor_id = cfg.get("tutor_id") or "default"
-    action = None
-    computer_action = build_computer_action(body.message)
-    coding_action = build_coding_action(body.message)
-    project_action = build_project_open_action(body.message)
-    registration_action = build_shortcut_registration_action(body.message)
-    if computer_action:
-        action = computer_action
-    elif coding_action:
-        action = coding_action
-    elif project_action:
-        action = project_action
-    elif registration_action:
-        action = registration_action
-        sys_prompt += build_registration_context(registration_action)
-    else:
-        try:
-            async with AsyncSessionLocal() as db:
-                shortcut = await find_shortcut_in_message(body.message, tutor_id, db)
-            if shortcut:
-                action = build_launch_action(shortcut)
-                sys_prompt += build_launch_context(shortcut)
-            else:
-                # Launch intent but no registered shortcut → offer auto-registration
-                auto_reg = build_auto_registration_from_launch(body.message)
-                if auto_reg:
-                    action = auto_reg
-                    registration_action = auto_reg
-                    sys_prompt += build_registration_context(auto_reg)
-        except Exception:
-            pass
-
-    if computer_action:
-        responses = [_computer_action_ack_response(computer_action)]
-    elif coding_action:
-        responses = [_coding_action_ack_response(coding_action)]
-    elif project_action:
-        responses = [_project_open_ack_response(project_action)]
-    elif registration_action:
-        responses = [_registration_ack_response(registration_action)]
-    else:
-        match body.mode:
-            case ResponseModeEnum.multi:
-                if body.llm and body.llm.value not in active:
-                    responses = [await _llm_unavailable_response(body.llm.value)]
-                else:
-                    llms = [body.llm.value] if body.llm else active
-                    if not llms:
-                        responses = [await _llm_unavailable_response()]
-                    else:
-                        responses = await llm_service.dispatch_multi(llms, body.message, body.history, sys_prompt)
-
-            case ResponseModeEnum.chain:
-                if body.llm and body.llm.value not in active:
-                    responses = [await _llm_unavailable_response(body.llm.value)]
-                else:
-                    llms = [body.llm.value] if body.llm else active
-                    if not llms:
-                        responses = [await _llm_unavailable_response()]
-                    else:
-                        resp = await llm_service.dispatch_chain(llms, body.message, body.history, sys_prompt)
-                        responses = [resp]
-
-            case _:
-                llm = body.llm.value if body.llm else (await pick_auto_llm(active) if active else "")
-                if not llm:
-                    responses = [await _llm_unavailable_response()]
-                elif llm not in active:
-                    responses = [await _llm_unavailable_response(llm)]
-                else:
-                    resp = await llm_service.dispatch_single(llm, body.message, body.history, sys_prompt)
-                    responses = [resp]
+    graph_result = await run_chat_graph(
+        message=body.message,
+        history=body.history,
+        mode=body.mode,
+        requested_llm=body.llm.value if body.llm else None,
+        active_llms=active,
+        system_prompt=sys_prompt,
+        tutor_id=tutor_id,
+    )
+    responses = graph_result["responses"]
+    action = graph_result.get("action")
 
     session_id = body.session_id
     try:

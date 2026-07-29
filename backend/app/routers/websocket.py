@@ -11,6 +11,7 @@ from ..core.security import resolve_token_user
 from ..models.schemas import ResponseModeEnum, Message
 from ..services import llm_service, notification_service
 from ..services.calendar_service import fetch_all_account_events
+from ..services.chat_graph_service import run_chat_graph
 from ..services.llm_status_service import get_ready_llms
 from ..services.llm_routing_service import pick_auto_llm
 from ..services.runtime_config_service import load_notif_config
@@ -180,7 +181,11 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
 
             match msg_type:
                 case "chat":
-                    await _handle_chat(connection_id, payload)
+                    await _handle_chat(
+                        connection_id,
+                        payload,
+                        user.get("tutor_id") or "default",
+                    )
                 case "chat_stream":
                     await _handle_chat_stream(connection_id, payload)
                 case "voice_transcribe":
@@ -230,7 +235,11 @@ def _parse_history(raw: list) -> list[Message]:
     return msgs
 
 
-async def _handle_chat(session_id: str, payload: dict):
+async def _handle_chat(
+    session_id: str,
+    payload: dict,
+    tutor_id: str = "default",
+):
     message  = payload.get("message", "").strip()
     mode_str = payload.get("mode", "single")
     llm_id   = payload.get("llm")
@@ -246,24 +255,29 @@ async def _handle_chat(session_id: str, payload: dict):
 
     try:
         mode = ResponseModeEnum(mode_str)
-        match mode:
-            case ResponseModeEnum.multi:
-                llms = [llm_id] if llm_id else active
-                responses = await llm_service.dispatch_multi(llms, message, history, sys_p)
-            case ResponseModeEnum.chain:
-                llms = [llm_id] if llm_id else active
-                r = await llm_service.dispatch_chain(llms, message, history, sys_p)
-                responses = [r]
-            case _:
-                llm = llm_id or (await pick_auto_llm(active) if active else "claude")
-                r = await llm_service.dispatch_single(llm, message, history, sys_p)
-                responses = [r]
+        graph_result = await run_chat_graph(
+            message=message,
+            history=history,
+            mode=mode,
+            requested_llm=llm_id,
+            active_llms=active,
+            system_prompt=sys_p,
+            tutor_id=tutor_id,
+        )
+        responses = graph_result["responses"]
+        action = graph_result.get("action")
+        action_payload = (
+            action.model_dump()
+            if hasattr(action, "model_dump")
+            else action
+        )
 
         await manager.send(session_id, {
             "type": "chat_response",
             "payload": {
                 "mode": mode_str,
                 "responses": [r.model_dump() for r in responses],
+                "action": action_payload,
             },
         })
     except Exception as e:

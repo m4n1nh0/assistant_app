@@ -54,6 +54,17 @@ imagem do Ollama baixa `llama3.2:3b`; mantenha `OLLAMA_MODEL=llama3.2:3b` no
 
 ---
 
+## Orquestracao De Chat
+
+O chat REST e o chat WebSocket usam um `StateGraph` assincrono definido em
+`app/services/chat_graph_service.py`. O workflow detecta acoes locais, resolve
+atalhos e escolhe entre despacho `single`, `multi` e `chain`. Os nos chamam a
+Service Layer existente, mantendo banco, provedores e execucao local fora do
+grafo. O SSE usa o caminho direto de streaming para entregar cada token assim
+que ele chega.
+
+---
+
 ## Provedores Locais De LLM
 
 O backend suporta dois provedores locais independentes:
@@ -434,6 +445,7 @@ backend/
 │   ├── models/
 │   │   └── schemas.py       # Pydantic schemas (request/response)
 │   ├── services/
+│   │   ├── chat_graph_service.py  # workflow LangGraph do chat
 │   │   ├── llm_service.py   # chamadas e streaming dos provedores de LLM
 │   │   ├── llm_status_service.py  # disponibilidade e modelos dos LLMs
 │   │   ├── calendar_service.py  # Google + Microsoft OAuth

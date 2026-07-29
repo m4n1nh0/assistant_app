@@ -60,7 +60,9 @@ flowchart LR
     ApiClient --> FastAPI[Backend FastAPI]
 
     FastAPI --> Routers[Routers REST / SSE / WebSocket]
+    Routers --> ChatGraph[LangGraph Chat Workflow]
     Routers --> Services[Service Layer]
+    ChatGraph --> Services
     Services --> Models[Schemas Pydantic]
     Services --> DB[(MySQL)]
     Services --> Vector[(Qdrant)]
@@ -81,6 +83,9 @@ flowchart LR
   configuracao inicial, captura de contexto local, atalhos, voz e preferencias.
 - **Backend API**: FastAPI com REST, SSE e WebSocket para chat, historico,
   agenda, notificacoes, automacoes, memoria e acoes locais.
+- **Orquestracao de chat**: LangGraph torna explicitas a deteccao de acoes, a
+  resolucao de atalhos e as rotas single, multi e chain sem alterar o contrato
+  consumido pela interface.
 - **Banco relacional**: MySQL via SQLAlchemy async para conversas,
   configuracoes, perfis, atalhos, auditoria e automacoes aprovadas.
 - **Memoria vetorial**: Qdrant para memorias revisadas e aprovadas.
@@ -202,6 +207,30 @@ Padroes usados na interface:
 
 Esse desenho evita colocar regra de negocio nos endpoints ou nos widgets,
 mantendo integracoes e fluxos testaveis em servicos dedicados.
+
+### Workflow De Chat Com LangGraph
+
+As requisicoes completas de chat, tanto REST quanto WebSocket, passam pelo
+grafo compilado em `backend/app/services/chat_graph_service.py`:
+
+```mermaid
+flowchart TD
+    Start([START]) --> Detect[Detectar acao local]
+    Detect --> Shortcut[Resolver atalho do usuario]
+    Shortcut --> Route{Rota}
+    Route -->|acao local| Ack[Confirmar acao para a interface]
+    Route -->|single| Single[Despachar um provedor]
+    Route -->|multi| Multi[Despachar provedores em paralelo]
+    Route -->|chain| Chain[Despachar provedores em cadeia]
+    Ack --> End([END])
+    Single --> End
+    Multi --> End
+    Chain --> End
+```
+
+O grafo orquestra os servicos existentes; ele nao acessa diretamente o
+computador nem substitui as confirmacoes da interface. O endpoint SSE continua
+com despacho direto para preservar o streaming incremental de tokens.
 
 ## Configuracao Segura
 
