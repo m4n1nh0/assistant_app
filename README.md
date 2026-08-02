@@ -62,6 +62,8 @@ flowchart LR
     FastAPI --> Routers[Routers REST / SSE / WebSocket]
     Routers --> ChatGraph[LangGraph Chat Workflow]
     Routers --> Services[Service Layer]
+    ChatGraph --> AgentLayer[LangChain Models / Tools / Structured Output]
+    AgentLayer --> Services
     ChatGraph --> Services
     Services --> Models[Schemas Pydantic]
     Services --> DB[(MySQL)]
@@ -79,13 +81,18 @@ flowchart LR
 
 ### Componentes
 
-- **Interface desktop**: Flutter para Windows, macOS e Linux. Cuida de chat,
-  configuracao inicial, captura de contexto local, atalhos, voz e preferencias.
+- **Interface desktop**: Flutter Desktop, com runner Windows versionado neste
+  repositorio. Cuida de chat, configuracao inicial, captura de contexto local,
+  atalhos, voz e preferencias.
 - **Backend API**: FastAPI com REST, SSE e WebSocket para chat, historico,
   agenda, notificacoes, automacoes, memoria e acoes locais.
 - **Orquestracao de chat**: LangGraph torna explicitas a deteccao de acoes, a
   resolucao de atalhos e as rotas single, multi e chain sem alterar o contrato
   consumido pela interface.
+- **Adaptacao LangChain**: padroniza os provedores existentes, expoe as
+  propostas de acoes como tools tipadas e valida as respostas internas com
+  modelos Pydantic. A selecao das tools e deterministica; nao ha execucao
+  autonoma de comandos pelo backend.
 - **Banco relacional**: MySQL via SQLAlchemy async para conversas,
   configuracoes, perfis, atalhos, auditoria e automacoes aprovadas.
 - **Memoria vetorial**: Qdrant para memorias revisadas e aprovadas.
@@ -208,7 +215,7 @@ Padroes usados na interface:
 Esse desenho evita colocar regra de negocio nos endpoints ou nos widgets,
 mantendo integracoes e fluxos testaveis em servicos dedicados.
 
-### Workflow De Chat Com LangGraph
+### Workflow De Chat Com LangChain E LangGraph
 
 As requisicoes completas de chat, tanto REST quanto WebSocket, passam pelo
 grafo compilado em `backend/app/services/chat_graph_service.py`:
@@ -229,8 +236,19 @@ flowchart TD
 ```
 
 O grafo orquestra os servicos existentes; ele nao acessa diretamente o
-computador nem substitui as confirmacoes da interface. O endpoint SSE continua
-com despacho direto para preservar o streaming incremental de tokens.
+computador nem substitui as confirmacoes da interface. O endpoint SSE e a
+mensagem WebSocket `chat_stream` continuam com despacho direto para preservar
+o streaming incremental de tokens.
+
+O LangGraph usa duas integrações LangChain:
+
+- `backend/app/services/assistant_tools.py` registra tools que apenas propoem
+  diagnosticos, scripts, inspecao de workspace, abertura de projeto e cadastro
+  de atalhos. A execucao continua dependendo da confirmacao da interface.
+- `backend/app/services/langchain_agent_service.py` adapta todos os provedores
+  atuais para `BaseChatModel`, converte o historico em mensagens LangChain e
+  transforma cada retorno em uma resposta Pydantic estruturada antes de
+  devolve-lo ao grafo.
 
 ## Configuracao Segura
 
@@ -293,12 +311,26 @@ legados são vinculados automaticamente ao admin existente.
 
 ## Execucao Local
 
+Requisitos principais:
+
+- Python e `pip` para o backend;
+- Docker com Compose para MySQL, Qdrant, Redis e Ollama;
+- Flutter com suporte a Windows Desktop para a interface versionada.
+
 ### Backend
 
+Na raiz do projeto, inicie primeiro a infraestrutura:
+
 ```bash
+docker compose up -d mysql qdrant redis ollama
+```
+
+Depois, em PowerShell:
+
+```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python run.py
 ```
@@ -313,14 +345,17 @@ flutter pub get
 flutter run -d windows
 ```
 
-Para macOS ou Linux, troque o device para `macos` ou `linux`.
+O checkout atual inclui apenas o runner Windows. Para macOS ou Linux, gere o
+runner correspondente com o Flutter no sistema de destino e valide os serviços
+locais específicos da plataforma; consulte o
+[guia da interface](interface/README.md#outras-plataformas).
 
 ### Docker
 
 Na raiz do projeto:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 O compose sobe MySQL, Qdrant, Redis, Ollama e backend. A interface Flutter
@@ -410,13 +445,15 @@ e [API OpenAI-compatible do LocalAI](https://localai.io/basics/getting_started/i
 Backend:
 
 ```bash
-.\.venv\Scripts\python.exe -m pytest backend\tests
+cd backend
+python -m pytest tests
 ```
 
 Interface:
 
 ```bash
 cd interface
+dart format lib test
 flutter analyze
 flutter test
 ```

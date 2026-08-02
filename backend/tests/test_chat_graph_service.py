@@ -47,7 +47,7 @@ def test_computer_action_short_circuits_llm_dispatch(monkeypatch):
         raise AssertionError("LLM dispatch should not run for a local action")
 
     monkeypatch.setattr(
-        chat_graph_service.llm_service,
+        chat_graph_service.langchain_agent_service,
         "dispatch_single",
         fail_dispatch,
     )
@@ -61,6 +61,18 @@ def test_computer_action_short_circuits_llm_dispatch(monkeypatch):
     assert result["action"]["action_id"] == "network_diagnostics"
     assert result["responses"][0].llm == "backend"
     assert "Diagnostico de rede" in result["responses"][0].content
+
+
+def test_registration_tool_routes_structured_action_to_interface():
+    result = run_graph(
+        message="Cadastre o Notepad como bloco",
+        active_llms=["gpt"],
+    )
+
+    assert result["action_kind"] == "registration"
+    assert result["action"]["type"] == "register_shortcut"
+    assert result["responses"][0].llm == "backend"
+    assert "cadastrar o atalho" in result["responses"][0].content
 
 
 def test_single_route_chooses_provider_and_dispatches(monkeypatch):
@@ -80,7 +92,11 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
     monkeypatch.setattr(chat_graph_service, "pick_auto_llm", pick_provider)
-    monkeypatch.setattr(chat_graph_service.llm_service, "dispatch_single", dispatch)
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_single",
+        dispatch,
+    )
 
     result = run_graph(active_llms=["llama", "gpt"])
 
@@ -103,7 +119,11 @@ def test_multi_route_dispatches_all_active_providers(monkeypatch):
         ]
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
-    monkeypatch.setattr(chat_graph_service.llm_service, "dispatch_multi", dispatch)
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_multi",
+        dispatch,
+    )
 
     result = run_graph(
         mode=ResponseModeEnum.multi,
@@ -125,7 +145,11 @@ def test_chain_route_dispatches_providers_in_order(monkeypatch):
         return LLMResponse(llm="gpt", content="Resposta refinada")
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
-    monkeypatch.setattr(chat_graph_service.llm_service, "dispatch_chain", dispatch)
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_chain",
+        dispatch,
+    )
 
     result = run_graph(
         mode=ResponseModeEnum.chain,
@@ -153,7 +177,11 @@ def test_launch_action_keeps_llm_response_and_injects_context(monkeypatch):
         return LLMResponse(llm=llm, content="Abrindo.")
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", find_shortcut)
-    monkeypatch.setattr(chat_graph_service.llm_service, "dispatch_single", dispatch)
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_single",
+        dispatch,
+    )
 
     result = run_graph(
         message="Abra o navegador",

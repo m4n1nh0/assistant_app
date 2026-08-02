@@ -1,21 +1,23 @@
 # Interface Desktop
 
-Aplicacao Flutter Desktop do Assistente. Esta camada cuida da janela principal,
-configuracao inicial, conversa, autenticacao local, atalhos, notificacoes e
-visualizacao de agenda.
+Aplicação Flutter Desktop do Assistente. Esta camada cuida da janela principal,
+configuração inicial, conversa, autenticação, atalhos, ações locais,
+notificações e visualização de agenda. O repositório versiona atualmente o
+runner Windows.
 
 ## Requisitos
 
-- Flutter com suporte a desktop habilitado
-- Dart SDK incluido na instalacao do Flutter
+- Flutter com suporte a Windows Desktop habilitado
+- Dart SDK `>=3.2.0 <4.0.0`, incluído na instalação do Flutter
+- Toolchain de desenvolvimento desktop do Windows reconhecida por
+  `flutter doctor`
 - Backend em execucao, por padrao em `http://localhost:8000`
 
-Para habilitar desktop:
+Para habilitar o alvo versionado:
 
 ```bash
 flutter config --enable-windows-desktop
-flutter config --enable-macos-desktop
-flutter config --enable-linux-desktop
+flutter doctor
 ```
 
 ## Instalar Dependencias
@@ -27,23 +29,22 @@ flutter pub get
 
 ## Executar
 
-Windows:
-
 ```bash
 flutter run -d windows
 ```
 
-macOS:
+### Outras Plataformas
+
+O código Dart foi organizado para desktop, mas os runners `macos/` e `linux/`
+não estão versionados. No sistema de destino, eles podem ser gerados a partir
+de `interface/`:
 
 ```bash
-flutter run -d macos
+flutter create --platforms=macos,linux .
 ```
 
-Linux:
-
-```bash
-flutter run -d linux
-```
+Depois, valide a disponibilidade dos plugins e dos serviços locais usados pela
+aplicação antes de distribuir o build nessas plataformas.
 
 ## Backend
 
@@ -70,7 +71,7 @@ python run.py
 Ou, pela raiz do projeto:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Provedores De IA
@@ -93,9 +94,10 @@ para ajudar no diagnóstico.
 
 Em um deploy Railway, somente o backend acessa endereços como
 `localai.railway.internal`. Nunca use esse endereço como
-`APP_BACKEND_HOST`: a interface desktop deve apontar para um endpoint acessível
+`APP_BACKEND_URL`: a interface desktop deve apontar para a URL pública completa
 do backend e não consegue resolver diretamente o domínio privado da Railway.
-O cliente atual monta esse endpoint como `http://<host>:<porta>`.
+URLs sem esquema recebem `http://`; URLs HTTPS geram automaticamente a conexão
+WebSocket equivalente em `wss://`.
 Consulte o [README do backend](../backend/README.md#railway) para as variáveis
 completas.
 
@@ -123,6 +125,21 @@ legados são migrados somente para o primeiro admin.
 As credenciais e URLs dos provedores de LLM são configurações de
 infraestrutura do backend e devem ser fornecidas por variáveis de ambiente.
 
+## Ações Locais E Segurança
+
+O backend pode devolver propostas tipadas para diagnósticos, scripts, inspeção
+de workspace, abertura de projetos e cadastro de atalhos. Essas propostas não
+são executadas no servidor. A interface:
+
+1. interpreta o campo `action` da resposta do chat;
+2. pede confirmação quando a ação exige autorização;
+3. executa com os serviços locais apropriados;
+4. devolve ao chat somente o resultado necessário para análise.
+
+Scripts de risco alto permanecem bloqueados até autorização explícita. Os
+snippets cadastrados no backend são isolados por conta, enquanto a execução
+ocorre no computador em que a interface está aberta.
+
 ## Estrutura
 
 ```text
@@ -142,8 +159,13 @@ interface/
 │   │   ├── config_screen.dart
 │   │   └── main_screen.dart
 │   ├── services/
-│   │   ├── api_service.dart
-│   │   └── storage_service.dart
+│   │   ├── api_service.dart                 # REST, SSE e WebSocket
+│   │   ├── storage_service.dart             # Hive e escopo por conta
+│   │   ├── local_computer_action_service.dart
+│   │   ├── local_workspace_service.dart
+│   │   ├── local_script_service.dart
+│   │   ├── project_discovery_service.dart
+│   │   └── external_launcher_service.dart
 │   ├── utils/
 │   │   └── theme.dart
 │   └── widgets/
@@ -158,7 +180,7 @@ interface/
 ## Verificacao
 
 ```bash
-dart format lib
+dart format lib test
 flutter analyze
 flutter test
 ```

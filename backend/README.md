@@ -1,7 +1,6 @@
-
 # Backend — FastAPI
 
-API REST + WebSocket — Aplicativo de assistente pessoal.
+API REST, SSE e WebSocket do Assistente Desktop.
 
 ---
 
@@ -27,7 +26,10 @@ python run.py
 ```
 
 
-Acesse: http://localhost:8000/docs
+Acesse a documentação OpenAPI em `http://localhost:8000/docs`. Para os
+recursos completos, mantenha MySQL, Qdrant e Redis disponíveis; o backend
+continua iniciando em modo degradado quando essas dependências opcionais estão
+indisponíveis, exceto quando um `DATABASE_SEED` foi solicitado.
 
 ---
 
@@ -35,13 +37,13 @@ Acesse: http://localhost:8000/docs
 
 ```bash
 # Na raiz do projeto
-docker-compose up -d
+docker compose up -d
 
 # Ver logs
-docker-compose logs -f backend
+docker compose logs -f backend
 
 # Parar
-docker-compose down
+docker compose down
 ```
 
 O ambiente Docker sobe cinco serviços: backend, MySQL, Qdrant, Redis e Ollama.
@@ -54,14 +56,39 @@ imagem do Ollama baixa `llama3.2:3b`; mantenha `OLLAMA_MODEL=llama3.2:3b` no
 
 ---
 
-## Orquestracao De Chat
+## Orquestração De Chat
 
-O chat REST e o chat WebSocket usam um `StateGraph` assincrono definido em
-`app/services/chat_graph_service.py`. O workflow detecta acoes locais, resolve
-atalhos e escolhe entre despacho `single`, `multi` e `chain`. Os nos chamam a
-Service Layer existente, mantendo banco, provedores e execucao local fora do
-grafo. O SSE usa o caminho direto de streaming para entregar cada token assim
+O chat completo via REST (`POST /chat/`) e WebSocket (`type: chat`) usa um
+`StateGraph` assíncrono definido em `app/services/chat_graph_service.py`. O
+workflow detecta ações locais, resolve atalhos e escolhe entre despacho
+`single`, `multi` e `chain`. Os nós chamam a Service Layer existente, mantendo
+banco, provedores e execução local fora do grafo. O SSE (`POST /chat/stream`) e
+o WebSocket `chat_stream` usam o caminho direto para entregar cada token assim
 que ele chega.
+
+As ações detectáveis são `StructuredTool`s do LangChain registradas em
+`app/services/assistant_tools.py`: diagnóstico do computador, execução de
+script, inspeção de workspace, abertura de projeto e cadastro de atalho. A
+seleção dessas tools é determinística e elas apenas produzem propostas tipadas;
+não existe um agente executando comandos de forma autônoma no backend. A
+interface continua responsável por confirmar e executar qualquer ação local.
+
+Os provedores passam por `ProviderChatModel`, em
+`app/services/langchain_agent_service.py`. Esse adaptador converte o histórico
+para mensagens LangChain e valida a saída como `StructuredModelResponse` antes
+de devolvê-la no contrato público `LLMResponse`.
+
+| Rota do grafo | Comportamento |
+|---------------|--------------|
+| ação local | Devolve uma proposta `computer_action`, `coding_action`, `launch` ou `register_shortcut` no campo `action` |
+| `single` | Usa o provedor solicitado ou escolhe automaticamente um disponível |
+| `multi` | Consulta em paralelo todos os provedores disponíveis, ou apenas o solicitado |
+| `chain` | Passa a resposta de cada provedor ao próximo para refinamento |
+
+Diagnóstico, script, workspace, projeto e cadastro encerram o grafo com uma
+confirmação produzida pelo próprio backend. Um atalho de abertura já cadastrado
+mantém a proposta no campo `action` e segue também para o LLM, que formula a
+resposta ao usuário.
 
 ---
 
@@ -288,27 +315,34 @@ depurar 500s em produção sem precisar reproduzir localmente.
 
 ## Endpoints REST
 
+Salvo quando indicado como público, os endpoints exigem
+`Authorization: Bearer <token>`. A especificação completa, com schemas de
+entrada e saída, fica disponível em `/docs` e `/openapi.json`.
+
 ### Health
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| GET | `/` | Info do servidor |
-| GET | `/health` | Status completo, incluindo disponibilidade dos LLMs |
-| GET | `/health/live` | Liveness check sem consultar dependências |
+| GET | `/` | Público: info do servidor |
+| GET | `/health` | Público: status completo, incluindo disponibilidade dos LLMs |
+| GET | `/health/live` | Liveness público, sem consultar dependências |
 | GET | `/system/storage/status` | Status do MySQL e Qdrant |
 
 ### Auth
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| GET | `/auth/status` | Estado do primeiro cadastro e entrega do convite |
-| POST | `/auth/registration-token` | Enviar token único ao e-mail administrativo |
-| POST | `/auth/register` | Criar o primeiro admin ou uma conta convidada |
-| POST | `/auth/login` | Autenticar e obter JWT |
+| GET | `/auth/status` | Público: consultar o estado do primeiro cadastro |
+| POST | `/auth/registration-token` | Público: enviar token único ao e-mail administrativo |
+| POST | `/auth/register` | Público: criar o primeiro admin ou uma conta convidada |
+| POST | `/auth/login` | Público: autenticar e obter JWT |
 | GET | `/auth/me` | Consultar a sessão autenticada |
 | PUT | `/auth/password` | Alterar a senha da conta |
 | POST | `/auth/invitations` | Admin: enviar convite individual por e-mail |
 | GET | `/auth/users` | Admin: listar contas cadastradas |
 
 ### Chat
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/chat/` | Conversa completa (single/multi/chain) |
@@ -316,29 +350,44 @@ depurar 500s em produção sem precisar reproduzir localmente.
 | GET | `/chat/history/{session_id}` | Histórico de conversa |
 | DELETE | `/chat/history/{session_id}` | Limpar histórico |
 
-### Calendar
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| GET | `/calendar/events` | Eventos dos próximos 7 dias |
-| GET | `/calendar/google/auth-url` | URL OAuth Google |
-| POST | `/calendar/google/exchange?code=` | Trocar código por refresh token |
-| GET | `/calendar/microsoft/auth-url` | URL OAuth Microsoft |
-| POST | `/calendar/microsoft/exchange?code=` | Trocar código Microsoft |
+### Calendário
 
-### Notifications
+Nas rotas abreviadas abaixo, `{provider}` representa os endpoints concretos
+`google` e `microsoft`.
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
+| GET | `/calendar/events` | Listar eventos das contas conectadas |
+| GET | `/calendar/status` | Consultar credenciais e contas configuradas, sem expor segredos |
+| GET | `/calendar/accounts` | Listar contas Google e Microsoft, inclusive conexões pendentes |
+| PUT | `/calendar/{provider}/oauth-app` | Salvar as credenciais do aplicativo OAuth |
+| GET | `/calendar/{provider}/start` | Criar uma conexão usando as credenciais já salvas |
+| POST | `/calendar/{provider}/connect` | Salvar credenciais e iniciar uma conexão |
+| POST | `/calendar/{provider}/callback` | Trocar manualmente o código OAuth e persistir a conta |
+| GET | `/calendar/{provider}/oauth-callback` | Público: callback aberto pelo navegador |
+| GET | `/calendar/{provider}/auth-url` | Obter URL OAuth pelo fluxo de compatibilidade |
+| DELETE | `/calendar/{provider}/accounts/{account_id}` | Desconectar uma conta específica |
+| DELETE | `/calendar/{provider}/disconnect` | Desconectar todas as contas do provedor |
+
+### Notificações
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/notifications/config` | Consultar a configuração do usuário |
+| PUT | `/notifications/config` | Persistir configuração de Telegram e WhatsApp |
 | POST | `/notifications/send` | Enviar notificação |
 | POST | `/notifications/test/telegram` | Testar Telegram |
 | POST | `/notifications/test/whatsapp` | Testar WhatsApp |
 
-### Voice
+### Voz
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/voice/transcribe` | Upload de áudio → texto |
 | POST | `/voice/tts` | Texto → áudio MP3 |
 
 ### Tutor
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | PUT | `/tutor/` | Criar ou atualizar tutor e perfil |
@@ -346,7 +395,41 @@ depurar 500s em produção sem precisar reproduzir localmente.
 | PUT | `/tutor/{tutor_id}/settings/{key}` | Criar ou atualizar configuração |
 | GET | `/tutor/{tutor_id}/settings` | Listar configurações |
 
+O `tutor_id` efetivo é derivado da conta autenticada. Valores enviados pelo
+cliente não permitem acessar dados de outra conta.
+
+### Atalhos E Histórico De Aberturas
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/launcher/suggest-command?name=` | Sugerir o executável de um aplicativo |
+| POST | `/launcher/shortcuts` | Criar atalho de aplicativo, URL ou comando |
+| GET | `/launcher/shortcuts?tutor_id=` | Listar atalhos da conta autenticada |
+| PATCH | `/launcher/shortcuts/{shortcut_id}` | Atualizar atalho |
+| DELETE | `/launcher/shortcuts/{shortcut_id}` | Excluir atalho |
+| POST | `/launcher/shortcuts/{shortcut_id}/launched` | Registrar o resultado de uma tentativa de abertura |
+| GET | `/launcher/launches?tutor_id=` | Consultar histórico de aberturas |
+
+### Computador, Scripts E Contexto Do Desktop
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/computer/actions` | Listar ações locais reconhecidas |
+| POST | `/computer/actions/{action_id}/run` | Contrato reservado; responde `501`, pois a execução pertence à interface |
+| GET | `/computer/scripts/shells` | Listar shells reconhecidos |
+| GET/POST | `/computer/scripts` | Listar ou cadastrar snippets da conta |
+| PATCH/DELETE | `/computer/scripts/{script_id}` | Atualizar ou excluir um snippet |
+| POST | `/computer/scripts/run` | Contrato reservado; responde `501`, pois a execução pertence à interface |
+| GET | `/desktop/windows` | Listar janelas visíveis no host do backend |
+| GET | `/desktop/windows/{window_id}/context` | Extrair contexto textual de uma janela |
+
+As rotas `/computer` e `/desktop` aceitam somente clientes locais. Mesmo nesse
+caso, o backend não executa scripts nem ações: a interface desktop aplica as
+confirmações, limites e bloqueios de risco e devolve apenas o resultado para
+análise.
+
 ### Memória
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/memory/review` | Propor memória para aprovação |
@@ -357,6 +440,7 @@ depurar 500s em produção sem precisar reproduzir localmente.
 | GET | `/memory/search?tutor_id=&q=` | Buscar memórias aprovadas |
 
 ### Automações
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/automations/` | Aprovar automação |
@@ -369,7 +453,11 @@ depurar 500s em produção sem precisar reproduzir localmente.
 
 ## WebSocket
 
-Conecte em: `ws://localhost:8000/ws/{session_id}`
+Conecte em
+`ws://localhost:8000/ws/{session_id}?token=<JWT_URL_ENCODED>`. Em produção,
+use `wss://` quando o backend estiver publicado com HTTPS. O servidor valida o
+JWT antes de aceitar a conexão e fecha com o código `4401` quando o token é
+inválido ou está ausente.
 
 ### Mensagens enviadas pelo cliente
 
@@ -402,8 +490,11 @@ Conecte em: `ws://localhost:8000/ws/{session_id}`
 // Conexão estabelecida
 { "type": "status", "payload": { "connected": true, "active_llms": ["claude", "gpt"] } }
 
+// Provedores que serão consultados
+{ "type": "thinking", "payload": { "llms": ["claude"] } }
+
 // Resposta de chat
-{ "type": "chat_response", "payload": { "mode": "single", "responses": [{ "llm": "claude", "content": "...", "duration_ms": 1200 }] } }
+{ "type": "chat_response", "payload": { "mode": "single", "responses": [{ "llm": "claude", "content": "...", "duration_ms": 1200 }], "action": null } }
 
 // Chunk de streaming
 { "type": "stream_chunk", "payload": { "chunk": "Olá", "llm": "claude", "done": false } }
@@ -432,7 +523,7 @@ Conecte em: `ws://localhost:8000/ws/{session_id}`
 
 ## Estrutura
 
-```
+```text
 backend/
 ├── app/
 │   ├── main.py              # FastAPI app + lifespan
@@ -445,7 +536,9 @@ backend/
 │   ├── models/
 │   │   └── schemas.py       # Pydantic schemas (request/response)
 │   ├── services/
+│   │   ├── assistant_tools.py  # tools tipadas do LangChain
 │   │   ├── chat_graph_service.py  # workflow LangGraph do chat
+│   │   ├── langchain_agent_service.py  # modelos e respostas estruturadas
 │   │   ├── llm_service.py   # chamadas e streaming dos provedores de LLM
 │   │   ├── llm_status_service.py  # disponibilidade e modelos dos LLMs
 │   │   ├── calendar_service.py  # Google + Microsoft OAuth
@@ -453,12 +546,30 @@ backend/
 │   │   └── voice_service.py  # transcrição + síntese de voz
 │   ├── routers/
 │   │   ├── chat.py          # REST chat + SSE stream
+│   │   ├── computer.py      # catálogo de ações e snippets locais
+│   │   ├── desktop.py       # contexto de janelas do host local
+│   │   ├── launcher.py      # atalhos e auditoria de aberturas
+│   │   ├── memory.py        # revisão e busca de memórias
+│   │   ├── automations.py   # automações aprovadas e auditoria
 │   │   ├── websocket.py     # WebSocket hub
-│   │   └── routes.py        # auth, calendar, notif, voice, health
+│   │   └── routes.py        # auth, calendário, notificações, voz e health
 │   └── utils/
 │       └── scheduler.py     # APScheduler (calendar polling)
+├── tests/                   # testes unitários e de contratos
 ├── run.py                   # Entry point
+├── seed_dev.py              # seed de demonstração manual
 ├── requirements.txt
 ├── Dockerfile
 └── .env.example
 ```
+
+## Testes
+
+A partir de `backend/`, com o ambiente virtual ativado:
+
+```bash
+python -m pytest tests
+```
+
+Os testes isolam os provedores externos com mocks. Alguns testes de integração
+inicializam os contratos da aplicação, mas não exigem credenciais reais de LLM.

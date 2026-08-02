@@ -6,17 +6,19 @@ from langgraph.graph import END, START, StateGraph
 
 from ..core.config import get_settings
 from ..core.database import AsyncSessionLocal
-from ..models.schemas import LLMResponse, Message, ResponseModeEnum
-from . import llm_service
-from .coding_action_service import build_coding_action
-from .computer_action_service import build_computer_action
+from ..models.schemas import (
+    LLMResponse,
+    Message,
+    ResponseModeEnum,
+    ShortcutRegistrationAction,
+)
+from . import langchain_agent_service
+from .assistant_tools import invoke_action_tool
 from .launcher_service import (
     build_auto_registration_from_launch,
     build_launch_action,
     build_launch_context,
-    build_project_open_action,
     build_registration_context,
-    build_shortcut_registration_action,
     find_shortcut_in_message,
 )
 from .llm_routing_service import pick_auto_llm
@@ -61,36 +63,21 @@ async def _detect_action(state: ChatGraphState) -> dict[str, Any]:
     message = state["message"]
     system_prompt = state["system_prompt"]
 
-    computer_action = build_computer_action(message)
-    if computer_action:
-        return {
-            "action": computer_action,
-            "action_kind": "computer",
-        }
-
-    coding_action = build_coding_action(message)
-    if coding_action:
-        return {
-            "action": coding_action,
-            "action_kind": "coding",
-        }
-
-    project_action = build_project_open_action(message)
-    if project_action:
-        return {
-            "action": project_action,
-            "action_kind": "project",
-        }
-
-    registration_action = build_shortcut_registration_action(message)
-    if registration_action:
-        return {
-            "action": registration_action,
-            "action_kind": "registration",
-            "system_prompt": (
-                system_prompt + build_registration_context(registration_action)
-            ),
-        }
+    for action_kind in ("computer", "coding", "project", "registration"):
+        action = invoke_action_tool(action_kind, message)
+        if action:
+            update: dict[str, Any] = {
+                "action": action,
+                "action_kind": action_kind,
+            }
+            if action_kind == "registration":
+                update["system_prompt"] = (
+                    system_prompt
+                    + build_registration_context(
+                        ShortcutRegistrationAction.model_validate(action)
+                    )
+                )
+            return update
 
     return {"action_kind": "unresolved"}
 
@@ -227,7 +214,7 @@ async def _dispatch_single(state: ChatGraphState) -> dict[str, Any]:
     elif llm not in active_llms:
         response = await _unavailable_response(llm)
     else:
-        response = await llm_service.dispatch_single(
+        response = await langchain_agent_service.dispatch_single(
             llm,
             state["message"],
             state["history"],
@@ -247,7 +234,7 @@ async def _dispatch_multi(state: ChatGraphState) -> dict[str, Any]:
     if not llms:
         return {"responses": [await _unavailable_response()]}
 
-    responses = await llm_service.dispatch_multi(
+    responses = await langchain_agent_service.dispatch_multi(
         llms,
         state["message"],
         state["history"],
@@ -267,7 +254,7 @@ async def _dispatch_chain(state: ChatGraphState) -> dict[str, Any]:
     if not llms:
         return {"responses": [await _unavailable_response()]}
 
-    response = await llm_service.dispatch_chain(
+    response = await langchain_agent_service.dispatch_chain(
         llms,
         state["message"],
         state["history"],
