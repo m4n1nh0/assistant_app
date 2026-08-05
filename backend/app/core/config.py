@@ -131,6 +131,18 @@ class Settings(BaseSettings):
     qdrant_collection_prefix: str = "assistant"
     qdrant_vector_size: int = 384
 
+    # Embeddings semanticos do modo educacao. "auto" tenta, nesta ordem,
+    # endpoint proprio, LocalAI, Ollama, OpenAI e por fim o hash offline.
+    embedding_provider: str = "auto"
+    embedding_model: str = ""
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_dimensions: int = 0
+
+    education_segment_seconds: int = 60
+    education_summary_max_chars: int = 24000
+    education_min_segment_chars: int = 12
+
     whisper_model: str = "small"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"

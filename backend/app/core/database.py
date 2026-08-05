@@ -257,6 +257,71 @@ class ShortcutLaunchLogModel(Base):
     launched_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class StudentModel(Base):
+    __tablename__ = "students"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    name        = Column(String(180), nullable=False)
+    class_group = Column(String(120), nullable=False, default="", index=True)
+    subject     = Column(String(120), nullable=False, default="", index=True)
+    external_id = Column(String(80), nullable=True)
+    aliases     = Column(JSON, default=list)
+    notes       = Column(Text, nullable=True)
+    active      = Column(Boolean, nullable=False, default=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class LessonModel(Base):
+    __tablename__ = "lessons"
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id       = Column(String(64), nullable=False, index=True)
+    subject        = Column(String(120), nullable=False, index=True)
+    title          = Column(String(255), nullable=False, default="")
+    class_group    = Column(String(120), nullable=False, default="", index=True)
+    teacher        = Column(String(180), nullable=True)
+    status         = Column(String(32), nullable=False, default="recording", index=True)
+    started_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    ended_at       = Column(DateTime, nullable=True)
+    summary        = Column(Text, nullable=True)
+    summary_llm    = Column(String(80), nullable=True)
+    summary_at     = Column(DateTime, nullable=True)
+    segment_count  = Column(Integer, nullable=False, default=0)
+    transcript_chars = Column(Integer, nullable=False, default=0)
+    metadata_      = Column("metadata", JSON, default=dict)
+
+
+class LessonSegmentModel(Base):
+    __tablename__ = "lesson_segments"
+    id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lesson_id       = Column(String(64), nullable=False, index=True)
+    tutor_id        = Column(String(64), nullable=False, index=True)
+    sequence        = Column(Integer, nullable=False, default=0)
+    text            = Column(Text, nullable=False)
+    confidence      = Column(Float, nullable=False, default=0.0)
+    duration_ms     = Column(Integer, nullable=False, default=0)
+    indexed         = Column(Boolean, nullable=False, default=False)
+    qdrant_point_id = Column(String(64), nullable=True)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class LessonPointModel(Base):
+    __tablename__ = "lesson_points"
+    id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id     = Column(String(64), nullable=False, index=True)
+    lesson_id    = Column(String(64), nullable=False, index=True)
+    segment_id   = Column(String(64), nullable=True)
+    student_id   = Column(String(64), nullable=True, index=True)
+    student_name = Column(String(180), nullable=False)
+    points       = Column(Float, nullable=False, default=0.0)
+    reason       = Column(Text, nullable=True)
+    subject      = Column(String(120), nullable=False, default="", index=True)
+    lesson_date  = Column(DateTime, nullable=False, index=True)
+    source       = Column(String(32), nullable=False, default="extracted")
+    confidence   = Column(Float, nullable=False, default=0.0)
+    quote        = Column(Text, nullable=True)
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

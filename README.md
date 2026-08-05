@@ -250,6 +250,78 @@ O LangGraph usa duas integrações LangChain:
   transforma cada retorno em uma resposta Pydantic estruturada antes de
   devolve-lo ao grafo.
 
+### Modo Educacao
+
+Grava a aula em blocos, transcreve cada bloco, indexa a transcricao no Qdrant e
+gera o resumo sob demanda. Acessivel pelo botao "Modo Aula" no painel esquerdo
+da interface.
+
+```mermaid
+flowchart LR
+    Mic[Microfone] --> Chunk[Bloco de 60s]
+    Chunk --> Upload[POST /education/lessons/id/audio]
+    Upload --> STT[voice_service transcreve]
+    STT --> Segment[(lesson_segments MySQL)]
+    STT --> Embed[embedding_service]
+    Embed --> Qdrant[(assistant_lesson_transcripts)]
+    STT --> Extract[LLM extrai pontuacao extra]
+    Extract --> Roster[Casa nome com a turma]
+    Roster --> Points[(lesson_points MySQL)]
+    Segment --> Summary[POST .../summary]
+    Summary --> Doc[Resumo estruturado]
+```
+
+Pontos de atencao do fluxo:
+
+- **Transcricao e indexacao sao independentes.** Se o Qdrant estiver fora, o
+  trecho continua gravado no MySQL e a aula nao para; so a busca semantica
+  daquele trecho fica pendente.
+- **O cadastro da turma ancora os nomes.** O transcritor erra nomes proprios com
+  frequencia, entao o LLM recebe a lista de alunos e o backend ainda faz
+  casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
+  a pontuacao e gravada com o nome ouvido e marcada para revisao na interface.
+- **Aulas longas usam mapa-reducao.** Acima de `EDUCATION_SUMMARY_MAX_CHARS` a
+  transcricao e resumida em janelas e depois consolidada, para caber na janela de
+  contexto de modelos locais.
+- **Blocos repetidos nao viram pontuacao duplicada.** Quando o corte do audio cai
+  no meio da frase, a mesma concessao pode ser extraida duas vezes; o backend
+  descarta a repeticao comparando aluno, valor e trecho citado.
+
+Endpoints principais:
+
+| Endpoint | Uso |
+| --- | --- |
+| `POST /education/lessons` | Abre a aula (disciplina, turma, tema) |
+| `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
+| `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
+| `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda |
+| `GET /education/points` | Nome e total de extra por dia e disciplina |
+| `GET /education/search` | Busca semantica nas transcricoes |
+| `GET /education/students` | Cadastro da turma |
+| `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
+
+#### Embeddings
+
+O modo educacao usa embeddings semanticos de verdade, com provedor plugavel
+definido em `EMBEDDING_PROVIDER`. Em `auto` a ordem e: `EMBEDDING_BASE_URL`
+(endpoint proprio compativel com a API da OpenAI), LocalAI, Ollama, OpenAI e,
+por ultimo, um hash offline. A dimensao do vetor e detectada na primeira chamada,
+entao trocar de modelo nao exige ajustar configuracao — mas invalida os vetores
+ja gravados, e o backend recusa a colecao antiga em vez de apagar as aulas.
+
+Para rodar so com infra propria via Ollama:
+
+```bash
+ollama pull nomic-embed-text
+# backend/.env
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=nomic-embed-text
+```
+
+As colecoes de memoria (`tutor_preferences`, `behavior_guidelines`,
+`approved_instructions`, `automation_knowledge`) continuam no hash legado de 384
+dimensoes; migra-las exige reindexacao e nao e feito automaticamente.
+
 ## Configuracao Segura
 
 Arquivos reais de ambiente e dados locais nao devem ser publicados:

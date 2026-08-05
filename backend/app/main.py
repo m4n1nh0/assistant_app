@@ -26,10 +26,12 @@ from .routers.routes import (
 )
 from .routers.system import router as system_router
 from .routers.tutor import router as tutor_router
+from .routers.education import router as education_router
 from .routers.launcher import router as launcher_router
 from .routers.desktop import router as desktop_router
 from .routers.computer import router as computer_router
-from .services.qdrant_service import ensure_collections
+from .services.qdrant_service import ensure_collections, ensure_lesson_collection
+from .services.embedding_service import describe as embedding_describe
 
 settings = get_settings()
 
@@ -81,6 +83,20 @@ async def lifespan(app: FastAPI):
         logger.info("Qdrant collections ready")
     except Exception as e:
         logger.warning(f"Qdrant unavailable: {e}")
+    try:
+        dimensions = await ensure_lesson_collection()
+        info = await embedding_describe()
+        logger.info(
+            f"Modo educacao pronto (embeddings {info.get('provider')}/"
+            f"{info.get('model')}, dim={dimensions})"
+        )
+        if not info.get("semantic"):
+            logger.warning(
+                "Embeddings em modo hash: a busca nas aulas sera por palavra "
+                "exata. Configure EMBEDDING_PROVIDER para busca semantica."
+            )
+    except Exception as e:
+        logger.warning(f"Modo educacao indisponivel: {e}")
     try:
         redis_url = settings.redis_url.strip()
         if redis_url and "://" not in redis_url:
@@ -152,6 +168,7 @@ app.include_router(router_health)
 app.include_router(chat_router)
 app.include_router(ws_router)
 app.include_router(tutor_router)
+app.include_router(education_router)
 app.include_router(launcher_router)
 app.include_router(memory_router)
 app.include_router(automations_router)

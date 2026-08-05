@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_provider.dart';
 import '../utils/theme.dart';
+import 'education_dialog.dart';
 import 'history_dialog.dart';
 import 'local_actions_dialog.dart';
 
@@ -49,29 +50,43 @@ class _LeftPanelState extends ConsumerState<LeftPanel> {
           ),
           _Section(
             label: 'FERRAMENTAS',
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: _ToolButton(
-                    icon: Icons.desktop_windows_outlined,
-                    label: 'PC',
-                    color: AssistantTheme.c1,
-                    onTap: () => showDialog(
-                      context: context,
-                      builder: (_) => const LocalActionsDialog(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ToolButton(
+                        icon: Icons.desktop_windows_outlined,
+                        label: 'PC',
+                        color: AssistantTheme.c1,
+                        onTap: () => showDialog(
+                          context: context,
+                          builder: (_) => const LocalActionsDialog(),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ToolButton(
+                        icon: Icons.history,
+                        label: 'Historico',
+                        color: AssistantTheme.c2,
+                        onTap: () => showDialog(
+                          context: context,
+                          builder: (_) => const HistoryDialog(),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _ToolButton(
-                    icon: Icons.history,
-                    label: 'Historico',
-                    color: AssistantTheme.c2,
-                    onTap: () => showDialog(
-                      context: context,
-                      builder: (_) => const HistoryDialog(),
-                    ),
+                const SizedBox(height: 8),
+                _ToolButton(
+                  icon: Icons.school_outlined,
+                  label: 'Modo Aula',
+                  color: AssistantTheme.c3,
+                  onTap: () => showDialog(
+                    context: context,
+                    builder: (_) => const EducationDialog(),
                   ),
                 ),
               ],

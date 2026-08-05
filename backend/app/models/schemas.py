@@ -634,3 +634,179 @@ class ActionAuditResponse(BaseModel):
     request: Dict[str, Any] = Field(default_factory=dict)
     result: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+# --- Modo educacao --------------------------------------------------------
+
+
+class StudentCreate(BaseModel):
+    name: str
+    class_group: str = ""
+    subject: str = ""
+    external_id: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
+    notes: Optional[str] = None
+    active: bool = True
+
+
+class StudentUpdate(BaseModel):
+    name: Optional[str] = None
+    class_group: Optional[str] = None
+    subject: Optional[str] = None
+    external_id: Optional[str] = None
+    aliases: Optional[List[str]] = None
+    notes: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class StudentResponse(BaseModel):
+    id: str
+    tutor_id: str
+    name: str
+    class_group: str = ""
+    subject: str = ""
+    external_id: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
+    notes: Optional[str] = None
+    active: bool
+    created_at: datetime
+
+
+class LessonCreate(BaseModel):
+    subject: str
+    title: str = ""
+    class_group: str = ""
+    teacher: Optional[str] = None
+    started_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LessonUpdate(BaseModel):
+    subject: Optional[str] = None
+    title: Optional[str] = None
+    class_group: Optional[str] = None
+    teacher: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class LessonSegmentResponse(BaseModel):
+    id: str
+    lesson_id: str
+    sequence: int
+    text: str
+    confidence: float
+    duration_ms: int
+    indexed: bool
+    created_at: datetime
+
+
+class LessonPointResponse(BaseModel):
+    id: str
+    lesson_id: str
+    student_id: Optional[str] = None
+    student_name: str
+    points: float
+    reason: Optional[str] = None
+    subject: str
+    lesson_date: datetime
+    source: str
+    confidence: float
+    quote: Optional[str] = None
+    created_at: datetime
+
+
+class LessonPointCreate(BaseModel):
+    student_name: str
+    points: float
+    reason: Optional[str] = None
+    student_id: Optional[str] = None
+
+
+class LessonResponse(BaseModel):
+    id: str
+    tutor_id: str
+    subject: str
+    title: str = ""
+    class_group: str = ""
+    teacher: Optional[str] = None
+    status: str
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    summary: Optional[str] = None
+    summary_llm: Optional[str] = None
+    summary_at: Optional[datetime] = None
+    segment_count: int = 0
+    transcript_chars: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LessonDetailResponse(LessonResponse):
+    segments: List[LessonSegmentResponse] = Field(default_factory=list)
+    points: List[LessonPointResponse] = Field(default_factory=list)
+
+
+class LessonSegmentIngestRequest(BaseModel):
+    """Ingestao de um bloco ja transcrito pelo cliente."""
+    text: str
+    confidence: float = 1.0
+    duration_ms: int = 0
+    extract_points: bool = True
+
+
+class LessonSegmentIngestResponse(BaseModel):
+    segment: Optional[LessonSegmentResponse] = None
+    indexed: bool = False
+    skipped_reason: Optional[str] = None
+    points: List[LessonPointResponse] = Field(default_factory=list)
+    lesson: LessonResponse
+
+
+class LessonSummaryRequest(BaseModel):
+    llm: Optional[str] = None
+    focus: str = ""
+    close_lesson: bool = False
+
+
+class LessonSummaryResponse(BaseModel):
+    lesson_id: str
+    summary: str
+    llm: str
+    generated_at: datetime
+    used_segments: int
+    points: List[LessonPointResponse] = Field(default_factory=list)
+
+
+class LessonSearchResult(BaseModel):
+    id: str
+    score: float
+    lesson_id: str
+    subject: str
+    lesson_date: str
+    sequence: int
+    content: str
+
+
+class PointsReportEntry(BaseModel):
+    student_name: str
+    student_id: Optional[str] = None
+    total_points: float
+    subject: str
+    lesson_date: str
+    entries: List[LessonPointResponse] = Field(default_factory=list)
+
+
+class PointsReportResponse(BaseModel):
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    subject: Optional[str] = None
+    total_points: float = 0.0
+    students: List[PointsReportEntry] = Field(default_factory=list)
+
+
+class EmbeddingStatusResponse(BaseModel):
+    ok: bool
+    provider: str
+    model: Optional[str] = None
+    dimensions: Optional[int] = None
+    semantic: bool = False
+    error: Optional[str] = None
