@@ -87,8 +87,8 @@ flowchart LR
 - **Backend API**: FastAPI com REST, SSE e WebSocket para chat, historico,
   agenda, notificacoes, automacoes, memoria e acoes locais.
 - **Orquestracao de chat**: LangGraph torna explicitas a deteccao de acoes, a
-  resolucao de atalhos e as rotas single, multi e chain sem alterar o contrato
-  consumido pela interface.
+  resolucao de atalhos, as consultas de agenda e as rotas single, multi e chain
+  sem alterar o contrato consumido pela interface.
 - **Adaptacao LangChain**: padroniza os provedores existentes, expoe as
   propostas de acoes como tools tipadas e valida as respostas internas com
   modelos Pydantic. A selecao das tools e deterministica; nao ha execucao
@@ -100,6 +100,9 @@ flowchart LR
   Ollama ou LocalAI.
 - **Scheduler**: APScheduler para sincronizacao periodica de calendario e envio
   de lembretes.
+- **Agenda conversacional**: interpreta com IA consultas como compromissos de
+  hoje ou da proxima semana, valida o periodo no backend e responde somente com
+  eventos retornados pelo Google Calendar ou Microsoft Graph.
 - **Rate limiting**: Redis + fastapi-limiter, com limite geral e um mais
   rigido por IP nas rotas de autenticacao. Se o Redis cair, o backend segue no
   ar sem aplicar limite.

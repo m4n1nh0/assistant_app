@@ -102,6 +102,7 @@ async def chat(
         active_llms=active,
         system_prompt=sys_prompt,
         tutor_id=tutor_id,
+        user_id=user["uid"],
         timezone=timezone_name,
     )
     responses = graph_result["responses"]

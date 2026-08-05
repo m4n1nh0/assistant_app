@@ -7,6 +7,7 @@ from app.models.schemas import (
     ShortcutType,
 )
 from app.services import chat_graph_service
+from app.services.calendar_query_service import CalendarQueryPlan, CalendarQueryResult
 
 
 def run_graph(
@@ -25,6 +26,7 @@ def run_graph(
             active_llms=active_llms or [],
             system_prompt="system",
             tutor_id="tutor-1",
+            user_id="user-1",
         )
     )
 
@@ -36,6 +38,7 @@ def test_chat_graph_exposes_explicit_workflow_nodes():
         "detect_action",
         "resolve_shortcut",
         "acknowledge_action",
+        "query_calendar",
         "dispatch_single",
         "dispatch_multi",
         "dispatch_chain",
@@ -106,6 +109,44 @@ def test_calendar_action_short_circuits_llm_and_requests_confirmation(monkeypatc
     assert result["action_kind"] == "calendar"
     assert result["action"]["requires_confirmation"] is True
     assert "Confirme os dados" in result["responses"][0].content
+
+
+def test_calendar_query_uses_interpreter_and_real_events_without_chat_hallucination(
+    monkeypatch,
+):
+    async def interpret(*args, **kwargs):
+        return CalendarQueryPlan(
+            start_time="2026-08-06T00:00:00-03:00",
+            end_time="2026-08-07T00:00:00-03:00",
+            interpreted_by="gpt",
+        )
+
+    async def execute(user_id, plan):
+        assert user_id == "user-1"
+        return CalendarQueryResult(
+            connected_accounts=1,
+            events=[],
+        )
+
+    async def fail_dispatch(*args, **kwargs):
+        raise AssertionError("Normal chat dispatch must not answer calendar data")
+
+    monkeypatch.setattr(chat_graph_service, "interpret_calendar_query", interpret)
+    monkeypatch.setattr(chat_graph_service, "execute_calendar_query", execute)
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_single",
+        fail_dispatch,
+    )
+
+    result = run_graph(
+        message="O que tenho na agenda amanhã?",
+        active_llms=["gpt"],
+    )
+
+    assert result["action_kind"] == "calendar_query"
+    assert result.get("action") is None
+    assert "não tem eventos" in result["responses"][0].content
 
 
 def test_single_route_chooses_provider_and_dispatches(monkeypatch):

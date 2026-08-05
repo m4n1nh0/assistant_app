@@ -15,6 +15,11 @@ from ..models.schemas import (
 )
 from . import langchain_agent_service
 from .assistant_tools import invoke_action_tool, invoke_calendar_action_tool
+from .calendar_query_service import (
+    execute_calendar_query,
+    format_calendar_query_response,
+    interpret_calendar_query,
+)
 from .launcher_service import (
     build_auto_registration_from_launch,
     build_launch_action,
@@ -35,8 +40,9 @@ ActionKind = Literal[
     "project",
     "registration",
     "calendar",
+    "calendar_query",
 ]
-GraphRoute = Literal["action", "single", "multi", "chain"]
+GraphRoute = Literal["action", "calendar_query", "single", "multi", "chain"]
 
 
 class ChatGraphState(TypedDict, total=False):
@@ -47,6 +53,7 @@ class ChatGraphState(TypedDict, total=False):
     active_llms: list[str]
     system_prompt: str
     tutor_id: str
+    user_id: str
     timezone: str
     action: Any
     action_kind: ActionKind
@@ -74,6 +81,19 @@ async def _detect_action(state: ChatGraphState) -> dict[str, Any]:
         return {
             "action": calendar_action,
             "action_kind": "calendar",
+        }
+
+    calendar_query = await interpret_calendar_query(
+        message,
+        history=state.get("history", []),
+        timezone_name=state.get("timezone", "America/Sao_Paulo"),
+        requested_llm=state.get("requested_llm"),
+        active_llms=state.get("active_llms", []),
+    )
+    if calendar_query:
+        return {
+            "action": calendar_query.model_dump(mode="json"),
+            "action_kind": "calendar_query",
         }
 
     for action_kind in ("computer", "coding", "project", "registration"):
@@ -141,6 +161,8 @@ async def _resolve_shortcut(state: ChatGraphState) -> dict[str, Any]:
 
 
 def _route_after_resolution(state: ChatGraphState) -> GraphRoute:
+    if state.get("action_kind") == "calendar_query":
+        return "calendar_query"
     if state.get("action_kind") in {
         "computer",
         "coding",
@@ -150,6 +172,26 @@ def _route_after_resolution(state: ChatGraphState) -> GraphRoute:
     }:
         return "action"
     return cast(GraphRoute, state["mode"].value)
+
+
+async def _query_calendar(state: ChatGraphState) -> dict[str, Any]:
+    from .calendar_query_service import CalendarQueryPlan
+
+    try:
+        plan = CalendarQueryPlan.model_validate(state["action"])
+        result = await execute_calendar_query(state["user_id"], plan)
+        content = format_calendar_query_response(plan, result)
+        response = LLMResponse(llm="backend", content=content)
+    except Exception:
+        response = LLMResponse(
+            llm="backend",
+            content=(
+                "Não consegui consultar sua agenda agora. "
+                "Verifique a conta em Configurações > Agendas e tente novamente."
+            ),
+            is_error=True,
+        )
+    return {"responses": [response], "action": None}
 
 
 async def _acknowledge_action(state: ChatGraphState) -> dict[str, Any]:
@@ -288,6 +330,7 @@ def _build_chat_graph():
     workflow.add_node("detect_action", _detect_action)
     workflow.add_node("resolve_shortcut", _resolve_shortcut)
     workflow.add_node("acknowledge_action", _acknowledge_action)
+    workflow.add_node("query_calendar", _query_calendar)
     workflow.add_node("dispatch_single", _dispatch_single)
     workflow.add_node("dispatch_multi", _dispatch_multi)
     workflow.add_node("dispatch_chain", _dispatch_chain)
@@ -299,12 +342,14 @@ def _build_chat_graph():
         _route_after_resolution,
         {
             "action": "acknowledge_action",
+            "calendar_query": "query_calendar",
             "single": "dispatch_single",
             "multi": "dispatch_multi",
             "chain": "dispatch_chain",
         },
     )
     workflow.add_edge("acknowledge_action", END)
+    workflow.add_edge("query_calendar", END)
     workflow.add_edge("dispatch_single", END)
     workflow.add_edge("dispatch_multi", END)
     workflow.add_edge("dispatch_chain", END)
@@ -323,6 +368,7 @@ async def run_chat_graph(
     active_llms: list[str],
     system_prompt: str,
     tutor_id: str,
+    user_id: str = "",
     timezone: str = "America/Sao_Paulo",
 ) -> ChatGraphState:
     result = await chat_graph.ainvoke(
@@ -334,6 +380,7 @@ async def run_chat_graph(
             "active_llms": list(active_llms),
             "system_prompt": system_prompt,
             "tutor_id": tutor_id,
+            "user_id": user_id,
             "timezone": timezone,
         }
     )

@@ -129,8 +129,9 @@ infraestrutura do backend e devem ser fornecidas por variáveis de ambiente.
 
 Em **Configurações > Agendas**, cada usuário pode conectar contas Google
 Calendar e Microsoft Outlook/Teams. O procedimento para criar as credenciais
-OAuth, cadastrar callbacks locais ou do Railway e testar a criação de eventos
-está em [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
+OAuth, cadastrar callbacks locais ou do Railway, consultar a agenda pela
+conversa e testar a criação de eventos está em
+[Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
 
 ## Ações Locais E Segurança
 

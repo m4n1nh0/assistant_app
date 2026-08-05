@@ -185,6 +185,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
                         connection_id,
                         payload,
                         user.get("tutor_id") or "default",
+                        user["uid"],
                     )
                 case "chat_stream":
                     await _handle_chat_stream(connection_id, payload)
@@ -239,6 +240,7 @@ async def _handle_chat(
     session_id: str,
     payload: dict,
     tutor_id: str = "default",
+    user_id: str = "",
 ):
     message  = payload.get("message", "").strip()
     mode_str = payload.get("mode", "single")
@@ -263,6 +265,7 @@ async def _handle_chat(
             active_llms=active,
             system_prompt=sys_p,
             tutor_id=tutor_id,
+            user_id=user_id,
             timezone=payload.get("timezone") or "America/Sao_Paulo",
         )
         responses = graph_result["responses"]

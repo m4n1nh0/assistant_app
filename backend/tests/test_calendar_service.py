@@ -37,6 +37,10 @@ class FakeAsyncClient:
         self.__class__.calls.append((url, kwargs))
         return self.__class__.response
 
+    async def get(self, url, **kwargs):
+        self.__class__.calls.append((url, kwargs))
+        return self.__class__.response
+
 
 def test_oauth_urls_request_calendar_write_scopes():
     google = parse_qs(urlparse(calendar_service.get_google_auth_url("g")).query)
@@ -124,3 +128,68 @@ def test_create_microsoft_event_posts_utc_times(monkeypatch):
     }
     assert event.id == "microsoft:microsoft-1:remote-2"
     assert event.source == "outlook"
+
+
+def test_google_query_uses_requested_range_and_parses_all_day_events(monkeypatch):
+    async def token(*args):
+        return "google-token"
+
+    monkeypatch.setattr(calendar_service, "_get_google_access_token", token)
+    monkeypatch.setattr(calendar_service.httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.calls = []
+    FakeAsyncClient.response = FakeResponse({
+        "items": [{
+            "id": "all-day",
+            "summary": "Feriado",
+            "start": {"date": "2026-08-06"},
+            "end": {"date": "2026-08-07"},
+        }],
+    })
+    start = datetime(2026, 8, 6, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 7, tzinfo=timezone.utc)
+
+    events = run(calendar_service.fetch_google_events(
+        calendar_service.CalendarConfig(
+            google_enabled=True,
+            google_client_id="client",
+            google_client_secret="secret",
+            google_refresh_token="refresh",
+        ),
+        start_time=start,
+        end_time=end,
+        max_results=10,
+    ))
+
+    _, request = FakeAsyncClient.calls[0]
+    assert request["params"]["timeMin"] == start.isoformat()
+    assert request["params"]["timeMax"] == end.isoformat()
+    assert request["params"]["maxResults"] == "10"
+    assert events[0].start_time.tzinfo is not None
+
+
+def test_account_query_keeps_partial_results_and_reports_failed_account(monkeypatch):
+    async def google(account, **query):
+        raise RuntimeError("token inválido")
+
+    async def microsoft(account, **query):
+        return [calendar_service.CalendarEvent(
+            id="event-1",
+            title="Planejamento",
+            start_time=datetime(2026, 8, 6, 12, tzinfo=timezone.utc),
+            source="outlook",
+        )]
+
+    monkeypatch.setattr(calendar_service, "_fetch_google_account_events", google)
+    monkeypatch.setattr(
+        calendar_service,
+        "_fetch_microsoft_account_events",
+        microsoft,
+    )
+
+    events, errors = run(calendar_service.fetch_account_events_with_errors(
+        [{"id": "g1", "label": "Google", "refresh_token": "g"}],
+        [{"id": "m1", "label": "Trabalho", "refresh_token": "m"}],
+    ))
+
+    assert [event.title for event in events] == ["Planejamento"]
+    assert errors == ["Google: token inválido"]

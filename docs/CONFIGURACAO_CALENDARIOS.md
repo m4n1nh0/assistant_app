@@ -249,7 +249,37 @@ vencimento.
 4. Entre com a conta Microsoft e aceite as permissões.
 5. Volte ao Assistente e confirme que a conta aparece como conectada.
 
-## Criar eventos pela conversa
+## Usar o calendário pela conversa
+
+### Consultar a agenda
+
+O Assistente usa um provedor de IA disponível para interpretar a intenção, o
+período, o provedor e um possível termo de busca. Exemplos:
+
+```text
+O que tenho na agenda hoje?
+Quais são meus compromissos amanhã depois das 14h?
+Quando é minha próxima reunião?
+Mostre os eventos do Google Calendar na próxima semana.
+Tenho alguma reunião com João nos próximos sete dias?
+```
+
+A interpretação gera internamente um plano `calendar_query`. O backend valida
+o plano, limita o período a 31 dias e consulta somente as contas pertencentes
+ao usuário autenticado. A resposta da conversa é montada exclusivamente com
+os eventos devolvidos pelo Google ou pela Microsoft.
+
+Client Secrets, tokens OAuth e eventos não são enviados ao provedor de IA. A
+IA recebe a pergunta, o contexto recente da conversa, a data atual e o fuso
+horário. Se a interpretação por IA falhar, o Assistente reconhece diretamente
+períodos comuns como hoje, amanhã, dias da semana e próxima semana.
+
+Consultas são somente leitura e não precisam de confirmação. Se uma conta
+falhar e outra responder, os eventos disponíveis são mostrados junto de um
+aviso de sincronização parcial. Uma agenda vazia e uma falha de conexão são
+informadas com mensagens diferentes.
+
+### Criar eventos
 
 Informe título, data e horário. Exemplos:
 
@@ -272,12 +302,17 @@ altera o calendário.
 ## Teste da integração
 
 1. Confirme que a conta aparece em **Configurações > Agendas**.
-2. Solicite um evento para alguns minutos ou horas no futuro.
-3. Revise a proposta e clique em **Criar evento**.
-4. Abra o Google Calendar ou Outlook e confirme o compromisso.
-5. Volte à tela principal do Assistente e atualize a agenda.
+2. Crie diretamente no Google ou Outlook um compromisso para hoje.
+3. Pergunte no chat `O que tenho na agenda hoje?` e confirme que o compromisso
+   aparece na resposta.
+4. Solicite ao Assistente um evento para alguns minutos ou horas no futuro.
+5. Revise a proposta e clique em **Criar evento**.
+6. Abra o Google Calendar ou Outlook e confirme o novo compromisso.
+7. Volte à tela principal do Assistente e atualize a agenda.
 
-O Assistente consulta até 25 eventos dos próximos sete dias.
+O painel lateral consulta até 25 eventos dos próximos sete dias. Uma consulta
+pela conversa pode usar um período de até 31 dias e retorna no máximo 25
+eventos por resposta.
 
 ## Solução de problemas
 

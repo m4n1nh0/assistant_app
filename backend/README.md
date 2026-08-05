@@ -370,6 +370,12 @@ Nas rotas abreviadas abaixo, `{provider}` representa os endpoints concretos
 | DELETE | `/calendar/{provider}/accounts/{account_id}` | Desconectar uma conta específica |
 | DELETE | `/calendar/{provider}/disconnect` | Desconectar todas as contas do provedor |
 
+Perguntas enviadas a `POST /chat/`, como `O que tenho na agenda amanhã?`, são
+interpretadas como um plano estruturado `calendar_query`. O backend valida o
+período, consulta somente as contas do usuário autenticado e devolve os eventos
+como uma resposta comum do chat. A criação usa `calendar_create` e continua
+dependendo da confirmação da interface antes do `POST /calendar/events`.
+
 O cadastro dos clientes OAuth, escopos, callbacks locais e Railway e a conexão
 das contas estão documentados em
 [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).

@@ -76,7 +76,32 @@ async def _get_google_access_token(
     return data["access_token"]
 
 
-async def fetch_google_events(config: CalendarConfig) -> List[CalendarEvent]:
+def _calendar_window(
+    start_time: datetime | None,
+    end_time: datetime | None,
+) -> tuple[datetime, datetime]:
+    start = start_time or datetime.now(timezone.utc)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    end = end_time or (start + timedelta(days=7))
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return start, end
+
+
+def _provider_datetime(raw: str) -> datetime:
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+async def fetch_google_events(
+    config: CalendarConfig,
+    *,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    max_results: int = 25,
+    raise_on_error: bool = False,
+) -> List[CalendarEvent]:
     if not config.google_enabled or not config.google_refresh_token:
         return []
     try:
@@ -85,19 +110,18 @@ async def fetch_google_events(config: CalendarConfig) -> List[CalendarEvent]:
             config.google_client_secret,
             config.google_refresh_token,
         )
-        now = datetime.now(timezone.utc)
-        max_time = now + timedelta(days=7)
+        range_start, range_end = _calendar_window(start_time, end_time)
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 "https://www.googleapis.com/calendar/v3/calendars/primary/events",
                 headers={"Authorization": f"Bearer {token}"},
                 params={
-                    "timeMin": now.isoformat(),
-                    "timeMax": max_time.isoformat(),
+                    "timeMin": range_start.isoformat(),
+                    "timeMax": range_end.isoformat(),
                     "singleEvents": "true",
                     "orderBy": "startTime",
-                    "maxResults": "25",
+                    "maxResults": str(max(1, min(max_results, 100))),
                 },
             )
         data = resp.json()
@@ -111,8 +135,8 @@ async def fetch_google_events(config: CalendarConfig) -> List[CalendarEvent]:
             events.append(CalendarEvent(
                 id=item["id"],
                 title=item.get("summary", "Sem título"),
-                start_time=datetime.fromisoformat(start_raw),
-                end_time=datetime.fromisoformat(end_raw) if end_raw else None,
+                start_time=_provider_datetime(start_raw),
+                end_time=_provider_datetime(end_raw) if end_raw else None,
                 source="google",
                 meeting_url=item.get("hangoutLink") or _extract_meet(item.get("description", "")),
                 description=item.get("description"),
@@ -120,6 +144,8 @@ async def fetch_google_events(config: CalendarConfig) -> List[CalendarEvent]:
         return events
     except Exception as e:
         logger.error(f"Google Calendar error: {e}")
+        if raise_on_error:
+            raise RuntimeError(str(e)) from e
         return []
 
 
@@ -194,7 +220,14 @@ async def _get_ms_access_token(
     return data["access_token"]
 
 
-async def fetch_microsoft_events(config: CalendarConfig) -> List[CalendarEvent]:
+async def fetch_microsoft_events(
+    config: CalendarConfig,
+    *,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    max_results: int = 25,
+    raise_on_error: bool = False,
+) -> List[CalendarEvent]:
     if not config.ms_enabled or not config.ms_refresh_token:
         return []
     try:
@@ -204,17 +237,16 @@ async def fetch_microsoft_events(config: CalendarConfig) -> List[CalendarEvent]:
             config.ms_tenant_id,
             config.ms_refresh_token,
         )
-        now = datetime.now(timezone.utc)
-        max_time = now + timedelta(days=7)
+        range_start, range_end = _calendar_window(start_time, end_time)
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 "https://graph.microsoft.com/v1.0/me/calendarView",
                 headers={"Authorization": f"Bearer {token}"},
                 params={
-                    "$top": "25",
-                    "startDateTime": now.isoformat(),
-                    "endDateTime": max_time.isoformat(),
+                    "$top": str(max(1, min(max_results, 100))),
+                    "startDateTime": range_start.isoformat(),
+                    "endDateTime": range_end.isoformat(),
                     "$select": "subject,start,end,onlineMeeting,bodyPreview,webLink",
                     "$orderby": "start/dateTime",
                 },
@@ -229,8 +261,8 @@ async def fetch_microsoft_events(config: CalendarConfig) -> List[CalendarEvent]:
             events.append(CalendarEvent(
                 id=item["id"],
                 title=item.get("subject", "Sem título"),
-                start_time=datetime.fromisoformat(item["start"]["dateTime"]).replace(tzinfo=timezone.utc),
-                end_time=datetime.fromisoformat(item["end"]["dateTime"]).replace(tzinfo=timezone.utc),
+                start_time=_provider_datetime(item["start"]["dateTime"]),
+                end_time=_provider_datetime(item["end"]["dateTime"]),
                 source="teams" if is_teams else "outlook",
                 meeting_url=item.get("onlineMeeting", {}).get("joinUrl") or item.get("webLink"),
                 description=item.get("bodyPreview"),
@@ -238,6 +270,8 @@ async def fetch_microsoft_events(config: CalendarConfig) -> List[CalendarEvent]:
         return events
     except Exception as e:
         logger.error(f"Microsoft Calendar error: {e}")
+        if raise_on_error:
+            raise RuntimeError(str(e)) from e
         return []
 
 
@@ -377,38 +411,91 @@ async def create_microsoft_account_event(
 async def fetch_all_account_events(
     google_accounts: List[dict],
     microsoft_accounts: List[dict],
+    *,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    max_results: int = 25,
 ) -> List[CalendarEvent]:
-    tasks = []
+    events, errors = await fetch_account_events_with_errors(
+        google_accounts,
+        microsoft_accounts,
+        start_time=start_time,
+        end_time=end_time,
+        max_results=max_results,
+    )
+    for error in errors:
+        logger.error(f"Calendar account fetch failed: {error}")
+    return events
+
+
+async def fetch_account_events_with_errors(
+    google_accounts: List[dict],
+    microsoft_accounts: List[dict],
+    *,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    max_results: int = 25,
+) -> tuple[List[CalendarEvent], List[str]]:
+    tasks: list[tuple[str, object]] = []
 
     for account in google_accounts:
         if account.get("refresh_token"):
-            tasks.append(_fetch_google_account_events(account))
+            label = account.get("label") or "Google Calendar"
+            tasks.append((label, _fetch_google_account_events(
+                account,
+                start_time=start_time,
+                end_time=end_time,
+                max_results=max_results,
+                raise_on_error=True,
+            )))
 
     for account in microsoft_accounts:
         if account.get("refresh_token"):
-            tasks.append(_fetch_microsoft_account_events(account))
+            label = account.get("label") or "Microsoft Calendar"
+            tasks.append((label, _fetch_microsoft_account_events(
+                account,
+                start_time=start_time,
+                end_time=end_time,
+                max_results=max_results,
+                raise_on_error=True,
+            )))
 
     if not tasks:
-        return []
+        return [], []
 
-    groups = await asyncio.gather(*tasks)
-    all_events = [event for group in groups for event in group]
+    groups = await asyncio.gather(
+        *(task for _, task in tasks),
+        return_exceptions=True,
+    )
+    all_events: list[CalendarEvent] = []
+    errors: list[str] = []
+    for (label, _), group in zip(tasks, groups):
+        if isinstance(group, BaseException):
+            errors.append(f"{label}: {str(group)[:240]}")
+        else:
+            all_events.extend(group)
     all_events.sort(key=lambda e: e.start_time)
-    return all_events
+    return all_events, errors
 
 
-async def _fetch_google_account_events(account: dict) -> List[CalendarEvent]:
+async def _fetch_google_account_events(
+    account: dict,
+    **query,
+) -> List[CalendarEvent]:
     config = CalendarConfig(
         google_client_id=account.get("client_id", ""),
         google_client_secret=account.get("client_secret", ""),
         google_refresh_token=account.get("refresh_token", ""),
         google_enabled=True,
     )
-    events = await fetch_google_events(config)
+    events = await fetch_google_events(config, **query)
     return _tag_account_events(events, "google", account)
 
 
-async def _fetch_microsoft_account_events(account: dict) -> List[CalendarEvent]:
+async def _fetch_microsoft_account_events(
+    account: dict,
+    **query,
+) -> List[CalendarEvent]:
     config = CalendarConfig(
         ms_client_id=account.get("client_id", ""),
         ms_client_secret=account.get("client_secret", ""),
@@ -416,7 +503,7 @@ async def _fetch_microsoft_account_events(account: dict) -> List[CalendarEvent]:
         ms_refresh_token=account.get("refresh_token", ""),
         ms_enabled=True,
     )
-    events = await fetch_microsoft_events(config)
+    events = await fetch_microsoft_events(config, **query)
     return _tag_account_events(events, "microsoft", account)
 
 
