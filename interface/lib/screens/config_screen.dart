@@ -655,7 +655,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   Widget _buildCalendar2() => _TabContent(title: 'AGENDAS', children: [
         _SectionCard(title: 'GOOGLE CALENDAR', children: [
           _InfoBox(
-              'Informe as credenciais OAuth uma vez ou use as que ja estao salvas no backend. O botao abre a autorizacao no navegador.'),
+              'Informe as credenciais OAuth uma vez ou use as que ja estao salvas no backend. O botao libera leitura e criacao de eventos. Reconecte contas antigas para autorizar escrita.'),
           _Field('CLIENT ID', _gcalClientCtrl, hint: 'Google OAuth Client ID'),
           _Field('CLIENT SECRET', _gcalSecretCtrl,
               hint: 'Google OAuth Client Secret', obscure: true),
@@ -670,7 +670,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         ]),
         _SectionCard(title: 'MICROSOFT (Teams + Outlook)', children: [
           _InfoBox(
-              'Informe as credenciais OAuth uma vez ou use as que ja estao salvas no backend. O botao abre a autorizacao no navegador.'),
+              'Informe as credenciais OAuth uma vez ou use as que ja estao salvas no backend. O botao libera leitura e criacao de eventos. Reconecte contas antigas para autorizar escrita.'),
           _Field('CLIENT ID', _msClientCtrl,
               hint: 'Microsoft Application Client ID'),
           _Field('CLIENT SECRET', _msSecretCtrl,

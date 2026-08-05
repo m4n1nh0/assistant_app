@@ -50,7 +50,7 @@ class ChatResponse(BaseModel):
     mode: str
     responses: List[LLMResponse]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction"]] = None
+    action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction", "CalendarCreateAction"]] = None
 
 
 class LoginRequest(BaseModel):
@@ -201,6 +201,18 @@ class CalendarEvent(BaseModel):
     description: Optional[str] = None
     notified_15: bool = False
     notified_0:  bool = False
+
+
+class CalendarEventCreateRequest(BaseModel):
+    provider: Literal["google", "microsoft"]
+    account_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=300)
+    start_time: datetime
+    end_time: datetime
+    timezone: str = Field(default="America/Sao_Paulo", min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=4000)
+    location: Optional[str] = Field(default=None, max_length=500)
+    confirmed: bool = False
 
 
 class EventsResponse(BaseModel):
@@ -614,6 +626,18 @@ class CodingAction(BaseModel):
     risk_level: Literal["low", "medium", "high"] = "low"
     requires_confirmation: bool = True
     arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CalendarCreateAction(BaseModel):
+    type: Literal["calendar_create"] = "calendar_create"
+    title: str
+    start_time: datetime
+    end_time: datetime
+    timezone: str = "America/Sao_Paulo"
+    provider: Literal["auto", "google", "microsoft"] = "auto"
+    description: Optional[str] = None
+    location: Optional[str] = None
+    requires_confirmation: bool = True
 
 
 class ActionAuditRequest(BaseModel):

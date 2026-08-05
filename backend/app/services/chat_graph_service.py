@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
@@ -13,7 +14,7 @@ from ..models.schemas import (
     ShortcutRegistrationAction,
 )
 from . import langchain_agent_service
-from .assistant_tools import invoke_action_tool
+from .assistant_tools import invoke_action_tool, invoke_calendar_action_tool
 from .launcher_service import (
     build_auto_registration_from_launch,
     build_launch_action,
@@ -33,6 +34,7 @@ ActionKind = Literal[
     "coding",
     "project",
     "registration",
+    "calendar",
 ]
 GraphRoute = Literal["action", "single", "multi", "chain"]
 
@@ -45,6 +47,7 @@ class ChatGraphState(TypedDict, total=False):
     active_llms: list[str]
     system_prompt: str
     tutor_id: str
+    timezone: str
     action: Any
     action_kind: ActionKind
     responses: list[LLMResponse]
@@ -62,6 +65,16 @@ def _value(action: Any, key: str, default: Any = "") -> Any:
 async def _detect_action(state: ChatGraphState) -> dict[str, Any]:
     message = state["message"]
     system_prompt = state["system_prompt"]
+
+    calendar_action = invoke_calendar_action_tool(
+        message,
+        state.get("timezone", "America/Sao_Paulo"),
+    )
+    if calendar_action:
+        return {
+            "action": calendar_action,
+            "action_kind": "calendar",
+        }
 
     for action_kind in ("computer", "coding", "project", "registration"):
         action = invoke_action_tool(action_kind, message)
@@ -133,6 +146,7 @@ def _route_after_resolution(state: ChatGraphState) -> GraphRoute:
         "coding",
         "project",
         "registration",
+        "calendar",
     }:
         return "action"
     return cast(GraphRoute, state["mode"].value)
@@ -142,7 +156,13 @@ async def _acknowledge_action(state: ChatGraphState) -> dict[str, Any]:
     action = state["action"]
     action_kind = state["action_kind"]
 
-    if action_kind == "computer":
+    if action_kind == "calendar":
+        start = datetime.fromisoformat(str(_value(action, "start_time")))
+        content = (
+            f"Preparei o evento '{_value(action, 'title')}' para "
+            f"{start:%d/%m/%Y às %H:%M}. Confirme os dados para criar."
+        )
+    elif action_kind == "computer":
         content = (
             f"Vou executar {_value(action, 'name')} no computador "
             "e analisar o resultado."
@@ -303,6 +323,7 @@ async def run_chat_graph(
     active_llms: list[str],
     system_prompt: str,
     tutor_id: str,
+    timezone: str = "America/Sao_Paulo",
 ) -> ChatGraphState:
     result = await chat_graph.ainvoke(
         {
@@ -313,6 +334,7 @@ async def run_chat_graph(
             "active_llms": list(active_llms),
             "system_prompt": system_prompt,
             "tutor_id": tutor_id,
+            "timezone": timezone,
         }
     )
     return cast(ChatGraphState, result)

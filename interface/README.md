@@ -125,6 +125,13 @@ legados são migrados somente para o primeiro admin.
 As credenciais e URLs dos provedores de LLM são configurações de
 infraestrutura do backend e devem ser fornecidas por variáveis de ambiente.
 
+### Calendários
+
+Em **Configurações > Agendas**, cada usuário pode conectar contas Google
+Calendar e Microsoft Outlook/Teams. O procedimento para criar as credenciais
+OAuth, cadastrar callbacks locais ou do Railway e testar a criação de eventos
+está em [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
+
 ## Ações Locais E Segurança
 
 O backend pode devolver propostas tipadas para diagnósticos, scripts, inspeção

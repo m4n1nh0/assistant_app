@@ -1503,6 +1503,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   }
 
   Future<void> _handleAssistantAction(ChatResult result) async {
+    if (result.calendarCreateAction != null) {
+      await _executeCalendarCreateAction(result.calendarCreateAction!);
+      return;
+    }
     if (result.codingAction != null) {
       await _executeCodingAction(result.codingAction!);
       return;
@@ -1524,6 +1528,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   ) async {
     if (result.computerAction != null ||
         result.codingAction != null ||
+        result.calendarCreateAction != null ||
         result.registrationAction != null ||
         result.action != null ||
         _isLocalScriptResultRequest(userRequest)) {
@@ -1570,9 +1575,156 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     }
   }
 
+  String _calendarDateTime(DateTime value) {
+    final local = value.toLocal();
+    String two(int part) => part.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
+
+  Future<void> _executeCalendarCreateAction(CalendarCreateAction action) async {
+    if (!mounted) return;
+
+    try {
+      final groupedAccounts = await api.listCalendarAccounts();
+      if (!mounted) return;
+      final accounts = <CalendarAccount>[
+        ...(groupedAccounts['google'] ?? const <CalendarAccount>[]),
+        ...(groupedAccounts['microsoft'] ?? const <CalendarAccount>[]),
+      ].where((account) {
+        if (!account.connected) return false;
+        return action.provider == 'auto' || account.provider == action.provider;
+      }).toList();
+
+      if (accounts.isEmpty) {
+        final providerName = action.provider == 'google'
+            ? 'Google'
+            : action.provider == 'microsoft'
+                ? 'Microsoft'
+                : 'Google ou Microsoft';
+        _addSystemMsg(
+            'Nenhuma conta $providerName com permissao de escrita esta conectada. '
+            'Conecte ou reconecte a conta em Configuracoes > Agendas.');
+        return;
+      }
+
+      var selected = accounts.first;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            backgroundColor: AssistantTheme.surface,
+            title: const Text(
+              'Confirmar novo evento',
+              style: TextStyle(color: AssistantTheme.textPrimary),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    action.title,
+                    style: const TextStyle(
+                      color: AssistantTheme.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Inicio: ${_calendarDateTime(action.startTime)}\n'
+                    'Termino: ${_calendarDateTime(action.endTime)}',
+                    style: const TextStyle(color: AssistantTheme.textSecondary),
+                  ),
+                  if (action.description?.trim().isNotEmpty ?? false) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      action.description!.trim(),
+                      style:
+                          const TextStyle(color: AssistantTheme.textSecondary),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<CalendarAccount>(
+                    value: selected,
+                    dropdownColor: AssistantTheme.surface,
+                    decoration: const InputDecoration(
+                      labelText: 'Agenda de destino',
+                      labelStyle:
+                          TextStyle(color: AssistantTheme.textSecondary),
+                    ),
+                    style: const TextStyle(color: AssistantTheme.textPrimary),
+                    items: accounts
+                        .map(
+                          (account) => DropdownMenuItem(
+                            value: account,
+                            child: Text(
+                              '${account.provider == 'google' ? 'Google' : 'Microsoft'} - ${account.label}',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (account) {
+                      if (account != null) {
+                        setDialogState(() => selected = account);
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Criar evento'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (!mounted) return;
+
+      if (confirmed != true) {
+        _addSystemMsg('Criacao do evento cancelada.');
+        return;
+      }
+
+      _addSystemMsg('Criando evento em ${selected.label}...');
+      final data = await api.createCalendarEvent(
+        provider: selected.provider,
+        accountId: selected.id,
+        title: action.title,
+        startTime: action.startTime,
+        endTime: action.endTime,
+        timezone: action.timezone,
+        description: action.description,
+        location: action.location,
+      );
+      if (!mounted) return;
+      final event = CalendarEvent.fromJson(data);
+      ref.read(eventsProvider.notifier).addEvent(event);
+      _addSystemMsg('Evento criado em ${selected.label}: ${event.title}, '
+          '${_calendarDateTime(event.startTime)}.');
+    } catch (e) {
+      final detail = e.toString().replaceFirst('Exception: ', '');
+      _addSystemMsg('Nao consegui criar o evento: $detail '
+          'Se a conta foi conectada antes desta atualizacao, reconecte-a para liberar escrita.');
+    }
+  }
+
   Future<void> _handleWorkspaceEditProposals(ChatResult result) async {
     if (!_workspaceEditingAllowed || _editableWorkspaceRoot == null) return;
-    if (result.codingAction != null || result.computerAction != null) return;
+    if (result.codingAction != null ||
+        result.computerAction != null ||
+        result.calendarCreateAction != null) {
+      return;
+    }
 
     final proposal = _extractWorkspaceEditProposal(result.responses);
     if (proposal == null || proposal.edits.isEmpty) return;

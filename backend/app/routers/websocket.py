@@ -263,6 +263,7 @@ async def _handle_chat(
             active_llms=active,
             system_prompt=sys_p,
             tutor_id=tutor_id,
+            timezone=payload.get("timezone") or "America/Sao_Paulo",
         )
         responses = graph_result["responses"]
         action = graph_result.get("action")

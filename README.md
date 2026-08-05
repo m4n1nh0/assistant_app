@@ -1,4 +1,4 @@
-# Assistente Desktop 
+# Assistente Desktop
 
 Aplicacao de assistente pessoal desktop com backend FastAPI, interface Flutter,
 memoria vetorial, automacoes locais, integracao com calendarios, voz,
@@ -540,6 +540,9 @@ Uso comercial exige permissao previa por escrito. Consulte [LICENSE](LICENSE).
 
 ## Documentacao Complementar
 
+- [docs/CONFIGURACAO_CALENDARIOS.md](docs/CONFIGURACAO_CALENDARIOS.md): configuração
+  completa do Google Calendar e Microsoft Outlook/Teams, incluindo OAuth,
+  callbacks locais e Railway, conexão de contas e criação de eventos.
 - [backend/README.md](backend/README.md): endpoints, provedores locais,
   Railway, WebSocket e detalhes do servidor.
 - [interface/README.md](interface/README.md): execucao, status dos provedores e

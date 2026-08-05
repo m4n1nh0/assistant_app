@@ -139,8 +139,7 @@ class ApiService {
     }
   }
 
-  Future<String?> currentUsername() async =>
-      (await currentAccount())?.username;
+  Future<String?> currentUsername() async => (await currentAccount())?.username;
 
   Future<String> inviteUser(String email) async {
     final r = await http.post(
@@ -675,6 +674,37 @@ class ApiService {
     return (data['events'] as List).cast<Map<String, dynamic>>();
   }
 
+  Future<Map<String, dynamic>> createCalendarEvent({
+    required String provider,
+    required String accountId,
+    required String title,
+    required DateTime startTime,
+    required DateTime endTime,
+    required String timezone,
+    String? description,
+    String? location,
+  }) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/calendar/events'),
+      headers: _headers,
+      body: jsonEncode({
+        'provider': provider,
+        'account_id': accountId,
+        'title': title,
+        'start_time': startTime.toIso8601String(),
+        'end_time': endTime.toIso8601String(),
+        'timezone': timezone,
+        if (description?.trim().isNotEmpty ?? false)
+          'description': description!.trim(),
+        if (location?.trim().isNotEmpty ?? false) 'location': location!.trim(),
+        'confirmed': true,
+      }),
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    _throwIfHttpError(r, data: data, fallback: 'Falha ao criar evento');
+    return data;
+  }
+
   Future<String> getGoogleAuthUrl() async {
     final r = await http.get(Uri.parse('$baseUrl/calendar/google/auth-url'),
         headers: _headers);
@@ -1094,8 +1124,7 @@ class AuthSetupStatus {
   factory AuthSetupStatus.fromJson(Map<String, dynamic> json) =>
       AuthSetupStatus(
         needsSetup: json['needs_setup'] == true,
-        inviteRegistrationEnabled:
-            json['invite_registration_enabled'] != false,
+        inviteRegistrationEnabled: json['invite_registration_enabled'] != false,
         registrationRequiresToken: json['registration_requires_token'] == true,
         registrationDeliveryConfigured:
             json['registration_delivery_configured'] == true,

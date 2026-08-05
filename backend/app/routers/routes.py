@@ -1,6 +1,7 @@
 import hmac
 from datetime import datetime, timedelta, timezone
 
+import pytz
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -321,8 +322,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel as _BM
 from typing import Optional as _Opt
 
-from ..models.schemas import CalendarConfig, EventsResponse
+from ..models.schemas import (
+    CalendarConfig,
+    CalendarEvent,
+    CalendarEventCreateRequest,
+    EventsResponse,
+)
 from ..services.calendar_service import (
+    create_google_account_event,
+    create_microsoft_account_event,
     fetch_all_account_events,
     get_google_auth_url, get_microsoft_auth_url,
     exchange_google_code, exchange_microsoft_code,
@@ -773,6 +781,72 @@ async def get_events(
     microsoft_accounts = await _load_microsoft_accounts(db, user["uid"])
     events = await fetch_all_account_events(google_accounts, microsoft_accounts)
     return EventsResponse(events=events, total=len(events))
+
+
+@router_calendar.post("/events", response_model=CalendarEvent, status_code=201)
+async def create_event(
+    body: CalendarEventCreateRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Creates an event only after the desktop confirmation dialog."""
+    if not body.confirmed:
+        raise HTTPException(400, "Confirme o evento antes de cria-lo.")
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(422, "O titulo do evento e obrigatorio.")
+
+    try:
+        event_timezone = pytz.timezone(body.timezone)
+    except pytz.UnknownTimeZoneError as exc:
+        raise HTTPException(422, "Fuso horario IANA invalido.") from exc
+
+    start_time = body.start_time
+    end_time = body.end_time
+    if start_time.tzinfo is None:
+        start_time = event_timezone.localize(start_time)
+    if end_time.tzinfo is None:
+        end_time = event_timezone.localize(end_time)
+    if end_time <= start_time:
+        raise HTTPException(422, "O termino deve ser posterior ao inicio.")
+    if start_time <= _datetime.now(_timezone.utc):
+        raise HTTPException(422, "O evento precisa comecar no futuro.")
+
+    if body.provider == "google":
+        accounts = await _load_google_accounts(db, user["uid"])
+    else:
+        accounts = await _load_microsoft_accounts(db, user["uid"])
+    account = next(
+        (
+            item
+            for item in accounts
+            if item.get("id") == body.account_id and item.get("refresh_token")
+        ),
+        None,
+    )
+    if account is None:
+        raise HTTPException(404, "Conta de calendario conectada nao encontrada.")
+
+    kwargs = {
+        "title": title,
+        "start_time": start_time,
+        "end_time": end_time,
+        "description": body.description.strip() if body.description else None,
+        "location": body.location.strip() if body.location else None,
+    }
+    try:
+        if body.provider == "google":
+            return await create_google_account_event(
+                account,
+                timezone_name=body.timezone,
+                **kwargs,
+            )
+        return await create_microsoft_account_event(account, **kwargs)
+    except Exception as exc:
+        detail = str(exc)
+        if "insufficient" in detail.lower() or "permission" in detail.lower():
+            detail += " Reconecte a conta para conceder a permissao de escrita."
+        raise HTTPException(502, detail) from exc
 
 
 # ── Status ────────────────────────────────────────────────────────────────────

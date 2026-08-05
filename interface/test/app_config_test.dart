@@ -15,4 +15,36 @@ void main() {
 
     expect(status.shortStatus, 'CHECANDO');
   });
+
+  test('CalendarCreateAction parses structured assistant proposal', () {
+    final action = CalendarCreateAction.fromJson({
+      'type': 'calendar_create',
+      'title': 'Consulta',
+      'start_time': '2026-08-10T14:00:00-03:00',
+      'end_time': '2026-08-10T15:00:00-03:00',
+      'timezone': 'America/Sao_Paulo',
+      'provider': 'google',
+      'requires_confirmation': true,
+    });
+
+    expect(action.title, 'Consulta');
+    expect(action.provider, 'google');
+    expect(
+        action.endTime.difference(action.startTime), const Duration(hours: 1));
+    expect(action.requiresConfirmation, isTrue);
+  });
+
+  test('CalendarEvent parses API snake case response', () {
+    final event = CalendarEvent.fromJson({
+      'id': 'google:one:event',
+      'title': 'Consulta',
+      'start_time': '2026-08-10T17:00:00Z',
+      'end_time': '2026-08-10T18:00:00Z',
+      'source': 'google',
+    });
+
+    expect(event.id, 'google:one:event');
+    expect(event.title, 'Consulta');
+    expect(event.endTime, isNotNull);
+  });
 }

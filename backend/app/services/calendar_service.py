@@ -11,6 +11,9 @@ from ..models.schemas import CalendarEvent, CalendarConfig
 
 settings = get_settings()
 
+GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+MICROSOFT_CALENDAR_SCOPE = "Calendars.ReadWrite offline_access"
+
 
 def get_google_auth_url(
     client_id: str,
@@ -21,7 +24,7 @@ def get_google_auth_url(
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        "scope": GOOGLE_CALENDAR_SCOPE,
         "access_type": "offline",
         "prompt": "consent select_account",
     }
@@ -136,7 +139,7 @@ def get_microsoft_auth_url(
         "client_id": client_id,
         "response_type": "code",
         "redirect_uri": redirect_uri,
-        "scope": "Calendars.Read offline_access",
+        "scope": MICROSOFT_CALENDAR_SCOPE,
         "response_mode": "query",
         "prompt": "select_account",
     }
@@ -162,7 +165,7 @@ async def exchange_microsoft_code(
                 "client_secret": client_secret,
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
-                "scope": "Calendars.Read offline_access",
+                "scope": MICROSOFT_CALENDAR_SCOPE,
             },
         )
     data = resp.json()
@@ -182,7 +185,7 @@ async def _get_ms_access_token(
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "grant_type": "refresh_token",
-                "scope": "Calendars.Read offline_access",
+                "scope": MICROSOFT_CALENDAR_SCOPE,
             },
         )
     data = resp.json()
@@ -246,6 +249,129 @@ async def fetch_all_events(config: CalendarConfig) -> List[CalendarEvent]:
     all_events = google_events + ms_events
     all_events.sort(key=lambda e: e.start_time)
     return all_events
+
+
+async def create_google_account_event(
+    account: dict,
+    *,
+    title: str,
+    start_time: datetime,
+    end_time: datetime,
+    timezone_name: str,
+    description: str | None = None,
+    location: str | None = None,
+) -> CalendarEvent:
+    """Creates an event in the connected account's primary Google calendar."""
+    token = await _get_google_access_token(
+        account.get("client_id", ""),
+        account.get("client_secret", ""),
+        account.get("refresh_token", ""),
+    )
+    payload = {
+        "summary": title,
+        "start": {
+            "dateTime": start_time.isoformat(),
+            "timeZone": timezone_name,
+        },
+        "end": {
+            "dateTime": end_time.isoformat(),
+            "timeZone": timezone_name,
+        },
+    }
+    if description:
+        payload["description"] = description
+    if location:
+        payload["location"] = location
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    data = response.json()
+    if response.is_error or "error" in data:
+        detail = data.get("error", {})
+        if isinstance(detail, dict):
+            detail = detail.get("message") or detail
+        raise RuntimeError(f"Google Calendar recusou o evento: {detail}")
+
+    account_id = account.get("id") or "google"
+    return CalendarEvent(
+        id=f"google:{account_id}:{data.get('id', '')}",
+        title=data.get("summary") or title,
+        start_time=start_time,
+        end_time=end_time,
+        source="google",
+        meeting_url=data.get("hangoutLink") or data.get("htmlLink"),
+        description=description,
+    )
+
+
+async def create_microsoft_account_event(
+    account: dict,
+    *,
+    title: str,
+    start_time: datetime,
+    end_time: datetime,
+    description: str | None = None,
+    location: str | None = None,
+) -> CalendarEvent:
+    """Creates an event in the connected account's default Outlook calendar."""
+    token = await _get_ms_access_token(
+        account.get("client_id", ""),
+        account.get("client_secret", ""),
+        account.get("tenant_id", "common"),
+        account.get("refresh_token", ""),
+    )
+    start_utc = start_time.astimezone(timezone.utc)
+    end_utc = end_time.astimezone(timezone.utc)
+    payload = {
+        "subject": title,
+        "start": {
+            "dateTime": start_utc.replace(tzinfo=None).isoformat(timespec="seconds"),
+            "timeZone": "UTC",
+        },
+        "end": {
+            "dateTime": end_utc.replace(tzinfo=None).isoformat(timespec="seconds"),
+            "timeZone": "UTC",
+        },
+    }
+    if description:
+        payload["body"] = {"contentType": "text", "content": description}
+    if location:
+        payload["location"] = {"displayName": location}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            "https://graph.microsoft.com/v1.0/me/events",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    data = response.json()
+    if response.is_error or "error" in data:
+        detail = data.get("error", {})
+        if isinstance(detail, dict):
+            detail = detail.get("message") or detail
+        raise RuntimeError(f"Microsoft Calendar recusou o evento: {detail}")
+
+    account_id = account.get("id") or "microsoft"
+    online_meeting = data.get("onlineMeeting") or {}
+    return CalendarEvent(
+        id=f"microsoft:{account_id}:{data.get('id', '')}",
+        title=data.get("subject") or title,
+        start_time=start_time,
+        end_time=end_time,
+        source="teams" if online_meeting else "outlook",
+        meeting_url=online_meeting.get("joinUrl") or data.get("webLink"),
+        description=description,
+    )
 
 
 async def fetch_all_account_events(

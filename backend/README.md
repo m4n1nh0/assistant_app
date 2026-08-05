@@ -358,6 +358,7 @@ Nas rotas abreviadas abaixo, `{provider}` representa os endpoints concretos
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/calendar/events` | Listar eventos das contas conectadas |
+| POST | `/calendar/events` | Criar evento confirmado em uma conta conectada |
 | GET | `/calendar/status` | Consultar credenciais e contas configuradas, sem expor segredos |
 | GET | `/calendar/accounts` | Listar contas Google e Microsoft, inclusive conexões pendentes |
 | PUT | `/calendar/{provider}/oauth-app` | Salvar as credenciais do aplicativo OAuth |
@@ -368,6 +369,10 @@ Nas rotas abreviadas abaixo, `{provider}` representa os endpoints concretos
 | GET | `/calendar/{provider}/auth-url` | Obter URL OAuth pelo fluxo de compatibilidade |
 | DELETE | `/calendar/{provider}/accounts/{account_id}` | Desconectar uma conta específica |
 | DELETE | `/calendar/{provider}/disconnect` | Desconectar todas as contas do provedor |
+
+O cadastro dos clientes OAuth, escopos, callbacks locais e Railway e a conexão
+das contas estão documentados em
+[Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
 
 ### Notificações
 

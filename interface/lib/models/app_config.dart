@@ -56,8 +56,8 @@ class AppConfig {
   int ttsRatePercent;
   int ttsPitchHz;
 
-  static const defaultBackendUrl =
-      String.fromEnvironment('APP_BACKEND_URL', defaultValue: 'http://localhost:8000');
+  static const defaultBackendUrl = String.fromEnvironment('APP_BACKEND_URL',
+      defaultValue: 'http://localhost:8000');
 
   AppConfig({
     this.assistantName = 'Assistente',
@@ -414,6 +414,7 @@ class ChatResult {
   final ShortcutRegistrationAction? registrationAction;
   final ComputerAction? computerAction;
   final CodingAction? codingAction;
+  final CalendarCreateAction? calendarCreateAction;
 
   const ChatResult({
     required this.responses,
@@ -421,6 +422,7 @@ class ChatResult {
     this.registrationAction,
     this.computerAction,
     this.codingAction,
+    this.calendarCreateAction,
   });
 
   LlmResponse get firstResponse => responses.isEmpty
@@ -565,6 +567,46 @@ class CodingAction {
         requiresConfirmation: json['requires_confirmation'] == true ||
             json['requiresConfirmation'] == true,
         arguments: AppConfig._map(json['arguments']),
+      );
+}
+
+class CalendarCreateAction {
+  final String type;
+  final String title;
+  final DateTime startTime;
+  final DateTime endTime;
+  final String timezone;
+  final String provider;
+  final String? description;
+  final String? location;
+  final bool requiresConfirmation;
+
+  const CalendarCreateAction({
+    required this.type,
+    required this.title,
+    required this.startTime,
+    required this.endTime,
+    required this.timezone,
+    required this.provider,
+    this.description,
+    this.location,
+    required this.requiresConfirmation,
+  });
+
+  factory CalendarCreateAction.fromJson(Map<String, dynamic> json) =>
+      CalendarCreateAction(
+        type: json['type']?.toString() ?? 'calendar_create',
+        title: json['title']?.toString() ?? '',
+        startTime: DateTime.parse(
+            (json['start_time'] ?? json['startTime']).toString()),
+        endTime:
+            DateTime.parse((json['end_time'] ?? json['endTime']).toString()),
+        timezone: json['timezone']?.toString() ?? 'America/Sao_Paulo',
+        provider: json['provider']?.toString() ?? 'auto',
+        description: json['description']?.toString(),
+        location: json['location']?.toString(),
+        requiresConfirmation: json['requires_confirmation'] == true ||
+            json['requiresConfirmation'] == true,
       );
 }
 
@@ -739,4 +781,23 @@ class CalendarEvent {
 
   bool get isUpcoming => startTime.isAfter(DateTime.now());
   Duration get timeUntil => startTime.difference(DateTime.now());
+
+  factory CalendarEvent.fromJson(Map<String, dynamic> json) => CalendarEvent(
+        id: json['id']?.toString() ?? '',
+        title: json['title']?.toString() ?? 'Sem título',
+        startTime: DateTime.parse(
+          (json['start_time'] ?? json['startTime']).toString(),
+        ).toLocal(),
+        endTime: (json['end_time'] ?? json['endTime']) != null
+            ? DateTime.parse(
+                (json['end_time'] ?? json['endTime']).toString(),
+              ).toLocal()
+            : null,
+        source: json['source']?.toString() ?? 'google',
+        meetingUrl: (json['meeting_url'] ?? json['meetingUrl'])?.toString(),
+        description: json['description']?.toString(),
+        notified15: json['notified_15'] == true || json['notified15'] == true,
+        notifiedOnTime:
+            json['notified_0'] == true || json['notifiedOnTime'] == true,
+      );
 }

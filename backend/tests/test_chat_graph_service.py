@@ -75,6 +75,39 @@ def test_registration_tool_routes_structured_action_to_interface():
     assert "cadastrar o atalho" in result["responses"][0].content
 
 
+def test_calendar_action_short_circuits_llm_and_requests_confirmation(monkeypatch):
+    async def fail_dispatch(*args, **kwargs):
+        raise AssertionError("LLM dispatch should not run for a calendar action")
+
+    monkeypatch.setattr(
+        chat_graph_service,
+        "invoke_calendar_action_tool",
+        lambda message, timezone: {
+            "type": "calendar_create",
+            "title": "Consulta",
+            "start_time": "2026-08-10T14:00:00-03:00",
+            "end_time": "2026-08-10T15:00:00-03:00",
+            "timezone": timezone,
+            "provider": "google",
+            "requires_confirmation": True,
+        },
+    )
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_single",
+        fail_dispatch,
+    )
+
+    result = run_graph(
+        message="Agende uma consulta",
+        active_llms=["gpt"],
+    )
+
+    assert result["action_kind"] == "calendar"
+    assert result["action"]["requires_confirmation"] is True
+    assert "Confirme os dados" in result["responses"][0].content
+
+
 def test_single_route_chooses_provider_and_dispatches(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""

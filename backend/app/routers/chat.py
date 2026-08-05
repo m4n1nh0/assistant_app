@@ -4,7 +4,7 @@ from sqlalchemy import select
 import uuid, json
 from datetime import datetime, timezone
 
-from ..core.database import AsyncSessionLocal, ConversationModel
+from ..core.database import AsyncSessionLocal, ConversationModel, TutorModel
 from ..core.security import get_current_user
 from ..core.config import get_settings
 from ..models.schemas import ChatRequest, ChatResponse, LLMResponse
@@ -15,6 +15,17 @@ from ..services.llm_routing_service import pick_auto_llm
 
 router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
 settings = get_settings()
+
+
+async def _profile_timezone(tutor_id: str) -> str:
+    try:
+        async with AsyncSessionLocal() as db:
+            tutor = await db.get(TutorModel, tutor_id)
+        if tutor and tutor.timezone:
+            return tutor.timezone
+    except Exception:
+        pass
+    return "America/Sao_Paulo"
 
 
 def _system_prompt(config: dict) -> str:
@@ -82,6 +93,7 @@ async def chat(
     active = await get_ready_llms()
 
     tutor_id = cfg.get("tutor_id") or "default"
+    timezone_name = await _profile_timezone(tutor_id)
     graph_result = await run_chat_graph(
         message=body.message,
         history=body.history,
@@ -90,6 +102,7 @@ async def chat(
         active_llms=active,
         system_prompt=sys_prompt,
         tutor_id=tutor_id,
+        timezone=timezone_name,
     )
     responses = graph_result["responses"]
     action = graph_result.get("action")

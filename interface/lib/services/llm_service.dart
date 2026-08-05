@@ -127,6 +127,18 @@ class LlmService {
       final actionType = actionData['type']?.toString() ?? 'launch';
       if (actionType == 'register_shortcut') {
         registrationAction = ShortcutRegistrationAction.fromJson(actionData);
+      } else if (actionType == 'calendar_create') {
+        return ChatResult(
+          responses: responses.isEmpty
+              ? [
+                  LlmResponse(
+                    llm: fallbackLlm,
+                    content: 'Confirme os dados para criar o evento.',
+                  ),
+                ]
+              : responses,
+          calendarCreateAction: CalendarCreateAction.fromJson(actionData),
+        );
       } else if (actionType == 'computer_action') {
         return ChatResult(
           responses: responses.isEmpty

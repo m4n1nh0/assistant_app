@@ -7,6 +7,7 @@ def test_action_tools_are_registered_with_stable_names():
         "propose_coding_action",
         "propose_project_action",
         "propose_shortcut_registration",
+        "propose_calendar_event",
     ]
 
 
@@ -41,3 +42,15 @@ def test_registration_tool_serializes_pydantic_action():
     assert action["type"] == "register_shortcut"
     assert action["name"]
     assert isinstance(action["aliases"], list)
+
+
+def test_calendar_tool_only_proposes_and_requires_confirmation():
+    result = assistant_tools.propose_calendar_event.invoke({
+        "request": "Agende consulta em 2099-08-10 às 14h",
+        "timezone": "America/Sao_Paulo",
+    })
+
+    assert result.matched is True
+    assert result.action is not None
+    assert result.action["type"] == "calendar_create"
+    assert result.action["requires_confirmation"] is True
