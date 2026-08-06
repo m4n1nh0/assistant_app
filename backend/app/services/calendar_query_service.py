@@ -547,7 +547,9 @@ def format_calendar_query_response(
         return f"Você não tem eventos{suffix} {period}."
 
     tz = _timezone(plan.timezone)
-    lines = [f"Encontrei {len(result.events)} evento(s) {period}:"]
+    event_count = len(result.events)
+    event_label = "evento" if event_count == 1 else "eventos"
+    lines = [f"Encontrei {event_count} {event_label} {period}:"]
     source_labels = {
         "google": "Google",
         "outlook": "Outlook",

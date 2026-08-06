@@ -243,6 +243,8 @@ def test_formats_only_events_returned_by_calendar_provider():
 
     content = format_calendar_query_response(plan, result)
 
+    assert "Encontrei 1 evento " in content
+    assert "evento(s)" not in content
     assert "Planejamento" in content
     assert "06/08 14:00–15:00" in content
     assert "Google" in content

@@ -21,6 +21,7 @@ import '../services/local_workspace_service.dart';
 import '../services/llm_service.dart';
 import '../services/neural_tts_service.dart';
 import '../services/neural_audio_player.dart';
+import '../services/speech_text_formatter.dart';
 import '../services/shortcut_matching.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
@@ -2864,20 +2865,10 @@ ${result.toPromptText()}
   }
 
   String _speechText(String content) {
-    var text = content;
-    text = text.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
-    text = text.replaceAllMapped(
-      RegExp(r'\[([^\]]+)\]\([^)]+\)'),
-      (match) => match.group(1) ?? '',
+    return formatSpeechText(
+      content,
+      language: ref.read(configProvider).language,
     );
-    text = text.replaceAllMapped(
-      RegExp(r'`([^`]+)`'),
-      (match) => match.group(1) ?? '',
-    );
-    text = text.replaceAll(RegExp(r'[*_#>`~]+'), ' ');
-    text = text.replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '');
-    text = text.replaceAll(RegExp(r'\s+'), ' ');
-    return text.trim();
   }
 
   void _addSystemMsg(String content) {
