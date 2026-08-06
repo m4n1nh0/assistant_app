@@ -653,6 +653,15 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       ]);
 
   Widget _buildCalendar2() => _TabContent(title: 'AGENDAS', children: [
+        _SectionCard(title: 'CRIAÇÃO DE EVENTOS', children: [
+          _InfoBox(
+              'Quando autorizada, a assistente cria pedidos claros de eventos sem abrir a confirmação. A primeira conta compatível é usada; se o provedor não for informado, o Google tem preferência. Esta opção vem desligada por segurança.'),
+          _Toggle(
+            'Autorizar criação automática',
+            _draft.calendar.autoCreateEvents,
+            (value) => setState(() => _draft.calendar.autoCreateEvents = value),
+          ),
+        ]),
         _SectionCard(title: 'GOOGLE CALENDAR', children: [
           _InfoBox(
               'Informe as credenciais OAuth uma vez ou use as que ja estao salvas no backend. O botao libera leitura e criacao de eventos. Reconecte contas antigas para autorizar escrita.'),

@@ -338,6 +338,7 @@ class CalendarConfig {
   String msTenantId;
   String msRefreshToken;
   bool msEnabled;
+  bool autoCreateEvents;
 
   CalendarConfig({
     this.gcalClientId = '',
@@ -349,6 +350,7 @@ class CalendarConfig {
     this.msTenantId = 'common',
     this.msRefreshToken = '',
     this.msEnabled = false,
+    this.autoCreateEvents = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -361,6 +363,7 @@ class CalendarConfig {
         'msTenantId': msTenantId,
         'msRefreshToken': msRefreshToken,
         'msEnabled': msEnabled,
+        'autoCreateEvents': autoCreateEvents,
       };
 
   factory CalendarConfig.fromJson(Map<String, dynamic> j) => CalendarConfig(
@@ -373,6 +376,8 @@ class CalendarConfig {
         msTenantId: j['msTenantId'] ?? 'common',
         msRefreshToken: j['msRefreshToken'] ?? '',
         msEnabled: j['msEnabled'] ?? false,
+        autoCreateEvents:
+            j['autoCreateEvents'] ?? j['auto_create_events'] ?? false,
       );
 }
 

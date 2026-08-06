@@ -55,4 +55,19 @@ Encontrei 1 evento em 05/08/2026:
 
     expect(speech, 'Meeting on 14/08 at 17:00.');
   });
+
+  test('humanizes a creation proposal and does not read the meeting URL', () {
+    const response =
+        'Preparei o evento “Bate-papo Dev Python GENAI” para 10/08/2026 '
+        'às 14:30. Link da reunião: '
+        'https://teams.live.com/meet/9360968074888?p=secret';
+
+    final speech = formatSpeechText(response);
+
+    expect(speech, contains('10 de agosto de 2026'));
+    expect(speech, contains('às 14 horas e 30 minutos'));
+    expect(speech, contains('link da reunião disponível nos detalhes'));
+    expect(speech, isNot(contains('https://')));
+    expect(speech, isNot(contains('p=secret')));
+  });
 }

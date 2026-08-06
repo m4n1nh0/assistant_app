@@ -47,4 +47,14 @@ void main() {
     expect(event.title, 'Consulta');
     expect(event.endTime, isNotNull);
   });
+
+  test('CalendarConfig keeps automatic creation disabled by default', () {
+    expect(CalendarConfig().autoCreateEvents, isFalse);
+
+    final restored = CalendarConfig.fromJson({
+      'autoCreateEvents': true,
+    });
+    expect(restored.autoCreateEvents, isTrue);
+    expect(restored.toJson()['autoCreateEvents'], isTrue);
+  });
 }

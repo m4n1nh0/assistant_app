@@ -1608,93 +1608,102 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       }
 
       var selected = accounts.first;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (dialogContext, setDialogState) => AlertDialog(
-            backgroundColor: AssistantTheme.surface,
-            title: const Text(
-              'Confirmar novo evento',
-              style: TextStyle(color: AssistantTheme.textPrimary),
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    action.title,
-                    style: const TextStyle(
-                      color: AssistantTheme.textPrimary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 17,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Inicio: ${_calendarDateTime(action.startTime)}\n'
-                    'Termino: ${_calendarDateTime(action.endTime)}',
-                    style: const TextStyle(color: AssistantTheme.textSecondary),
-                  ),
-                  if (action.description?.trim().isNotEmpty ?? false) ...[
-                    const SizedBox(height: 10),
+      final automaticCreation =
+          ref.read(configProvider).calendar.autoCreateEvents;
+      var confirmed = true;
+      if (action.requiresConfirmation && !automaticCreation) {
+        final decision = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, setDialogState) => AlertDialog(
+              backgroundColor: AssistantTheme.surface,
+              title: const Text(
+                'Confirmar novo evento',
+                style: TextStyle(color: AssistantTheme.textPrimary),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      action.description!.trim(),
+                      action.title,
+                      style: const TextStyle(
+                        color: AssistantTheme.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Inicio: ${_calendarDateTime(action.startTime)}\n'
+                      'Termino: ${_calendarDateTime(action.endTime)}',
                       style:
                           const TextStyle(color: AssistantTheme.textSecondary),
                     ),
-                  ],
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<CalendarAccount>(
-                    value: selected,
-                    dropdownColor: AssistantTheme.surface,
-                    decoration: const InputDecoration(
-                      labelText: 'Agenda de destino',
-                      labelStyle:
-                          TextStyle(color: AssistantTheme.textSecondary),
-                    ),
-                    style: const TextStyle(color: AssistantTheme.textPrimary),
-                    items: accounts
-                        .map(
-                          (account) => DropdownMenuItem(
-                            value: account,
-                            child: Text(
-                              '${account.provider == 'google' ? 'Google' : 'Microsoft'} - ${account.label}',
+                    if (action.description?.trim().isNotEmpty ?? false) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        action.description!.trim(),
+                        style: const TextStyle(
+                            color: AssistantTheme.textSecondary),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<CalendarAccount>(
+                      value: selected,
+                      dropdownColor: AssistantTheme.surface,
+                      decoration: const InputDecoration(
+                        labelText: 'Agenda de destino',
+                        labelStyle:
+                            TextStyle(color: AssistantTheme.textSecondary),
+                      ),
+                      style: const TextStyle(color: AssistantTheme.textPrimary),
+                      items: accounts
+                          .map(
+                            (account) => DropdownMenuItem(
+                              value: account,
+                              child: Text(
+                                '${account.provider == 'google' ? 'Google' : 'Microsoft'} - ${account.label}',
+                              ),
                             ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (account) {
-                      if (account != null) {
-                        setDialogState(() => selected = account);
-                      }
-                    },
-                  ),
-                ],
+                          )
+                          .toList(),
+                      onChanged: (account) {
+                        if (account != null) {
+                          setDialogState(() => selected = account);
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Criar evento'),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancelar'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Criar evento'),
-              ),
-            ],
           ),
-        ),
-      );
+        );
+        confirmed = decision == true;
+      }
       if (!mounted) return;
 
-      if (confirmed != true) {
+      if (!confirmed) {
         _addSystemMsg('Criacao do evento cancelada.');
         return;
       }
 
-      _addSystemMsg('Criando evento em ${selected.label}...');
+      _addSystemMsg(automaticCreation
+          ? 'Criacao automatica autorizada em ${selected.label}.'
+          : 'Criando evento em ${selected.label}...');
       final data = await api.createCalendarEvent(
         provider: selected.provider,
         accountId: selected.id,

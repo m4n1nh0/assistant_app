@@ -55,3 +55,21 @@ def test_ignores_questions_negations_and_requests_without_a_time():
     assert build("Não agende reunião amanhã às 14h") is None
     assert build("Agende uma reunião amanhã") is None
 
+
+def test_extracts_title_date_and_link_from_copied_teams_invitation():
+    action = build(
+        "Pode criar este evento do google? Maiara Américo convidou você para "
+        "uma Reunião do Microsoft Teams: Bate-papo Dev Python GENAI - "
+        "Mariano Florencio Mendonça, 10 de agosto de 2026 às 14:30. "
+        "Link da reunião: "
+        "https://teams.live.com/meet/9360968074888?p=FZUToqlwZCcc6sS4cb"
+    )
+
+    assert action is not None
+    assert action["title"] == (
+        "Bate-papo Dev Python GENAI - Mariano Florencio Mendonça"
+    )
+    assert action["provider"] == "google"
+    assert action["start_time"] == "2026-08-10T14:30:00-03:00"
+    assert "Maiara Américo" in action["description"]
+    assert "https://teams.live.com/meet/" in action["description"]

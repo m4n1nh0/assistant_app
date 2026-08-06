@@ -63,11 +63,39 @@ class ChatGraphState(TypedDict, total=False):
 
 settings = get_settings()
 
+_MONTH_NAMES_PT = (
+    "janeiro",
+    "fevereiro",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+)
+
 
 def _value(action: Any, key: str, default: Any = "") -> Any:
     if isinstance(action, dict):
         return action.get(key, default)
     return getattr(action, key, default)
+
+
+def _calendar_proposal_text(action: Any) -> str:
+    start = datetime.fromisoformat(str(_value(action, "start_time")))
+    day = f"{start.day} de {_MONTH_NAMES_PT[start.month - 1]} de {start.year}"
+    hour_label = "1 hora" if start.hour == 1 else f"{start.hour} horas"
+    if start.minute:
+        minute_label = "1 minuto" if start.minute == 1 else f"{start.minute} minutos"
+        hour_label = f"{hour_label} e {minute_label}"
+    return (
+        f"Preparei o evento “{_value(action, 'title')}” para {day}, "
+        f"às {hour_label}. Os detalhes estão prontos para criação."
+    )
 
 
 async def _detect_action(state: ChatGraphState) -> dict[str, Any]:
@@ -200,11 +228,7 @@ async def _acknowledge_action(state: ChatGraphState) -> dict[str, Any]:
     action_kind = state["action_kind"]
 
     if action_kind == "calendar":
-        start = datetime.fromisoformat(str(_value(action, "start_time")))
-        content = (
-            f"Preparei o evento '{_value(action, 'title')}' para "
-            f"{start:%d/%m/%Y às %H:%M}. Confirme os dados para criar."
-        )
+        content = _calendar_proposal_text(action)
     elif action_kind == "computer":
         content = (
             f"Vou executar {_value(action, 'name')} no computador "

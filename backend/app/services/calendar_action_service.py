@@ -39,6 +39,21 @@ _WEEKDAYS = {
     "domingo": 6,
 }
 
+_MONTHS = {
+    "janeiro": 1,
+    "fevereiro": 2,
+    "marco": 3,
+    "abril": 4,
+    "maio": 5,
+    "junho": 6,
+    "julho": 7,
+    "agosto": 8,
+    "setembro": 9,
+    "outubro": 10,
+    "novembro": 11,
+    "dezembro": 12,
+}
+
 
 def _normalize(value: str) -> str:
     decomposed = unicodedata.normalize("NFD", value.lower())
@@ -83,6 +98,18 @@ def _parse_date(text: str, today: date) -> date | None:
             if year is None and parsed < today:
                 parsed = parsed.replace(year=parsed.year + 1)
             return parsed
+        except ValueError:
+            return None
+
+    written_match = re.search(
+        r"(?<!\d)(\d{1,2})\s+de\s+(" + "|".join(_MONTHS) + r")"
+        r"(?:\s+de)?\s+(\d{4})(?!\d)",
+        text,
+    )
+    if written_match:
+        day, month_name, year = written_match.groups()
+        try:
+            return date(int(year), _MONTHS[month_name], int(day))
         except ValueError:
             return None
 
@@ -162,7 +189,57 @@ def _provider(text: str) -> str:
     return "auto"
 
 
+def _invitation_title(request: str) -> str | None:
+    teams = re.search(
+        r"\breuni[aã]o\s+do\s+microsoft\s+teams\s*:\s*(.+?)"
+        r"(?=\s*,\s*\d{1,2}\s+de\s+[a-zA-ZÃ-ÿ]+|"
+        r"\s+link\s+da\s+reuni[aã]o\s*:|$)",
+        request,
+        flags=re.IGNORECASE,
+    )
+    if teams:
+        return re.sub(r"\s+", " ", teams.group(1)).strip(" ,.;:-") or None
+
+    invitation = re.search(
+        r"\bconvidou\s+voc[eê]\s+para\s+(.+?)"
+        r"(?=\s*,\s*\d{1,2}\s+de\s+[a-zA-ZÃ-ÿ]+|"
+        r"\s+link\s+da\s+reuni[aã]o\s*:|$)",
+        request,
+        flags=re.IGNORECASE,
+    )
+    if not invitation:
+        return None
+    title = re.sub(
+        r"^um(?:a)?\s+reuni[aã]o(?:\s+do\s+microsoft\s+teams)?\s*:\s*",
+        "",
+        invitation.group(1),
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", title).strip(" ,.;:-") or None
+
+
+def _invitation_description(request: str) -> str | None:
+    url_match = re.search(r"https?://[^\s'\"]+", request, flags=re.IGNORECASE)
+    inviter_match = re.search(
+        r"(?:^|[?.!]\s*)([^?.!]{2,120}?)\s+convidou\s+voc[eê]\b",
+        request,
+        flags=re.IGNORECASE,
+    )
+    details: list[str] = []
+    if inviter_match:
+        inviter = re.sub(r"\s+", " ", inviter_match.group(1)).strip(" ,.;:-")
+        if inviter:
+            details.append(f"Convite enviado por {inviter}.")
+    if url_match:
+        details.append(f"Link da reunião: {url_match.group(0).rstrip('.,;')}")
+    return "\n".join(details) or None
+
+
 def _clean_title(request: str) -> str:
+    invitation_title = _invitation_title(request)
+    if invitation_title:
+        return invitation_title[:300]
+
     title = request.strip()
     title = re.sub(
         r"^\s*(?:por\s+favor[, ]+)?(?:eu\s+quero\s+que\s+voc[eê]\s+)?"
@@ -179,6 +256,9 @@ def _clean_title(request: str) -> str:
         r"(?<!\d)\d{4}-\d{1,2}-\d{1,2}(?!\d)",
         r"\b(?:no\s+)?dia\s+(?=\d)",
         r"(?<!\d)\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?(?!\d)",
+        r"(?<!\d)\d{1,2}\s+de\s+(?:janeiro|fevereiro|mar[cç]o|abril|maio|"
+        r"junho|julho|agosto|setembro|outubro|novembro|dezembro)"
+        r"(?:\s+de\s+\d{4})?(?!\d)",
         r"\b(?:das?|de)\s+\d{1,2}(?:[:h]\d{2})?\s*(?:h\s*)?"
         r"(?:[àa]s|at[eé]|-)\s*\d{1,2}(?:[:h]\d{2})?\s*(?:h|horas?)?\b",
         r"\b(?:[àa]s|para)\s+\d{1,2}(?:[:h]\d{2})?\s*(?:h|horas?)?\b",
@@ -198,6 +278,8 @@ def _clean_title(request: str) -> str:
         title,
         flags=re.IGNORECASE,
     )
+    title = re.sub(r"\s+", " ", title).strip(" ,.;:-")
+    title = re.sub(r"https?://\S+", " ", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", " ", title).strip(" ,.;:-")
     title = re.sub(r"\s+(?:para|em|no|na)$", "", title, flags=re.IGNORECASE)
     return title[:300]
@@ -266,7 +348,7 @@ def build_calendar_create_action(
             else "America/Sao_Paulo"
         ),
         "provider": _provider(normalized),
-        "description": None,
+        "description": _invitation_description(request),
         "location": None,
         "requires_confirmation": True,
     }

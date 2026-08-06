@@ -108,7 +108,9 @@ def test_calendar_action_short_circuits_llm_and_requests_confirmation(monkeypatc
 
     assert result["action_kind"] == "calendar"
     assert result["action"]["requires_confirmation"] is True
-    assert "Confirme os dados" in result["responses"][0].content
+    assert "10 de agosto de 2026" in result["responses"][0].content
+    assert "14 horas" in result["responses"][0].content
+    assert "detalhes estão prontos" in result["responses"][0].content
 
 
 def test_calendar_query_uses_interpreter_and_real_events_without_chat_hallucination(

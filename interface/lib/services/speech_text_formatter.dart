@@ -27,6 +27,13 @@ String formatSpeechText(String content, {String language = 'pt-BR'}) {
     RegExp(r'`([^`]+)`'),
     (match) => match.group(1) ?? '',
   );
+  text = text.replaceAll(
+    RegExp(
+      r'(?:link\s+da\s+reunião\s*:\s*)?https?://\S+',
+      caseSensitive: false,
+    ),
+    'link da reunião disponível nos detalhes',
+  );
 
   if (_isPortuguese(language)) {
     text = _formatCalendarEventLines(text);
@@ -34,6 +41,7 @@ String formatSpeechText(String content, {String language = 'pt-BR'}) {
     text = _formatFullDates(text);
     text = _formatShortDates(text);
     text = _formatTimeRanges(text);
+    text = _formatStandaloneTimes(text);
     text = text.replaceAllMapped(
       RegExp(r'\b1\s+evento\(s\)', caseSensitive: false),
       (_) => 'um evento',
@@ -155,6 +163,23 @@ String _formatTimeRanges(String text) => text.replaceAllMapped(
         int.parse(match.group(4)!),
       ),
     );
+
+String _formatStandaloneTimes(String text) {
+  text = text.replaceAllMapped(
+    RegExp(r'(?:às|as)\s+(\d{1,2}):(\d{2})\b', caseSensitive: false),
+    (match) => _atTime(
+      int.parse(match.group(1)!),
+      int.parse(match.group(2)!),
+    ),
+  );
+  return text.replaceAllMapped(
+    RegExp(r'(?:às|as)\s+(\d{1,2})h(\d{2})\b', caseSensitive: false),
+    (match) => _atTime(
+      int.parse(match.group(1)!),
+      int.parse(match.group(2)!),
+    ),
+  );
+}
 
 String _eventCount(int count) =>
     count == 1 ? 'Encontrei um evento' : 'Encontrei $count eventos';

@@ -289,7 +289,7 @@ Marque dentista dia 10/08 às 09:30 por 30 minutos no Google Calendar.
 Crie Planejamento na sexta das 14h às 15h no Outlook.
 ```
 
-O Assistente apresenta a proposta de evento. Confira:
+Por padrão, o Assistente apresenta a proposta de evento. Confira:
 
 - título;
 - início e término;
@@ -299,6 +299,23 @@ O Assistente apresenta a proposta de evento. Confira:
 Clique em **Criar evento** para confirmar. Fechar ou cancelar a janela não
 altera o calendário.
 
+#### Criação automática
+
+Em **Configurações > Agendas > Criação de eventos**, ative **Autorizar criação
+automática** para não abrir a janela de confirmação a cada pedido. A opção vem
+desligada por segurança e é salva por usuário.
+
+Quando ela está ativa:
+
+- somente pedidos explícitos com título, data e horário podem criar eventos;
+- a primeira conta compatível com o provedor solicitado é utilizada;
+- quando o pedido não informa Google ou Microsoft, a conta Google conectada tem
+  preferência;
+- o Assistente informa no chat em qual agenda o evento foi criado.
+
+Desative a opção quando quiser revisar título, horário, descrição e conta de
+destino antes de cada criação.
+
 ## Teste da integração
 
 1. Confirme que a conta aparece em **Configurações > Agendas**.
@@ -306,7 +323,8 @@ altera o calendário.
 3. Pergunte no chat `O que tenho na agenda hoje?` e confirme que o compromisso
    aparece na resposta.
 4. Solicite ao Assistente um evento para alguns minutos ou horas no futuro.
-5. Revise a proposta e clique em **Criar evento**.
+5. Revise a proposta e clique em **Criar evento**, ou confirme que a criação
+   ocorreu diretamente quando a autorização automática estiver ativa.
 6. Abra o Google Calendar ou Outlook e confirme o novo compromisso.
 7. Volte à tela principal do Assistente e atualize a agenda.
 
