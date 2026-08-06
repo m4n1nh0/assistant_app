@@ -279,3 +279,20 @@ def test_empty_provider_list_returns_controlled_error(monkeypatch):
     assert result["responses"][0].llm == "backend"
     assert result["responses"][0].is_error is True
     assert "Nenhum agente de IA" in result["responses"][0].content
+
+
+def test_unexpected_graph_failure_returns_controlled_error(monkeypatch):
+    async def fail_graph(_state):
+        raise RuntimeError("provider connection failed")
+
+    monkeypatch.setattr(chat_graph_service.chat_graph, "ainvoke", fail_graph)
+
+    result = run_graph(
+        requested_llm="gpt",
+        active_llms=["gpt"],
+    )
+
+    assert result["action"] is None
+    assert result["responses"][0].llm == "gpt"
+    assert result["responses"][0].is_error is True
+    assert "Tente novamente" in result["responses"][0].content

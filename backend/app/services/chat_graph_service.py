@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
+from loguru import logger
 
 from ..core.config import get_settings
 from ..core.database import AsyncSessionLocal
@@ -371,17 +372,34 @@ async def run_chat_graph(
     user_id: str = "",
     timezone: str = "America/Sao_Paulo",
 ) -> ChatGraphState:
-    result = await chat_graph.ainvoke(
-        {
-            "message": message,
-            "history": history,
-            "mode": mode,
-            "requested_llm": requested_llm,
-            "active_llms": list(active_llms),
-            "system_prompt": system_prompt,
-            "tutor_id": tutor_id,
-            "user_id": user_id,
-            "timezone": timezone,
+    try:
+        result = await chat_graph.ainvoke(
+            {
+                "message": message,
+                "history": history,
+                "mode": mode,
+                "requested_llm": requested_llm,
+                "active_llms": list(active_llms),
+                "system_prompt": system_prompt,
+                "tutor_id": tutor_id,
+                "user_id": user_id,
+                "timezone": timezone,
+            }
+        )
+        return cast(ChatGraphState, result)
+    except Exception as exc:
+        logger.exception("Chat graph failed: {}", exc)
+        return {
+            "action_kind": "chat",
+            "action": None,
+            "responses": [
+                LLMResponse(
+                    llm=requested_llm or "backend",
+                    content=(
+                        "Nao consegui processar sua mensagem agora. "
+                        "Tente novamente ou selecione outro agente."
+                    ),
+                    is_error=True,
+                )
+            ],
         }
-    )
-    return cast(ChatGraphState, result)

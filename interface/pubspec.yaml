@@ -28,7 +28,9 @@ dependencies:
 
   speech_to_text: ^6.6.0
   flutter_tts: ^4.0.2
-  audioplayers: ^6.0.0
+  audioplayers: ^6.7.1
+  media_kit: ^1.2.6
+  media_kit_libs_windows_audio: ^1.0.9
 
   url_launcher: ^6.2.4
   flutter_local_notifications: ^17.1.2

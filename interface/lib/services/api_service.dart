@@ -212,7 +212,11 @@ class ApiService {
         'stream': false,
       }),
     );
-    return jsonDecode(r.body) as Map<String, dynamic>;
+    return _decodeObjectResponse(
+      r,
+      httpError: 'Falha ao conversar com o assistente',
+      invalidResponse: 'Resposta invalida recebida do assistente',
+    );
   }
 
   Stream<String> chatStream({
@@ -665,6 +669,32 @@ class ApiService {
       throw Exception(decoded['detail']);
     }
     throw Exception('$fallback (HTTP ${response.statusCode})');
+  }
+
+  Map<String, dynamic> _decodeObjectResponse(
+    http.Response response, {
+    required String httpError,
+    required String invalidResponse,
+  }) {
+    Object? decoded;
+    if (response.body.trim().isNotEmpty) {
+      try {
+        decoded = jsonDecode(response.body);
+      } catch (_) {
+        _throwIfHttpError(response, fallback: httpError);
+        throw FormatException(invalidResponse);
+      }
+    }
+
+    _throwIfHttpError(
+      response,
+      data: decoded is Map<String, dynamic> ? decoded : null,
+      fallback: httpError,
+    );
+    if (decoded is! Map) {
+      throw FormatException(invalidResponse);
+    }
+    return decoded.map((key, value) => MapEntry(key.toString(), value));
   }
 
   Future<List<Map<String, dynamic>>> getEvents() async {

@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import '../providers/app_provider.dart';
@@ -21,6 +20,7 @@ import '../services/local_script_service.dart';
 import '../services/local_workspace_service.dart';
 import '../services/llm_service.dart';
 import '../services/neural_tts_service.dart';
+import '../services/neural_audio_player.dart';
 import '../services/shortcut_matching.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
@@ -106,7 +106,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   final _scrollCtrl = ScrollController();
   final _stt = stt.SpeechToText();
   final _tts = FlutterTts();
-  final _backendTtsPlayer = AudioPlayer();
+  final _backendTtsPlayer = NeuralAudioPlayer();
   final _recorder = AudioRecorder();
 
   bool _sttAvailable = false;
@@ -117,7 +117,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   bool _voicePreferenceSyncing = false;
   final bool _voiceBusy = false;
   bool _backendTtsActive = false;
-  StreamSubscription<PlayerState>? _backendTtsStateSub;
+  StreamSubscription<bool>? _backendTtsStateSub;
   StreamSubscription<void>? _backendTtsCompleteSub;
   String? _directRecordPath;
   String? _voiceStatus;
@@ -191,14 +191,12 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         () => ref.read(isSpeakingProvider.notifier).state = false);
     _tts.setErrorHandler(
         (_) => ref.read(isSpeakingProvider.notifier).state = false);
-    _backendTtsStateSub ??=
-        _backendTtsPlayer.onPlayerStateChanged.listen((state) {
+    _backendTtsStateSub ??= _backendTtsPlayer.playing.listen((isPlaying) {
       if (!mounted) return;
       if (!_backendTtsActive) return;
-      ref.read(isSpeakingProvider.notifier).state =
-          state == PlayerState.playing;
+      ref.read(isSpeakingProvider.notifier).state = isPlaying;
     });
-    _backendTtsCompleteSub ??= _backendTtsPlayer.onPlayerComplete.listen((_) {
+    _backendTtsCompleteSub ??= _backendTtsPlayer.completed.listen((_) {
       if (!mounted) return;
       _backendTtsActive = false;
       ref.read(isSpeakingProvider.notifier).state = false;
@@ -1211,7 +1209,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         await _backendTtsPlayer.stop();
         _backendTtsActive = true;
         ref.read(isSpeakingProvider.notifier).state = true;
-        await _backendTtsPlayer.play(BytesSource(audioBytes));
+        await _backendTtsPlayer.play(audioBytes);
         return;
       }
     } catch (_) {

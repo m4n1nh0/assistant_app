@@ -1,4 +1,3 @@
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_provider.dart';
@@ -6,6 +5,7 @@ import '../services/storage_service.dart';
 import '../services/api_service.dart';
 import '../services/external_launcher_service.dart';
 import '../services/neural_tts_service.dart';
+import '../services/neural_audio_player.dart';
 import '../services/notification_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
@@ -40,7 +40,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _msTenantCtrl = TextEditingController();
   final _backendUrlCtrl = TextEditingController();
   bool _backendTestBusy = false;
-  final _voicePreviewPlayer = AudioPlayer();
+  final _voicePreviewPlayer = NeuralAudioPlayer();
   bool _voiceTestBusy = false;
   Map<String, List<CalendarAccount>> _calendarAccounts = const {
     'google': [],
@@ -245,7 +245,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         return;
       }
       await _voicePreviewPlayer.stop();
-      await _voicePreviewPlayer.play(BytesSource(bytes));
+      await _voicePreviewPlayer.play(bytes);
     } catch (e) {
       _showSnack('Falha ao gerar a voz (precisa de internet): $e');
     } finally {
