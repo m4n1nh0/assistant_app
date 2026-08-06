@@ -35,6 +35,8 @@ from ..models.schemas import (
     PointsReportEntry,
     PointsReportResponse,
     StudentCreate,
+    StudentImportRequest,
+    StudentImportResponse,
     StudentResponse,
     StudentUpdate,
 )
@@ -322,12 +324,22 @@ async def create_student(
     name = body.name.strip()
     if not name:
         raise HTTPException(422, "Nome do aluno e obrigatorio")
+    external_id = (body.external_id or "").strip() or None
+    if external_id:
+        duplicate = await db.execute(
+            select(StudentModel).where(
+                StudentModel.tutor_id == user["tutor_id"],
+                StudentModel.external_id == external_id,
+            )
+        )
+        if duplicate.scalars().first() is not None:
+            raise HTTPException(409, "Matricula ja cadastrada")
     student = StudentModel(
         tutor_id=user["tutor_id"],
         name=name,
         class_group=body.class_group.strip(),
         subject=body.subject.strip(),
-        external_id=body.external_id,
+        external_id=external_id,
         aliases=[alias.strip() for alias in body.aliases if alias.strip()],
         notes=body.notes,
         active=body.active,
@@ -336,6 +348,79 @@ async def create_student(
     await db.commit()
     await db.refresh(student)
     return _student_response(student)
+
+
+@router.post("/students/import", response_model=StudentImportResponse)
+async def import_students(
+    body: StudentImportRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    class_group = body.class_group.strip()
+    subject = body.subject.strip()
+    if not class_group:
+        raise HTTPException(422, "Turma e obrigatoria para importar alunos")
+    if not subject:
+        raise HTTPException(422, "Disciplina e obrigatoria para importar alunos")
+
+    incoming: dict[str, tuple[str, str]] = {}
+    for index, item in enumerate(body.students, start=2):
+        enrollment = item.enrollment.strip()
+        name = item.name.strip()
+        if not enrollment or not name:
+            raise HTTPException(
+                422,
+                f"Linha {index}: matricula e nome sao obrigatorios",
+            )
+        key = enrollment.casefold()
+        if key in incoming:
+            raise HTTPException(422, f"Matricula duplicada no arquivo: {enrollment}")
+        incoming[key] = (enrollment, name)
+
+    result = await db.execute(
+        select(StudentModel).where(
+            StudentModel.tutor_id == user["tutor_id"],
+            StudentModel.external_id.is_not(None),
+        )
+    )
+    existing = {
+        student.external_id.strip().casefold(): student
+        for student in result.scalars().all()
+        if student.external_id and student.external_id.strip()
+    }
+
+    created = 0
+    updated = 0
+    for key, (enrollment, name) in incoming.items():
+        student = existing.get(key)
+        if student is None:
+            db.add(
+                StudentModel(
+                    tutor_id=user["tutor_id"],
+                    external_id=enrollment,
+                    name=name,
+                    class_group=class_group,
+                    subject=subject,
+                    aliases=[],
+                    active=True,
+                )
+            )
+            created += 1
+            continue
+
+        student.external_id = enrollment
+        student.name = name
+        student.class_group = class_group
+        student.subject = subject
+        student.active = True
+        updated += 1
+
+    await db.commit()
+    return StudentImportResponse(
+        created=created,
+        updated=updated,
+        total=created + updated,
+    )
 
 
 @router.patch("/students/{student_id}", response_model=StudentResponse)

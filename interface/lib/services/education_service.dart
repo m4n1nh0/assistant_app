@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'api_service.dart';
+import 'student_csv_parser.dart';
 
 /// Cliente do modo educacao: aulas, trechos de transcricao, resumo,
 /// pontuacoes extras e cadastro de turma.
@@ -224,6 +225,7 @@ class EducationService {
 
   Future<Student> createStudent({
     required String name,
+    String? externalId,
     String classGroup = '',
     String subject = '',
     List<String> aliases = const [],
@@ -233,12 +235,37 @@ class EducationService {
       headers: _headers,
       body: jsonEncode({
         'name': name,
+        'external_id': externalId,
         'class_group': classGroup,
         'subject': subject,
         'aliases': aliases,
       }),
     );
     return Student.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<StudentImportResult> importStudents({
+    required String classGroup,
+    required String subject,
+    required List<StudentCsvRow> students,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/students/import'),
+      headers: _headers,
+      body: jsonEncode({
+        'class_group': classGroup,
+        'subject': subject,
+        'students': students
+            .map((student) => {
+                  'enrollment': student.enrollment,
+                  'name': student.name,
+                })
+            .toList(),
+      }),
+    );
+    return StudentImportResult.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
   }
 
   Future<void> deleteStudent(String studentId) async {
@@ -541,6 +568,7 @@ class LessonSummary {
 class Student {
   final String id;
   final String name;
+  final String? externalId;
   final String classGroup;
   final String subject;
   final List<String> aliases;
@@ -549,6 +577,7 @@ class Student {
   Student({
     required this.id,
     required this.name,
+    this.externalId,
     required this.classGroup,
     required this.subject,
     this.aliases = const [],
@@ -558,12 +587,32 @@ class Student {
   factory Student.fromJson(Map<String, dynamic> json) => Student(
         id: json['id'].toString(),
         name: json['name']?.toString() ?? '',
+        externalId: json['external_id']?.toString(),
         classGroup: json['class_group']?.toString() ?? '',
         subject: json['subject']?.toString() ?? '',
         aliases: ((json['aliases'] as List<dynamic>?) ?? [])
             .map((item) => item.toString())
             .toList(),
         active: json['active'] != false,
+      );
+}
+
+class StudentImportResult {
+  final int created;
+  final int updated;
+  final int total;
+
+  const StudentImportResult({
+    required this.created,
+    required this.updated,
+    required this.total,
+  });
+
+  factory StudentImportResult.fromJson(Map<String, dynamic> json) =>
+      StudentImportResult(
+        created: (json['created'] as num?)?.toInt() ?? 0,
+        updated: (json['updated'] as num?)?.toInt() ?? 0,
+        total: (json['total'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -664,9 +713,8 @@ class EmbeddingStatus {
         ok: json['ok'] == true,
         provider: json['provider']?.toString() ?? '',
         model: json['model']?.toString(),
-        dimensions: json['dimensions'] == null
-            ? null
-            : _toInt(json['dimensions']),
+        dimensions:
+            json['dimensions'] == null ? null : _toInt(json['dimensions']),
         semantic: json['semantic'] == true,
         error: json['error']?.toString(),
       );

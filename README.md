@@ -283,6 +283,11 @@ Pontos de atencao do fluxo:
   frequencia, entao o LLM recebe a lista de alunos e o backend ainda faz
   casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
   a pontuacao e gravada com o nome ouvido e marcada para revisao na interface.
+- **A turma pode ser importada por CSV.** Na aba `TURMA`, informe a turma e a
+  disciplina e selecione um arquivo com as colunas `matricula` e `nome`. Uma
+  matricula nova cria o aluno; uma matricula ja cadastrada atualiza nome, turma e
+  disciplina sem duplicar o registro. Arquivos separados por virgula ou ponto e
+  virgula sao aceitos.
 - **Aulas longas usam mapa-reducao.** Acima de `EDUCATION_SUMMARY_MAX_CHARS` a
   transcricao e resumida em janelas e depois consolidada, para caber na janela de
   contexto de modelos locais.
@@ -301,6 +306,7 @@ Endpoints principais:
 | `GET /education/points` | Nome e total de extra por dia e disciplina |
 | `GET /education/search` | Busca semantica nas transcricoes |
 | `GET /education/students` | Cadastro da turma |
+| `POST /education/students/import` | Importacao de alunos por matricula e nome |
 | `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
 
 #### Embeddings

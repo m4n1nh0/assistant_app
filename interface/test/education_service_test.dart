@@ -221,13 +221,29 @@ void main() {
       final student = Student.fromJson({
         'id': 's1',
         'name': 'Ana Paula Ribeiro',
+        'external_id': '2026001',
         'class_group': '3A',
         'subject': '',
         'aliases': ['Aninha', 'Ana P'],
       });
 
       expect(student.aliases, ['Aninha', 'Ana P']);
+      expect(student.externalId, '2026001');
       expect(student.active, isTrue);
+    });
+  });
+
+  group('StudentImportResult', () {
+    test('parses created and updated totals', () {
+      final result = StudentImportResult.fromJson({
+        'created': 25,
+        'updated': 3,
+        'total': 28,
+      });
+
+      expect(result.created, 25);
+      expect(result.updated, 3);
+      expect(result.total, 28);
     });
   });
 }

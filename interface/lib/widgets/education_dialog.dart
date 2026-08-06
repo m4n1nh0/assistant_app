@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import '../services/education_service.dart';
+import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
 
 class EducationDialog extends StatelessWidget {
@@ -62,7 +65,9 @@ class EducationDialog extends StatelessWidget {
                   Tab(
                       icon: Icon(Icons.emoji_events_outlined, size: 17),
                       text: 'PONTUACOES'),
-                  Tab(icon: Icon(Icons.groups_outlined, size: 17), text: 'TURMA'),
+                  Tab(
+                      icon: Icon(Icons.groups_outlined, size: 17),
+                      text: 'TURMA'),
                 ],
               ),
               const Expanded(
@@ -348,8 +353,8 @@ class _LessonTabState extends State<_LessonTab> {
       _setStatus('Resumo pronto (${summary.llm}, '
           '${summary.usedSegments} trechos).');
       if (close) {
-        final refreshed = await education.getLesson(lesson.id,
-            includeSegments: false);
+        final refreshed =
+            await education.getLesson(lesson.id, includeSegments: false);
         if (mounted) setState(() => _lesson = refreshed);
       }
     } catch (e) {
@@ -501,7 +506,8 @@ class _LessonTabState extends State<_LessonTab> {
         const SizedBox(width: 8),
         if (!lesson.isClosed)
           FilledButton.icon(
-            onPressed: _summarising ? null : () => _generateSummary(close: true),
+            onPressed:
+                _summarising ? null : () => _generateSummary(close: true),
             icon: const Icon(Icons.stop, size: 15),
             label: const Text('ENCERRAR'),
             style: FilledButton.styleFrom(
@@ -852,6 +858,7 @@ class _RosterTab extends StatefulWidget {
 }
 
 class _RosterTabState extends State<_RosterTab> {
+  final _enrollmentCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _classCtrl = TextEditingController();
   final _subjectCtrl = TextEditingController();
@@ -859,7 +866,9 @@ class _RosterTabState extends State<_RosterTab> {
 
   List<Student> _students = [];
   var _loading = true;
+  var _importing = false;
   var _status = '';
+  var _statusIsError = false;
 
   @override
   void initState() {
@@ -869,6 +878,7 @@ class _RosterTabState extends State<_RosterTab> {
 
   @override
   void dispose() {
+    _enrollmentCtrl.dispose();
     _nameCtrl.dispose();
     _classCtrl.dispose();
     _subjectCtrl.dispose();
@@ -882,21 +892,31 @@ class _RosterTabState extends State<_RosterTab> {
       final students = await education.listStudents();
       if (mounted) setState(() => _students = students);
     } catch (e) {
-      if (mounted) setState(() => _status = 'Falha ao carregar turma: $e');
+      if (mounted) {
+        setState(() {
+          _status = 'Falha ao carregar turma: $e';
+          _statusIsError = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _add() async {
+    final enrollment = _enrollmentCtrl.text.trim();
     final name = _nameCtrl.text.trim();
-    if (name.isEmpty) {
-      setState(() => _status = 'Informe o nome do aluno.');
+    if (enrollment.isEmpty || name.isEmpty) {
+      setState(() {
+        _status = 'Informe a matricula e o nome do aluno.';
+        _statusIsError = true;
+      });
       return;
     }
     try {
       await education.createStudent(
         name: name,
+        externalId: enrollment,
         classGroup: _classCtrl.text.trim(),
         subject: _subjectCtrl.text.trim(),
         aliases: _aliasCtrl.text
@@ -905,12 +925,139 @@ class _RosterTabState extends State<_RosterTab> {
             .where((item) => item.isNotEmpty)
             .toList(),
       );
+      _enrollmentCtrl.clear();
       _nameCtrl.clear();
       _aliasCtrl.clear();
-      setState(() => _status = '');
+      setState(() {
+        _status = 'Aluno cadastrado.';
+        _statusIsError = false;
+      });
       await _load();
     } catch (e) {
-      setState(() => _status = 'Falha ao cadastrar: $e');
+      setState(() {
+        _status = 'Falha ao cadastrar: $e';
+        _statusIsError = true;
+      });
+    }
+  }
+
+  Future<void> _importCsv() async {
+    final classGroup = _classCtrl.text.trim();
+    final subject = _subjectCtrl.text.trim();
+    if (classGroup.isEmpty || subject.isEmpty) {
+      setState(() {
+        _status = 'Informe turma e disciplina antes de importar o CSV.';
+        _statusIsError = true;
+      });
+      return;
+    }
+
+    setState(() => _importing = true);
+    try {
+      final selection = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        withData: true,
+      );
+      if (selection == null || selection.files.isEmpty) return;
+
+      final file = selection.files.single;
+      final bytes = file.bytes ??
+          (file.path == null ? null : await File(file.path!).readAsBytes());
+      if (bytes == null) {
+        throw const FormatException(
+            'Nao foi possivel ler o arquivo escolhido.');
+      }
+
+      late final String content;
+      try {
+        content = utf8.decode(bytes);
+      } on FormatException {
+        content = latin1.decode(bytes);
+      }
+      final rows = parseStudentCsv(content);
+      if (!mounted) return;
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: const Text('Importar alunos'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${rows.length} aluno(s) para $classGroup - $subject.',
+                  style: const TextStyle(color: AssistantTheme.textPrimary),
+                ),
+                const SizedBox(height: 10),
+                ...rows.take(5).map(
+                      (row) => Text(
+                        '${row.enrollment} - ${row.name}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AssistantTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                if (rows.length > 5)
+                  Text(
+                    '... e mais ${rows.length - 5}.',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AssistantTheme.textMuted,
+                    ),
+                  ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Matriculas existentes serao atualizadas; as demais serao '
+                  'cadastradas.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AssistantTheme.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('IMPORTAR'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+
+      final result = await education.importStudents(
+        classGroup: classGroup,
+        subject: subject,
+        students: rows,
+      );
+      if (!mounted) return;
+      setState(() {
+        _status = 'Importacao concluida: ${result.created} cadastrado(s) e '
+            '${result.updated} atualizado(s).';
+        _statusIsError = false;
+      });
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      final message = error is FormatException ? error.message : '$error';
+      setState(() {
+        _status = 'Falha ao importar: $message';
+        _statusIsError = true;
+      });
+    } finally {
+      if (mounted) setState(() => _importing = false);
     }
   }
 
@@ -923,13 +1070,21 @@ class _RosterTabState extends State<_RosterTab> {
         children: [
           const Text(
             'O cadastro ancora os nomes ouvidos no audio. Sem ele, nomes '
-            'proprios saem com a grafia que o transcritor entendeu.',
+            'proprios saem com a grafia que o transcritor entendeu. Para '
+            'importar, use um CSV com as colunas matricula e nome.',
             style: TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
           ),
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              Expanded(
+                child: _Field(
+                  controller: _enrollmentCtrl,
+                  label: 'MATRICULA',
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 flex: 2,
                 child: _Field(controller: _nameCtrl, label: 'NOME COMPLETO'),
@@ -940,14 +1095,24 @@ class _RosterTabState extends State<_RosterTab> {
               Expanded(
                 child: _Field(controller: _subjectCtrl, label: 'DISCIPLINA'),
               ),
-              const SizedBox(width: 10),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
               Expanded(
-                flex: 2,
                 child: _Field(
                   controller: _aliasCtrl,
                   label: 'APELIDOS (SEPARADOS POR VIRGULA)',
                   onSubmitted: (_) => _add(),
                 ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                onPressed: _importing ? null : _importCsv,
+                icon: const Icon(Icons.upload_file_outlined, size: 15),
+                label: Text(_importing ? 'IMPORTANDO...' : 'IMPORTAR CSV'),
               ),
               const SizedBox(width: 10),
               FilledButton.icon(
@@ -961,11 +1126,15 @@ class _RosterTabState extends State<_RosterTab> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           if (_status.isNotEmpty)
             Text(_status,
-                style: const TextStyle(
-                    fontSize: 11, color: AssistantTheme.danger)),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: _statusIsError
+                      ? AssistantTheme.danger
+                      : AssistantTheme.c3,
+                )),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -981,6 +1150,8 @@ class _RosterTabState extends State<_RosterTab> {
                         itemBuilder: (_, index) {
                           final student = _students[index];
                           final tags = [
+                            if (student.externalId?.isNotEmpty == true)
+                              'matricula: ${student.externalId}',
                             if (student.classGroup.isNotEmpty)
                               student.classGroup,
                             if (student.subject.isNotEmpty) student.subject,
@@ -1013,15 +1184,18 @@ class _RosterTabState extends State<_RosterTab> {
                               ),
                               IconButton(
                                 tooltip: 'Remover',
-                                icon: const Icon(Icons.delete_outline, size: 16),
+                                icon:
+                                    const Icon(Icons.delete_outline, size: 16),
                                 color: AssistantTheme.textMuted,
                                 onPressed: () async {
                                   try {
                                     await education.deleteStudent(student.id);
                                     await _load();
                                   } catch (e) {
-                                    setState(() =>
-                                        _status = 'Falha ao remover: $e');
+                                    setState(() {
+                                      _status = 'Falha ao remover: $e';
+                                      _statusIsError = true;
+                                    });
                                   }
                                 },
                               ),
@@ -1075,12 +1249,12 @@ class _Field extends StatelessWidget {
         TextField(
           controller: controller,
           onSubmitted: onSubmitted,
-          style: const TextStyle(
-              fontSize: 12, color: AssistantTheme.textPrimary),
+          style:
+              const TextStyle(fontSize: 12, color: AssistantTheme.textPrimary),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(
-                fontSize: 11, color: AssistantTheme.textMuted),
+            hintStyle:
+                const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
             isDense: true,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 10),

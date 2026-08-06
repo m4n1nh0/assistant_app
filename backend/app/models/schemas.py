@@ -696,6 +696,23 @@ class StudentResponse(BaseModel):
     created_at: datetime
 
 
+class StudentImportItem(BaseModel):
+    enrollment: str
+    name: str
+
+
+class StudentImportRequest(BaseModel):
+    class_group: str
+    subject: str
+    students: List[StudentImportItem] = Field(min_length=1, max_length=1000)
+
+
+class StudentImportResponse(BaseModel):
+    created: int
+    updated: int
+    total: int
+
+
 class LessonCreate(BaseModel):
     subject: str
     title: str = ""
