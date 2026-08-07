@@ -288,3 +288,66 @@ def test_summary_focus_reaches_the_prompt(monkeypatch):
 
 def test_normalize_name_strips_accents_and_punctuation():
     assert service.normalize_name("José D'Ávila-Neto") == "jose d avila neto"
+
+
+# --- Contexto de estudo para o chat ----------------------------------------
+
+
+def fake_hits(monkeypatch, hits):
+    from app.services import qdrant_service
+
+    async def _search(**kwargs):
+        return hits
+
+    monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _search)
+
+
+def test_study_context_formats_hits_with_subject_and_date(monkeypatch):
+    fake_hits(monkeypatch, [
+        {
+            "score": 0.8,
+            "subject": "Matematica",
+            "lesson_date": "2026-08-04",
+            "content": "funcao do primeiro grau",
+        }
+    ])
+
+    context = run(service.build_study_context(tutor_id="t1", message="funcoes"))
+
+    assert "Matematica, 2026-08-04" in context
+    assert "funcao do primeiro grau" in context
+
+
+def test_study_context_drops_weak_matches(monkeypatch):
+    fake_hits(monkeypatch, [
+        {"score": 0.05, "subject": "Historia", "content": "nada a ver"}
+    ])
+
+    assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
+
+
+def test_study_context_is_empty_without_hits(monkeypatch):
+    fake_hits(monkeypatch, [])
+
+    assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
+
+
+def test_study_context_survives_a_qdrant_failure(monkeypatch):
+    from app.services import qdrant_service
+
+    async def _boom(**kwargs):
+        raise RuntimeError("qdrant fora do ar")
+
+    monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _boom)
+
+    assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
+
+
+def test_study_context_tells_the_model_not_to_guess(monkeypatch):
+    fake_hits(monkeypatch, [
+        {"score": 0.9, "subject": "Fisica", "content": "segunda lei de newton"}
+    ])
+
+    context = run(service.build_study_context(tutor_id="t1", message="newton"))
+
+    assert "em vez de completar com suposicao" in context

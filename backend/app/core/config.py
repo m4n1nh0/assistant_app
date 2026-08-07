@@ -139,6 +139,13 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_dimensions: int = 0
 
+    # Servidores MCP em JSON. Aceita mapa {"nome": {...}} ou lista com "name".
+    # stdio: {"fs": {"command": "npx", "args": ["-y", "@mcp/server-fs", "/dir"]}}
+    # http:  {"docs": {"url": "http://localhost:3000/mcp"}}
+    mcp_servers: str = ""
+    agent_max_tool_iterations: int = 3
+    agent_max_handoffs: int = 2
+
     education_segment_seconds: int = 60
     education_summary_max_chars: int = 24000
     education_min_segment_chars: int = 12

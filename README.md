@@ -227,16 +227,40 @@ grafo compilado em `backend/app/services/chat_graph_service.py`:
 flowchart TD
     Start([START]) --> Detect[Detectar acao local]
     Detect --> Shortcut[Resolver atalho do usuario]
-    Shortcut --> Route{Rota}
+    Shortcut --> Ctx[Classificar tarefa e recuperar contexto]
+    Ctx --> Route{Rota}
     Route -->|acao local| Ack[Confirmar acao para a interface]
-    Route -->|single| Single[Despachar um provedor]
+    Route -->|consulta agenda| Cal[Responder pela agenda]
+    Route -->|single| Agent[Especialista + ferramentas]
     Route -->|multi| Multi[Despachar provedores em paralelo]
     Route -->|chain| Chain[Despachar provedores em cadeia]
-    Ack --> End([END])
-    Single --> End
+    Agent --> Handoff{Transferir?}
+    Handoff -->|sim| Agent
+    Handoff -->|nao| End([END])
+    Ack --> End
+    Cal --> End
     Multi --> End
     Chain --> End
 ```
+
+O no `retrieve_context` faz duas coisas antes de qualquer provedor ser
+escolhido: classifica o pedido (`code`, `study`, `calendar`, `general`) e, so
+quando e estudo, busca trechos das aulas gravadas no Qdrant e os anexa ao
+prompt. A busca vetorial nao roda no caminho comum de conversa.
+
+O modo `single` passa por especialistas. O roteador escolhe quem atende a
+partir da tarefa, o especialista recebe apenas as ferramentas da area dele e
+pode transferir a conversa (A2A) quando o pedido nao for seu. A transferencia e
+validada pelo orquestrador — destino desconhecido ou ja visitado encerra o
+repasse, e `AGENT_MAX_HANDOFFS` limita a cadeia. Os modos `multi` e `chain`
+continuam despachando direto, sem especialistas.
+
+| Especialista | Atende | Ferramentas |
+| --- | --- | --- |
+| `general` | conversa ampla | MCP |
+| `code` | codigo, workspace, scripts | acoes de codigo/PC/projeto + MCP |
+| `study` | aulas gravadas e conteudo | nenhuma (usa o contexto recuperado) |
+| `calendar` | compromissos e eventos | proposta de evento |
 
 O grafo orquestra os servicos existentes; ele nao acessa diretamente o
 computador nem substitui as confirmacoes da interface. O endpoint SSE e a
@@ -251,7 +275,32 @@ O LangGraph usa duas integrações LangChain:
 - `backend/app/services/langchain_agent_service.py` adapta todos os provedores
   atuais para `BaseChatModel`, converte o historico em mensagens LangChain e
   transforma cada retorno em uma resposta Pydantic estruturada antes de
-  devolve-lo ao grafo.
+  devolve-lo ao grafo. Tambem implementa `bind_tools` e o ciclo
+  modelo -> ferramenta -> modelo.
+- `backend/app/services/agent_service.py` define os especialistas, monta o
+  conjunto de ferramentas de cada um e conduz as transferencias A2A.
+- `backend/app/services/mcp_service.py` conecta servidores MCP externos e
+  converte as ferramentas deles em tools LangChain.
+
+#### Tool-calling nos dez provedores
+
+O `ProviderChatModel` fala com dez provedores por um gateway HTTP proprio, e
+varios deles (Ollama, LocalAI, Hugging Face) nao expoem tool-calling nativo.
+Em vez de reescrever as dez integracoes, o `bind_tools` injeta o catalogo de
+ferramentas no prompt e le a escolha de volta como JSON, convertendo em
+`tool_calls` do LangChain. Isso e **tool-calling por protocolo textual**, nao
+pela API nativa de cada provedor — a vantagem e funcionar igual em todos,
+inclusive nos modelos locais; o custo e depender do modelo respeitar o formato.
+O nome escolhido e validado contra o catalogo, entao alucinacao nao vira
+execucao de ferramenta.
+
+#### MCP
+
+Servidores MCP sao processos externos e podem estar fora do ar. Falha de
+conexao nunca derruba o chat: o assistente responde sem aquelas ferramentas, e
+a falha fica em cache por alguns minutos para nao tentar reconectar a cada
+mensagem. `GET /system/agents/status` mostra especialistas, servidores MCP
+conectados, ferramentas disponiveis e o provedor de embeddings ativo.
 
 ### Modo Educacao
 

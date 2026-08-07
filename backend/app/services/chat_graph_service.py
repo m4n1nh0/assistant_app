@@ -14,7 +14,7 @@ from ..models.schemas import (
     ResponseModeEnum,
     ShortcutRegistrationAction,
 )
-from . import langchain_agent_service
+from . import agent_service, education_service, langchain_agent_service
 from .assistant_tools import invoke_action_tool, invoke_calendar_action_tool
 from .calendar_query_service import (
     execute_calendar_query,
@@ -28,7 +28,7 @@ from .launcher_service import (
     build_registration_context,
     find_shortcut_in_message,
 )
-from .llm_routing_service import pick_auto_llm
+from .llm_routing_service import detect_task, pick_auto_llm
 from .llm_status_service import get_llm_statuses
 
 
@@ -59,6 +59,10 @@ class ChatGraphState(TypedDict, total=False):
     action: Any
     action_kind: ActionKind
     responses: list[LLMResponse]
+    task_kind: str
+    agent_id: str
+    tool_trace: list[dict[str, Any]]
+    handoffs: list[dict[str, str]]
 
 
 settings = get_settings()
@@ -189,6 +193,50 @@ async def _resolve_shortcut(state: ChatGraphState) -> dict[str, Any]:
     return update
 
 
+_NON_CHAT_KINDS = {
+    "computer",
+    "coding",
+    "project",
+    "registration",
+    "calendar",
+    "calendar_query",
+}
+
+
+async def _retrieve_context(state: ChatGraphState) -> dict[str, Any]:
+    """Classifica a tarefa e busca material de aula quando for estudo.
+
+    A busca vetorial so roda no ramo de conversa e so quando o pedido e de
+    estudo: acao local e consulta de agenda ja tem resposta propria, e pagar
+    uma busca em toda mensagem encareceria o caminho mais comum.
+    """
+    if state.get("action_kind") in _NON_CHAT_KINDS:
+        return {}
+
+    task = detect_task(state["message"])
+    update: dict[str, Any] = {"task_kind": task}
+
+    if task != "study":
+        return update
+
+    tutor_id = state.get("tutor_id") or ""
+    if not tutor_id:
+        return update
+
+    try:
+        context = await education_service.build_study_context(
+            tutor_id=tutor_id,
+            message=state["message"],
+        )
+    except Exception as exc:
+        logger.warning("Study retrieval failed: {}", exc)
+        return update
+
+    if context:
+        update["system_prompt"] = state["system_prompt"] + context
+    return update
+
+
 def _route_after_resolution(state: ChatGraphState) -> GraphRoute:
     if state.get("action_kind") == "calendar_query":
         return "calendar_query"
@@ -290,24 +338,27 @@ async def _unavailable_response(llm: str | None = None) -> LLMResponse:
 async def _dispatch_single(state: ChatGraphState) -> dict[str, Any]:
     active_llms = state["active_llms"]
     requested_llm = state.get("requested_llm")
-    llm = (
-        requested_llm
-        if requested_llm
-        else (await pick_auto_llm(active_llms) if active_llms else "")
-    )
+    task = state.get("task_kind") or "general"
 
-    if not llm:
-        response = await _unavailable_response()
-    elif llm not in active_llms:
-        response = await _unavailable_response(llm)
-    else:
-        response = await langchain_agent_service.dispatch_single(
-            llm,
-            state["message"],
-            state["history"],
-            state["system_prompt"],
-        )
-    return {"responses": [response]}
+    if requested_llm and requested_llm not in active_llms:
+        return {"responses": [await _unavailable_response(requested_llm)]}
+    if not requested_llm and not active_llms:
+        return {"responses": [await _unavailable_response()]}
+
+    outcome = await agent_service.run_agents(
+        message=state["message"],
+        history=state["history"],
+        system_prompt=state["system_prompt"],
+        task=task,
+        active_llms=active_llms,
+        requested_llm=requested_llm,
+    )
+    return {
+        "responses": [outcome.response],
+        "agent_id": outcome.agent_id,
+        "tool_trace": outcome.tool_trace,
+        "handoffs": outcome.handoffs,
+    }
 
 
 async def _dispatch_multi(state: ChatGraphState) -> dict[str, Any]:
@@ -354,6 +405,7 @@ def _build_chat_graph():
     workflow = StateGraph(ChatGraphState)
     workflow.add_node("detect_action", _detect_action)
     workflow.add_node("resolve_shortcut", _resolve_shortcut)
+    workflow.add_node("retrieve_context", _retrieve_context)
     workflow.add_node("acknowledge_action", _acknowledge_action)
     workflow.add_node("query_calendar", _query_calendar)
     workflow.add_node("dispatch_single", _dispatch_single)
@@ -362,8 +414,9 @@ def _build_chat_graph():
 
     workflow.add_edge(START, "detect_action")
     workflow.add_edge("detect_action", "resolve_shortcut")
+    workflow.add_edge("resolve_shortcut", "retrieve_context")
     workflow.add_conditional_edges(
-        "resolve_shortcut",
+        "retrieve_context",
         _route_after_resolution,
         {
             "action": "acknowledge_action",

@@ -347,6 +347,52 @@ def _windows(texts: Sequence[str], max_chars: int) -> List[str]:
     return windows
 
 
+async def build_study_context(
+    *,
+    tutor_id: str,
+    message: str,
+    limit: int = 6,
+    min_score: float = 0.25,
+) -> str:
+    """Recupera trechos de aula relevantes para injetar no prompt do chat.
+
+    Chamado apenas quando o roteador classifica o pedido como estudo, para nao
+    pagar uma busca vetorial em toda conversa. O corte por score evita colar
+    trecho aleatorio quando a aula nao fala do assunto perguntado.
+    """
+    from . import qdrant_service
+
+    try:
+        hits = await qdrant_service.search_lesson_transcripts(
+            tutor_id=tutor_id,
+            query=message,
+            limit=limit,
+        )
+    except Exception as e:
+        logger.warning(f"Busca de contexto de aula falhou: {e}")
+        return ""
+
+    relevant = [hit for hit in hits if hit.get("score", 0.0) >= min_score]
+    if not relevant:
+        return ""
+
+    lines = []
+    for hit in relevant:
+        header = hit.get("subject") or "aula"
+        date = hit.get("lesson_date") or ""
+        if date:
+            header = f"{header}, {date}"
+        lines.append(f"[{header}] {hit.get('content', '').strip()}")
+
+    return (
+        "\n\nTrechos das aulas gravadas pelo usuario que podem responder a "
+        "pergunta. Use-os como fonte e cite a disciplina e a data quando "
+        "responder. Se nao responderem o que foi perguntado, diga isso em vez "
+        "de completar com suposicao.\n"
+        + "\n".join(lines)
+    )
+
+
 async def generate_summary(
     *,
     subject: str,

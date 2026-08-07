@@ -37,6 +37,7 @@ def test_chat_graph_exposes_explicit_workflow_nodes():
     assert {
         "detect_action",
         "resolve_shortcut",
+        "retrieve_context",
         "acknowledge_action",
         "query_calendar",
         "dispatch_single",
@@ -155,23 +156,28 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""
 
-    async def pick_provider(candidates):
+    async def pick_provider(candidates, task="general"):
         assert candidates == ["llama", "gpt"]
+        assert task == "general"
         return "llama"
 
-    async def dispatch(llm, message, history, system_prompt):
-        assert llm == "llama"
+    async def run_with_tools(
+        provider, message, history, system_prompt, tools, **kwargs
+    ):
+        assert provider == "llama"
         assert message == "Ola"
         assert history == []
-        assert system_prompt == "system"
-        return LLMResponse(llm=llm, content="Resposta local")
+        assert system_prompt.startswith("system")
+        return LLMResponse(llm=provider, content="Resposta local"), []
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
-    monkeypatch.setattr(chat_graph_service, "pick_auto_llm", pick_provider)
     monkeypatch.setattr(
-        chat_graph_service.langchain_agent_service,
-        "dispatch_single",
-        dispatch,
+        chat_graph_service.agent_service, "pick_auto_llm", pick_provider
+    )
+    monkeypatch.setattr(
+        chat_graph_service.agent_service.langchain_agent_service,
+        "run_with_tools",
+        run_with_tools,
     )
 
     result = run_graph(active_llms=["llama", "gpt"])
@@ -180,6 +186,7 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
     assert result["responses"] == [
         LLMResponse(llm="llama", content="Resposta local")
     ]
+    assert result["agent_id"] == "general"
     assert "action" not in result
 
 
@@ -248,15 +255,17 @@ def test_launch_action_keeps_llm_response_and_injects_context(monkeypatch):
     async def find_shortcut(message, tutor_id):
         return launch_action, "launch", "\nlaunch context"
 
-    async def dispatch(llm, message, history, system_prompt):
-        assert system_prompt == "system\nlaunch context"
-        return LLMResponse(llm=llm, content="Abrindo.")
+    async def run_with_tools(
+        provider, message, history, system_prompt, tools, **kwargs
+    ):
+        assert "system\nlaunch context" in system_prompt
+        return LLMResponse(llm=provider, content="Abrindo."), []
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", find_shortcut)
     monkeypatch.setattr(
-        chat_graph_service.langchain_agent_service,
-        "dispatch_single",
-        dispatch,
+        chat_graph_service.agent_service.langchain_agent_service,
+        "run_with_tools",
+        run_with_tools,
     )
 
     result = run_graph(

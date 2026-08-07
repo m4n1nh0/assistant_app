@@ -76,3 +76,79 @@ def test_empty_candidates_returns_empty_string(monkeypatch):
     fake_statuses(monkeypatch, {})
 
     assert run(service.pick_auto_llm([])) == ""
+
+
+# --- Rota por tarefa -------------------------------------------------------
+
+
+def test_detects_code_task():
+    assert service.detect_task("tem um bug no meu codigo python") == "code"
+
+
+def test_detects_study_task():
+    assert service.detect_task("o que o professor falou sobre funcoes na aula?") == "study"
+
+
+def test_detects_calendar_task():
+    assert service.detect_task("marcar uma reuniao amanha") == "calendar"
+
+
+def test_plain_message_is_general():
+    assert service.detect_task("bom dia, tudo bem?") == "general"
+
+
+def test_empty_message_is_general():
+    assert service.detect_task("   ") == "general"
+
+
+def test_accents_do_not_break_detection():
+    assert service.detect_task("o que a professora explicou sobre a matéria?") == "study"
+
+
+def test_code_task_demotes_weak_local_model(monkeypatch):
+    """Tarefa exigente nao vai para o modelo local fraco quando ha alternativa."""
+    fake_statuses(
+        monkeypatch,
+        {"llama": status("llama"), "claude": status("claude", balance_ok=True)},
+    )
+
+    assert run(service.pick_auto_llm(["llama", "claude"], "code")) == "claude"
+
+
+def test_local_model_still_wins_for_general_task(monkeypatch):
+    fake_statuses(
+        monkeypatch,
+        {"llama": status("llama"), "claude": status("claude", balance_ok=True)},
+    )
+
+    assert run(service.pick_auto_llm(["llama", "claude"], "general")) == "llama"
+
+
+def test_local_model_answers_code_when_it_is_the_only_option(monkeypatch):
+    """Rebaixar nao e eliminar: sem alternativa, o local responde."""
+    fake_statuses(monkeypatch, {"llama": status("llama")})
+
+    assert run(service.pick_auto_llm(["llama"], "code")) == "llama"
+
+
+def test_default_task_keeps_the_original_cost_behaviour(monkeypatch):
+    fake_statuses(
+        monkeypatch,
+        {"llama": status("llama"), "claude": status("claude", balance_ok=True)},
+    )
+
+    assert run(service.pick_auto_llm(["claude", "llama"])) == "llama"
+
+
+def test_pick_for_message_returns_provider_and_task(monkeypatch):
+    fake_statuses(
+        monkeypatch,
+        {"llama": status("llama"), "gpt": status("gpt", balance_ok=True)},
+    )
+
+    provider, task = run(
+        service.pick_for_message(["llama", "gpt"], "erro de compilacao no codigo")
+    )
+
+    assert task == "code"
+    assert provider == "gpt"
