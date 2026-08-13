@@ -16,6 +16,10 @@ import '../utils/theme.dart';
 const _rosterTab = 0;
 const _lessonTab = 1;
 
+/// Turma no sentido pratico do professor: a dupla turma + disciplina que o
+/// cadastro de alunos ja usa.
+typedef _ClassOption = ({String classGroup, String subject});
+
 class EducationDialog extends StatefulWidget {
   const EducationDialog({super.key});
 
@@ -203,14 +207,22 @@ class _LessonTabState extends State<_LessonTab> {
   String? _summary;
   EmbeddingStatus? _embedding;
 
+  /// Turma escolhida na lista. `null` com [_manualEntry] falso significa que
+  /// nada foi selecionado ainda.
+  _ClassOption? _selected;
+  var _manualEntry = false;
+
   @override
   void initState() {
     super.initState();
     _loadEmbeddingStatus();
+    _selected = _singleOption(widget.roster.value);
+    widget.roster.addListener(_onRosterChanged);
   }
 
   @override
   void dispose() {
+    widget.roster.removeListener(_onRosterChanged);
     _chunkTimer?.cancel();
     _clockTimer?.cancel();
     // Sem await no dispose: o recorder e liberado em background.
@@ -236,12 +248,69 @@ class _LessonTabState extends State<_LessonTab> {
     if (mounted) setState(() => _status = message);
   }
 
+  void _onRosterChanged() {
+    if (!mounted) return;
+    setState(() => _selected ??= _singleOption(widget.roster.value));
+  }
+
+  // --- Turma da aula -------------------------------------------------------
+
+  /// Turmas conhecidas pelo cadastro. Escolher daqui garante que a disciplina
+  /// gravada na aula seja identica a do aluno — o backend casa os dois por
+  /// igualdade de texto antes de procurar os nomes citados.
+  List<_ClassOption> _classOptions(List<Student>? students) {
+    final options = <_ClassOption>{};
+    for (final student in students ?? const <Student>[]) {
+      final option = (
+        classGroup: student.classGroup.trim(),
+        subject: student.subject.trim(),
+      );
+      if (option.classGroup.isEmpty && option.subject.isEmpty) continue;
+      options.add(option);
+    }
+    final sorted = options.toList()
+      ..sort((a, b) {
+        final bySubject = a.subject.compareTo(b.subject);
+        return bySubject != 0 ? bySubject : a.classGroup.compareTo(b.classGroup);
+      });
+    return sorted;
+  }
+
+  _ClassOption? _singleOption(List<Student>? students) {
+    final options = _classOptions(students);
+    return options.length == 1 ? options.first : null;
+  }
+
+  /// Quantos alunos o backend vai considerar nessa aula. Campo vazio no aluno
+  /// vale como coringa, igual ao filtro de `_roster` no router.
+  int _rosterSize(List<Student>? students, _ClassOption option) {
+    return (students ?? const <Student>[]).where((student) {
+      final group = student.classGroup.trim();
+      final subject = student.subject.trim();
+      return (group.isEmpty || group == option.classGroup) &&
+          (subject.isEmpty || subject == option.subject);
+    }).length;
+  }
+
+  String _optionLabel(_ClassOption option) {
+    if (option.classGroup.isEmpty) return '${option.subject} (sem turma)';
+    if (option.subject.isEmpty) return '${option.classGroup} (sem disciplina)';
+    return '${option.classGroup} - ${option.subject}';
+  }
+
   // --- Ciclo da aula -------------------------------------------------------
 
   Future<void> _startLesson() async {
-    final subject = _subjectCtrl.text.trim();
-    if (subject.isEmpty) {
-      _setStatus('Informe a disciplina antes de iniciar.');
+    final selected = _manualEntry ? null : _selected;
+    final subject =
+        selected != null ? selected.subject : _subjectCtrl.text.trim();
+    final classGroup =
+        selected != null ? selected.classGroup : _classCtrl.text.trim();
+
+    if (subject.isEmpty && classGroup.isEmpty) {
+      _setStatus(_manualEntry
+          ? 'Informe a disciplina antes de iniciar.'
+          : 'Selecione a turma antes de iniciar.');
       return;
     }
     if (!await _recorder.hasPermission()) {
@@ -254,7 +323,7 @@ class _LessonTabState extends State<_LessonTab> {
       final lesson = await education.createLesson(
         subject: subject,
         title: _titleCtrl.text.trim(),
-        classGroup: _classCtrl.text.trim(),
+        classGroup: classGroup,
       );
       setState(() {
         _lesson = lesson;
@@ -525,29 +594,135 @@ class _LessonTabState extends State<_LessonTab> {
   }
 
   Widget _buildStartForm() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    return ValueListenableBuilder<List<Student>?>(
+      valueListenable: widget.roster,
+      builder: (context, students, _) {
+        final options = _classOptions(students);
+        // Sem cadastro nao ha o que listar: sobra digitar na mao.
+        final manual = _manualEntry || options.isEmpty;
+        final selected = options.contains(_selected) ? _selected : null;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: manual
+                      ? _Field(controller: _subjectCtrl, label: 'DISCIPLINA')
+                      : _buildClassPicker(options, selected, students),
+                ),
+                const SizedBox(width: 10),
+                if (manual) ...[
+                  Expanded(
+                    child: _Field(controller: _classCtrl, label: 'TURMA'),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  flex: 2,
+                  child: _Field(controller: _titleCtrl, label: 'TEMA DA AULA'),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  onPressed: _starting ? null : _startLesson,
+                  icon: const Icon(Icons.fiber_manual_record, size: 15),
+                  label: Text(_starting ? 'INICIANDO...' : 'INICIAR AULA'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AssistantTheme.c3,
+                    foregroundColor: AssistantTheme.bg,
+                  ),
+                ),
+              ],
+            ),
+            if (options.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _manualEntry = !_manualEntry),
+                  icon: Icon(
+                    manual ? Icons.list_alt_outlined : Icons.edit_outlined,
+                    size: 13,
+                  ),
+                  label: Text(
+                    manual
+                        ? 'ESCOLHER UMA TURMA CADASTRADA'
+                        : 'AULA DE UMA TURMA NAO CADASTRADA',
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AssistantTheme.textMuted,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildClassPicker(
+    List<_ClassOption> options,
+    _ClassOption? selected,
+    List<Student>? students,
+  ) {
+    final size = selected == null ? null : _rosterSize(students, selected);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          flex: 2,
-          child: _Field(controller: _subjectCtrl, label: 'DISCIPLINA'),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 2,
-          child: _Field(controller: _titleCtrl, label: 'TEMA DA AULA'),
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: _Field(controller: _classCtrl, label: 'TURMA')),
-        const SizedBox(width: 10),
-        FilledButton.icon(
-          onPressed: _starting ? null : _startLesson,
-          icon: const Icon(Icons.fiber_manual_record, size: 15),
-          label: Text(_starting ? 'INICIANDO...' : 'INICIAR AULA'),
-          style: FilledButton.styleFrom(
-            backgroundColor: AssistantTheme.c3,
-            foregroundColor: AssistantTheme.bg,
+        Text(
+          size == null
+              ? 'TURMA E DISCIPLINA'
+              : 'TURMA E DISCIPLINA  -  $size ALUNO${size == 1 ? "" : "S"}',
+          style: const TextStyle(
+            fontSize: 9,
+            letterSpacing: 1.5,
+            color: AssistantTheme.textMuted,
           ),
+        ),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<_ClassOption>(
+          initialValue: selected,
+          isExpanded: true,
+          hint: const Text(
+            'Selecione a turma',
+            style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+          ),
+          dropdownColor: AssistantTheme.surface,
+          style: const TextStyle(
+              fontSize: 12, color: AssistantTheme.textPrimary),
+          icon: const Icon(Icons.arrow_drop_down,
+              size: 18, color: AssistantTheme.textMuted),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            filled: true,
+            fillColor: AssistantTheme.bg2,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(3),
+              borderSide: const BorderSide(color: AssistantTheme.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(3),
+              borderSide: const BorderSide(color: AssistantTheme.border),
+            ),
+          ),
+          items: [
+            for (final option in options)
+              DropdownMenuItem(
+                value: option,
+                child: Text(
+                  _optionLabel(option),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: (value) => setState(() => _selected = value),
         ),
       ],
     );
@@ -580,6 +755,8 @@ class _LessonTabState extends State<_LessonTab> {
                 ),
               ),
               Text(
+                '${lesson.classGroup.isEmpty ? "" : "turma "
+                    "${lesson.classGroup}  -  "}'
                 '$minutes:$seconds  -  ${lesson.segmentCount} trechos  -  '
                 '${lesson.transcriptChars} caracteres'
                 '${_pendingUploads.isNotEmpty || _uploading ? "  -  enviando..." : ""}',
@@ -1599,8 +1776,9 @@ class _HowItWorks extends StatelessWidget {
   static const _steps = [
     (
       Icons.edit_outlined,
-      'Preencha a disciplina e clique em INICIAR AULA.',
-      'Tema e turma sao opcionais e ajudam a achar a aula depois.',
+      'Escolha a turma e clique em INICIAR AULA.',
+      'A lista vem do cadastro, entao a disciplina da aula nasce igual a dos '
+          'alunos. O tema e opcional e ajuda a achar a aula depois.',
     ),
     (
       Icons.mic_none,
