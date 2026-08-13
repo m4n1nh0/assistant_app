@@ -832,6 +832,7 @@ class PointsReportEntry(BaseModel):
     student_id: Optional[str] = None
     total_points: float
     subject: str
+    class_group: str = ""
     lesson_date: str
     entries: List[LessonPointResponse] = Field(default_factory=list)
 
@@ -840,6 +841,7 @@ class PointsReportResponse(BaseModel):
     date_from: Optional[str] = None
     date_to: Optional[str] = None
     subject: Optional[str] = None
+    class_group: Optional[str] = None
     total_points: float = 0.0
     students: List[PointsReportEntry] = Field(default_factory=list)
 

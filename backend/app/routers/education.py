@@ -771,13 +771,20 @@ async def points_report(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     subject: Optional[str] = None,
+    class_group: Optional[str] = None,
     student_name: Optional[str] = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Quanto de extra cada aluno recebeu, por dia e disciplina."""
-    query = select(LessonPointModel).where(
-        LessonPointModel.tutor_id == user["tutor_id"]
+    """Quanto de extra cada aluno recebeu, por dia, disciplina e turma.
+
+    A turma nao fica no ponto: ela vem da aula que o originou, entao duas
+    turmas da mesma disciplina no mesmo dia so se separam por esse join.
+    """
+    query = (
+        select(LessonPointModel, LessonModel.class_group)
+        .outerjoin(LessonModel, LessonModel.id == LessonPointModel.lesson_id)
+        .where(LessonPointModel.tutor_id == user["tutor_id"])
     )
     start = _parse_date(date_from)
     end = _parse_date(date_to, end_of_day=True)
@@ -787,29 +794,32 @@ async def points_report(
         query = query.where(LessonPointModel.lesson_date <= end)
     if subject:
         query = query.where(LessonPointModel.subject == subject)
+    if class_group:
+        query = query.where(LessonModel.class_group == class_group)
 
     result = await db.execute(query.order_by(LessonPointModel.lesson_date))
-    items = list(result.scalars().all())
+    items = [(point, group or "") for point, group in result.all()]
 
     if student_name:
         wanted = education_service.normalize_name(student_name)
         items = [
-            item
-            for item in items
-            if wanted in education_service.normalize_name(item.student_name)
+            (point, group)
+            for point, group in items
+            if wanted in education_service.normalize_name(point.student_name)
         ]
 
     grouped: Dict[tuple, List[LessonPointModel]] = defaultdict(list)
-    for item in items:
+    for point, group in items:
         key = (
-            education_service.normalize_name(item.student_name),
-            item.subject or "",
-            _as_utc(item.lesson_date).date().isoformat(),
+            education_service.normalize_name(point.student_name),
+            point.subject or "",
+            group,
+            _as_utc(point.lesson_date).date().isoformat(),
         )
-        grouped[key].append(item)
+        grouped[key].append(point)
 
     entries: List[PointsReportEntry] = []
-    for (_, subject_key, date_key), group in grouped.items():
+    for (_, subject_key, group_key, date_key), group in grouped.items():
         entries.append(
             PointsReportEntry(
                 student_name=group[0].student_name,
@@ -818,16 +828,25 @@ async def points_report(
                 ),
                 total_points=round(sum(item.points for item in group), 3),
                 subject=subject_key,
+                class_group=group_key,
                 lesson_date=date_key,
                 entries=[_point_response(item) for item in group],
             )
         )
 
-    entries.sort(key=lambda item: (item.lesson_date, item.subject, item.student_name))
+    entries.sort(
+        key=lambda item: (
+            item.lesson_date,
+            item.subject,
+            item.class_group,
+            item.student_name,
+        )
+    )
     return PointsReportResponse(
         date_from=date_from,
         date_to=date_to,
         subject=subject,
+        class_group=class_group,
         total_points=round(sum(entry.total_points for entry in entries), 3),
         students=entries,
     )

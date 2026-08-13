@@ -175,6 +175,52 @@ void main() {
       expect(report.students, isEmpty);
       expect(report.totalPoints, 0.0);
     });
+
+    test('separates two classes of the same subject on the same day', () {
+      final report = PointsReport.fromJson({
+        'total_points': 2.0,
+        'students': [
+          {
+            'student_name': 'Ana Paula Ribeiro',
+            'total_points': 1.0,
+            'subject': 'ARA0040',
+            'class_group': '3001 PRESENCIAL',
+            'lesson_date': '2026-08-13',
+            'entries': [],
+          },
+          {
+            'student_name': 'Thiago Souza',
+            'total_points': 1.0,
+            'subject': 'ARA0040',
+            'class_group': '3002 SEMIPRESENCIAL',
+            'lesson_date': '2026-08-13',
+            'entries': [],
+          },
+        ],
+      });
+
+      expect(
+        report.students.map((entry) => entry.classGroup),
+        ['3001 PRESENCIAL', '3002 SEMIPRESENCIAL'],
+      );
+    });
+
+    test('entry without class group falls back to empty', () {
+      final report = PointsReport.fromJson({
+        'total_points': 1.0,
+        'students': [
+          {
+            'student_name': 'Ana Paula Ribeiro',
+            'total_points': 1.0,
+            'subject': 'Matematica',
+            'lesson_date': '2026-08-04',
+            'entries': [],
+          },
+        ],
+      });
+
+      expect(report.students.single.classGroup, '');
+    });
   });
 
   group('EmbeddingStatus', () {

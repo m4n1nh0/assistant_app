@@ -20,6 +20,48 @@ const _lessonTab = 1;
 /// cadastro de alunos ja usa.
 typedef _ClassOption = ({String classGroup, String subject});
 
+/// Turmas conhecidas pelo cadastro. Escolher daqui — na aula ou no relatorio —
+/// garante que o texto enviado ao backend seja identico ao do aluno, que e
+/// como as duas pontas sao casadas.
+List<_ClassOption> _classOptions(List<Student>? students) {
+  final options = <_ClassOption>{};
+  for (final student in students ?? const <Student>[]) {
+    final option = (
+      classGroup: student.classGroup.trim(),
+      subject: student.subject.trim(),
+    );
+    if (option.classGroup.isEmpty && option.subject.isEmpty) continue;
+    options.add(option);
+  }
+  return options.toList()
+    ..sort((a, b) {
+      final bySubject = a.subject.compareTo(b.subject);
+      return bySubject != 0 ? bySubject : a.classGroup.compareTo(b.classGroup);
+    });
+}
+
+_ClassOption? _singleOption(List<Student>? students) {
+  final options = _classOptions(students);
+  return options.length == 1 ? options.first : null;
+}
+
+/// Quantos alunos o backend vai considerar na aula. Campo vazio no aluno vale
+/// como coringa, igual ao filtro de `_roster` no router.
+int _rosterSize(List<Student>? students, _ClassOption option) {
+  return (students ?? const <Student>[]).where((student) {
+    final group = student.classGroup.trim();
+    final subject = student.subject.trim();
+    return (group.isEmpty || group == option.classGroup) &&
+        (subject.isEmpty || subject == option.subject);
+  }).length;
+}
+
+String _optionLabel(_ClassOption option) {
+  if (option.classGroup.isEmpty) return '${option.subject} (sem turma)';
+  if (option.subject.isEmpty) return '${option.classGroup} (sem disciplina)';
+  return '${option.classGroup} - ${option.subject}';
+}
+
 class EducationDialog extends StatefulWidget {
   const EducationDialog({super.key});
 
@@ -109,7 +151,7 @@ class _EducationDialogState extends State<EducationDialog> {
                           children: [
                             _RosterTab(roster: _roster),
                             _LessonTab(roster: _roster),
-                            const _PointsTab(),
+                            _PointsTab(roster: _roster),
                           ],
                         ),
                       ),
@@ -251,51 +293,6 @@ class _LessonTabState extends State<_LessonTab> {
   void _onRosterChanged() {
     if (!mounted) return;
     setState(() => _selected ??= _singleOption(widget.roster.value));
-  }
-
-  // --- Turma da aula -------------------------------------------------------
-
-  /// Turmas conhecidas pelo cadastro. Escolher daqui garante que a disciplina
-  /// gravada na aula seja identica a do aluno — o backend casa os dois por
-  /// igualdade de texto antes de procurar os nomes citados.
-  List<_ClassOption> _classOptions(List<Student>? students) {
-    final options = <_ClassOption>{};
-    for (final student in students ?? const <Student>[]) {
-      final option = (
-        classGroup: student.classGroup.trim(),
-        subject: student.subject.trim(),
-      );
-      if (option.classGroup.isEmpty && option.subject.isEmpty) continue;
-      options.add(option);
-    }
-    final sorted = options.toList()
-      ..sort((a, b) {
-        final bySubject = a.subject.compareTo(b.subject);
-        return bySubject != 0 ? bySubject : a.classGroup.compareTo(b.classGroup);
-      });
-    return sorted;
-  }
-
-  _ClassOption? _singleOption(List<Student>? students) {
-    final options = _classOptions(students);
-    return options.length == 1 ? options.first : null;
-  }
-
-  /// Quantos alunos o backend vai considerar nessa aula. Campo vazio no aluno
-  /// vale como coringa, igual ao filtro de `_roster` no router.
-  int _rosterSize(List<Student>? students, _ClassOption option) {
-    return (students ?? const <Student>[]).where((student) {
-      final group = student.classGroup.trim();
-      final subject = student.subject.trim();
-      return (group.isEmpty || group == option.classGroup) &&
-          (subject.isEmpty || subject == option.subject);
-    }).length;
-  }
-
-  String _optionLabel(_ClassOption option) {
-    if (option.classGroup.isEmpty) return '${option.subject} (sem turma)';
-    if (option.subject.isEmpty) return '${option.classGroup} (sem disciplina)';
-    return '${option.classGroup} - ${option.subject}';
   }
 
   // --- Ciclo da aula -------------------------------------------------------
@@ -671,60 +668,14 @@ class _LessonTabState extends State<_LessonTab> {
   ) {
     final size = selected == null ? null : _rosterSize(students, selected);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          size == null
-              ? 'TURMA E DISCIPLINA'
-              : 'TURMA E DISCIPLINA  -  $size ALUNO${size == 1 ? "" : "S"}',
-          style: const TextStyle(
-            fontSize: 9,
-            letterSpacing: 1.5,
-            color: AssistantTheme.textMuted,
-          ),
-        ),
-        const SizedBox(height: 4),
-        DropdownButtonFormField<_ClassOption>(
-          initialValue: selected,
-          isExpanded: true,
-          hint: const Text(
-            'Selecione a turma',
-            style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
-          ),
-          dropdownColor: AssistantTheme.surface,
-          style: const TextStyle(
-              fontSize: 12, color: AssistantTheme.textPrimary),
-          icon: const Icon(Icons.arrow_drop_down,
-              size: 18, color: AssistantTheme.textMuted),
-          decoration: InputDecoration(
-            isDense: true,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            filled: true,
-            fillColor: AssistantTheme.bg2,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(3),
-              borderSide: const BorderSide(color: AssistantTheme.border),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(3),
-              borderSide: const BorderSide(color: AssistantTheme.border),
-            ),
-          ),
-          items: [
-            for (final option in options)
-              DropdownMenuItem(
-                value: option,
-                child: Text(
-                  _optionLabel(option),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
-          onChanged: (value) => setState(() => _selected = value),
-        ),
-      ],
+    return _ClassDropdown(
+      label: size == null
+          ? 'TURMA E DISCIPLINA'
+          : 'TURMA E DISCIPLINA  -  $size ALUNO${size == 1 ? "" : "S"}',
+      hint: 'Selecione a turma',
+      options: options,
+      value: selected,
+      onChanged: (value) => setState(() => _selected = value),
     );
   }
 
@@ -921,7 +872,9 @@ class _PendingChunk {
 // --- Pontuacoes ------------------------------------------------------------
 
 class _PointsTab extends StatefulWidget {
-  const _PointsTab();
+  final ValueNotifier<List<Student>?> roster;
+
+  const _PointsTab({required this.roster});
 
   @override
   State<_PointsTab> createState() => _PointsTabState();
@@ -934,6 +887,7 @@ class _PointsTabState extends State<_PointsTab> {
   DateTime? _from;
   DateTime? _to;
   PointsReport? _report;
+  _ClassOption? _selected;
   var _loading = false;
   var _status = '';
 
@@ -961,10 +915,12 @@ class _PointsTabState extends State<_PointsTab> {
       _status = '';
     });
     try {
+      final selected = _selected;
       final report = await education.pointsReport(
         dateFrom: _iso(_from),
         dateTo: _iso(_to),
-        subject: _subjectCtrl.text.trim(),
+        subject: selected?.subject ?? _subjectCtrl.text.trim(),
+        classGroup: selected?.classGroup,
         studentName: _studentCtrl.text.trim(),
       );
       if (mounted) setState(() => _report = report);
@@ -1011,10 +967,30 @@ class _PointsTabState extends State<_PointsTab> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _Field(
-                  controller: _subjectCtrl,
-                  label: 'DISCIPLINA',
-                  onSubmitted: (_) => _load(),
+                flex: 2,
+                child: ValueListenableBuilder<List<Student>?>(
+                  valueListenable: widget.roster,
+                  builder: (context, students, _) {
+                    final options = _classOptions(students);
+                    if (options.isEmpty) {
+                      return _Field(
+                        controller: _subjectCtrl,
+                        label: 'DISCIPLINA',
+                        onSubmitted: (_) => _load(),
+                      );
+                    }
+                    return _ClassDropdown(
+                      label: 'TURMA E DISCIPLINA',
+                      hint: 'Todas as turmas',
+                      allLabel: 'Todas as turmas',
+                      options: options,
+                      value: options.contains(_selected) ? _selected : null,
+                      onChanged: (value) {
+                        setState(() => _selected = value);
+                        _load();
+                      },
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 10),
@@ -1089,7 +1065,10 @@ class _PointsTabState extends State<_PointsTab> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '${entry.subject} - ${entry.lessonDate}',
+                                    '${entry.subject}'
+                                    '${entry.classGroup.isEmpty ? "" : " - "
+                                        "turma ${entry.classGroup}"}'
+                                    ' - ${entry.lessonDate}',
                                     style: const TextStyle(
                                         fontSize: 11,
                                         color: AssistantTheme.textMuted),
@@ -1566,6 +1545,90 @@ class _Field extends StatelessWidget {
               borderSide: const BorderSide(color: AssistantTheme.border),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Lista de turmas com a mesma moldura dos campos de texto. Com [allLabel]
+/// preenchido ganha uma primeira opcao que representa "sem filtro".
+class _ClassDropdown extends StatelessWidget {
+  final String label;
+  final String hint;
+  final List<_ClassOption> options;
+  final _ClassOption? value;
+  final String? allLabel;
+  final ValueChanged<_ClassOption?> onChanged;
+
+  const _ClassDropdown({
+    required this.label,
+    required this.hint,
+    required this.options,
+    required this.value,
+    required this.onChanged,
+    this.allLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 9,
+            letterSpacing: 1.5,
+            color: AssistantTheme.textMuted,
+          ),
+        ),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<_ClassOption>(
+          initialValue: value,
+          isExpanded: true,
+          hint: Text(
+            hint,
+            style: const TextStyle(
+                fontSize: 11, color: AssistantTheme.textMuted),
+          ),
+          dropdownColor: AssistantTheme.surface,
+          style:
+              const TextStyle(fontSize: 12, color: AssistantTheme.textPrimary),
+          icon: const Icon(Icons.arrow_drop_down,
+              size: 18, color: AssistantTheme.textMuted),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            filled: true,
+            fillColor: AssistantTheme.bg2,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(3),
+              borderSide: const BorderSide(color: AssistantTheme.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(3),
+              borderSide: const BorderSide(color: AssistantTheme.border),
+            ),
+          ),
+          items: [
+            if (allLabel != null)
+              DropdownMenuItem(
+                value: null,
+                child: Text(allLabel!,
+                    style: const TextStyle(color: AssistantTheme.textMuted)),
+              ),
+            for (final option in options)
+              DropdownMenuItem(
+                value: option,
+                child: Text(
+                  _optionLabel(option),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: onChanged,
         ),
       ],
     );

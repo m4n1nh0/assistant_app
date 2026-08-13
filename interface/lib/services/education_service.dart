@@ -188,6 +188,7 @@ class EducationService {
     String? dateFrom,
     String? dateTo,
     String? subject,
+    String? classGroup,
     String? studentName,
   }) async {
     final uri = Uri.parse('$_baseUrl/education/points').replace(
@@ -195,6 +196,8 @@ class EducationService {
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
         if (subject != null && subject.isNotEmpty) 'subject': subject,
+        if (classGroup != null && classGroup.isNotEmpty)
+          'class_group': classGroup,
         if (studentName != null && studentName.isNotEmpty)
           'student_name': studentName,
       },
@@ -621,6 +624,10 @@ class PointsReportEntry {
   final String? studentId;
   final double totalPoints;
   final String subject;
+
+  /// Turma da aula que gerou os pontos: separa duas turmas da mesma
+  /// disciplina no mesmo dia.
+  final String classGroup;
   final String lessonDate;
   final List<LessonPoint> entries;
 
@@ -629,6 +636,7 @@ class PointsReportEntry {
     required this.totalPoints,
     required this.subject,
     required this.lessonDate,
+    this.classGroup = '',
     this.studentId,
     this.entries = const [],
   });
@@ -639,6 +647,7 @@ class PointsReportEntry {
         studentId: json['student_id']?.toString(),
         totalPoints: _toDouble(json['total_points']),
         subject: json['subject']?.toString() ?? '',
+        classGroup: json['class_group']?.toString() ?? '',
         lessonDate: json['lesson_date']?.toString() ?? '',
         entries: ((json['entries'] as List<dynamic>?) ?? [])
             .map((item) => LessonPoint.fromJson(item as Map<String, dynamic>))

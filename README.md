@@ -339,6 +339,12 @@ Pontos de atencao do fluxo:
   frequencia, entao o LLM recebe a lista de alunos e o backend ainda faz
   casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
   a pontuacao e gravada com o nome ouvido e marcada para revisao na interface.
+- **Duas turmas da mesma disciplina se separam pela turma.** A aula nasce com a
+  dupla turma + disciplina escolhida na lista, e so os alunos daquela dupla vao
+  para o casamento de nomes. No relatorio a turma nao vem do ponto — `lesson_points`
+  nao guarda esse campo — e sim de um `LEFT OUTER JOIN` com a aula pelo
+  `lesson_id`, o que tambem vale para pontos ja gravados. O join e externo de
+  proposito: ponto de aula apagada continua no relatorio, com a turma vazia.
 - **A turma pode ser importada por CSV.** Na aba `TURMA`, informe a turma e a
   disciplina e selecione um arquivo com as colunas `matricula` e `nome`. Uma
   matricula nova cria o aluno; uma matricula ja cadastrada atualiza nome, turma e
@@ -359,7 +365,7 @@ Endpoints principais:
 | `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
 | `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
 | `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda |
-| `GET /education/points` | Nome e total de extra por dia e disciplina |
+| `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
 | `GET /education/students` | Cadastro da turma |
 | `POST /education/students/import` | Importacao de alunos por matricula e nome |
