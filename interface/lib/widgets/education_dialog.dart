@@ -11,11 +11,59 @@ import '../services/education_service.dart';
 import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
 
-class EducationDialog extends StatelessWidget {
+/// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
+/// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
+const _rosterTab = 0;
+const _lessonTab = 1;
+
+class EducationDialog extends StatefulWidget {
   const EducationDialog({super.key});
 
   @override
+  State<EducationDialog> createState() => _EducationDialogState();
+}
+
+class _EducationDialogState extends State<EducationDialog> {
+  /// Cadastro compartilhado entre as abas: TURMA escreve, AULA le para avisar
+  /// quando nao ha nomes para ancorar a transcricao. `null` = desconhecido.
+  final _roster = ValueNotifier<List<Student>?>(null);
+
+  int? _initialTab;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveInitialTab();
+  }
+
+  @override
+  void dispose() {
+    _roster.dispose();
+    super.dispose();
+  }
+
+  /// Primeira vez (turma vazia) abre no cadastro; quem ja tem turma cai
+  /// direto na gravacao.
+  Future<void> _resolveInitialTab() async {
+    List<Student>? students;
+    try {
+      students = await education.listStudents();
+    } catch (_) {
+      // Sem resposta nao da para saber se e a primeira vez: abre na aula.
+    }
+    if (!mounted) return;
+    _roster.value = students;
+    setState(() {
+      _initialTab = (students != null && students.isEmpty)
+          ? _rosterTab
+          : _lessonTab;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final initialTab = _initialTab;
+
     return Dialog(
       backgroundColor: AssistantTheme.surface,
       shape: RoundedRectangleBorder(
@@ -24,64 +72,90 @@ class EducationDialog extends StatelessWidget {
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1020, maxHeight: 760),
-        child: DefaultTabController(
-          length: 3,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.school_outlined,
-                        size: 18, color: AssistantTheme.c3),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        'MODO EDUCACAO',
-                        style: TextStyle(
-                          fontFamily: 'Rajdhani',
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 3,
-                          color: AssistantTheme.textPrimary,
+        child: Column(
+          children: [
+            _buildHeader(context),
+            if (initialTab == null)
+              const Expanded(child: Center(child: CircularProgressIndicator()))
+            else
+              Expanded(
+                child: DefaultTabController(
+                  length: 3,
+                  initialIndex: initialTab,
+                  child: Column(
+                    children: [
+                      const TabBar(
+                        indicatorColor: AssistantTheme.c3,
+                        labelColor: AssistantTheme.c3,
+                        unselectedLabelColor: AssistantTheme.textMuted,
+                        tabs: [
+                          Tab(
+                              icon: Icon(Icons.groups_outlined, size: 17),
+                              text: '1. TURMA'),
+                          Tab(
+                              icon: Icon(Icons.mic_none, size: 17),
+                              text: '2. AULA'),
+                          Tab(
+                              icon: Icon(Icons.emoji_events_outlined, size: 17),
+                              text: '3. PONTUACOES'),
+                        ],
+                      ),
+                      Expanded(
+                        child: TabBarView(
+                          children: [
+                            _RosterTab(roster: _roster),
+                            _LessonTab(roster: _roster),
+                            const _PointsTab(),
+                          ],
                         ),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Fechar',
-                      icon: const Icon(Icons.close, size: 18),
-                      color: AssistantTheme.textSecondary,
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              const TabBar(
-                indicatorColor: AssistantTheme.c3,
-                labelColor: AssistantTheme.c3,
-                unselectedLabelColor: AssistantTheme.textMuted,
-                tabs: [
-                  Tab(icon: Icon(Icons.mic_none, size: 17), text: 'AULA'),
-                  Tab(
-                      icon: Icon(Icons.emoji_events_outlined, size: 17),
-                      text: 'PONTUACOES'),
-                  Tab(
-                      icon: Icon(Icons.groups_outlined, size: 17),
-                      text: 'TURMA'),
-                ],
-              ),
-              const Expanded(
-                child: TabBarView(
-                  children: [
-                    _LessonTab(),
-                    _PointsTab(),
-                    _RosterTab(),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.school_outlined, size: 18, color: AssistantTheme.c3),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'MODO AULA',
+                  style: TextStyle(
+                    fontFamily: 'Rajdhani',
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 3,
+                    color: AssistantTheme.textPrimary,
+                  ),
+                ),
+                Text(
+                  'Cadastre a turma, grave a aula e distribua pontos falando '
+                  'o nome do aluno.',
+                  style: TextStyle(
+                      fontSize: 11, color: AssistantTheme.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Fechar',
+            icon: const Icon(Icons.close, size: 18),
+            color: AssistantTheme.textSecondary,
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
       ),
     );
   }
@@ -90,7 +164,9 @@ class EducationDialog extends StatelessWidget {
 // --- Aula ------------------------------------------------------------------
 
 class _LessonTab extends StatefulWidget {
-  const _LessonTab();
+  final ValueNotifier<List<Student>?> roster;
+
+  const _LessonTab({required this.roster});
 
   @override
   State<_LessonTab> createState() => _LessonTabState();
@@ -373,21 +449,7 @@ class _LessonTabState extends State<_LessonTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_embedding != null && !_embedding!.semantic)
-            _Banner(
-              icon: Icons.warning_amber_outlined,
-              color: AssistantTheme.c4,
-              text: 'Embeddings em modo hash: a busca nas aulas sera por '
-                  'palavra exata. Configure EMBEDDING_PROVIDER no backend.',
-            ),
-          if (_embedding != null && _embedding!.semantic)
-            _Banner(
-              icon: Icons.check_circle_outline,
-              color: AssistantTheme.c3,
-              text: 'Embeddings ${_embedding!.provider}/'
-                  '${_embedding!.model} (${_embedding!.dimensions} dims).',
-            ),
-          const SizedBox(height: 8),
+          _buildAlerts(),
           _lesson == null ? _buildStartForm() : _buildLiveHeader(),
           const SizedBox(height: 10),
           if (_status.isNotEmpty)
@@ -401,12 +463,7 @@ class _LessonTabState extends State<_LessonTab> {
             ),
           Expanded(
             child: _lesson == null
-                ? const _EmptyState(
-                    icon: Icons.mic_none,
-                    text: 'Preencha a disciplina e inicie a aula.\n'
-                        'O audio e enviado em blocos de 60s, transcrito e '
-                        'indexado no Qdrant.',
-                  )
+                ? const _HowItWorks()
                 : Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -418,6 +475,52 @@ class _LessonTabState extends State<_LessonTab> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Avisos que mudam o resultado da aula: turma vazia (nomes sem ancora) e
+  /// busca sem embedding semantico. O detalhe tecnico fica no tooltip.
+  Widget _buildAlerts() {
+    return ValueListenableBuilder<List<Student>?>(
+      valueListenable: widget.roster,
+      builder: (context, students, _) {
+        final banners = <Widget>[
+          if (students != null && students.isEmpty)
+            _Banner(
+              icon: Icons.groups_outlined,
+              color: AssistantTheme.c4,
+              text: 'Nenhum aluno cadastrado. Sem a turma, os nomes ditos na '
+                  'aula entram com a grafia que o transcritor entendeu.',
+              action: TextButton(
+                onPressed: () =>
+                    DefaultTabController.of(context).animateTo(_rosterTab),
+                child: const Text('CADASTRAR TURMA',
+                    style: TextStyle(fontSize: 10)),
+              ),
+            ),
+          if (_embedding != null && !_embedding!.semantic)
+            _Banner(
+              icon: Icons.search_off_outlined,
+              color: AssistantTheme.c4,
+              text: 'Busca por conteudo indisponivel: a aula fica gravada, mas '
+                  'perguntas no chat so acham palavra exata.',
+              tooltip: 'Embeddings em modo hash '
+                  '(provedor: ${_embedding!.provider}). '
+                  'Configure EMBEDDING_PROVIDER no backend.',
+            ),
+        ];
+
+        if (banners.isEmpty) return const SizedBox(height: 4);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final banner in banners) ...[
+              banner,
+              const SizedBox(height: 6),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -598,7 +701,9 @@ class _LessonTabState extends State<_LessonTab> {
             child: _points.isEmpty
                 ? const _EmptyState(
                     icon: Icons.emoji_events_outlined,
-                    text: 'Nenhuma pontuacao citada ate agora.',
+                    text: 'Cite o aluno em voz alta durante a aula:\n'
+                        '"um ponto extra para o Pedro pela pergunta".\n'
+                        'O registro aparece aqui no proximo trecho.',
                   )
                 : ListView.separated(
                     itemCount: _points.length,
@@ -851,7 +956,9 @@ class _PointsTabState extends State<_PointsTab> {
 // --- Turma -----------------------------------------------------------------
 
 class _RosterTab extends StatefulWidget {
-  const _RosterTab();
+  final ValueNotifier<List<Student>?> roster;
+
+  const _RosterTab({required this.roster});
 
   @override
   State<_RosterTab> createState() => _RosterTabState();
@@ -890,7 +997,10 @@ class _RosterTabState extends State<_RosterTab> {
     setState(() => _loading = true);
     try {
       final students = await education.listStudents();
-      if (mounted) setState(() => _students = students);
+      // Sem o mounted o notifier ja pode ter sido descartado com o dialogo.
+      if (!mounted) return;
+      widget.roster.value = students;
+      setState(() => _students = students);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -1069,10 +1179,18 @@ class _RosterTabState extends State<_RosterTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'O cadastro ancora os nomes ouvidos no audio. Sem ele, nomes '
-            'proprios saem com a grafia que o transcritor entendeu. Para '
-            'importar, use um CSV com as colunas matricula e nome.',
+            'Passo 1: o cadastro ancora os nomes ouvidos no audio. Sem ele, '
+            'nomes proprios saem com a grafia que o transcritor entendeu, e a '
+            'pontuacao por voz nao acha o aluno. Os apelidos ajudam quando '
+            'voce chama o aluno de outro jeito em sala.',
             style: TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'TURMA e DISCIPLINA valem para o cadastro manual e tambem para o '
+            'CSV importado (colunas: matricula e nome), entao preencha os dois '
+            'antes de importar.',
+            style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
           ),
           const SizedBox(height: 12),
           Row(
@@ -1141,7 +1259,9 @@ class _RosterTabState extends State<_RosterTab> {
                 : _students.isEmpty
                     ? const _EmptyState(
                         icon: Icons.groups_outlined,
-                        text: 'Nenhum aluno cadastrado.',
+                        text: 'Nenhum aluno cadastrado.\n'
+                            'Importe o CSV da turma ou adicione um aluno '
+                            'acima; depois va para a aba AULA.',
                       )
                     : ListView.separated(
                         itemCount: _students.length,
@@ -1429,12 +1549,20 @@ class _Banner extends StatelessWidget {
   final IconData icon;
   final Color color;
   final String text;
+  final String? tooltip;
+  final Widget? action;
 
-  const _Banner({required this.icon, required this.color, required this.text});
+  const _Banner({
+    required this.icon,
+    required this.color,
+    required this.text,
+    this.tooltip,
+    this.action,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final banner = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
@@ -1451,7 +1579,95 @@ class _Banner extends StatelessWidget {
               style: TextStyle(fontSize: 10, color: color),
             ),
           ),
+          if (action != null) ...[
+            const SizedBox(width: 7),
+            action!,
+          ],
         ],
+      ),
+    );
+
+    return tooltip == null ? banner : Tooltip(message: tooltip!, child: banner);
+  }
+}
+
+/// Tela de partida da aba AULA. Explica o ciclo antes de gravar, porque a
+/// pontuacao por voz nao tem botao para ser descoberta sozinha.
+class _HowItWorks extends StatelessWidget {
+  const _HowItWorks();
+
+  static const _steps = [
+    (
+      Icons.edit_outlined,
+      'Preencha a disciplina e clique em INICIAR AULA.',
+      'Tema e turma sao opcionais e ajudam a achar a aula depois.',
+    ),
+    (
+      Icons.mic_none,
+      'De aula normalmente.',
+      'A cada 60 segundos o audio vira um trecho transcrito aqui na tela.',
+    ),
+    (
+      Icons.emoji_events_outlined,
+      'Para dar ponto, cite o aluno em voz alta.',
+      'Ex.: "meio ponto extra para a Ana pela participacao". O registro '
+          'aparece no painel de pontuacoes no proximo trecho.',
+    ),
+    (
+      Icons.summarize_outlined,
+      'Ao terminar, use GERAR RESUMO ou ENCERRAR.',
+      'Depois disso da para perguntar sobre a aula no chat do assistente.',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final (icon, title, detail) in _steps)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(icon, size: 15, color: AssistantTheme.c3),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AssistantTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              detail,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                height: 1.45,
+                                color: AssistantTheme.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -308,6 +308,13 @@ Grava a aula em blocos, transcreve cada bloco, indexa a transcricao no Qdrant e
 gera o resumo sob demanda. Acessivel pelo botao "Modo Aula" no painel esquerdo
 da interface.
 
+As abas seguem a ordem de uso — `1. TURMA`, `2. AULA`, `3. PONTUACOES` — porque
+o cadastro precede a gravacao: e ele que ancora os nomes ouvidos no audio. Com a
+turma vazia o dialogo abre no cadastro e a aba da aula exibe o aviso; com a turma
+ja cadastrada, abre direto na gravacao. A pontuacao nao tem botao: o professor
+cita o aluno em voz alta durante a aula ("meio ponto extra para a Ana pela
+participacao") e o trecho seguinte traz o registro.
+
 ```mermaid
 flowchart LR
     Mic[Microfone] --> Chunk[Bloco de 60s]
