@@ -40,11 +40,11 @@ class EducationService {
 
   // --- Disciplinas ---------------------------------------------------------
 
-  Future<List<Discipline>> listDisciplines() async {
-    final response = await http.get(
-      Uri.parse('$_baseUrl/education/disciplines'),
-      headers: _headers,
+  Future<List<Discipline>> listDisciplines({bool activeOnly = true}) async {
+    final uri = Uri.parse('$_baseUrl/education/disciplines').replace(
+      queryParameters: {'active_only': '$activeOnly'},
     );
+    final response = await http.get(uri, headers: _headers);
     return (_decode(response) as List<dynamic>)
         .map((item) => Discipline.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -66,6 +66,7 @@ class EducationService {
     String disciplineId, {
     String? code,
     String? name,
+    bool? active,
   }) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/education/disciplines/$disciplineId'),
@@ -73,6 +74,7 @@ class EducationService {
       body: jsonEncode({
         if (code != null) 'code': code,
         if (name != null) 'name': name,
+        if (active != null) 'active': active,
       }),
     );
     return Discipline.fromJson(_decode(response) as Map<String, dynamic>);
@@ -91,7 +93,8 @@ class EducationService {
   Future<List<ClassGroup>> listClasses({String? discipline}) async {
     final uri = Uri.parse('$_baseUrl/education/classes').replace(
       queryParameters: {
-        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
+        if (discipline != null && discipline.isNotEmpty)
+          'discipline': discipline,
       },
     );
     final response = await http.get(uri, headers: _headers);
@@ -199,7 +202,8 @@ class EducationService {
   }) async {
     final uri = Uri.parse('$_baseUrl/education/lessons').replace(
       queryParameters: {
-        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
+        if (discipline != null && discipline.isNotEmpty)
+          'discipline': discipline,
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
         'limit': '$limit',
@@ -227,6 +231,23 @@ class EducationService {
       headers: _headers,
     );
     _decode(response);
+  }
+
+  Future<LessonSegment> updateLessonSegment(
+    String lessonId,
+    String segmentId,
+    String text,
+  ) async {
+    final response = await http.patch(
+      Uri.parse(
+        '$_baseUrl/education/lessons/$lessonId/segments/$segmentId',
+      ),
+      headers: _headers,
+      body: jsonEncode({'text': text}),
+    );
+    return LessonSegment.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
   }
 
   Future<Lesson> closeLesson(String lessonId) async {
@@ -327,7 +348,8 @@ class EducationService {
       queryParameters: {
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
-        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
+        if (discipline != null && discipline.isNotEmpty)
+          'discipline': discipline,
         if (classGroup != null && classGroup.isNotEmpty)
           'class_group': classGroup,
         if (studentName != null && studentName.isNotEmpty)
@@ -350,7 +372,8 @@ class EducationService {
         if (classId != null && classId.isNotEmpty) 'class_id': classId,
         if (classGroup != null && classGroup.isNotEmpty)
           'class_group': classGroup,
-        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
+        if (discipline != null && discipline.isNotEmpty)
+          'discipline': discipline,
       },
     );
     final response = await http.get(uri, headers: _headers);
@@ -444,7 +467,8 @@ class EducationService {
     final uri = Uri.parse('$_baseUrl/education/search').replace(
       queryParameters: {
         'q': query,
-        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
+        if (discipline != null && discipline.isNotEmpty)
+          'discipline': discipline,
         if (lessonId != null && lessonId.isNotEmpty) 'lesson_id': lessonId,
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
@@ -457,7 +481,6 @@ class EducationService {
         .map((item) => TranscriptHit.fromJson(item as Map<String, dynamic>))
         .toList();
   }
-
 
   Future<EmbeddingStatus> embeddingStatus() async {
     final response = await http.get(
@@ -495,6 +518,7 @@ class Discipline {
   final String name;
   final String label;
   final int classCount;
+  final bool active;
 
   const Discipline({
     required this.id,
@@ -502,6 +526,7 @@ class Discipline {
     required this.name,
     required this.label,
     this.classCount = 0,
+    this.active = true,
   });
 
   factory Discipline.fromJson(Map<String, dynamic> json) => Discipline(
@@ -510,6 +535,7 @@ class Discipline {
         name: json['name']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
         classCount: _toInt(json['class_count']),
+        active: json['active'] != false,
       );
 }
 

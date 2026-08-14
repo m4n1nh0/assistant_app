@@ -66,6 +66,17 @@ def test_stt_prompt_anchors_technical_vocabulary():
     assert "VS Code" in en
 
 
+def test_stt_prompt_uses_lesson_context_for_classroom_audio():
+    prompt = voice_service._stt_prompt(
+        "pt",
+        "ARA0040 - Banco de Dados; normalizacao e PostgreSQL",
+    )
+
+    assert "Banco de Dados" in prompt
+    assert "PostgreSQL" in prompt
+    assert "aula" in prompt
+
+
 def test_cuda_libraries_are_registered_only_for_cuda_device(monkeypatch):
     chamadas = []
     monkeypatch.setattr(
@@ -113,9 +124,10 @@ def test_sync_tts_prefers_openai_voice_when_configured(monkeypatch):
 def test_sync_transcribe_can_use_openai_when_enabled(monkeypatch):
     calls = {}
 
-    def fake_openai_transcribe(audio_bytes, language):
+    def fake_openai_transcribe(audio_bytes, language, context=""):
         calls["audio_bytes"] = audio_bytes
         calls["language"] = language
+        calls["context"] = context
         return voice_service.STTResponse(
             transcript="abrir calendario",
             confidence=1.0,
@@ -134,4 +146,8 @@ def test_sync_transcribe_can_use_openai_when_enabled(monkeypatch):
     result = voice_service._sync_transcribe(b"audio", "pt-BR")
 
     assert result.transcript == "abrir calendario"
-    assert calls == {"audio_bytes": b"audio", "language": "pt-BR"}
+    assert calls == {
+        "audio_bytes": b"audio",
+        "language": "pt-BR",
+        "context": "",
+    }

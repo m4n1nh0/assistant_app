@@ -62,13 +62,27 @@ def _load_whisper():
     return _whisper_model
 
 
-async def transcribe_audio(audio_bytes: bytes, language: str = "pt") -> STTResponse:
+async def transcribe_audio(
+    audio_bytes: bytes,
+    language: str = "pt",
+    context: str = "",
+) -> STTResponse:
     import asyncio
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_transcribe, audio_bytes, language)
+    return await loop.run_in_executor(
+        None,
+        _sync_transcribe,
+        audio_bytes,
+        language,
+        context,
+    )
 
 
-def _sync_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
+def _sync_transcribe(
+    audio_bytes: bytes,
+    language: str,
+    context: str = "",
+) -> STTResponse:
     if not audio_bytes:
         return STTResponse(transcript="", confidence=0.0)
 
@@ -76,7 +90,7 @@ def _sync_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
     should_try_openai = provider in {"auto", "openai"} and bool(settings.openai_api_key)
     if should_try_openai:
         try:
-            return _sync_openai_transcribe(audio_bytes, language)
+            return _sync_openai_transcribe(audio_bytes, language, context)
         except Exception as e:
             logger.warning(f"OpenAI STT unavailable, falling back to local Whisper: {e}")
 
@@ -104,7 +118,7 @@ def _sync_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
             condition_on_previous_text=False,
             # Mesma dica de contexto usada no caminho da OpenAI: ancora nomes de
             # apps e palavras de ativacao que o modelo costuma transcrever errado.
-            initial_prompt=_stt_prompt(whisper_language or "pt"),
+            initial_prompt=_stt_prompt(whisper_language or "pt", context),
             temperature=0.0,
             no_speech_threshold=0.55,
             compression_ratio_threshold=2.4,
@@ -175,7 +189,11 @@ def _sync_openai_tts(text: str, language: str, speed: float | None) -> bytes:
     return response.read()
 
 
-def _sync_openai_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
+def _sync_openai_transcribe(
+    audio_bytes: bytes,
+    language: str,
+    context: str = "",
+) -> STTResponse:
     from openai import OpenAI
 
     suffix = _detect_audio_suffix(audio_bytes)
@@ -194,7 +212,7 @@ def _sync_openai_transcribe(audio_bytes: bytes, language: str) -> STTResponse:
         }
         if whisper_language:
             kwargs["language"] = whisper_language
-            kwargs["prompt"] = _stt_prompt(whisper_language)
+            kwargs["prompt"] = _stt_prompt(whisper_language, context)
 
         with kwargs["file"] as audio_file:
             kwargs["file"] = audio_file
@@ -284,7 +302,7 @@ def _openai_tts_instructions(language: str) -> str:
     )
 
 
-def _stt_prompt(language: str) -> str:
+def _stt_prompt(language: str, context: str = "") -> str:
     """Ancora o vocabulario que o usuario realmente fala com a assistente.
 
     Sem essa lista, os termos tecnicos em ingles sao os que mais erram no meio
@@ -292,6 +310,14 @@ def _stt_prompt(language: str) -> str:
     vira "backing". Citar as palavras exatas aqui corrige a maioria desses
     casos, e pesa mais do que aumentar o modelo.
     """
+    clean_context = " ".join((context or "").split())[:500]
+    if language == "pt" and clean_context:
+        return (
+            "Transcreva em portugues brasileiro uma aula. Preserve termos "
+            "tecnicos, nomes proprios, siglas e palavras em ingles; nao tente "
+            "traduzi-los. Use pontuacao simples. Contexto da aula: "
+            f"{clean_context}"
+        )
     if language == "pt":
         return (
             "Transcreva em portugues brasileiro comandos falados para um "
@@ -300,6 +326,12 @@ def _stt_prompt(language: str) -> str:
             "Railway, Docker, Redis, endpoint, log, script, workspace, "
             "assistant app. Palavras de ativacao: Dani, Dany. "
             "Use pontuacao simples e nao traduza nomes de programas."
+        )
+    if clean_context:
+        return (
+            "Transcribe a class, preserving technical terms, proper names, "
+            "acronyms, and words in other languages. Class context: "
+            f"{clean_context}"
         )
     return (
         "Transcribe spoken commands for a development assistant. Recurring "

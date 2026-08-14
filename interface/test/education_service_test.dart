@@ -227,6 +227,18 @@ void main() {
 
       expect(discipline.label, 'ARA0040 - BANCO DE DADOS');
       expect(discipline.classCount, 2);
+      expect(discipline.active, isTrue);
+    });
+
+    test('recognises an archived discipline', () {
+      final discipline = Discipline.fromJson({
+        'id': 's2',
+        'code': 'ARA0041',
+        'label': 'ARA0041',
+        'active': false,
+      });
+
+      expect(discipline.active, isFalse);
     });
   });
 

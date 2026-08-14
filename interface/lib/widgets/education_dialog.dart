@@ -592,7 +592,8 @@ class _LessonTabState extends State<_LessonTab> {
               icon: _sessionExpired
                   ? Icons.lock_clock_outlined
                   : Icons.cloud_upload_outlined,
-              color: _sessionExpired ? AssistantTheme.danger : AssistantTheme.c4,
+              color:
+                  _sessionExpired ? AssistantTheme.danger : AssistantTheme.c4,
               text: _sessionExpired
                   ? 'Sessao expirada. Entre de novo na conta: os '
                       '${_pendingUploads.length} bloco(s) da aula estao '
@@ -622,8 +623,8 @@ class _LessonTabState extends State<_LessonTab> {
               action: TextButton(
                 onPressed: () =>
                     DefaultTabController.of(context).animateTo(_rosterTab),
-                child: const Text('ABRIR TURMAS',
-                    style: TextStyle(fontSize: 10)),
+                child:
+                    const Text('ABRIR TURMAS', style: TextStyle(fontSize: 10)),
               ),
             ),
           if (_embedding != null && !_embedding!.semantic)
@@ -658,8 +659,7 @@ class _LessonTabState extends State<_LessonTab> {
       builder: (context, classes, _) {
         final available = classes ?? const <ClassGroup>[];
         final weekday = DateTime.now().weekday;
-        final today =
-            available.where((item) => item.meetsOn(weekday)).toList();
+        final today = available.where((item) => item.meetsOn(weekday)).toList();
         final others =
             available.where((item) => !item.meetsOn(weekday)).toList();
         final chosen = _chosen;
@@ -746,8 +746,8 @@ class _LessonTabState extends State<_LessonTab> {
                   'Marque mais de uma turma quando a aula for reunida: os '
                   'alunos de todas entram no reconhecimento de nomes e a '
                   'pontuacao continua separada por turma no relatorio.',
-                  style: TextStyle(
-                      fontSize: 10, color: AssistantTheme.textMuted),
+                  style:
+                      TextStyle(fontSize: 10, color: AssistantTheme.textMuted),
                 ),
               ),
           ],
@@ -912,6 +912,14 @@ class _LessonTabState extends State<_LessonTab> {
                               ? AssistantTheme.c3
                               : AssistantTheme.c4,
                         ),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Corrigir transcricao',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.edit_outlined, size: 13),
+                          color: AssistantTheme.textMuted,
+                          onPressed: () => _editSegment(segment),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 3),
@@ -927,6 +935,34 @@ class _LessonTabState extends State<_LessonTab> {
               },
             ),
     );
+  }
+
+  Future<void> _editSegment(LessonSegment segment) async {
+    final corrected = await _askSegmentCorrection(context, segment);
+    if (corrected == null || corrected == segment.text) return;
+    try {
+      final updated = await education.updateLessonSegment(
+        _lesson!.id,
+        segment.id,
+        corrected,
+      );
+      final lesson = await education.getLesson(
+        _lesson!.id,
+        includeSegments: false,
+      );
+      if (!mounted) return;
+      setState(() {
+        final index = _segments.indexWhere((item) => item.id == segment.id);
+        if (index >= 0) _segments[index] = updated;
+        _lesson = lesson;
+        _summary = null;
+        _status = updated.indexed
+            ? 'Transcricao corrigida e busca atualizada.'
+            : 'Transcricao corrigida; reindexacao pendente.';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao corrigir trecho: $e');
+    }
   }
 
   Widget _buildSidePanel() {
@@ -1328,9 +1364,10 @@ class _RosterTabState extends State<_RosterTab> {
       widget.classes.value = classes;
       setState(() {
         _disciplines = disciplines;
-        _newDiscipline =
-            disciplines.where((item) => item.id == _newDiscipline?.id).firstOrNull ??
-                (disciplines.isEmpty ? null : disciplines.first);
+        _newDiscipline = disciplines
+                .where((item) => item.id == _newDiscipline?.id)
+                .firstOrNull ??
+            (disciplines.isEmpty ? null : disciplines.first);
       });
       final wanted = keepId ?? _selected?.id;
       setState(() {
@@ -1396,9 +1433,8 @@ class _RosterTabState extends State<_RosterTab> {
       text: group.schedules.isEmpty ? '' : group.schedules.first.endTime,
     );
     final days = group.schedules.map((item) => item.weekday).toSet();
-    var discipline = _disciplines
-        .where((item) => item.id == group.disciplineId)
-        .firstOrNull;
+    var discipline =
+        _disciplines.where((item) => item.id == group.disciplineId).firstOrNull;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1554,7 +1590,8 @@ class _RosterTabState extends State<_RosterTab> {
     final nameCtrl = TextEditingController(text: student.name);
     final aliasCtrl = TextEditingController(text: student.aliases.join(', '));
     final classes = widget.classes.value ?? const <ClassGroup>[];
-    var target = classes.where((item) => item.id == student.classId).firstOrNull;
+    var target =
+        classes.where((item) => item.id == student.classId).firstOrNull;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1856,7 +1893,8 @@ class _RosterTabState extends State<_RosterTab> {
                               ),
                               IconButton(
                                 tooltip: 'Remover turma',
-                                icon: const Icon(Icons.delete_outline, size: 14),
+                                icon:
+                                    const Icon(Icons.delete_outline, size: 14),
                                 color: AssistantTheme.textMuted,
                                 onPressed: () => _deleteClass(group),
                               ),
@@ -1978,14 +2016,16 @@ class _RosterTabState extends State<_RosterTab> {
                               ),
                               IconButton(
                                 tooltip: 'Remover',
-                                icon: const Icon(Icons.delete_outline, size: 15),
+                                icon:
+                                    const Icon(Icons.delete_outline, size: 15),
                                 color: AssistantTheme.textMuted,
                                 onPressed: () async {
                                   try {
                                     await education.deleteStudent(student.id);
                                     await _loadClasses();
                                   } catch (e) {
-                                    _report('Falha ao remover: $e', error: true);
+                                    _report('Falha ao remover: $e',
+                                        error: true);
                                   }
                                 },
                               ),
@@ -2266,6 +2306,23 @@ class _HistoryTabState extends State<_HistoryTab> {
     }
   }
 
+  Future<void> _editSegment(LessonDetail detail, LessonSegment segment) async {
+    final corrected = await _askSegmentCorrection(context, segment);
+    if (corrected == null || corrected == segment.text) return;
+    try {
+      await education.updateLessonSegment(detail.id, segment.id, corrected);
+      await _open(detail.id);
+      if (mounted) {
+        setState(() {
+          _showTranscript = true;
+          _status = 'Transcricao corrigida. Gere novamente o resumo da aula.';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao corrigir trecho: $e');
+    }
+  }
+
   /// Resumo de aula antiga: o backend le a transcricao guardada e devolve o
   /// texto, mesmo que a aula ja esteja encerrada.
   Future<void> _summarise(LessonDetail detail) async {
@@ -2313,7 +2370,8 @@ class _HistoryTabState extends State<_HistoryTab> {
       );
       if (path == null) return;
       // No desktop o file_picker devolve o caminho e nao grava sozinho.
-      final file = File(path.toLowerCase().endsWith('.pdf') ? path : '$path.pdf');
+      final file =
+          File(path.toLowerCase().endsWith('.pdf') ? path : '$path.pdf');
       if (!await file.exists() || await file.length() != bytes.length) {
         await file.writeAsBytes(bytes);
       }
@@ -2334,8 +2392,8 @@ class _HistoryTabState extends State<_HistoryTab> {
                 ? 'Aula sem trechos gravados.'
                 : '${detail.segments.length} trecho(s), '
                     '${detail.transcriptChars} caracteres.',
-            style: const TextStyle(
-                fontSize: 11, color: AssistantTheme.textMuted),
+            style:
+                const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
           ),
         ),
         OutlinedButton.icon(
@@ -2557,22 +2615,54 @@ class _HistoryTabState extends State<_HistoryTab> {
                     ),
                   )
                 : null,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                _showTranscript || !hasSummary
-                    ? (detail.segments.isEmpty
-                        ? 'Sem trechos gravados.'
-                        : detail.segments
-                            .map((item) => item.text)
-                            .join('\n\n'))
-                    : detail.summary!,
-                style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: AssistantTheme.textPrimary,
-                ),
-              ),
-            ),
+            child: _showTranscript || !hasSummary
+                ? (detail.segments.isEmpty
+                    ? const Text(
+                        'Sem trechos gravados.',
+                        style: TextStyle(color: AssistantTheme.textMuted),
+                      )
+                    : ListView.separated(
+                        itemCount: detail.segments.length,
+                        separatorBuilder: (_, __) => const Divider(
+                          height: 16,
+                          color: AssistantTheme.border,
+                        ),
+                        itemBuilder: (_, index) {
+                          final segment = detail.segments[index];
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: SelectableText(
+                                  segment.text,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    height: 1.5,
+                                    color: AssistantTheme.textPrimary,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Corrigir trecho ${segment.sequence}',
+                                visualDensity: VisualDensity.compact,
+                                icon: const Icon(Icons.edit_outlined, size: 14),
+                                color: AssistantTheme.textMuted,
+                                onPressed: () => _editSegment(detail, segment),
+                              ),
+                            ],
+                          );
+                        },
+                      ))
+                : SingleChildScrollView(
+                    child: SelectableText(
+                      detail.summary!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.5,
+                        color: AssistantTheme.textPrimary,
+                      ),
+                    ),
+                  ),
           ),
         ),
         const SizedBox(height: 10),
@@ -2593,8 +2683,7 @@ class _HistoryTabState extends State<_HistoryTab> {
                       point: detail.points[index],
                       onDelete: () async {
                         try {
-                          await education
-                              .deletePoint(detail.points[index].id);
+                          await education.deletePoint(detail.points[index].id);
                           await _open(detail.id);
                         } catch (e) {
                           if (mounted) {
@@ -2650,7 +2739,8 @@ class _DisciplineDropdown extends StatelessWidget {
             style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
           ),
           dropdownColor: AssistantTheme.surface,
-          style: const TextStyle(fontSize: 12, color: AssistantTheme.textPrimary),
+          style:
+              const TextStyle(fontSize: 12, color: AssistantTheme.textPrimary),
           icon: const Icon(Icons.arrow_drop_down,
               size: 18, color: AssistantTheme.textMuted),
           decoration: InputDecoration(
@@ -2782,6 +2872,12 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
   var _status = '';
 
   @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  @override
   void dispose() {
     _codeCtrl.dispose();
     _nameCtrl.dispose();
@@ -2790,7 +2886,7 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
 
   Future<void> _reload() async {
     try {
-      final disciplines = await education.listDisciplines();
+      final disciplines = await education.listDisciplines(activeOnly: false);
       if (mounted) setState(() => _disciplines = disciplines);
     } catch (e) {
       if (mounted) setState(() => _status = 'Falha ao carregar: $e');
@@ -2809,6 +2905,46 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
       _codeCtrl.clear();
       _nameCtrl.clear();
       setState(() => _status = '');
+      await _reload();
+    } catch (e) {
+      if (mounted) setState(() => _status = '$e');
+    }
+  }
+
+  Future<void> _setActive(Discipline discipline, bool active) async {
+    if (!active) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: const Text('Encerrar disciplina'),
+          content: Text(
+            'Encerrar ${discipline.label}? Ela e suas turmas deixam de aparecer '
+            'nas novas aulas, mas todo o historico, alunos, transcricoes e '
+            'pontuacoes permanecem guardados.',
+            style: const TextStyle(color: AssistantTheme.textPrimary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('ENCERRAR'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    try {
+      await education.updateDiscipline(discipline.id, active: active);
+      if (mounted) {
+        setState(() => _status = active
+            ? 'Disciplina reaberta.'
+            : 'Disciplina encerrada; o historico foi preservado.');
+      }
       await _reload();
     } catch (e) {
       if (mounted) setState(() => _status = '$e');
@@ -2853,13 +2989,16 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                                 children: [
                                   Text(
                                     discipline.label,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: AssistantTheme.textPrimary,
+                                      color: discipline.active
+                                          ? AssistantTheme.textPrimary
+                                          : AssistantTheme.textMuted,
                                     ),
                                   ),
                                   Text(
-                                    '${discipline.classCount} turma(s)',
+                                    '${discipline.classCount} turma(s)'
+                                    '${discipline.active ? "" : "  -  ENCERRADA"}',
                                     style: const TextStyle(
                                         fontSize: 10,
                                         color: AssistantTheme.textMuted),
@@ -2868,12 +3007,29 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                               ),
                             ),
                             IconButton(
+                              tooltip: discipline.active
+                                  ? 'Encerrar disciplina'
+                                  : 'Reabrir disciplina',
+                              icon: Icon(
+                                discipline.active
+                                    ? Icons.archive_outlined
+                                    : Icons.unarchive_outlined,
+                                size: 15,
+                              ),
+                              color: discipline.active
+                                  ? AssistantTheme.c4
+                                  : AssistantTheme.c3,
+                              onPressed: () =>
+                                  _setActive(discipline, !discipline.active),
+                            ),
+                            IconButton(
                               tooltip: 'Remover',
                               icon: const Icon(Icons.delete_outline, size: 15),
                               color: AssistantTheme.textMuted,
                               onPressed: () async {
                                 try {
-                                  await education.deleteDiscipline(discipline.id);
+                                  await education
+                                      .deleteDiscipline(discipline.id);
                                   await _reload();
                                 } catch (e) {
                                   if (mounted) {
@@ -2942,6 +3098,55 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
 }
 
 // --- Componentes compartilhados --------------------------------------------
+
+Future<String?> _askSegmentCorrection(
+  BuildContext context,
+  LessonSegment segment,
+) async {
+  final controller = TextEditingController(text: segment.text);
+  final corrected = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      backgroundColor: AssistantTheme.surface,
+      title: Text('Corrigir trecho ${segment.sequence}'),
+      content: SizedBox(
+        width: 560,
+        child: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 4,
+          maxLines: 10,
+          style: const TextStyle(
+            fontSize: 12,
+            height: 1.45,
+            color: AssistantTheme.textPrimary,
+          ),
+          decoration: const InputDecoration(
+            hintText: 'Texto correto do que foi falado',
+            filled: true,
+            fillColor: AssistantTheme.bg2,
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('CANCELAR'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final value = controller.text.trim();
+            if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+          },
+          child: const Text('SALVAR CORRECAO'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  return corrected;
+}
 
 String _formatPoints(double value) {
   final rounded = value.toStringAsFixed(2);
@@ -3044,8 +3249,8 @@ class _ClassDropdown extends StatelessWidget {
           isExpanded: true,
           hint: Text(
             hint,
-            style: const TextStyle(
-                fontSize: 11, color: AssistantTheme.textMuted),
+            style:
+                const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
           ),
           dropdownColor: AssistantTheme.surface,
           style:

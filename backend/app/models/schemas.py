@@ -806,6 +806,10 @@ class LessonSegmentResponse(BaseModel):
     created_at: datetime
 
 
+class LessonSegmentUpdate(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+
+
 class LessonPointResponse(BaseModel):
     id: str
     lesson_id: str

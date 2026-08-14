@@ -16,6 +16,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timezone
 from loguru import logger
 from .config import get_settings
@@ -473,12 +474,29 @@ def _add_compatibility_columns(sync_conn) -> None:
         existing = {column["name"] for column in inspector.get_columns(table_name)}
         for column_name, definition in columns.items():
             if column_name not in existing:
-                sync_conn.execute(
-                    text(
-                        f"ALTER TABLE {table_name} "
-                        f"ADD COLUMN {column_name} {definition}"
+                try:
+                    sync_conn.execute(
+                        text(
+                            f"ALTER TABLE {table_name} "
+                            f"ADD COLUMN {column_name} {definition}"
+                        )
                     )
-                )
+                except SQLAlchemyError:
+                    # Mais de um worker pode iniciar ao mesmo tempo. Nesse
+                    # intervalo outro worker pode adicionar a coluna depois
+                    # da inspecao acima e antes deste ALTER TABLE. Confirme o
+                    # estado atual usando um Inspector novo, sem cache, antes
+                    # de decidir se o erro realmente deve interromper o boot.
+                    current_columns = {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns(table_name)
+                    }
+                    if column_name not in current_columns:
+                        raise
+                    logger.info(
+                        "Coluna de compatibilidade ja adicionada por outro "
+                        f"worker: {table_name}.{column_name}"
+                    )
 
     inspector = inspect(sync_conn)
     if "users" in tables:

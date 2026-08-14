@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from loguru import logger
-from sqlalchemy import delete as sql_delete, func, select
+from sqlalchemy import delete as sql_delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
@@ -40,6 +40,7 @@ from ..models.schemas import (
     LessonSegmentIngestRequest,
     LessonSegmentIngestResponse,
     LessonSegmentResponse,
+    LessonSegmentUpdate,
     LessonSummaryRequest,
     LessonSummaryResponse,
     LessonUpdate,
@@ -665,7 +666,19 @@ async def list_classes(
     if discipline:
         query = query.where(ClassGroupModel.discipline == discipline)
     if active_only:
-        query = query.where(ClassGroupModel.active.is_(True))
+        # Turmas de uma disciplina encerrada somem dos fluxos do semestre
+        # atual, mas continuam intactas para historico e relatorios.
+        active_disciplines = select(DisciplineModel.id).where(
+            DisciplineModel.tutor_id == user["tutor_id"],
+            DisciplineModel.active.is_(True),
+        )
+        query = query.where(
+            ClassGroupModel.active.is_(True),
+            or_(
+                ClassGroupModel.discipline_id.is_(None),
+                ClassGroupModel.discipline_id.in_(active_disciplines),
+            ),
+        )
     result = await db.execute(
         query.order_by(ClassGroupModel.discipline, ClassGroupModel.code)
     )
@@ -1162,7 +1175,12 @@ async def ingest_lesson_audio(
         raise HTTPException(409, "Aula ja encerrada")
 
     audio_bytes = await file.read()
-    stt = await transcribe_audio(audio_bytes, language)
+    context_parts = [lesson.discipline, lesson.title or ""]
+    stt = await transcribe_audio(
+        audio_bytes,
+        language,
+        context="; ".join(part.strip() for part in context_parts if part.strip()),
+    )
     if not stt.transcript.strip():
         return LessonSegmentIngestResponse(
             lesson=_lesson_response(lesson),
@@ -1199,6 +1217,77 @@ async def ingest_lesson_text(
         extract_points=body.extract_points,
         db=db,
     )
+
+
+@router.patch(
+    "/lessons/{lesson_id}/segments/{segment_id}",
+    response_model=LessonSegmentResponse,
+)
+async def update_lesson_segment(
+    lesson_id: str,
+    segment_id: str,
+    body: LessonSegmentUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Corrige uma transcricao e substitui o vetor usado na busca."""
+    lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
+    segment = await db.get(LessonSegmentModel, segment_id)
+    if (
+        segment is None
+        or segment.lesson_id != lesson.id
+        or segment.tutor_id != user["tutor_id"]
+    ):
+        raise HTTPException(404, "Trecho nao encontrado")
+
+    clean = " ".join(body.text.split())
+    if not clean:
+        raise HTTPException(422, "A transcricao nao pode ficar vazia")
+
+    old_length = len(segment.text or "")
+    segment.text = clean
+    segment.indexed = False
+    segment.qdrant_point_id = None
+    segment.embedding_model = None
+    lesson.transcript_chars = max(
+        0,
+        (lesson.transcript_chars or 0) - old_length + len(clean),
+    )
+    # Um resumo existente foi criado com o texto anterior e precisa ser
+    # gerado novamente para nao continuar exibindo a palavra errada.
+    lesson.summary = None
+    lesson.summary_llm = None
+    lesson.summary_at = None
+    await db.commit()
+    await db.refresh(segment)
+
+    started = _as_utc(lesson.started_at)
+    try:
+        written = await qdrant_service.index_lesson_segments(
+            tutor_id=lesson.tutor_id,
+            lesson_id=lesson.id,
+            discipline=lesson.discipline,
+            segments=[{
+                "id": segment.id,
+                "text": clean,
+                "sequence": segment.sequence,
+                "class_group": lesson.class_group or "",
+                "lesson_date": started.date().isoformat(),
+                "lesson_ts": int(started.timestamp()),
+            }],
+        )
+        if written:
+            segment.indexed = True
+            segment.qdrant_point_id = segment.id
+            segment.embedding_model = embedding_service.active_signature()
+            await db.commit()
+            await db.refresh(segment)
+    except Exception as e:
+        # A correcao fica salva no MySQL; o reindexador recupera o vetor
+        # depois caso o Qdrant esteja temporariamente indisponivel.
+        logger.warning(f"Falha ao reindexar trecho corrigido {segment.id}: {e}")
+
+    return _segment_response(segment)
 
 
 @router.post("/lessons/{lesson_id}/summary", response_model=LessonSummaryResponse)
