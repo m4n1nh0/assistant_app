@@ -2,7 +2,8 @@
 
 Aplicacao de assistente pessoal desktop com backend FastAPI, interface Flutter,
 memoria vetorial, automacoes locais, integracao com calendarios, voz,
-notificacoes e multiplos provedores de LLM.
+notificacoes, modo educacao com gravacao de aulas e multiplos provedores de
+LLM.
 
 O projeto foi pensado para rodar localmente, com dados e credenciais sensiveis
 fora do repositorio. O arquivo `backend/.env.example` documenta apenas as
@@ -66,8 +67,8 @@ flowchart LR
     AgentLayer --> Services
     ChatGraph --> Services
     Services --> Models[Schemas Pydantic]
-    Services --> DB[(MySQL)]
-    Services --> Vector[(Qdrant)]
+    Services --> DB[(MySQL: dados e transcricoes)]
+    Services --> Vector[(Qdrant: memorias e indice das aulas)]
     Services --> Scheduler[APScheduler]
     Services --> LLMs[LLMs em nuvem]
     Services --> Ollama[Ollama / LocalAI]
@@ -94,8 +95,10 @@ flowchart LR
   modelos Pydantic. A selecao das tools e deterministica; nao ha execucao
   autonoma de comandos pelo backend.
 - **Banco relacional**: MySQL via SQLAlchemy async para conversas,
-  configuracoes, perfis, atalhos, auditoria e automacoes aprovadas.
-- **Memoria vetorial**: Qdrant para memorias revisadas e aprovadas.
+  configuracoes, perfis, atalhos, auditoria, automacoes e os dados fonte do
+  modo educacao.
+- **Memoria vetorial**: Qdrant para memorias revisadas e para o indice derivado
+  das transcricoes de aula; o texto original permanece no MySQL.
 - **LLMs**: provedores em nuvem configurados por `.env` e modelos locais via
   Ollama ou LocalAI.
 - **Scheduler**: APScheduler para sincronizacao periodica de calendario e envio
@@ -160,6 +163,12 @@ flowchart TD
     ConfigTable --> Backend
     CalendarAccounts --> Backend
 ```
+
+Entre as preferencias locais esta **Enter envia mensagem**. Ligada, `Enter`
+envia e `Shift+Enter` insere uma nova linha. Desligada, `Enter` insere a linha e
+`Ctrl+Enter` (`Cmd+Enter` no macOS) envia; o botao **ENVIAR** funciona nos dois
+modos. A escolha e serializada em `AppConfig` e persiste no armazenamento local
+da conta.
 
 ## Padrao De Projeto
 
@@ -314,15 +323,24 @@ ouvidos no audio. Sem turma cadastrada o dialogo abre no cadastro; com turma,
 abre direto na gravacao. A pontuacao nao tem botao: o professor cita o aluno em
 voz alta durante a aula ("meio ponto extra para a Ana pela participacao") e o
 trecho seguinte traz o registro. O `4. HISTORICO` lista as aulas do periodo,
-mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema e
-turmas depois — inclusive de aula ja encerrada. De la tambem se pede o resumo
-de uma aula antiga e se exporta o resultado em PDF.
+mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema,
+turmas e cada trecho transcrito — inclusive de aula ja encerrada. De la tambem
+se pede o resumo de uma aula antiga e se exporta o resultado em PDF.
 
-#### Disciplina, turma e horario
+#### Semestre, disciplina, turma e horario
 
-Disciplina e turma nao sao mais texto repetido no aluno e na aula. `disciplines` e
-a disciplina ministrada (`code` ARA0040, `name` BANCO DE DADOS). O modulo
-chamava isso de `subject`, palavra que tambem significa assunto e que ja era
+O periodo academico usa o formato `AAAA.1` ou `AAAA.2`, por exemplo `2026.2`.
+Cada disciplina pertence a um semestre; a turma herda esse semestre e a aula
+guarda uma copia para que o historico continue correto mesmo depois da virada.
+Nao e permitido reunir na mesma aula turmas de semestres diferentes. Em
+**Turmas > Disciplinas**, encerrar um semestre arquiva todas as disciplinas do
+periodo: elas e suas turmas deixam de aparecer em novas aulas, mas alunos,
+transcricoes, pontos, resumos e PDFs permanecem acessiveis. O semestre tambem
+pode ser reaberto.
+
+Disciplina e turma nao sao mais apenas texto repetido no aluno e na aula.
+`disciplines` e a disciplina ministrada (`code` ARA0040, `name` BANCO DE DADOS).
+O modulo chamava isso de `subject`, palavra que tambem significa assunto e que ja era
 usada para o titulo do evento de calendario e para o assunto do email; o termo
 foi renomeado em toda a educacao, com migracao automatica na subida.
 `class_groups` e a turma (`code` 3001, `name` Presencial), pendurada na
@@ -344,31 +362,68 @@ erDiagram
     class_groups ||--o{ students : "class_id"
     class_groups ||--o{ lesson_class_groups : ""
     lessons ||--o{ lesson_class_groups : "aula reunida tem varias"
+    lessons ||--o{ lesson_segments : "transcricao"
     lessons ||--o{ lesson_points : ""
     students ||--o{ lesson_points : "student_id"
+
+    disciplines {
+        string id PK
+        string semester "2026.1 ou 2026.2"
+        string code
+        string name
+        boolean active "encerrada ou atual"
+    }
+    class_groups {
+        string id PK
+        string discipline_id FK
+        string semester "herdado da disciplina"
+        string code
+        string name
+    }
+    lessons {
+        string id PK
+        string semester "copia historica"
+        string discipline
+        string status
+    }
+    lesson_segments {
+        string id PK
+        string lesson_id FK
+        int sequence
+        text text
+        string embedding_model
+    }
 ```
 
-Os campos de texto `class_group` e `subject` continuam gravados no aluno e na
+Os campos de texto `class_group` e `discipline` continuam gravados no aluno e na
 aula como copia do rotulo da turma, para consulta por nome seguir funcionando;
 quem manda e o vinculo. Renomear a turma desce o novo rotulo para os alunos
 dela. Na primeira subida do backend, `_backfill_class_groups` deriva as turmas
 dos textos que ja existiam, liga cada aluno a sua e liga cada aula — aula que
 estava sem turma no texto era o jeito antigo de dizer reunida, entao entra ligada
-a todas as turmas da disciplina.
+a todas as turmas da disciplina. `_backfill_semesters` associa registros sem
+periodo ao semestre corrente somente no primeiro upgrade; a virada do calendario
+nao altera dados ja classificados. As adicoes de coluna sao idempotentes e
+revalidam o schema se dois workers iniciarem ao mesmo tempo.
 
 ```mermaid
 flowchart LR
     Mic[Microfone] --> Chunk[Bloco de 60s]
     Chunk --> Upload[POST /education/lessons/id/audio]
-    Upload --> STT[voice_service transcreve]
+    Context[Semestre + disciplina + tema] --> STT
+    Upload --> STT[voice_service transcreve com contexto]
     STT --> Segment[(lesson_segments MySQL)]
-    STT --> Embed[embedding_service]
+    Segment --> Embed[embedding_service]
     Embed --> Qdrant[(assistant_lesson_transcripts)]
     STT --> Extract[LLM extrai pontuacao extra]
     Extract --> Roster[Casa nome com a turma]
     Roster --> Points[(lesson_points MySQL)]
     Segment --> Summary[POST .../summary]
     Summary --> Doc[Resumo estruturado]
+    Segment --> Edit[PATCH .../segments/id]
+    Edit --> Segment
+    Edit --> Reembed[Substitui vetor no Qdrant]
+    Edit --> Invalidate[Invalida resumo anterior]
 ```
 
 Pontos de atencao do fluxo:
@@ -380,9 +435,20 @@ Pontos de atencao do fluxo:
   segmento guarda o modelo que gerou o seu vetor e a reindexacao refaz o que
   faltar a partir do banco.
 - **O cadastro da turma ancora os nomes.** O transcritor erra nomes proprios com
-  frequencia, entao o LLM recebe a lista de alunos e o backend ainda faz
+  frequencia. O STT recebe semestre, disciplina e tema como vocabulario de
+  contexto; depois, o LLM recebe a lista de alunos e o backend ainda faz
   casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
   a pontuacao e gravada com o nome ouvido e marcada para revisao na interface.
+- **A transcricao pode ser corrigida.** Cada bloco tem edicao tanto durante a
+  gravacao quanto no historico. O `PATCH` normaliza e salva o novo texto,
+  recalcula o total de caracteres e substitui o vetor correspondente no
+  Qdrant. Se o indice estiver indisponivel, a correcao fica salva e entra na
+  reindexacao pendente. Um resumo feito antes da correcao e invalidado para nao
+  continuar mostrando a palavra errada e deve ser gerado novamente.
+- **Semestre encerra uso, nao apaga historia.** Disciplinas e turmas arquivadas
+  deixam os seletores operacionais, enquanto aulas, pontos, transcricoes e
+  alunos seguem no banco. Codigo e nome de disciplina podem se repetir em um
+  semestre novo sem colidir com o cadastro anterior.
 - **Duas turmas da mesma disciplina se separam pelo vinculo.** Na aba de
   gravacao, as turmas aparecem como marcadores: marcar uma so restringe o
   reconhecimento de nomes aos alunos dela, marcar duas faz a aula reunida. Aluno
@@ -405,7 +471,8 @@ Pontos de atencao do fluxo:
   de destaque nas divisorias. O corpo e claro porque resumo de aula acaba
   impresso. Roboto vai embutido em `interface/assets/fonts` — sem uma TTF de
   verdade o `pdf` cai na Helvetica interna, que nao tem acento e devolveria
-  "normalizacao" no lugar de "normalização".
+  "normalizacao" no lugar de "normalização". O semestre aparece no cabecalho e
+  no nome sugerido para o arquivo.
 - **A sessao e renovada durante a aula.** O token vale 24h; uma aula de duas
   horas com token velho estourava no meio e os blocos passavam a voltar 401.
   Agora o app chama `POST /auth/refresh` ao abrir, ao iniciar a aula e a cada 20
@@ -433,14 +500,18 @@ Endpoints principais:
 
 | Endpoint | Uso |
 | --- | --- |
-| `POST /education/lessons` | Abre a aula (disciplina, turma, tema) |
+| `POST /education/lessons` | Abre a aula (semestre, disciplina, turmas e tema) |
 | `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
 | `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
+| `PATCH /education/lessons/{id}/segments/{segment_id}` | Corrige o texto e substitui seu vetor |
 | `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda |
 | `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
-| `GET /education/disciplines` | Disciplinas cadastradas, com quantas turmas cada uma |
-| `POST /education/disciplines` | Cria a disciplina (codigo e nome) |
+| `GET /education/disciplines` | Disciplinas por status/semestre, com total de turmas |
+| `POST /education/disciplines` | Cria a disciplina (semestre, codigo e nome) |
+| `PATCH /education/disciplines/{id}` | Renomeia, move de semestre, encerra ou reabre |
+| `GET /education/semesters` | Periodos existentes e totais de disciplinas/turmas |
+| `PATCH /education/semesters/{semester}` | Encerra ou reabre todas as disciplinas do periodo |
 | `GET /education/classes` | Turmas, com alunos e dias de aula |
 | `POST /education/classes` | Cria a turma (codigo, nome, disciplina, dias) |
 | `PATCH /education/classes/{id}` | Renomeia e desce o rotulo para os alunos |
