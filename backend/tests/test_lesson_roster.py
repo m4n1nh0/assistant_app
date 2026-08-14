@@ -42,27 +42,27 @@ class FakeDb:
 
 
 TURMA_3001 = ClassGroupModel(
-    id="c1", tutor_id="t1", code="3001", name="Presencial", subject="ARA0040"
+    id="c1", tutor_id="t1", code="3001", name="Presencial", discipline="ARA0040"
 )
 TURMA_3002 = ClassGroupModel(
-    id="c2", tutor_id="t1", code="3002", name="Semipresencial", subject="ARA0040"
+    id="c2", tutor_id="t1", code="3002", name="Semipresencial", discipline="ARA0040"
 )
 
 
-def _student(name, class_id=None, class_group="", subject=""):
+def _student(name, class_id=None, class_group="", discipline=""):
     return SimpleNamespace(
         id=name.lower(),
         name=name,
         class_id=class_id,
         class_group=class_group,
-        subject=subject,
+        discipline=discipline,
         aliases=[],
     )
 
 
-def _lesson(class_group="", subject="ARA0040"):
+def _lesson(class_group="", discipline="ARA0040"):
     return SimpleNamespace(
-        id="l1", tutor_id="t1", class_group=class_group, subject=subject
+        id="l1", tutor_id="t1", class_group=class_group, discipline=discipline
     )
 
 
@@ -99,7 +99,7 @@ def test_student_of_another_class_stays_out():
 def test_lesson_without_links_falls_back_to_the_text_fields():
     # Aula anterior a tabela de turmas, com a turma so no texto.
     lesson = SimpleNamespace(
-        id="l1", tutor_id="t1", class_group="3001 Presencial", subject="ARA0040"
+        id="l1", tutor_id="t1", class_group="3001 Presencial", discipline="ARA0040"
     )
     roster = run(education._roster(lesson, FakeDb(STUDENTS, [])))
 

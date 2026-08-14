@@ -50,7 +50,7 @@ class FakeDb:
 def _request(*rows):
     return StudentImportRequest(
         class_group="3A",
-        subject="Matematica",
+        discipline="Matematica",
         students=[
             StudentImportItem(enrollment=enrollment, name=name)
             for enrollment, name in rows
@@ -64,7 +64,7 @@ def test_import_creates_new_students_and_updates_existing_by_enrollment():
         name="Nome antigo",
         class_id=None,
         class_group="2A",
-        subject="Fisica",
+        discipline="Fisica",
         active=False,
     )
     db = FakeDb([existing])
@@ -82,7 +82,7 @@ def test_import_creates_new_students_and_updates_existing_by_enrollment():
     assert response.total == 2
     assert existing.name == "Ana Silva"
     assert existing.class_group == "3A"
-    assert existing.subject == "Matematica"
+    assert existing.discipline == "Matematica"
     assert existing.active is True
     assert db.added[0].external_id == "1002"
     assert db.added[0].tutor_id == "tutor-1"
@@ -106,10 +106,10 @@ def test_import_rejects_duplicate_enrollment_in_same_file():
     assert db.committed is False
 
 
-def test_import_requires_class_and_subject():
+def test_import_requires_class_and_discipline():
     body = StudentImportRequest(
         class_group="",
-        subject="",
+        discipline="",
         students=[StudentImportItem(enrollment="1001", name="Ana")],
     )
 

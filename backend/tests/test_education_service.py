@@ -304,7 +304,7 @@ def test_summary_uses_single_call_for_short_lesson(monkeypatch):
     calls = fake_llm(monkeypatch, "## Resumo\nAula sobre funcoes.")
 
     outcome = run(service.generate_summary(
-        subject="Matematica",
+        discipline="Matematica",
         title="Funcoes",
         segments=["primeiro trecho", "segundo trecho"],
     ))
@@ -322,7 +322,7 @@ def test_long_lesson_is_summarised_in_two_stages(monkeypatch):
 
     segments = ["x" * 1500 for _ in range(4)]
     outcome = run(service.generate_summary(
-        subject="Historia", title="", segments=segments
+        discipline="Historia", title="", segments=segments
     ))
 
     # Quatro trechos de 1500 chars cabem em tres janelas de 2000, mais a
@@ -336,7 +336,7 @@ def test_summary_returns_empty_for_lesson_without_text(monkeypatch):
     calls = fake_llm(monkeypatch, "nao deveria ser chamado")
 
     outcome = run(service.generate_summary(
-        subject="Fisica", title="", segments=["", "   "]
+        discipline="Fisica", title="", segments=["", "   "]
     ))
 
     assert outcome["summary"] == ""
@@ -348,7 +348,7 @@ def test_summary_reports_error_when_model_fails(monkeypatch):
     fake_llm(monkeypatch, "modelo offline", is_error=True)
 
     outcome = run(service.generate_summary(
-        subject="Quimica", title="", segments=["trecho"]
+        discipline="Quimica", title="", segments=["trecho"]
     ))
 
     assert outcome["summary"] == ""
@@ -359,7 +359,7 @@ def test_summary_focus_reaches_the_prompt(monkeypatch):
     calls = fake_llm(monkeypatch, "resumo")
 
     run(service.generate_summary(
-        subject="Biologia",
+        discipline="Biologia",
         title="Genetica",
         segments=["trecho"],
         focus="datas de prova",
@@ -385,11 +385,11 @@ def fake_hits(monkeypatch, hits):
     monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _search)
 
 
-def test_study_context_formats_hits_with_subject_and_date(monkeypatch):
+def test_study_context_formats_hits_with_discipline_and_date(monkeypatch):
     fake_hits(monkeypatch, [
         {
             "score": 0.8,
-            "subject": "Matematica",
+            "discipline": "Matematica",
             "lesson_date": "2026-08-04",
             "content": "funcao do primeiro grau",
         }
@@ -403,7 +403,7 @@ def test_study_context_formats_hits_with_subject_and_date(monkeypatch):
 
 def test_study_context_drops_weak_matches(monkeypatch):
     fake_hits(monkeypatch, [
-        {"score": 0.05, "subject": "Historia", "content": "nada a ver"}
+        {"score": 0.05, "discipline": "Historia", "content": "nada a ver"}
     ])
 
     assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
@@ -428,7 +428,7 @@ def test_study_context_survives_a_qdrant_failure(monkeypatch):
 
 def test_study_context_tells_the_model_not_to_guess(monkeypatch):
     fake_hits(monkeypatch, [
-        {"score": 0.9, "subject": "Fisica", "content": "segunda lei de newton"}
+        {"score": 0.9, "discipline": "Fisica", "content": "segunda lei de newton"}
     ])
 
     context = run(service.build_study_context(tutor_id="t1", message="newton"))

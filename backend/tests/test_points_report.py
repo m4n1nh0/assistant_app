@@ -33,14 +33,14 @@ def _row(name, points, student_group=None, lesson_group=None, **kwargs):
     return (_point(name, points, **kwargs), student_group, lesson_group)
 
 
-def _point(name, points, subject="ARA0040", lesson_id="l1", day=13):
+def _point(name, points, discipline="ARA0040", lesson_id="l1", day=13):
     return education.LessonPointModel(
         id=f"{name}-{lesson_id}",
         tutor_id="t1",
         lesson_id=lesson_id,
         student_name=name,
         points=points,
-        subject=subject,
+        discipline=discipline,
         lesson_date=datetime(2026, 8, day, 19, 0, tzinfo=timezone.utc),
         source="extracted",
         confidence=1.0,
@@ -51,7 +51,7 @@ def _point(name, points, subject="ARA0040", lesson_id="l1", day=13):
 USER = {"tutor_id": "t1"}
 
 
-def test_same_subject_and_day_split_by_class_group():
+def test_same_discipline_and_day_split_by_class_group():
     db = FakeDb(
         [
             _row("Ana", 1.0, lesson_group="3001 PRESENCIAL", lesson_id="l1"),

@@ -256,9 +256,16 @@ class _LessonTabState extends State<_LessonTab> {
     setState(() => _preselectSingleClass(widget.classes.value));
   }
 
-  /// Com uma turma so nao ha o que escolher.
+  /// Marca sozinho o que o horario ja diz: as turmas que tem aula hoje. Com
+  /// uma turma so, marca ela mesmo sem horario cadastrado.
   void _preselectSingleClass(List<ClassGroup>? classes) {
-    if (_selected.isEmpty && classes != null && classes.length == 1) {
+    if (_selected.isNotEmpty || classes == null || classes.isEmpty) return;
+    final today = DateTime.now().weekday;
+    final scheduled =
+        classes.where((item) => item.meetsOn(today)).map((item) => item.id);
+    if (scheduled.isNotEmpty) {
+      _selected.addAll(scheduled);
+    } else if (classes.length == 1) {
       _selected.add(classes.first.id);
     }
   }
@@ -276,9 +283,9 @@ class _LessonTabState extends State<_LessonTab> {
       _setStatus('Selecione a turma antes de iniciar.');
       return;
     }
-    final subjects = chosen.map((item) => item.subject).toSet();
-    final subject = subjects.length == 1 ? subjects.first : '';
-    if (subject.isEmpty) {
+    final disciplines = chosen.map((item) => item.discipline).toSet();
+    final discipline = disciplines.length == 1 ? disciplines.first : '';
+    if (discipline.isEmpty) {
       _setStatus('As turmas escolhidas sao de disciplinas diferentes.');
       return;
     }
@@ -292,7 +299,7 @@ class _LessonTabState extends State<_LessonTab> {
       // Aula de duas horas nao pode esbarrar no fim do token no meio.
       await api.refreshSession();
       final lesson = await education.createLesson(
-        subject: subject,
+        discipline: discipline,
         title: _titleCtrl.text.trim(),
         classIds: chosen.map((item) => item.id).toList(),
       );
@@ -649,6 +656,11 @@ class _LessonTabState extends State<_LessonTab> {
       valueListenable: widget.classes,
       builder: (context, classes, _) {
         final available = classes ?? const <ClassGroup>[];
+        final weekday = DateTime.now().weekday;
+        final today =
+            available.where((item) => item.meetsOn(weekday)).toList();
+        final others =
+            available.where((item) => !item.meetsOn(weekday)).toList();
         final chosen = _chosen;
         final students = chosen.fold<int>(
           0,
@@ -699,35 +711,33 @@ class _LessonTabState extends State<_LessonTab> {
                 style: const TextStyle(
                     fontSize: 11, color: AssistantTheme.textMuted),
               )
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final group in available)
-                    FilterChip(
-                      selected: _selected.contains(group.id),
-                      onSelected: (on) => setState(() {
-                        if (on) {
-                          _selected.add(group.id);
-                        } else {
-                          _selected.remove(group.id);
-                        }
-                      }),
-                      label: Text(
-                        '${group.display}  (${group.studentCount})',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      backgroundColor: AssistantTheme.bg2,
-                      selectedColor: AssistantTheme.c3.withValues(alpha: 0.22),
-                      checkmarkColor: AssistantTheme.c3,
-                      side: const BorderSide(color: AssistantTheme.border),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                    ),
-                ],
-              ),
+            else ...[
+              if (today.isNotEmpty) ...[
+                Text(
+                  'HOJE, ${_weekdayName(DateTime.now().weekday).toUpperCase()}',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    letterSpacing: 1.5,
+                    color: AssistantTheme.c3,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _buildClassChips(today),
+                const SizedBox(height: 10),
+              ],
+              if (others.isNotEmpty) ...[
+                Text(
+                  today.isEmpty ? '' : 'OUTRAS TURMAS',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    letterSpacing: 1.5,
+                    color: AssistantTheme.textMuted,
+                  ),
+                ),
+                if (today.isNotEmpty) const SizedBox(height: 6),
+                _buildClassChips(others),
+              ],
+            ],
             if (available.length > 1)
               const Padding(
                 padding: EdgeInsets.only(top: 6),
@@ -742,6 +752,38 @@ class _LessonTabState extends State<_LessonTab> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildClassChips(List<ClassGroup> groups) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final group in groups)
+          FilterChip(
+            selected: _selected.contains(group.id),
+            onSelected: (on) => setState(() {
+              if (on) {
+                _selected.add(group.id);
+              } else {
+                _selected.remove(group.id);
+              }
+            }),
+            label: Text(
+              '${group.display}  (${group.studentCount})'
+              '${group.scheduleLabel.isEmpty ? "" : "  ${group.scheduleLabel}"}',
+              style: const TextStyle(fontSize: 11),
+            ),
+            backgroundColor: AssistantTheme.bg2,
+            selectedColor: AssistantTheme.c3.withValues(alpha: 0.22),
+            checkmarkColor: AssistantTheme.c3,
+            side: const BorderSide(color: AssistantTheme.border),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+      ],
     );
   }
 
@@ -763,7 +805,7 @@ class _LessonTabState extends State<_LessonTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${lesson.subject}'
+                '${lesson.discipline}'
                 '${lesson.title.isEmpty ? "" : " - ${lesson.title}"}',
                 style: const TextStyle(
                   fontSize: 14,
@@ -947,7 +989,7 @@ class _PointsTab extends StatefulWidget {
 }
 
 class _PointsTabState extends State<_PointsTab> {
-  final _subjectCtrl = TextEditingController();
+  final _disciplineCtrl = TextEditingController();
   final _studentCtrl = TextEditingController();
 
   DateTime? _from;
@@ -968,7 +1010,7 @@ class _PointsTabState extends State<_PointsTab> {
 
   @override
   void dispose() {
-    _subjectCtrl.dispose();
+    _disciplineCtrl.dispose();
     _studentCtrl.dispose();
     super.dispose();
   }
@@ -985,7 +1027,7 @@ class _PointsTabState extends State<_PointsTab> {
       final report = await education.pointsReport(
         dateFrom: _iso(_from),
         dateTo: _iso(_to),
-        subject: selected?.subject ?? _subjectCtrl.text.trim(),
+        discipline: selected?.discipline ?? _disciplineCtrl.text.trim(),
         classGroup: selected?.label,
         studentName: _studentCtrl.text.trim(),
       );
@@ -1078,7 +1120,7 @@ class _PointsTabState extends State<_PointsTab> {
                     final options = classes ?? const <ClassGroup>[];
                     if (options.isEmpty) {
                       return _Field(
-                        controller: _subjectCtrl,
+                        controller: _disciplineCtrl,
                         label: 'DISCIPLINA',
                         onSubmitted: (_) => _load(),
                       );
@@ -1172,7 +1214,7 @@ class _PointsTabState extends State<_PointsTab> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '${entry.subject}'
+                                    '${entry.discipline}'
                                     '${entry.classGroup.isEmpty ? "" : " - "
                                         "turma ${entry.classGroup}"}'
                                     ' - ${entry.lessonDate}',
@@ -1236,13 +1278,15 @@ class _RosterTab extends StatefulWidget {
 class _RosterTabState extends State<_RosterTab> {
   final _codeCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
-  final _subjectCtrl = TextEditingController();
+  final _disciplineCtrl = TextEditingController();
 
   final _enrollmentCtrl = TextEditingController();
   final _studentCtrl = TextEditingController();
   final _aliasCtrl = TextEditingController();
 
   ClassGroup? _selected;
+  Discipline? _newDiscipline;
+  List<Discipline> _disciplines = [];
   List<Student> _students = [];
   var _loading = true;
   var _importing = false;
@@ -1259,7 +1303,7 @@ class _RosterTabState extends State<_RosterTab> {
   void dispose() {
     _codeCtrl.dispose();
     _nameCtrl.dispose();
-    _subjectCtrl.dispose();
+    _disciplineCtrl.dispose();
     _enrollmentCtrl.dispose();
     _studentCtrl.dispose();
     _aliasCtrl.dispose();
@@ -1277,9 +1321,16 @@ class _RosterTabState extends State<_RosterTab> {
   Future<void> _loadClasses({String? keepId}) async {
     setState(() => _loading = true);
     try {
+      final disciplines = await education.listDisciplines();
       final classes = await education.listClasses();
       if (!mounted) return;
       widget.classes.value = classes;
+      setState(() {
+        _disciplines = disciplines;
+        _newDiscipline =
+            disciplines.where((item) => item.id == _newDiscipline?.id).firstOrNull ??
+                (disciplines.isEmpty ? null : disciplines.first);
+      });
       final wanted = keepId ?? _selected?.id;
       setState(() {
         _selected = classes.where((item) => item.id == wanted).firstOrNull ??
@@ -1315,11 +1366,15 @@ class _RosterTabState extends State<_RosterTab> {
       _report('Informe o codigo da turma.', error: true);
       return;
     }
+    if (_newDiscipline == null) {
+      _report('Cadastre a disciplina antes da turma.', error: true);
+      return;
+    }
     try {
       final group = await education.createClass(
         code: code,
         name: _nameCtrl.text.trim(),
-        subject: _subjectCtrl.text.trim(),
+        disciplineId: _newDiscipline!.id,
       );
       _codeCtrl.clear();
       _nameCtrl.clear();
@@ -1333,42 +1388,83 @@ class _RosterTabState extends State<_RosterTab> {
   Future<void> _renameClass(ClassGroup group) async {
     final codeCtrl = TextEditingController(text: group.code);
     final nameCtrl = TextEditingController(text: group.name);
-    final subjectCtrl = TextEditingController(text: group.subject);
+    final startCtrl = TextEditingController(
+      text: group.schedules.isEmpty ? '' : group.schedules.first.startTime,
+    );
+    final endCtrl = TextEditingController(
+      text: group.schedules.isEmpty ? '' : group.schedules.first.endTime,
+    );
+    final days = group.schedules.map((item) => item.weekday).toSet();
+    var discipline = _disciplines
+        .where((item) => item.id == group.disciplineId)
+        .firstOrNull;
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AssistantTheme.surface,
-        title: const Text('Editar turma'),
-        content: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _Field(controller: codeCtrl, label: 'CODIGO'),
-              const SizedBox(height: 8),
-              _Field(controller: nameCtrl, label: 'NOME (EX: PRESENCIAL)'),
-              const SizedBox(height: 8),
-              _Field(controller: subjectCtrl, label: 'DISCIPLINA'),
-              const SizedBox(height: 10),
-              const Text(
-                'Renomear atualiza os alunos vinculados; as aulas ja gravadas '
-                'seguem ligadas a esta turma.',
-                style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: const Text('Editar turma'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: _Field(controller: codeCtrl, label: 'CODIGO'),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: _Field(
+                          controller: nameCtrl,
+                          label: 'NOME (EX: PRESENCIAL)',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _DisciplineDropdown(
+                    disciplines: _disciplines,
+                    value: discipline,
+                    onChanged: (value) =>
+                        setDialogState(() => discipline = value),
+                  ),
+                  const SizedBox(height: 12),
+                  _WeekdayPicker(
+                    days: days,
+                    startCtrl: startCtrl,
+                    endCtrl: endCtrl,
+                    onChanged: () => setDialogState(() {}),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Os dias marcados fazem a turma aparecer como aula de hoje '
+                    'na gravacao. Renomear atualiza os alunos vinculados; as '
+                    'aulas ja gravadas seguem ligadas a esta turma.',
+                    style: TextStyle(
+                        fontSize: 11, color: AssistantTheme.textMuted),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('SALVAR'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('CANCELAR'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('SALVAR'),
-          ),
-        ],
       ),
     );
     if (confirmed == true) {
@@ -1377,7 +1473,15 @@ class _RosterTabState extends State<_RosterTab> {
           group.id,
           code: codeCtrl.text.trim(),
           name: nameCtrl.text.trim(),
-          subject: subjectCtrl.text.trim(),
+          disciplineId: discipline?.id,
+          schedules: [
+            for (final day in days)
+              ClassSchedule(
+                weekday: day,
+                startTime: startCtrl.text.trim(),
+                endTime: endCtrl.text.trim(),
+              ),
+          ],
         );
         _report('Turma atualizada.');
         await _loadClasses(keepId: group.id);
@@ -1387,7 +1491,17 @@ class _RosterTabState extends State<_RosterTab> {
     }
     codeCtrl.dispose();
     nameCtrl.dispose();
-    subjectCtrl.dispose();
+    startCtrl.dispose();
+    endCtrl.dispose();
+  }
+
+  /// Cadastro de disciplina: e ela que agrupa as turmas do mesmo conteudo.
+  Future<void> _manageDisciplines() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _DisciplinesDialog(disciplines: _disciplines),
+    );
+    await _loadClasses();
   }
 
   Future<void> _deleteClass(ClassGroup group) async {
@@ -1672,6 +1786,11 @@ class _RosterTabState extends State<_RosterTab> {
         Expanded(
           child: _Panel(
             title: 'TURMAS',
+            trailing: TextButton.icon(
+              onPressed: _manageDisciplines,
+              icon: const Icon(Icons.menu_book_outlined, size: 14),
+              label: const Text('DISCIPLINAS', style: TextStyle(fontSize: 10)),
+            ),
             child: classes.isEmpty
                 ? const _EmptyState(
                     icon: Icons.school_outlined,
@@ -1718,8 +1837,9 @@ class _RosterTabState extends State<_RosterTab> {
                                       ),
                                     ),
                                     Text(
-                                      '${group.subject.isEmpty ? "sem disciplina" : group.subject}'
-                                      '  -  ${group.studentCount} aluno(s)',
+                                      '${group.discipline.isEmpty ? "sem disciplina" : group.discipline}'
+                                      '  -  ${group.studentCount} aluno(s)'
+                                      '${group.scheduleLabel.isEmpty ? "" : "  -  ${group.scheduleLabel}"}',
                                       style: const TextStyle(
                                           fontSize: 10,
                                           color: AssistantTheme.textMuted),
@@ -1761,10 +1881,10 @@ class _RosterTabState extends State<_RosterTab> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: _Field(
-                controller: _subjectCtrl,
-                label: 'DISCIPLINA',
-                onSubmitted: (_) => _createClass(),
+              child: _DisciplineDropdown(
+                disciplines: _disciplines,
+                value: _newDiscipline,
+                onChanged: (value) => setState(() => _newDiscipline = value),
               ),
             ),
             const SizedBox(width: 8),
@@ -2251,7 +2371,7 @@ class _HistoryTabState extends State<_HistoryTab> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${_when(lesson)}  -  ${lesson.subject}',
+                                '${_when(lesson)}  -  ${lesson.discipline}',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: selected
@@ -2372,6 +2492,336 @@ class _HistoryTabState extends State<_HistoryTab> {
                     ),
                   ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+const _weekdayLabels = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'];
+
+/// Nome do dia a partir do `DateTime.weekday` (segunda = 1).
+String _weekdayName(int dartWeekday) =>
+    _weekdayLabels[(dartWeekday - 1).clamp(0, 6)];
+
+class _DisciplineDropdown extends StatelessWidget {
+  final List<Discipline> disciplines;
+  final Discipline? value;
+  final ValueChanged<Discipline?> onChanged;
+
+  const _DisciplineDropdown({
+    required this.disciplines,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'DISCIPLINA',
+          style: TextStyle(
+            fontSize: 9,
+            letterSpacing: 1.5,
+            color: AssistantTheme.textMuted,
+          ),
+        ),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<Discipline>(
+          initialValue: value,
+          isExpanded: true,
+          hint: const Text(
+            'Cadastre uma disciplina',
+            style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+          ),
+          dropdownColor: AssistantTheme.surface,
+          style: const TextStyle(fontSize: 12, color: AssistantTheme.textPrimary),
+          icon: const Icon(Icons.arrow_drop_down,
+              size: 18, color: AssistantTheme.textMuted),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            filled: true,
+            fillColor: AssistantTheme.bg2,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(3),
+              borderSide: const BorderSide(color: AssistantTheme.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(3),
+              borderSide: const BorderSide(color: AssistantTheme.border),
+            ),
+          ),
+          items: [
+            for (final discipline in disciplines)
+              DropdownMenuItem(
+                value: discipline,
+                child: Text(discipline.label, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+}
+
+/// Dias da semana da turma, com um horario aplicado a todos eles.
+class _WeekdayPicker extends StatelessWidget {
+  final Set<int> days;
+  final TextEditingController startCtrl;
+  final TextEditingController endCtrl;
+  final VoidCallback onChanged;
+
+  const _WeekdayPicker({
+    required this.days,
+    required this.startCtrl,
+    required this.endCtrl,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'DIAS DE AULA',
+          style: TextStyle(
+            fontSize: 9,
+            letterSpacing: 1.5,
+            color: AssistantTheme.textMuted,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          children: [
+            for (var day = 0; day < 7; day++)
+              FilterChip(
+                selected: days.contains(day),
+                onSelected: (on) {
+                  if (on) {
+                    days.add(day);
+                  } else {
+                    days.remove(day);
+                  }
+                  onChanged();
+                },
+                label: Text(
+                  _weekdayLabels[day],
+                  style: const TextStyle(fontSize: 11),
+                ),
+                backgroundColor: AssistantTheme.bg2,
+                selectedColor: AssistantTheme.c3.withValues(alpha: 0.22),
+                checkmarkColor: AssistantTheme.c3,
+                side: const BorderSide(color: AssistantTheme.border),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: _Field(
+                controller: startCtrl,
+                label: 'INICIO',
+                hint: '18:30',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _Field(
+                controller: endCtrl,
+                label: 'FIM',
+                hint: '21:10',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Cadastro de disciplinas, aberto pela aba de turmas.
+class _DisciplinesDialog extends StatefulWidget {
+  final List<Discipline> disciplines;
+
+  const _DisciplinesDialog({required this.disciplines});
+
+  @override
+  State<_DisciplinesDialog> createState() => _DisciplinesDialogState();
+}
+
+class _DisciplinesDialogState extends State<_DisciplinesDialog> {
+  final _codeCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+
+  late List<Discipline> _disciplines = List.of(widget.disciplines);
+  var _status = '';
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _reload() async {
+    try {
+      final disciplines = await education.listDisciplines();
+      if (mounted) setState(() => _disciplines = disciplines);
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao carregar: $e');
+    }
+  }
+
+  Future<void> _create() async {
+    final code = _codeCtrl.text.trim();
+    final name = _nameCtrl.text.trim();
+    if (code.isEmpty && name.isEmpty) {
+      setState(() => _status = 'Informe o codigo ou o nome.');
+      return;
+    }
+    try {
+      await education.createDiscipline(code: code, name: name);
+      _codeCtrl.clear();
+      _nameCtrl.clear();
+      setState(() => _status = '');
+      await _reload();
+    } catch (e) {
+      if (mounted) setState(() => _status = '$e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AssistantTheme.surface,
+      title: const Text('Disciplinas'),
+      content: SizedBox(
+        width: 460,
+        height: 380,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'A disciplina agrupa as turmas do mesmo conteudo. Ex.: ARA0040 '
+              'com as turmas 3001 e 3002.',
+              style:
+                  TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _disciplines.isEmpty
+                  ? const _EmptyState(
+                      icon: Icons.menu_book_outlined,
+                      text: 'Nenhuma disciplina cadastrada.',
+                    )
+                  : ListView.separated(
+                      itemCount: _disciplines.length,
+                      separatorBuilder: (_, __) => const Divider(
+                          height: 10, color: AssistantTheme.border),
+                      itemBuilder: (_, index) {
+                        final discipline = _disciplines[index];
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    discipline.label,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: AssistantTheme.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${discipline.classCount} turma(s)',
+                                    style: const TextStyle(
+                                        fontSize: 10,
+                                        color: AssistantTheme.textMuted),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Remover',
+                              icon: const Icon(Icons.delete_outline, size: 15),
+                              color: AssistantTheme.textMuted,
+                              onPressed: () async {
+                                try {
+                                  await education.deleteDiscipline(discipline.id);
+                                  await _reload();
+                                } catch (e) {
+                                  if (mounted) {
+                                    setState(() => _status = '$e');
+                                  }
+                                }
+                              },
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+            if (_status.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  _status,
+                  style: const TextStyle(
+                      fontSize: 11, color: AssistantTheme.danger),
+                ),
+              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: _Field(
+                    controller: _codeCtrl,
+                    label: 'CODIGO',
+                    hint: 'ARA0040',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: _Field(
+                    controller: _nameCtrl,
+                    label: 'NOME',
+                    hint: 'BANCO DE DADOS',
+                    onSubmitted: (_) => _create(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _create,
+                  icon: const Icon(Icons.add, size: 15),
+                  label: const Text('CRIAR'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AssistantTheme.c3,
+                    foregroundColor: AssistantTheme.bg,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('FECHAR'),
         ),
       ],
     );

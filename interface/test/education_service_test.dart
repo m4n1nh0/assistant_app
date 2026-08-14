@@ -7,7 +7,7 @@ void main() {
     test('reads the payload returned by the backend', () {
       final lesson = Lesson.fromJson({
         'id': 'l1',
-        'subject': 'Matematica',
+        'discipline': 'Matematica',
         'title': 'Funcoes',
         'class_group': '3A',
         'status': 'recording',
@@ -16,7 +16,7 @@ void main() {
         'transcript_chars': 1200,
       });
 
-      expect(lesson.subject, 'Matematica');
+      expect(lesson.discipline, 'Matematica');
       expect(lesson.classGroup, '3A');
       expect(lesson.segmentCount, 4);
       expect(lesson.startedAt?.hour, 13);
@@ -24,7 +24,7 @@ void main() {
     });
 
     test('survives missing optional fields', () {
-      final lesson = Lesson.fromJson({'id': 'l1', 'subject': 'Fisica'});
+      final lesson = Lesson.fromJson({'id': 'l1', 'discipline': 'Fisica'});
 
       expect(lesson.title, '');
       expect(lesson.summary, isNull);
@@ -34,7 +34,7 @@ void main() {
 
     test('closed lesson is flagged', () {
       final lesson = Lesson.fromJson(
-          {'id': 'l1', 'subject': 'Fisica', 'status': 'closed'});
+          {'id': 'l1', 'discipline': 'Fisica', 'status': 'closed'});
 
       expect(lesson.isClosed, isTrue);
     });
@@ -49,7 +49,7 @@ void main() {
         'student_name': 'Thiago Souza',
         'points': 0.5,
         'reason': 'resolveu no quadro',
-        'subject': 'Matematica',
+        'discipline': 'Matematica',
         'lesson_date': '2026-08-04T13:00:00',
         'source': 'extracted',
         'confidence': 0.9,
@@ -67,7 +67,7 @@ void main() {
         'student_id': null,
         'student_name': 'Joao',
         'points': 1,
-        'subject': 'Historia',
+        'discipline': 'Historia',
         'source': 'extracted',
         'confidence': 0.4,
       });
@@ -111,12 +111,12 @@ void main() {
             'student_name': 'Ana Paula Ribeiro',
             'student_id': 's1',
             'points': 1,
-            'subject': 'Matematica',
+            'discipline': 'Matematica',
             'source': 'extracted',
             'confidence': 1.0,
           }
         ],
-        'lesson': {'id': 'l1', 'subject': 'Matematica', 'segment_count': 2},
+        'lesson': {'id': 'l1', 'discipline': 'Matematica', 'segment_count': 2},
       });
 
       expect(result.segment?.sequence, 2);
@@ -131,7 +131,7 @@ void main() {
         'indexed': false,
         'skipped_reason': 'nenhuma fala reconhecida no bloco',
         'points': [],
-        'lesson': {'id': 'l1', 'subject': 'Matematica'},
+        'lesson': {'id': 'l1', 'discipline': 'Matematica'},
       });
 
       expect(result.segment, isNull);
@@ -146,7 +146,7 @@ void main() {
         'id': 'c1',
         'code': '3001',
         'name': 'Presencial',
-        'subject': 'ARA0040',
+        'discipline': 'ARA0040',
         'label': '3001 Presencial',
         'active': true,
         'student_count': 14,
@@ -157,7 +157,7 @@ void main() {
       expect(group.studentCount, 14);
     });
 
-    test('display falls back to the label when there is no subject', () {
+    test('display falls back to the label when there is no discipline', () {
       final group = ClassGroup.fromJson({
         'id': 'c2',
         'code': '3002',
@@ -170,11 +170,71 @@ void main() {
     });
   });
 
+  group('ClassSchedule', () {
+    test('meetsOn maps the dart weekday to the backend weekday', () {
+      final group = ClassGroup.fromJson({
+        'id': 'c1',
+        'code': '3001',
+        'label': '3001',
+        'discipline': 'ARA0040',
+        // 0 = segunda, 3 = quinta no backend.
+        'schedules': [
+          {'weekday': 0, 'start_time': '18:30', 'end_time': '21:10'},
+          {'weekday': 3, 'start_time': '18:30', 'end_time': '21:10'},
+        ],
+        'schedule_label': 'seg 18:30, qui 18:30',
+      });
+
+      expect(group.meetsOn(DateTime.monday), isTrue);
+      expect(group.meetsOn(DateTime.thursday), isTrue);
+      expect(group.meetsOn(DateTime.tuesday), isFalse);
+      expect(group.meetsOn(DateTime.sunday), isFalse);
+      expect(group.scheduleLabel, 'seg 18:30, qui 18:30');
+    });
+
+    test('class without schedule never counts as today', () {
+      final group = ClassGroup.fromJson({
+        'id': 'c2',
+        'code': '3002',
+        'label': '3002',
+      });
+
+      expect(group.schedules, isEmpty);
+      expect(group.meetsOn(DateTime.monday), isFalse);
+    });
+
+    test('schedule survives the round trip to json', () {
+      const schedule =
+          ClassSchedule(weekday: 3, startTime: '18:30', endTime: '21:10');
+
+      expect(schedule.toJson(), {
+        'weekday': 3,
+        'start_time': '18:30',
+        'end_time': '21:10',
+      });
+    });
+  });
+
+  group('Discipline', () {
+    test('parses code, name and how many classes it has', () {
+      final discipline = Discipline.fromJson({
+        'id': 's1',
+        'code': 'ARA0040',
+        'name': 'BANCO DE DADOS',
+        'label': 'ARA0040 - BANCO DE DADOS',
+        'class_count': 2,
+      });
+
+      expect(discipline.label, 'ARA0040 - BANCO DE DADOS');
+      expect(discipline.classCount, 2);
+    });
+  });
+
   group('Lesson classes', () {
     test('a joint lesson carries every linked class', () {
       final lesson = Lesson.fromJson({
         'id': 'l1',
-        'subject': 'ARA0040',
+        'discipline': 'ARA0040',
         'status': 'recording',
         'class_group': '',
         'class_ids': ['c1', 'c2'],
@@ -188,7 +248,7 @@ void main() {
     test('older lesson without links keeps the text field', () {
       final lesson = Lesson.fromJson({
         'id': 'l2',
-        'subject': 'ARA0040',
+        'discipline': 'ARA0040',
         'status': 'closed',
         'class_group': '3001',
       });
@@ -207,14 +267,14 @@ void main() {
             'student_name': 'Ana Paula Ribeiro',
             'student_id': 's1',
             'total_points': 2.5,
-            'subject': 'Matematica',
+            'discipline': 'Matematica',
             'lesson_date': '2026-08-04',
             'entries': [],
           },
           {
             'student_name': 'Thiago Souza',
             'total_points': 1.0,
-            'subject': 'Matematica',
+            'discipline': 'Matematica',
             'lesson_date': '2026-08-04',
             'entries': [],
           },
@@ -234,14 +294,14 @@ void main() {
       expect(report.totalPoints, 0.0);
     });
 
-    test('separates two classes of the same subject on the same day', () {
+    test('separates two classes of the same discipline on the same day', () {
       final report = PointsReport.fromJson({
         'total_points': 2.0,
         'students': [
           {
             'student_name': 'Ana Paula Ribeiro',
             'total_points': 1.0,
-            'subject': 'ARA0040',
+            'discipline': 'ARA0040',
             'class_group': '3001 PRESENCIAL',
             'lesson_date': '2026-08-13',
             'entries': [],
@@ -249,7 +309,7 @@ void main() {
           {
             'student_name': 'Thiago Souza',
             'total_points': 1.0,
-            'subject': 'ARA0040',
+            'discipline': 'ARA0040',
             'class_group': '3002 SEMIPRESENCIAL',
             'lesson_date': '2026-08-13',
             'entries': [],
@@ -270,7 +330,7 @@ void main() {
           {
             'student_name': 'Ana Paula Ribeiro',
             'total_points': 1.0,
-            'subject': 'Matematica',
+            'discipline': 'Matematica',
             'lesson_date': '2026-08-04',
             'entries': [],
           },
@@ -327,7 +387,7 @@ void main() {
         'name': 'Ana Paula Ribeiro',
         'external_id': '2026001',
         'class_group': '3A',
-        'subject': '',
+        'discipline': '',
         'aliases': ['Aninha', 'Ana P'],
       });
 

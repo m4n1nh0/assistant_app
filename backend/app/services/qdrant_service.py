@@ -262,7 +262,7 @@ async def index_lesson_segments(
     *,
     tutor_id: str,
     lesson_id: str,
-    subject: str,
+    discipline: str,
     segments: List[Dict[str, Any]],
 ) -> int:
     """Grava trechos da aula no Qdrant. Retorna quantos foram indexados."""
@@ -283,7 +283,7 @@ async def index_lesson_segments(
                 "id": str(item["id"]),
                 "tutor_id": tutor_id,
                 "lesson_id": lesson_id,
-                "subject": subject,
+                "discipline": discipline,
                 "class_group": item.get("class_group") or "",
                 "lesson_date": item.get("lesson_date") or "",
                 "lesson_ts": int(item.get("lesson_ts") or 0),
@@ -305,7 +305,7 @@ async def index_lesson_segments(
 
 def _lesson_filter(
     tutor_id: str,
-    subject: Optional[str],
+    discipline: Optional[str],
     lesson_id: Optional[str],
     ts_from: Optional[int],
     ts_to: Optional[int],
@@ -313,8 +313,8 @@ def _lesson_filter(
     must: List[Any] = [
         FieldCondition(key="tutor_id", match=MatchValue(value=tutor_id))
     ]
-    if subject:
-        must.append(FieldCondition(key="subject", match=MatchValue(value=subject)))
+    if discipline:
+        must.append(FieldCondition(key="discipline", match=MatchValue(value=discipline)))
     if lesson_id:
         must.append(FieldCondition(key="lesson_id", match=MatchValue(value=lesson_id)))
     if ts_from is not None or ts_to is not None:
@@ -330,7 +330,7 @@ async def search_lesson_transcripts(
     *,
     tutor_id: str,
     query: str,
-    subject: Optional[str] = None,
+    discipline: Optional[str] = None,
     lesson_id: Optional[str] = None,
     ts_from: Optional[int] = None,
     ts_to: Optional[int] = None,
@@ -338,7 +338,7 @@ async def search_lesson_transcripts(
 ) -> List[Dict[str, Any]]:
     await ensure_lesson_collection()
     vector = await embedding_service.embed_text(query)
-    query_filter = _lesson_filter(tutor_id, subject, lesson_id, ts_from, ts_to)
+    query_filter = _lesson_filter(tutor_id, discipline, lesson_id, ts_from, ts_to)
 
     try:
         hits = await asyncio.to_thread(
@@ -361,7 +361,11 @@ async def search_lesson_transcripts(
             "id": str(payload.get("id") or hit.id),
             "score": float(hit.score),
             "lesson_id": str(payload.get("lesson_id") or ""),
-            "subject": str(payload.get("subject") or ""),
+            # `subject` era o nome antigo do campo: os vetores gravados antes
+            # do rename continuam com ele ate serem reindexados.
+            "discipline": str(
+                payload.get("discipline") or payload.get("subject") or ""
+            ),
             "lesson_date": str(payload.get("lesson_date") or ""),
             "sequence": int(payload.get("sequence") or 0),
             "content": str(payload.get("content") or ""),

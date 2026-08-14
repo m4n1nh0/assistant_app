@@ -667,7 +667,7 @@ class StudentCreate(BaseModel):
     name: str
     class_id: Optional[str] = None
     class_group: str = ""
-    subject: str = ""
+    discipline: str = ""
     external_id: Optional[str] = None
     aliases: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
@@ -678,7 +678,7 @@ class StudentUpdate(BaseModel):
     name: Optional[str] = None
     class_id: Optional[str] = None
     class_group: Optional[str] = None
-    subject: Optional[str] = None
+    discipline: Optional[str] = None
     external_id: Optional[str] = None
     aliases: Optional[List[str]] = None
     notes: Optional[str] = None
@@ -691,7 +691,7 @@ class StudentResponse(BaseModel):
     name: str
     class_id: Optional[str] = None
     class_group: str = ""
-    subject: str = ""
+    discipline: str = ""
     external_id: Optional[str] = None
     aliases: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
@@ -707,7 +707,7 @@ class StudentImportItem(BaseModel):
 class StudentImportRequest(BaseModel):
     class_id: Optional[str] = None
     class_group: str = ""
-    subject: str = ""
+    discipline: str = ""
     students: List[StudentImportItem] = Field(min_length=1, max_length=1000)
 
 
@@ -718,7 +718,7 @@ class StudentImportResponse(BaseModel):
 
 
 class LessonCreate(BaseModel):
-    subject: str
+    discipline: str
     title: str = ""
     class_group: str = ""
     # Turmas atendidas. Mais de uma significa aula reunida.
@@ -728,31 +728,66 @@ class LessonCreate(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class DisciplineCreate(BaseModel):
+    code: str = ""
+    name: str = ""
+
+
+class DisciplineUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class DisciplineResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+    label: str
+    active: bool = True
+    class_count: int = 0
+
+
+class ClassScheduleItem(BaseModel):
+    """Dia da semana da turma. 0 = segunda, 6 = domingo."""
+
+    weekday: int = Field(ge=0, le=6)
+    start_time: str = ""
+    end_time: str = ""
+
+
 class ClassGroupCreate(BaseModel):
     code: str = ""
     name: str = ""
-    subject: str = ""
+    discipline_id: Optional[str] = None
+    discipline: str = ""
+    schedules: List[ClassScheduleItem] = Field(default_factory=list)
 
 
 class ClassGroupUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
-    subject: Optional[str] = None
+    discipline_id: Optional[str] = None
+    discipline: Optional[str] = None
     active: Optional[bool] = None
+    schedules: Optional[List[ClassScheduleItem]] = None
 
 
 class ClassGroupResponse(BaseModel):
     id: str
     code: str
     name: str
-    subject: str
+    discipline_id: Optional[str] = None
+    discipline: str
     label: str
     active: bool = True
     student_count: int = 0
+    schedules: List[ClassScheduleItem] = Field(default_factory=list)
+    schedule_label: str = ""
 
 
 class LessonUpdate(BaseModel):
-    subject: Optional[str] = None
+    discipline: Optional[str] = None
     title: Optional[str] = None
     class_group: Optional[str] = None
     class_ids: Optional[List[str]] = None
@@ -778,7 +813,7 @@ class LessonPointResponse(BaseModel):
     student_name: str
     points: float
     reason: Optional[str] = None
-    subject: str
+    discipline: str
     lesson_date: datetime
     source: str
     confidence: float
@@ -796,7 +831,7 @@ class LessonPointCreate(BaseModel):
 class LessonResponse(BaseModel):
     id: str
     tutor_id: str
-    subject: str
+    discipline: str
     title: str = ""
     class_group: str = ""
     class_ids: List[str] = Field(default_factory=list)
@@ -853,7 +888,7 @@ class LessonSearchResult(BaseModel):
     id: str
     score: float
     lesson_id: str
-    subject: str
+    discipline: str
     lesson_date: str
     sequence: int
     content: str
@@ -863,7 +898,7 @@ class PointsReportEntry(BaseModel):
     student_name: str
     student_id: Optional[str] = None
     total_points: float
-    subject: str
+    discipline: str
     class_group: str = ""
     lesson_date: str
     entries: List[LessonPointResponse] = Field(default_factory=list)
@@ -872,7 +907,7 @@ class PointsReportEntry(BaseModel):
 class PointsReportResponse(BaseModel):
     date_from: Optional[str] = None
     date_to: Optional[str] = None
-    subject: Optional[str] = None
+    discipline: Optional[str] = None
     class_group: Optional[str] = None
     total_points: float = 0.0
     students: List[PointsReportEntry] = Field(default_factory=list)

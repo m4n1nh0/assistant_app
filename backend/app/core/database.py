@@ -258,11 +258,24 @@ class ShortcutLaunchLogModel(Base):
     launched_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class DisciplineModel(Base):
+    """Disciplina ministrada: ARA0040 / BANCO DE DADOS."""
+
+    __tablename__ = "disciplines"
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id   = Column(String(64), nullable=False, index=True)
+    code       = Column(String(80), nullable=False, default="")
+    name       = Column(String(180), nullable=False, default="")
+    active     = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class ClassGroupModel(Base):
     """Turma como entidade: o texto solto em students/lessons vira vinculo.
 
     `code` e o numero da turma no sistema da instituicao (3001) e `name` a
-    distincao que o professor usa em sala (Presencial, Semipresencial).
+    distincao que o professor usa em sala (Presencial, Semipresencial). A
+    coluna `discipline` segue como copia do rotulo da disciplina vinculada.
     """
 
     __tablename__ = "class_groups"
@@ -270,9 +283,25 @@ class ClassGroupModel(Base):
     tutor_id   = Column(String(64), nullable=False, index=True)
     code       = Column(String(80), nullable=False, default="")
     name       = Column(String(120), nullable=False, default="")
-    subject    = Column(String(120), nullable=False, default="", index=True)
+    discipline_id = Column(String(64), nullable=True, index=True)
+    discipline    = Column(String(120), nullable=False, default="", index=True)
     active     = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ClassScheduleModel(Base):
+    """Dia da semana em que a turma tem aula, com horario opcional.
+
+    Uma turma pode ter mais de uma linha: a mesma disciplina cai na segunda e
+    na quinta, e cada dia pode ter mais de uma turma.
+    """
+
+    __tablename__ = "class_schedules"
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    class_group_id = Column(String(64), nullable=False, index=True)
+    weekday        = Column(Integer, nullable=False, default=0)  # 0 = segunda
+    start_time     = Column(String(5), nullable=False, default="")
+    end_time       = Column(String(5), nullable=False, default="")
 
 
 class LessonClassGroupModel(Base):
@@ -293,7 +322,7 @@ class StudentModel(Base):
     # partir dela, para o que ja consulta por nome continuar funcionando.
     class_id    = Column(String(64), nullable=True, index=True)
     class_group = Column(String(120), nullable=False, default="", index=True)
-    subject     = Column(String(120), nullable=False, default="", index=True)
+    discipline     = Column(String(120), nullable=False, default="", index=True)
     external_id = Column(String(80), nullable=True)
     aliases     = Column(JSON, default=list)
     notes       = Column(Text, nullable=True)
@@ -305,7 +334,7 @@ class LessonModel(Base):
     __tablename__ = "lessons"
     id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id       = Column(String(64), nullable=False, index=True)
-    subject        = Column(String(120), nullable=False, index=True)
+    discipline        = Column(String(120), nullable=False, index=True)
     title          = Column(String(255), nullable=False, default="")
     class_group    = Column(String(120), nullable=False, default="", index=True)
     teacher        = Column(String(180), nullable=True)
@@ -344,7 +373,7 @@ class LessonPointModel(Base):
     student_name = Column(String(180), nullable=False)
     points       = Column(Float, nullable=False, default=0.0)
     reason       = Column(Text, nullable=True)
-    subject      = Column(String(120), nullable=False, default="", index=True)
+    discipline      = Column(String(120), nullable=False, default="", index=True)
     lesson_date  = Column(DateTime, nullable=False, index=True)
     source       = Column(String(32), nullable=False, default="extracted")
     confidence   = Column(Float, nullable=False, default=0.0)
@@ -354,10 +383,53 @@ class LessonPointModel(Base):
 
 async def init_db():
     async with engine.begin() as conn:
+        # Antes do create_all: senao ele cria as tabelas novas vazias ao lado
+        # das antigas e o rename nao acha mais o que renomear.
+        await conn.run_sync(_rename_subject_to_discipline)
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_compatibility_columns)
     await _backfill_account_ownership()
     await _backfill_class_groups()
+    await _backfill_disciplines()
+
+
+def _rename_subject_to_discipline(sync_conn) -> None:
+    """Renomeia o que ja foi gravado como `subject` para `discipline`.
+
+    O modulo chamava disciplina de subject, palavra que tambem significa
+    assunto e que colidia com o subject do calendario e do email. Roda uma vez
+    por instalacao: se a coluna nova ja existe, nao faz nada.
+    """
+    inspector = inspect(sync_conn)
+    tables = set(inspector.get_table_names())
+
+    if "subjects" in tables and "disciplines" not in tables:
+        sync_conn.execute(text("ALTER TABLE subjects RENAME TO disciplines"))
+        tables.discard("subjects")
+        tables.add("disciplines")
+
+    renames = {
+        "lessons": [("subject", "discipline")],
+        "students": [("subject", "discipline")],
+        "lesson_points": [("subject", "discipline")],
+        "class_groups": [
+            ("subject", "discipline"),
+            ("subject_id", "discipline_id"),
+        ],
+    }
+    for table_name, columns in renames.items():
+        if table_name not in tables:
+            continue
+        existing = {column["name"] for column in inspector.get_columns(table_name)}
+        for old_name, new_name in columns:
+            if old_name in existing and new_name not in existing:
+                sync_conn.execute(
+                    text(
+                        f"ALTER TABLE {table_name} "
+                        f"RENAME COLUMN {old_name} TO {new_name}"
+                    )
+                )
+                logger.info(f"Coluna renomeada: {table_name}.{old_name} -> {new_name}")
 
 
 def _add_compatibility_columns(sync_conn) -> None:
@@ -384,6 +456,9 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "students": {
             "class_id": "VARCHAR(64) NULL",
+        },
+        "class_groups": {
+            "discipline_id": "VARCHAR(64) NULL",
         },
     }
     for table_name, columns in additions.items():
@@ -458,8 +533,8 @@ def derive_class_groups(students, lessons):
     """
     groups: dict[tuple, ClassGroupModel] = {}
 
-    def ensure(tutor_id: str, subject: str, code: str) -> ClassGroupModel:
-        key = (tutor_id, subject, code)
+    def ensure(tutor_id: str, discipline: str, code: str) -> ClassGroupModel:
+        key = (tutor_id, discipline, code)
         group = groups.get(key)
         if group is None:
             groups[key] = group = ClassGroupModel(
@@ -467,25 +542,25 @@ def derive_class_groups(students, lessons):
                 tutor_id=tutor_id,
                 code=code,
                 name="",
-                subject=subject,
+                discipline=discipline,
             )
         return group
 
     for student in students:
         code = (student.class_group or "").strip()
-        subject = (student.subject or "").strip()
-        if not code and not subject:
+        discipline = (student.discipline or "").strip()
+        if not code and not discipline:
             continue
-        student.class_id = ensure(student.tutor_id, subject, code).id
+        student.class_id = ensure(student.tutor_id, discipline, code).id
 
     links = []
     for lesson in lessons:
         code = (lesson.class_group or "").strip()
-        subject = (lesson.subject or "").strip()
-        for (tutor_id, group_subject, group_code), group in groups.items():
+        discipline = (lesson.discipline or "").strip()
+        for (tutor_id, group_discipline, group_code), group in groups.items():
             if tutor_id != lesson.tutor_id:
                 continue
-            if subject and group_subject and group_subject != subject:
+            if discipline and group_discipline and group_discipline != discipline:
                 continue
             if code and group_code != code:
                 continue
@@ -498,6 +573,46 @@ def derive_class_groups(students, lessons):
             )
 
     return list(groups.values()), links
+
+
+def derive_disciplines(groups):
+    """Cria uma disciplina por texto distinto de `class_groups.discipline`.
+
+    Efeito colateral proposital: aponta cada turma para a disciplina dela.
+    """
+    disciplines: dict[tuple, DisciplineModel] = {}
+    for group in groups:
+        code = (group.discipline or "").strip()
+        if not code:
+            continue
+        key = (group.tutor_id, code)
+        discipline = disciplines.get(key)
+        if discipline is None:
+            disciplines[key] = discipline = DisciplineModel(
+                id=str(uuid.uuid4()),
+                tutor_id=group.tutor_id,
+                code=code,
+                name="",
+            )
+        group.discipline_id = discipline.id
+    return list(disciplines.values())
+
+
+async def _backfill_disciplines() -> None:
+    """Transforma o texto de disciplina da turma em cadastro proprio."""
+    async with AsyncSessionLocal() as db:
+        if (await db.execute(select(DisciplineModel.id).limit(1))).first():
+            return
+
+        groups = list((await db.execute(select(ClassGroupModel))).scalars().all())
+        if not groups:
+            return
+
+        disciplines = derive_disciplines(groups)
+        for discipline in disciplines:
+            db.add(discipline)
+        await db.commit()
+        logger.info(f"Disciplinas derivadas das turmas: {len(disciplines)}.")
 
 
 async def _backfill_class_groups() -> None:

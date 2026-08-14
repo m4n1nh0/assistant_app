@@ -317,16 +317,29 @@ trecho seguinte traz o registro. O `4. HISTORICO` lista as aulas do periodo,
 mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema e
 turmas depois — inclusive de aula ja encerrada.
 
-#### Turma como entidade
+#### Disciplina, turma e horario
 
-Turma nao e mais texto repetido no aluno e na aula: e a tabela `class_groups`
-(`code` 3001, `name` Presencial, `subject` ARA0040). O aluno aponta para ela por
-`students.class_id` e a aula por `lesson_class_groups`, um vinculo N:N — e assim
-que uma aula reunida atende duas turmas ao mesmo tempo e que duas turmas da
-mesma disciplina no mesmo dia continuam distintas.
+Disciplina e turma nao sao mais texto repetido no aluno e na aula. `disciplines` e
+a disciplina ministrada (`code` ARA0040, `name` BANCO DE DADOS). O modulo
+chamava isso de `subject`, palavra que tambem significa assunto e que ja era
+usada para o titulo do evento de calendario e para o assunto do email; o termo
+foi renomeado em toda a educacao, com migracao automatica na subida.
+`class_groups` e a turma (`code` 3001, `name` Presencial), pendurada na
+disciplina por `discipline_id`. O aluno aponta para a turma por `students.class_id`
+e a aula por `lesson_class_groups`, um vinculo N:N — e assim que uma aula
+reunida atende duas turmas ao mesmo tempo e que duas turmas da mesma disciplina
+no mesmo dia continuam distintas.
+
+`class_schedules` guarda os dias da turma (`weekday` 0 = segunda, com horario
+opcional). Uma disciplina que cai na segunda e na quinta tem uma linha por dia,
+e cada dia pode ter mais de uma turma. Na aba de gravacao, as turmas que tem
+aula hoje aparecem primeiro, sob o titulo do dia, e ja vem marcadas — e dai que
+sai a aula reunida sem ninguem precisar lembrar quais turmas sao.
 
 ```mermaid
 erDiagram
+    disciplines ||--o{ class_groups : "discipline_id"
+    class_groups ||--o{ class_schedules : "dias da semana"
     class_groups ||--o{ students : "class_id"
     class_groups ||--o{ lesson_class_groups : ""
     lessons ||--o{ lesson_class_groups : "aula reunida tem varias"
@@ -410,8 +423,10 @@ Endpoints principais:
 | `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda |
 | `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
-| `GET /education/classes` | Turmas, com quantos alunos cada uma tem |
-| `POST /education/classes` | Cria a turma (codigo, nome, disciplina) |
+| `GET /education/disciplines` | Disciplinas cadastradas, com quantas turmas cada uma |
+| `POST /education/disciplines` | Cria a disciplina (codigo e nome) |
+| `GET /education/classes` | Turmas, com alunos e dias de aula |
+| `POST /education/classes` | Cria a turma (codigo, nome, disciplina, dias) |
 | `PATCH /education/classes/{id}` | Renomeia e desce o rotulo para os alunos |
 | `PATCH /education/lessons/{id}` | Corrige tema e turmas de uma aula gravada |
 | `GET /education/students` | Alunos, filtraveis por `class_id` |

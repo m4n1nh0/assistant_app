@@ -366,13 +366,13 @@ _SUMMARY_SYSTEM_PROMPT = (
 
 def _summary_prompt(
     *,
-    subject: str,
+    discipline: str,
     title: str,
     transcript: str,
     focus: str,
     partial: bool = False,
 ) -> str:
-    header = f"Disciplina: {subject}"
+    header = f"Disciplina: {discipline}"
     if title:
         header += f"\nAula: {title}"
     extra = f"\nDe atencao especial a: {focus}" if focus.strip() else ""
@@ -453,7 +453,7 @@ async def build_study_context(
 
     lines = []
     for hit in relevant:
-        header = hit.get("subject") or "aula"
+        header = hit.get("discipline") or "aula"
         date = hit.get("lesson_date") or ""
         if date:
             header = f"{header}, {date}"
@@ -470,7 +470,7 @@ async def build_study_context(
 
 async def generate_summary(
     *,
-    subject: str,
+    discipline: str,
     title: str,
     segments: Sequence[str],
     llm: Optional[str] = None,
@@ -493,7 +493,7 @@ async def generate_summary(
             response = await dispatch_single(
                 provider,
                 _summary_prompt(
-                    subject=subject,
+                    discipline=discipline,
                     title=title,
                     transcript=chunk,
                     focus=focus,
@@ -518,7 +518,7 @@ async def generate_summary(
     response = await dispatch_single(
         provider,
         _summary_prompt(
-            subject=subject,
+            discipline=discipline,
             title=title,
             transcript=transcript,
             focus=focus,

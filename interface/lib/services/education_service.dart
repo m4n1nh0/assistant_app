@@ -38,12 +38,60 @@ class EducationService {
     return jsonDecode(response.body);
   }
 
+  // --- Disciplinas ---------------------------------------------------------
+
+  Future<List<Discipline>> listDisciplines() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/disciplines'),
+      headers: _headers,
+    );
+    return (_decode(response) as List<dynamic>)
+        .map((item) => Discipline.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Discipline> createDiscipline({
+    required String code,
+    String name = '',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/disciplines'),
+      headers: _headers,
+      body: jsonEncode({'code': code, 'name': name}),
+    );
+    return Discipline.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<Discipline> updateDiscipline(
+    String disciplineId, {
+    String? code,
+    String? name,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/disciplines/$disciplineId'),
+      headers: _headers,
+      body: jsonEncode({
+        if (code != null) 'code': code,
+        if (name != null) 'name': name,
+      }),
+    );
+    return Discipline.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteDiscipline(String disciplineId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/disciplines/$disciplineId'),
+      headers: _headers,
+    );
+    _decode(response);
+  }
+
   // --- Turmas --------------------------------------------------------------
 
-  Future<List<ClassGroup>> listClasses({String? subject}) async {
+  Future<List<ClassGroup>> listClasses({String? discipline}) async {
     final uri = Uri.parse('$_baseUrl/education/classes').replace(
       queryParameters: {
-        if (subject != null && subject.isNotEmpty) 'subject': subject,
+        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
       },
     );
     final response = await http.get(uri, headers: _headers);
@@ -55,12 +103,18 @@ class EducationService {
   Future<ClassGroup> createClass({
     required String code,
     String name = '',
-    String subject = '',
+    String? disciplineId,
+    List<ClassSchedule> schedules = const [],
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/classes'),
       headers: _headers,
-      body: jsonEncode({'code': code, 'name': name, 'subject': subject}),
+      body: jsonEncode({
+        'code': code,
+        'name': name,
+        if (disciplineId != null) 'discipline_id': disciplineId,
+        'schedules': schedules.map((item) => item.toJson()).toList(),
+      }),
     );
     return ClassGroup.fromJson(_decode(response) as Map<String, dynamic>);
   }
@@ -69,7 +123,8 @@ class EducationService {
     String classId, {
     String? code,
     String? name,
-    String? subject,
+    String? disciplineId,
+    List<ClassSchedule>? schedules,
     bool? active,
   }) async {
     final response = await http.patch(
@@ -78,7 +133,9 @@ class EducationService {
       body: jsonEncode({
         if (code != null) 'code': code,
         if (name != null) 'name': name,
-        if (subject != null) 'subject': subject,
+        if (disciplineId != null) 'discipline_id': disciplineId,
+        if (schedules != null)
+          'schedules': schedules.map((item) => item.toJson()).toList(),
         if (active != null) 'active': active,
       }),
     );
@@ -96,7 +153,7 @@ class EducationService {
   // --- Aulas ---------------------------------------------------------------
 
   Future<Lesson> createLesson({
-    required String subject,
+    required String discipline,
     String title = '',
     String classGroup = '',
     List<String> classIds = const [],
@@ -106,7 +163,7 @@ class EducationService {
       Uri.parse('$_baseUrl/education/lessons'),
       headers: _headers,
       body: jsonEncode({
-        'subject': subject,
+        'discipline': discipline,
         'title': title,
         'class_group': classGroup,
         'class_ids': classIds,
@@ -118,7 +175,7 @@ class EducationService {
 
   Future<Lesson> updateLesson(
     String lessonId, {
-    String? subject,
+    String? discipline,
     String? title,
     List<String>? classIds,
   }) async {
@@ -126,7 +183,7 @@ class EducationService {
       Uri.parse('$_baseUrl/education/lessons/$lessonId'),
       headers: _headers,
       body: jsonEncode({
-        if (subject != null) 'subject': subject,
+        if (discipline != null) 'discipline': discipline,
         if (title != null) 'title': title,
         if (classIds != null) 'class_ids': classIds,
       }),
@@ -135,14 +192,14 @@ class EducationService {
   }
 
   Future<List<Lesson>> listLessons({
-    String? subject,
+    String? discipline,
     String? dateFrom,
     String? dateTo,
     int limit = 50,
   }) async {
     final uri = Uri.parse('$_baseUrl/education/lessons').replace(
       queryParameters: {
-        if (subject != null && subject.isNotEmpty) 'subject': subject,
+        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
         'limit': '$limit',
@@ -262,7 +319,7 @@ class EducationService {
   Future<PointsReport> pointsReport({
     String? dateFrom,
     String? dateTo,
-    String? subject,
+    String? discipline,
     String? classGroup,
     String? studentName,
   }) async {
@@ -270,7 +327,7 @@ class EducationService {
       queryParameters: {
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
-        if (subject != null && subject.isNotEmpty) 'subject': subject,
+        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
         if (classGroup != null && classGroup.isNotEmpty)
           'class_group': classGroup,
         if (studentName != null && studentName.isNotEmpty)
@@ -286,14 +343,14 @@ class EducationService {
   Future<List<Student>> listStudents({
     String? classId,
     String? classGroup,
-    String? subject,
+    String? discipline,
   }) async {
     final uri = Uri.parse('$_baseUrl/education/students').replace(
       queryParameters: {
         if (classId != null && classId.isNotEmpty) 'class_id': classId,
         if (classGroup != null && classGroup.isNotEmpty)
           'class_group': classGroup,
-        if (subject != null && subject.isNotEmpty) 'subject': subject,
+        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
       },
     );
     final response = await http.get(uri, headers: _headers);
@@ -308,7 +365,7 @@ class EducationService {
     String? externalId,
     String? classId,
     String classGroup = '',
-    String subject = '',
+    String discipline = '',
     List<String> aliases = const [],
   }) async {
     final response = await http.post(
@@ -319,7 +376,7 @@ class EducationService {
         'external_id': externalId,
         if (classId != null) 'class_id': classId,
         'class_group': classGroup,
-        'subject': subject,
+        'discipline': discipline,
         'aliases': aliases,
       }),
     );
@@ -378,7 +435,7 @@ class EducationService {
 
   Future<List<TranscriptHit>> search(
     String query, {
-    String? subject,
+    String? discipline,
     String? lessonId,
     String? dateFrom,
     String? dateTo,
@@ -387,7 +444,7 @@ class EducationService {
     final uri = Uri.parse('$_baseUrl/education/search').replace(
       queryParameters: {
         'q': query,
-        if (subject != null && subject.isNotEmpty) 'subject': subject,
+        if (discipline != null && discipline.isNotEmpty) 'discipline': discipline,
         if (lessonId != null && lessonId.isNotEmpty) 'lesson_id': lessonId,
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
@@ -401,15 +458,6 @@ class EducationService {
         .toList();
   }
 
-  Future<List<String>> listSubjects() async {
-    final response = await http.get(
-      Uri.parse('$_baseUrl/education/subjects'),
-      headers: _headers,
-    );
-    return (_decode(response) as List<dynamic>)
-        .map((item) => item.toString())
-        .toList();
-  }
 
   Future<EmbeddingStatus> embeddingStatus() async {
     final response = await http.get(
@@ -440,44 +488,110 @@ int _toInt(dynamic value) =>
 DateTime? _toDate(dynamic value) =>
     value == null ? null : DateTime.tryParse(value.toString());
 
+/// Disciplina ministrada: ARA0040 - BANCO DE DADOS.
+class Discipline {
+  final String id;
+  final String code;
+  final String name;
+  final String label;
+  final int classCount;
+
+  const Discipline({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.label,
+    this.classCount = 0,
+  });
+
+  factory Discipline.fromJson(Map<String, dynamic> json) => Discipline(
+        id: json['id'].toString(),
+        code: json['code']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        label: json['label']?.toString() ?? '',
+        classCount: _toInt(json['class_count']),
+      );
+}
+
+/// Dia da semana em que a turma tem aula. 0 = segunda, como no backend.
+class ClassSchedule {
+  final int weekday;
+  final String startTime;
+  final String endTime;
+
+  const ClassSchedule({
+    required this.weekday,
+    this.startTime = '',
+    this.endTime = '',
+  });
+
+  factory ClassSchedule.fromJson(Map<String, dynamic> json) => ClassSchedule(
+        weekday: _toInt(json['weekday']),
+        startTime: json['start_time']?.toString() ?? '',
+        endTime: json['end_time']?.toString() ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'weekday': weekday,
+        'start_time': startTime,
+        'end_time': endTime,
+      };
+}
+
 /// Turma como entidade do backend. `label` e o texto que aparece no aluno e
 /// na aula, montado a partir do codigo e do nome.
 class ClassGroup {
   final String id;
   final String code;
   final String name;
-  final String subject;
+  final String? disciplineId;
+  final String discipline;
   final String label;
   final bool active;
   final int studentCount;
+  final List<ClassSchedule> schedules;
+  final String scheduleLabel;
 
   const ClassGroup({
     required this.id,
     required this.code,
     required this.name,
-    required this.subject,
+    required this.discipline,
     required this.label,
+    this.disciplineId,
     this.active = true,
     this.studentCount = 0,
+    this.schedules = const [],
+    this.scheduleLabel = '',
   });
 
   factory ClassGroup.fromJson(Map<String, dynamic> json) => ClassGroup(
         id: json['id'].toString(),
         code: json['code']?.toString() ?? '',
         name: json['name']?.toString() ?? '',
-        subject: json['subject']?.toString() ?? '',
+        disciplineId: json['discipline_id']?.toString(),
+        discipline: json['discipline']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
         active: json['active'] != false,
         studentCount: _toInt(json['student_count']),
+        schedules: ((json['schedules'] as List<dynamic>?) ?? [])
+            .map((item) => ClassSchedule.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        scheduleLabel: json['schedule_label']?.toString() ?? '',
       );
 
+  /// A turma tem aula neste dia? Recebe o `DateTime.weekday` do Dart, em que
+  /// segunda e 1, e compara com o backend, em que segunda e 0.
+  bool meetsOn(int dartWeekday) =>
+      schedules.any((item) => item.weekday == dartWeekday - 1);
+
   /// Como a turma aparece nas listas: "3001 Presencial - ARA0040".
-  String get display => subject.isEmpty ? label : '$label - $subject';
+  String get display => discipline.isEmpty ? label : '$label - $discipline';
 }
 
 class Lesson {
   final String id;
-  final String subject;
+  final String discipline;
   final String title;
   final String classGroup;
   final List<String> classIds;
@@ -493,7 +607,7 @@ class Lesson {
 
   Lesson({
     required this.id,
-    required this.subject,
+    required this.discipline,
     required this.title,
     required this.classGroup,
     required this.status,
@@ -512,7 +626,7 @@ class Lesson {
 
   factory Lesson.fromJson(Map<String, dynamic> json) => Lesson(
         id: json['id'].toString(),
-        subject: json['subject']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
         title: json['title']?.toString() ?? '',
         classGroup: json['class_group']?.toString() ?? '',
         classIds: ((json['class_ids'] as List<dynamic>?) ?? [])
@@ -538,7 +652,7 @@ class LessonDetail extends Lesson {
 
   LessonDetail({
     required super.id,
-    required super.subject,
+    required super.discipline,
     required super.title,
     required super.classGroup,
     required super.status,
@@ -559,7 +673,7 @@ class LessonDetail extends Lesson {
     final lesson = Lesson.fromJson(json);
     return LessonDetail(
       id: lesson.id,
-      subject: lesson.subject,
+      discipline: lesson.discipline,
       title: lesson.title,
       classGroup: lesson.classGroup,
       classIds: lesson.classIds,
@@ -616,7 +730,7 @@ class LessonPoint {
   final String studentName;
   final double points;
   final String? reason;
-  final String subject;
+  final String discipline;
   final DateTime? lessonDate;
   final String source;
   final double confidence;
@@ -627,7 +741,7 @@ class LessonPoint {
     required this.lessonId,
     required this.studentName,
     required this.points,
-    required this.subject,
+    required this.discipline,
     required this.source,
     required this.confidence,
     this.studentId,
@@ -646,7 +760,7 @@ class LessonPoint {
         studentName: json['student_name']?.toString() ?? '',
         points: _toDouble(json['points']),
         reason: json['reason']?.toString(),
-        subject: json['subject']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
         lessonDate: _toDate(json['lesson_date']),
         source: json['source']?.toString() ?? 'extracted',
         confidence: _toDouble(json['confidence']),
@@ -718,7 +832,7 @@ class Student {
   final String? classId;
   final String? externalId;
   final String classGroup;
-  final String subject;
+  final String discipline;
   final List<String> aliases;
   final bool active;
 
@@ -728,7 +842,7 @@ class Student {
     this.classId,
     this.externalId,
     required this.classGroup,
-    required this.subject,
+    required this.discipline,
     this.aliases = const [],
     this.active = true,
   });
@@ -739,7 +853,7 @@ class Student {
         classId: json['class_id']?.toString(),
         externalId: json['external_id']?.toString(),
         classGroup: json['class_group']?.toString() ?? '',
-        subject: json['subject']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
         aliases: ((json['aliases'] as List<dynamic>?) ?? [])
             .map((item) => item.toString())
             .toList(),
@@ -770,7 +884,7 @@ class PointsReportEntry {
   final String studentName;
   final String? studentId;
   final double totalPoints;
-  final String subject;
+  final String discipline;
 
   /// Turma da aula que gerou os pontos: separa duas turmas da mesma
   /// disciplina no mesmo dia.
@@ -781,7 +895,7 @@ class PointsReportEntry {
   PointsReportEntry({
     required this.studentName,
     required this.totalPoints,
-    required this.subject,
+    required this.discipline,
     required this.lessonDate,
     this.classGroup = '',
     this.studentId,
@@ -793,7 +907,7 @@ class PointsReportEntry {
         studentName: json['student_name']?.toString() ?? '',
         studentId: json['student_id']?.toString(),
         totalPoints: _toDouble(json['total_points']),
-        subject: json['subject']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
         classGroup: json['class_group']?.toString() ?? '',
         lessonDate: json['lesson_date']?.toString() ?? '',
         entries: ((json['entries'] as List<dynamic>?) ?? [])
@@ -821,7 +935,7 @@ class TranscriptHit {
   final String id;
   final double score;
   final String lessonId;
-  final String subject;
+  final String discipline;
   final String lessonDate;
   final int sequence;
   final String content;
@@ -830,7 +944,7 @@ class TranscriptHit {
     required this.id,
     required this.score,
     required this.lessonId,
-    required this.subject,
+    required this.discipline,
     required this.lessonDate,
     required this.sequence,
     required this.content,
@@ -840,7 +954,7 @@ class TranscriptHit {
         id: json['id'].toString(),
         score: _toDouble(json['score']),
         lessonId: json['lesson_id']?.toString() ?? '',
-        subject: json['subject']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
         lessonDate: json['lesson_date']?.toString() ?? '',
         sequence: _toInt(json['sequence']),
         content: json['content']?.toString() ?? '',
