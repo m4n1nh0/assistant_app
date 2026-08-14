@@ -267,6 +267,7 @@ class DisciplineModel(Base):
     tutor_id   = Column(String(64), nullable=False, index=True)
     code       = Column(String(80), nullable=False, default="")
     name       = Column(String(180), nullable=False, default="")
+    semester   = Column(String(16), nullable=False, default="")
     active     = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -286,6 +287,7 @@ class ClassGroupModel(Base):
     name       = Column(String(120), nullable=False, default="")
     discipline_id = Column(String(64), nullable=True, index=True)
     discipline    = Column(String(120), nullable=False, default="", index=True)
+    semester      = Column(String(16), nullable=False, default="", index=True)
     active     = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -336,6 +338,7 @@ class LessonModel(Base):
     id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id       = Column(String(64), nullable=False, index=True)
     discipline        = Column(String(120), nullable=False, index=True)
+    semester       = Column(String(16), nullable=False, default="", index=True)
     title          = Column(String(255), nullable=False, default="")
     class_group    = Column(String(120), nullable=False, default="", index=True)
     teacher        = Column(String(180), nullable=True)
@@ -395,6 +398,7 @@ async def init_db():
     await _backfill_account_ownership()
     await _backfill_class_groups()
     await _backfill_disciplines()
+    await _backfill_semesters()
 
 
 def _rename_subject_to_discipline(sync_conn) -> None:
@@ -463,6 +467,13 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "class_groups": {
             "discipline_id": "VARCHAR(64) NULL",
+            "semester": "VARCHAR(16) NOT NULL DEFAULT ''",
+        },
+        "disciplines": {
+            "semester": "VARCHAR(16) NOT NULL DEFAULT ''",
+        },
+        "lessons": {
+            "semester": "VARCHAR(16) NOT NULL DEFAULT ''",
         },
         "lesson_segments": {
             "embedding_model": "VARCHAR(120) NULL",
@@ -620,6 +631,62 @@ def derive_disciplines(groups):
             )
         group.discipline_id = discipline.id
     return list(disciplines.values())
+
+
+def current_semester_code(at: datetime | None = None) -> str:
+    """Codigo academico convencional: primeiro ou segundo semestre do ano."""
+    moment = at or datetime.now(timezone.utc)
+    half = 1 if moment.month <= 6 else 2
+    return f"{moment.year}.{half}"
+
+
+async def _backfill_semesters() -> None:
+    """Associa o cadastro anterior ao semestre vigente no primeiro upgrade.
+
+    Turmas herdam a disciplina vinculada e aulas mantem uma copia, como ja
+    acontece com o nome da disciplina. Depois de preenchido, o periodo nunca
+    muda automaticamente na virada do calendario.
+    """
+    async with AsyncSessionLocal() as db:
+        current = current_semester_code()
+        disciplines = list(
+            (await db.execute(select(DisciplineModel))).scalars().all()
+        )
+        by_id = {item.id: item for item in disciplines}
+        by_label = {
+            (item.tutor_id, " - ".join(
+                part for part in ((item.code or "").strip(), (item.name or "").strip())
+                if part
+            )): item
+            for item in disciplines
+        }
+        changed = 0
+        for discipline in disciplines:
+            if not (discipline.semester or "").strip():
+                discipline.semester = current
+                changed += 1
+
+        groups = list((await db.execute(select(ClassGroupModel))).scalars().all())
+        for group in groups:
+            if (group.semester or "").strip():
+                continue
+            linked = by_id.get(group.discipline_id)
+            group.semester = linked.semester if linked else current
+            changed += 1
+
+        lessons = list((await db.execute(select(LessonModel))).scalars().all())
+        for lesson in lessons:
+            if (lesson.semester or "").strip():
+                continue
+            linked = by_label.get((lesson.tutor_id, (lesson.discipline or "").strip()))
+            lesson.semester = linked.semester if linked else current
+            changed += 1
+
+        if changed:
+            await db.commit()
+            logger.info(
+                f"Semestre {current} associado a {changed} registro(s) legado(s)."
+            )
 
 
 async def _backfill_disciplines() -> None:

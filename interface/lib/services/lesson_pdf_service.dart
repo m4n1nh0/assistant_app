@@ -101,7 +101,8 @@ Future<pw.ThemeData> _pdfTheme() async {
   if (_theme != null) return _theme!;
   try {
     final theme = pw.ThemeData.withFont(
-      base: pw.Font.ttf(await rootBundle.load('assets/fonts/roboto-regular.ttf')),
+      base:
+          pw.Font.ttf(await rootBundle.load('assets/fonts/roboto-regular.ttf')),
       bold: pw.Font.ttf(await rootBundle.load('assets/fonts/roboto-bold.ttf')),
     );
     // So guarda o que deu certo: um fallback em cache deixaria o documento
@@ -134,6 +135,7 @@ String _formatPoints(double value) {
 /// Nome sugerido no dialogo de salvar: disciplina, turma e data.
 String lessonPdfFilename(Lesson lesson) {
   final parts = [
+    lesson.semester,
     lesson.discipline,
     lesson.classLabels.isEmpty
         ? lesson.classGroup
@@ -223,6 +225,7 @@ pw.Widget _buildBanner(Lesson lesson, String turmas) {
         pw.SizedBox(height: 10),
         pw.Text(
           [
+            if (lesson.semester.isNotEmpty) 'Semestre: ${lesson.semester}',
             if (turmas.isNotEmpty) 'Turma: $turmas',
             if (lesson.startedAt != null) _formatDate(lesson.startedAt),
             '${lesson.segmentCount} trechos gravados',
@@ -245,6 +248,7 @@ pw.Widget _buildRunningHeader(Lesson lesson) {
       border: pw.Border(bottom: pw.BorderSide(color: _rule)),
     ),
     child: pw.Text(
+      '${lesson.semester.isEmpty ? "" : "${lesson.semester}   |   "}'
       '${lesson.discipline}   |   ${_formatDate(lesson.startedAt)}',
       style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
     ),

@@ -290,6 +290,11 @@ class _LessonTabState extends State<_LessonTab> {
       _setStatus('As turmas escolhidas sao de disciplinas diferentes.');
       return;
     }
+    final semesters = chosen.map((item) => item.semester).toSet();
+    if (semesters.length > 1) {
+      _setStatus('As turmas escolhidas sao de semestres diferentes.');
+      return;
+    }
     if (!await _recorder.hasPermission()) {
       _setStatus('Microfone nao autorizado pelo sistema.');
       return;
@@ -301,6 +306,8 @@ class _LessonTabState extends State<_LessonTab> {
       await api.refreshSession();
       final lesson = await education.createLesson(
         discipline: discipline,
+        semester:
+            semesters.length == 1 ? semesters.first : _currentSemesterCode(),
         title: _titleCtrl.text.trim(),
         classIds: chosen.map((item) => item.id).toList(),
       );
@@ -2540,7 +2547,8 @@ class _HistoryTabState extends State<_HistoryTab> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${_when(lesson)}  -  ${lesson.discipline}',
+                                '${_when(lesson)}  -  ${lesson.discipline}'
+                                '${lesson.semester.isEmpty ? "" : "  [${lesson.semester}]"}',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: selected
@@ -2867,6 +2875,7 @@ class _DisciplinesDialog extends StatefulWidget {
 class _DisciplinesDialogState extends State<_DisciplinesDialog> {
   final _codeCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
+  final _semesterCtrl = TextEditingController(text: _currentSemesterCode());
 
   late List<Discipline> _disciplines = List.of(widget.disciplines);
   var _status = '';
@@ -2881,6 +2890,7 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
   void dispose() {
     _codeCtrl.dispose();
     _nameCtrl.dispose();
+    _semesterCtrl.dispose();
     super.dispose();
   }
 
@@ -2901,7 +2911,11 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
       return;
     }
     try {
-      await education.createDiscipline(code: code, name: name);
+      await education.createDiscipline(
+        code: code,
+        name: name,
+        semester: _semesterCtrl.text.trim(),
+      );
       _codeCtrl.clear();
       _nameCtrl.clear();
       setState(() => _status = '');
@@ -2951,14 +2965,68 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
     }
   }
 
+  Future<void> _setSemesterActive(String semester, bool active) async {
+    if (!active) {
+      final affected = _disciplines
+          .where((item) => item.semester == semester && item.active)
+          .length;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: Text('Encerrar semestre $semester'),
+          content: Text(
+            'As $affected disciplina(s) ativas e suas turmas deixam de '
+            'aparecer em novas aulas. Historico, alunos, transcricoes e '
+            'pontuacoes permanecem guardados.',
+            style: const TextStyle(color: AssistantTheme.textPrimary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('ENCERRAR SEMESTRE'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    try {
+      final result = await education.updateSemester(
+        semester,
+        active: active,
+      );
+      if (mounted) {
+        setState(() => _status = active
+            ? 'Semestre $semester reaberto.'
+            : 'Semestre $semester encerrado: '
+                '${result.disciplineCount} disciplina(s), '
+                '${result.classCount} turma(s).');
+      }
+      await _reload();
+    } catch (e) {
+      if (mounted) setState(() => _status = '$e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final semesters = _disciplines
+        .map((item) => item.semester)
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
     return AlertDialog(
       backgroundColor: AssistantTheme.surface,
       title: const Text('Disciplinas'),
       content: SizedBox(
-        width: 460,
-        height: 380,
+        width: 540,
+        height: 460,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2969,6 +3037,33 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                   TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
             ),
             const SizedBox(height: 10),
+            if (semesters.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final semester in semesters)
+                    Builder(builder: (context) {
+                      final active = _disciplines.any(
+                        (item) => item.semester == semester && item.active,
+                      );
+                      return OutlinedButton.icon(
+                        onPressed: () => _setSemesterActive(semester, !active),
+                        icon: Icon(
+                          active
+                              ? Icons.archive_outlined
+                              : Icons.unarchive_outlined,
+                          size: 14,
+                        ),
+                        label: Text(
+                          '${active ? "ENCERRAR" : "REABRIR"} $semester',
+                          style: const TextStyle(fontSize: 10),
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            if (semesters.isNotEmpty) const SizedBox(height: 10),
             Expanded(
               child: _disciplines.isEmpty
                   ? const _EmptyState(
@@ -2997,6 +3092,7 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                                     ),
                                   ),
                                   Text(
+                                    '${discipline.semester}  -  '
                                     '${discipline.classCount} turma(s)'
                                     '${discipline.active ? "" : "  -  ENCERRADA"}',
                                     style: const TextStyle(
@@ -3073,6 +3169,15 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                SizedBox(
+                  width: 82,
+                  child: _Field(
+                    controller: _semesterCtrl,
+                    label: 'SEMESTRE',
+                    hint: '2026.2',
+                  ),
+                ),
+                const SizedBox(width: 8),
                 FilledButton.icon(
                   onPressed: _create,
                   icon: const Icon(Icons.add, size: 15),
@@ -3098,6 +3203,11 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
 }
 
 // --- Componentes compartilhados --------------------------------------------
+
+String _currentSemesterCode() {
+  final now = DateTime.now();
+  return '${now.year}.${now.month <= 6 ? 1 : 2}';
+}
 
 Future<String?> _askSegmentCorrection(
   BuildContext context,

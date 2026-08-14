@@ -719,6 +719,7 @@ class StudentImportResponse(BaseModel):
 
 class LessonCreate(BaseModel):
     discipline: str
+    semester: str = ""
     title: str = ""
     class_group: str = ""
     # Turmas atendidas. Mais de uma significa aula reunida.
@@ -731,11 +732,13 @@ class LessonCreate(BaseModel):
 class DisciplineCreate(BaseModel):
     code: str = ""
     name: str = ""
+    semester: str = ""
 
 
 class DisciplineUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
+    semester: Optional[str] = None
     active: Optional[bool] = None
 
 
@@ -744,6 +747,7 @@ class DisciplineResponse(BaseModel):
     code: str
     name: str
     label: str
+    semester: str
     active: bool = True
     class_count: int = 0
 
@@ -779,6 +783,7 @@ class ClassGroupResponse(BaseModel):
     name: str
     discipline_id: Optional[str] = None
     discipline: str
+    semester: str = ""
     label: str
     active: bool = True
     student_count: int = 0
@@ -810,6 +815,17 @@ class LessonSegmentUpdate(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
 
 
+class SemesterUpdate(BaseModel):
+    active: bool
+
+
+class SemesterResponse(BaseModel):
+    code: str
+    active: bool
+    discipline_count: int = 0
+    class_count: int = 0
+
+
 class LessonPointResponse(BaseModel):
     id: str
     lesson_id: str
@@ -836,6 +852,7 @@ class LessonResponse(BaseModel):
     id: str
     tutor_id: str
     discipline: str
+    semester: str = ""
     title: str = ""
     class_group: str = ""
     class_ids: List[str] = Field(default_factory=list)

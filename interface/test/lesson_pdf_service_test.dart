@@ -7,6 +7,7 @@ import 'package:assistant_app/services/lesson_pdf_service.dart';
 Lesson _lesson() => Lesson(
       id: 'l1',
       discipline: 'ARA0040 - BANCO DE DADOS',
+      semester: '2026.2',
       title: 'Normalizacao',
       classGroup: '',
       classLabels: const ['3001 Presencial', '3002 Semipresencial'],
@@ -85,7 +86,7 @@ void main() {
     test('builds a slug from discipline, classes and date', () {
       expect(
         lessonPdfFilename(_lesson()),
-        'ara0040-banco-de-dados-3001-presencial-3002-semipresencial-13-08-2026.pdf',
+        '2026-2-ara0040-banco-de-dados-3001-presencial-3002-semipresencial-13-08-2026.pdf',
       );
     });
 

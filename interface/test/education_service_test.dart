@@ -8,6 +8,7 @@ void main() {
       final lesson = Lesson.fromJson({
         'id': 'l1',
         'discipline': 'Matematica',
+        'semester': '2026.2',
         'title': 'Funcoes',
         'class_group': '3A',
         'status': 'recording',
@@ -17,6 +18,7 @@ void main() {
       });
 
       expect(lesson.discipline, 'Matematica');
+      expect(lesson.semester, '2026.2');
       expect(lesson.classGroup, '3A');
       expect(lesson.segmentCount, 4);
       expect(lesson.startedAt?.hour, 13);
@@ -147,13 +149,14 @@ void main() {
         'code': '3001',
         'name': 'Presencial',
         'discipline': 'ARA0040',
+        'semester': '2026.2',
         'label': '3001 Presencial',
         'active': true,
         'student_count': 14,
       });
 
       expect(group.label, '3001 Presencial');
-      expect(group.display, '3001 Presencial - ARA0040');
+      expect(group.display, '3001 Presencial - ARA0040 (2026.2)');
       expect(group.studentCount, 14);
     });
 
@@ -222,10 +225,12 @@ void main() {
         'code': 'ARA0040',
         'name': 'BANCO DE DADOS',
         'label': 'ARA0040 - BANCO DE DADOS',
+        'semester': '2026.2',
         'class_count': 2,
       });
 
       expect(discipline.label, 'ARA0040 - BANCO DE DADOS');
+      expect(discipline.semester, '2026.2');
       expect(discipline.classCount, 2);
       expect(discipline.active, isTrue);
     });
@@ -239,6 +244,22 @@ void main() {
       });
 
       expect(discipline.active, isFalse);
+    });
+  });
+
+  group('Semester', () {
+    test('parses lifecycle totals', () {
+      final semester = Semester.fromJson({
+        'code': '2026.2',
+        'active': false,
+        'discipline_count': 3,
+        'class_count': 6,
+      });
+
+      expect(semester.code, '2026.2');
+      expect(semester.active, isFalse);
+      expect(semester.disciplineCount, 3);
+      expect(semester.classCount, 6);
     });
   });
 

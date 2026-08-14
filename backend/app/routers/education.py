@@ -19,6 +19,7 @@ from ..core.database import (
     LessonSegmentModel,
     StudentModel,
     DisciplineModel,
+    current_semester_code,
     get_db,
 )
 from ..core.security import get_current_user
@@ -41,6 +42,8 @@ from ..models.schemas import (
     LessonSegmentIngestResponse,
     LessonSegmentResponse,
     LessonSegmentUpdate,
+    SemesterResponse,
+    SemesterUpdate,
     LessonSummaryRequest,
     LessonSummaryResponse,
     LessonUpdate,
@@ -93,6 +96,7 @@ def _discipline_response(
         code=item.code or "",
         name=item.name or "",
         label=_discipline_label(item),
+        semester=getattr(item, "semester", "") or current_semester_code(),
         active=bool(item.active),
         class_count=class_count,
     )
@@ -124,6 +128,7 @@ def _class_response(
         name=item.name or "",
         discipline_id=item.discipline_id,
         discipline=item.discipline or "",
+        semester=getattr(item, "semester", "") or "",
         label=_class_label(item),
         active=bool(item.active),
         student_count=student_count,
@@ -163,6 +168,7 @@ def _lesson_response(
         id=item.id,
         tutor_id=item.tutor_id,
         discipline=item.discipline,
+        semester=getattr(item, "semester", "") or "",
         title=item.title or "",
         class_group=item.class_group or "",
         class_ids=[group.id for group in classes],
@@ -211,6 +217,18 @@ def _point_response(item: LessonPointModel) -> LessonPointResponse:
 
 
 # --- Helpers ---------------------------------------------------------------
+
+
+def _semester_code(value: str, *, default_current: bool = True) -> str:
+    code = (value or "").strip()
+    if not code and default_current:
+        return current_semester_code()
+    parts = code.split(".")
+    if len(parts) != 2 or not parts[0].isdigit() or parts[1] not in {"1", "2"}:
+        raise HTTPException(422, "Semestre invalido. Use o formato 2026.1 ou 2026.2")
+    if len(parts[0]) != 4:
+        raise HTTPException(422, "Semestre invalido. Use o formato 2026.1 ou 2026.2")
+    return code
 
 
 async def _get_lesson(lesson_id: str, tutor_id: str, db: AsyncSession) -> LessonModel:
@@ -295,6 +313,8 @@ async def _resolve_discipline(
     discipline = await db.get(DisciplineModel, discipline_id)
     if discipline is None or discipline.tutor_id != tutor_id:
         raise HTTPException(404, "Disciplina nao encontrada")
+    if not getattr(discipline, "active", True):
+        raise HTTPException(409, "A disciplina pertence a um semestre encerrado")
     return discipline
 
 
@@ -341,6 +361,7 @@ async def _link_classes(
         )
     if len(classes) == 1:
         lesson.class_group = _class_label(classes[0])
+        lesson.semester = classes[0].semester or lesson.semester
         if classes[0].discipline:
             lesson.discipline = classes[0].discipline
     elif classes:
@@ -348,6 +369,9 @@ async def _link_classes(
         disciplines = {group.discipline for group in classes if group.discipline}
         if len(disciplines) == 1:
             lesson.discipline = disciplines.pop()
+        semesters = {group.semester for group in classes if group.semester}
+        if len(semesters) == 1:
+            lesson.semester = semesters.pop()
 
 
 async def _roster(lesson: LessonModel, db: AsyncSession) -> List[Dict[str, Any]]:
@@ -531,13 +555,22 @@ async def _ingest_segment(
 @router.get("/disciplines", response_model=List[DisciplineResponse])
 async def list_disciplines(
     active_only: bool = True,
+    semester: Optional[str] = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(DisciplineModel).where(DisciplineModel.tutor_id == user["tutor_id"])
     if active_only:
         query = query.where(DisciplineModel.active.is_(True))
-    result = await db.execute(query.order_by(DisciplineModel.code, DisciplineModel.name))
+    if semester:
+        query = query.where(DisciplineModel.semester == _semester_code(semester))
+    result = await db.execute(
+        query.order_by(
+            DisciplineModel.semester.desc(),
+            DisciplineModel.code,
+            DisciplineModel.name,
+        )
+    )
     disciplines = list(result.scalars().all())
 
     counts = dict(
@@ -560,6 +593,7 @@ async def create_discipline(
 ):
     code = body.code.strip()
     name = body.name.strip()
+    semester = _semester_code(body.semester)
     if not code and not name:
         raise HTTPException(422, "Informe o codigo ou o nome da disciplina")
 
@@ -569,13 +603,19 @@ async def create_discipline(
                 DisciplineModel.tutor_id == user["tutor_id"],
                 DisciplineModel.code == code,
                 DisciplineModel.name == name,
+                DisciplineModel.semester == semester,
             )
         )
     ).scalars().first()
     if duplicate is not None:
         raise HTTPException(409, "Disciplina ja cadastrada")
 
-    discipline = DisciplineModel(tutor_id=user["tutor_id"], code=code, name=name)
+    discipline = DisciplineModel(
+        tutor_id=user["tutor_id"],
+        code=code,
+        name=name,
+        semester=semester,
+    )
     db.add(discipline)
     await db.commit()
     await db.refresh(discipline)
@@ -597,6 +637,8 @@ async def update_discipline(
         discipline.code = body.code.strip()
     if body.name is not None:
         discipline.name = body.name.strip()
+    if body.semester is not None:
+        discipline.semester = _semester_code(body.semester)
     if body.active is not None:
         discipline.active = body.active
 
@@ -609,6 +651,7 @@ async def update_discipline(
     label = _discipline_label(discipline)
     for group in groups:
         group.discipline = label
+        group.semester = discipline.semester
         students = (
             await db.execute(
                 select(StudentModel).where(StudentModel.class_id == group.id)
@@ -620,6 +663,85 @@ async def update_discipline(
     await db.commit()
     await db.refresh(discipline)
     return _discipline_response(discipline, len(groups))
+
+
+@router.get("/semesters", response_model=List[SemesterResponse])
+async def list_semesters(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    disciplines = list(
+        (
+            await db.execute(
+                select(DisciplineModel).where(
+                    DisciplineModel.tutor_id == user["tutor_id"]
+                )
+            )
+        ).scalars().all()
+    )
+    groups = list(
+        (
+            await db.execute(
+                select(ClassGroupModel).where(
+                    ClassGroupModel.tutor_id == user["tutor_id"]
+                )
+            )
+        ).scalars().all()
+    )
+    codes = sorted(
+        {item.semester for item in disciplines if item.semester},
+        reverse=True,
+    )
+    return [
+        SemesterResponse(
+            code=code,
+            active=any(
+                item.active for item in disciplines if item.semester == code
+            ),
+            discipline_count=sum(item.semester == code for item in disciplines),
+            class_count=sum(item.semester == code for item in groups),
+        )
+        for code in codes
+    ]
+
+
+@router.patch("/semesters/{semester}", response_model=SemesterResponse)
+async def update_semester(
+    semester: str,
+    body: SemesterUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    code = _semester_code(semester)
+    disciplines = list(
+        (
+            await db.execute(
+                select(DisciplineModel).where(
+                    DisciplineModel.tutor_id == user["tutor_id"],
+                    DisciplineModel.semester == code,
+                )
+            )
+        ).scalars().all()
+    )
+    if not disciplines:
+        raise HTTPException(404, "Semestre nao encontrado")
+    for discipline in disciplines:
+        discipline.active = body.active
+    class_count = (
+        await db.execute(
+            select(func.count(ClassGroupModel.id)).where(
+                ClassGroupModel.tutor_id == user["tutor_id"],
+                ClassGroupModel.semester == code,
+            )
+        )
+    ).scalar_one()
+    await db.commit()
+    return SemesterResponse(
+        code=code,
+        active=body.active,
+        discipline_count=len(disciplines),
+        class_count=class_count,
+    )
 
 
 @router.delete("/disciplines/{discipline_id}")
@@ -716,6 +838,9 @@ async def create_class(
     discipline_row = await _resolve_discipline(body.discipline_id, user["tutor_id"], db)
     code = body.code.strip()
     discipline = _discipline_label(discipline_row) if discipline_row else body.discipline.strip()
+    semester = (
+        discipline_row.semester if discipline_row else current_semester_code()
+    )
     if not code and not discipline:
         raise HTTPException(422, "Informe ao menos o codigo da turma")
 
@@ -724,6 +849,7 @@ async def create_class(
             ClassGroupModel.tutor_id == user["tutor_id"],
             ClassGroupModel.code == code,
             ClassGroupModel.discipline == discipline,
+            ClassGroupModel.semester == semester,
         )
     )
     existing = duplicate.scalars().first()
@@ -736,6 +862,7 @@ async def create_class(
         name=body.name.strip(),
         discipline_id=discipline_row.id if discipline_row else None,
         discipline=discipline,
+        semester=semester,
     )
     db.add(group)
     await db.flush()
@@ -764,6 +891,9 @@ async def update_class(
         discipline_row = await _resolve_discipline(body.discipline_id, user["tutor_id"], db)
         group.discipline_id = discipline_row.id if discipline_row else None
         group.discipline = _discipline_label(discipline_row) if discipline_row else ""
+        group.semester = (
+            discipline_row.semester if discipline_row else current_semester_code()
+        )
     elif body.discipline is not None:
         group.discipline = body.discipline.strip()
     if body.active is not None:
@@ -1023,6 +1153,9 @@ async def create_lesson(
     db: AsyncSession = Depends(get_db),
 ):
     classes = await _resolve_classes(body.class_ids, user["tutor_id"], db)
+    semesters = {group.semester for group in classes if group.semester}
+    if len(semesters) > 1:
+        raise HTTPException(422, "As turmas pertencem a semestres diferentes")
     discipline = body.discipline.strip()
     if not discipline and classes:
         disciplines = {group.discipline for group in classes if group.discipline}
@@ -1033,6 +1166,7 @@ async def create_lesson(
     lesson = LessonModel(
         tutor_id=user["tutor_id"],
         discipline=discipline,
+        semester=_semester_code(body.semester),
         title=body.title.strip(),
         class_group=body.class_group.strip(),
         teacher=body.teacher,
@@ -1050,6 +1184,7 @@ async def create_lesson(
 @router.get("/lessons", response_model=List[LessonResponse])
 async def list_lessons(
     discipline: Optional[str] = None,
+    semester: Optional[str] = None,
     class_group: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -1060,6 +1195,8 @@ async def list_lessons(
     query = select(LessonModel).where(LessonModel.tutor_id == user["tutor_id"])
     if discipline:
         query = query.where(LessonModel.discipline == discipline)
+    if semester:
+        query = query.where(LessonModel.semester == _semester_code(semester))
     if class_group:
         query = query.where(LessonModel.class_group == class_group)
     start = _parse_date(date_from)
@@ -1175,7 +1312,7 @@ async def ingest_lesson_audio(
         raise HTTPException(409, "Aula ja encerrada")
 
     audio_bytes = await file.read()
-    context_parts = [lesson.discipline, lesson.title or ""]
+    context_parts = [lesson.semester or "", lesson.discipline, lesson.title or ""]
     stt = await transcribe_audio(
         audio_bytes,
         language,

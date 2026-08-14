@@ -40,9 +40,15 @@ class EducationService {
 
   // --- Disciplinas ---------------------------------------------------------
 
-  Future<List<Discipline>> listDisciplines({bool activeOnly = true}) async {
+  Future<List<Discipline>> listDisciplines({
+    bool activeOnly = true,
+    String? semester,
+  }) async {
     final uri = Uri.parse('$_baseUrl/education/disciplines').replace(
-      queryParameters: {'active_only': '$activeOnly'},
+      queryParameters: {
+        'active_only': '$activeOnly',
+        if (semester != null && semester.isNotEmpty) 'semester': semester,
+      },
     );
     final response = await http.get(uri, headers: _headers);
     return (_decode(response) as List<dynamic>)
@@ -53,11 +59,16 @@ class EducationService {
   Future<Discipline> createDiscipline({
     required String code,
     String name = '',
+    String semester = '',
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/disciplines'),
       headers: _headers,
-      body: jsonEncode({'code': code, 'name': name}),
+      body: jsonEncode({
+        'code': code,
+        'name': name,
+        'semester': semester,
+      }),
     );
     return Discipline.fromJson(_decode(response) as Map<String, dynamic>);
   }
@@ -66,6 +77,7 @@ class EducationService {
     String disciplineId, {
     String? code,
     String? name,
+    String? semester,
     bool? active,
   }) async {
     final response = await http.patch(
@@ -74,6 +86,7 @@ class EducationService {
       body: jsonEncode({
         if (code != null) 'code': code,
         if (name != null) 'name': name,
+        if (semester != null) 'semester': semester,
         if (active != null) 'active': active,
       }),
     );
@@ -86,6 +99,15 @@ class EducationService {
       headers: _headers,
     );
     _decode(response);
+  }
+
+  Future<Semester> updateSemester(String code, {required bool active}) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/semesters/$code'),
+      headers: _headers,
+      body: jsonEncode({'active': active}),
+    );
+    return Semester.fromJson(_decode(response) as Map<String, dynamic>);
   }
 
   // --- Turmas --------------------------------------------------------------
@@ -157,6 +179,7 @@ class EducationService {
 
   Future<Lesson> createLesson({
     required String discipline,
+    String semester = '',
     String title = '',
     String classGroup = '',
     List<String> classIds = const [],
@@ -167,6 +190,7 @@ class EducationService {
       headers: _headers,
       body: jsonEncode({
         'discipline': discipline,
+        'semester': semester,
         'title': title,
         'class_group': classGroup,
         'class_ids': classIds,
@@ -196,6 +220,7 @@ class EducationService {
 
   Future<List<Lesson>> listLessons({
     String? discipline,
+    String? semester,
     String? dateFrom,
     String? dateTo,
     int limit = 50,
@@ -204,6 +229,7 @@ class EducationService {
       queryParameters: {
         if (discipline != null && discipline.isNotEmpty)
           'discipline': discipline,
+        if (semester != null && semester.isNotEmpty) 'semester': semester,
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
         'limit': '$limit',
@@ -517,6 +543,7 @@ class Discipline {
   final String code;
   final String name;
   final String label;
+  final String semester;
   final int classCount;
   final bool active;
 
@@ -525,6 +552,7 @@ class Discipline {
     required this.code,
     required this.name,
     required this.label,
+    this.semester = '',
     this.classCount = 0,
     this.active = true,
   });
@@ -534,8 +562,30 @@ class Discipline {
         code: json['code']?.toString() ?? '',
         name: json['name']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
+        semester: json['semester']?.toString() ?? '',
         classCount: _toInt(json['class_count']),
         active: json['active'] != false,
+      );
+}
+
+class Semester {
+  final String code;
+  final bool active;
+  final int disciplineCount;
+  final int classCount;
+
+  const Semester({
+    required this.code,
+    required this.active,
+    this.disciplineCount = 0,
+    this.classCount = 0,
+  });
+
+  factory Semester.fromJson(Map<String, dynamic> json) => Semester(
+        code: json['code']?.toString() ?? '',
+        active: json['active'] != false,
+        disciplineCount: _toInt(json['discipline_count']),
+        classCount: _toInt(json['class_count']),
       );
 }
 
@@ -572,6 +622,7 @@ class ClassGroup {
   final String name;
   final String? disciplineId;
   final String discipline;
+  final String semester;
   final String label;
   final bool active;
   final int studentCount;
@@ -583,6 +634,7 @@ class ClassGroup {
     required this.code,
     required this.name,
     required this.discipline,
+    this.semester = '',
     required this.label,
     this.disciplineId,
     this.active = true,
@@ -597,6 +649,7 @@ class ClassGroup {
         name: json['name']?.toString() ?? '',
         disciplineId: json['discipline_id']?.toString(),
         discipline: json['discipline']?.toString() ?? '',
+        semester: json['semester']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
         active: json['active'] != false,
         studentCount: _toInt(json['student_count']),
@@ -612,12 +665,16 @@ class ClassGroup {
       schedules.any((item) => item.weekday == dartWeekday - 1);
 
   /// Como a turma aparece nas listas: "3001 Presencial - ARA0040".
-  String get display => discipline.isEmpty ? label : '$label - $discipline';
+  String get display {
+    final base = discipline.isEmpty ? label : '$label - $discipline';
+    return semester.isEmpty ? base : '$base ($semester)';
+  }
 }
 
 class Lesson {
   final String id;
   final String discipline;
+  final String semester;
   final String title;
   final String classGroup;
   final List<String> classIds;
@@ -634,6 +691,7 @@ class Lesson {
   Lesson({
     required this.id,
     required this.discipline,
+    this.semester = '',
     required this.title,
     required this.classGroup,
     required this.status,
@@ -653,6 +711,7 @@ class Lesson {
   factory Lesson.fromJson(Map<String, dynamic> json) => Lesson(
         id: json['id'].toString(),
         discipline: json['discipline']?.toString() ?? '',
+        semester: json['semester']?.toString() ?? '',
         title: json['title']?.toString() ?? '',
         classGroup: json['class_group']?.toString() ?? '',
         classIds: ((json['class_ids'] as List<dynamic>?) ?? [])
@@ -679,6 +738,7 @@ class LessonDetail extends Lesson {
   LessonDetail({
     required super.id,
     required super.discipline,
+    super.semester,
     required super.title,
     required super.classGroup,
     required super.status,
@@ -700,6 +760,7 @@ class LessonDetail extends Lesson {
     return LessonDetail(
       id: lesson.id,
       discipline: lesson.discipline,
+      semester: lesson.semester,
       title: lesson.title,
       classGroup: lesson.classGroup,
       classIds: lesson.classIds,
