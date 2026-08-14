@@ -29,6 +29,8 @@ _resolved_provider: Optional[str] = None
 _resolved_dimensions: Optional[int] = None
 _failed_providers: Dict[str, float] = {}
 _lock = asyncio.Lock()
+_local_model = None
+_local_lock = asyncio.Lock()
 
 DEFAULT_MODELS = {
     "ollama": "nomic-embed-text",
@@ -43,6 +45,12 @@ class EmbeddingError(Exception):
 
 
 def _model_for(provider: str) -> str:
+    if provider == "local":
+        # EMBEDDING_MODEL nomeia modelo de API e nao serve aqui: o provedor
+        # local tem catalogo proprio, entao ele tem a sua propria variavel.
+        return settings.embedding_local_model.strip()
+    if provider == "hash":
+        return "hash"
     configured = settings.embedding_model.strip()
     return configured or DEFAULT_MODELS.get(provider, "")
 
@@ -67,6 +75,8 @@ def _candidate_providers() -> List[str]:
         candidates.append("localai")
     if settings.ollama_base_url:
         candidates.append("ollama")
+    # Antes da nuvem: indexar aula nao pode parar porque uma chave paga venceu.
+    candidates.append("local")
     if settings.openai_api_key:
         candidates.append("openai")
     candidates.append("hash")
@@ -165,7 +175,49 @@ async def _embed_ollama(texts: Sequence[str]) -> List[List[float]]:
     return [[float(value) for value in vector] for vector in vectors]
 
 
+def _load_local_model(name: str):
+    """Carrega o modelo ONNX. Bloqueia: sempre chamado em thread separada."""
+    from fastembed import TextEmbedding
+
+    cache_dir = settings.embedding_cache_dir.strip()
+    return TextEmbedding(
+        model_name=name,
+        **({"cache_dir": cache_dir} if cache_dir else {}),
+    )
+
+
+async def _embed_local(texts: Sequence[str]) -> List[List[float]]:
+    """Embedding dentro do proprio backend, sem API e sem chave.
+
+    O modelo e baixado uma vez (~220 MB) e fica em memoria. A primeira chamada
+    depois de subir o processo paga o download; as seguintes levam milissegundos.
+    """
+    global _local_model
+
+    async with _local_lock:
+        if _local_model is None:
+            name = _model_for("local")
+            if not name:
+                raise EmbeddingError("EMBEDDING_LOCAL_MODEL vazio")
+            try:
+                _local_model = await asyncio.to_thread(_load_local_model, name)
+            except Exception as exc:
+                raise EmbeddingError(f"modelo local indisponivel: {exc}") from exc
+            logger.info(f"Modelo de embedding local carregado: {name}")
+
+    model = _local_model
+    try:
+        vectors = await asyncio.to_thread(
+            lambda: [list(vector) for vector in model.embed(list(texts))]
+        )
+    except Exception as exc:
+        raise EmbeddingError(f"falha no modelo local: {exc}") from exc
+    return [[float(value) for value in vector] for vector in vectors]
+
+
 async def _embed_with(provider: str, texts: Sequence[str]) -> List[List[float]]:
+    if provider == "local":
+        return await _embed_local(texts)
     if provider == "ollama":
         return await _embed_ollama(texts)
     if provider == "localai":
@@ -254,6 +306,25 @@ async def embed_text(text: str) -> List[float]:
     return vectors[0]
 
 
+def active_signature() -> str:
+    """Quem gerou os vetores agora, no formato `provedor:modelo`.
+
+    Fica gravado junto de cada trecho indexado: e o que permite descobrir,
+    depois, que um vetor foi feito por outro modelo e precisa ser refeito.
+    """
+    provider = _resolved_provider
+    if not provider:
+        return ""
+    # Cortado no tamanho da coluna que a guarda em `lesson_segments`.
+    return f"{provider}:{_model_for(provider) or 'hash'}"[:120]
+
+
+def is_semantic(signature: str = "") -> bool:
+    """Diz se a assinatura veio de um modelo de verdade, e nao do hash."""
+    value = signature or active_signature()
+    return bool(value) and not value.startswith("hash:")
+
+
 async def resolve_dimensions() -> int:
     """Descobre o tamanho do vetor do provedor ativo, com cache por processo.
 
@@ -294,7 +365,8 @@ async def describe() -> Dict[str, object]:
 
 def reset_cache() -> None:
     """Usado pelos testes e por mudancas de configuracao em runtime."""
-    global _resolved_provider, _resolved_dimensions
+    global _resolved_provider, _resolved_dimensions, _local_model
     _resolved_provider = None
     _resolved_dimensions = None
+    _local_model = None
     _failed_providers.clear()

@@ -505,19 +505,32 @@ async def build_study_context(
     pagar uma busca vetorial em toda conversa. O corte por score evita colar
     trecho aleatorio quando a aula nao fala do assunto perguntado.
     """
-    from . import qdrant_service
+    from . import lesson_index_service, qdrant_service
 
-    try:
-        hits = await qdrant_service.search_lesson_transcripts(
-            tutor_id=tutor_id,
-            query=message,
-            limit=limit,
+    async def _search() -> List[Dict[str, Any]]:
+        try:
+            hits = await qdrant_service.search_lesson_transcripts(
+                tutor_id=tutor_id,
+                query=message,
+                limit=limit,
+            )
+        except Exception as e:
+            logger.warning(f"Busca de contexto de aula falhou: {e}")
+            return []
+        return [hit for hit in hits if hit.get("score", 0.0) >= min_score]
+
+    relevant = await _search()
+    if not relevant:
+        # A aula pode existir no MySQL e faltar no indice: o Qdrant estava fora
+        # do ar na gravacao, ou o modelo de embedding mudou. Reconstroi o que
+        # falta e pergunta de novo - uma vez, com intervalo minimo entre
+        # tentativas, para pergunta sem resposta nao virar reindexacao em loop.
+        outcome = await lesson_index_service.catch_up(
+            tutor_id=tutor_id, reason="busca de aula sem resultado"
         )
-    except Exception as e:
-        logger.warning(f"Busca de contexto de aula falhou: {e}")
-        return ""
+        if outcome.get("indexed"):
+            relevant = await _search()
 
-    relevant = [hit for hit in hits if hit.get("score", 0.0) >= min_score]
     if not relevant:
         return ""
 

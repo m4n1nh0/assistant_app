@@ -39,6 +39,10 @@ sqlalchemy==2.0.49
 aiomysql==0.3.2
 alembic==1.18.4
 qdrant-client==1.18.0
+# Embedding local, em processo, para indexar aula sem depender de API paga.
+# Roda sobre o onnxruntime que o faster-whisper ja instala, entao o custo real
+# e o modelo baixado no primeiro uso (~220 MB).
+fastembed==0.8.0
 
 faster-whisper==1.2.1
 # Necessarias so quando WHISPER_DEVICE=cuda. O CTranslate2 procura essas DLLs

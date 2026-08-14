@@ -30,8 +30,11 @@ from ..models.schemas import (
     EmbeddingStatusResponse,
     LessonCreate,
     LessonDetailResponse,
+    LessonIndexStatusResponse,
     LessonPointCreate,
     LessonPointResponse,
+    LessonReindexRequest,
+    LessonReindexResponse,
     LessonResponse,
     LessonSearchResult,
     LessonSegmentIngestRequest,
@@ -51,7 +54,12 @@ from ..models.schemas import (
     DisciplineResponse,
     DisciplineUpdate,
 )
-from ..services import education_service, embedding_service, qdrant_service
+from ..services import (
+    education_service,
+    embedding_service,
+    lesson_index_service,
+    qdrant_service,
+)
 from ..services.voice_service import transcribe_audio
 
 settings = get_settings()
@@ -471,6 +479,7 @@ async def _ingest_segment(
     if indexed:
         segment.indexed = True
         segment.qdrant_point_id = segment.id
+        segment.embedding_model = embedding_service.active_signature()
         await db.commit()
         await db.refresh(segment)
 
@@ -1444,3 +1453,35 @@ async def search_transcripts(
 @router.get("/embedding-status", response_model=EmbeddingStatusResponse)
 async def embedding_status():
     return EmbeddingStatusResponse(**await embedding_service.describe())
+
+
+@router.get("/index-status", response_model=LessonIndexStatusResponse)
+async def index_status(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Quantos trechos gravados ainda nao estao no indice de busca."""
+    return LessonIndexStatusResponse(
+        **await lesson_index_service.status(db, tutor_id=user["tutor_id"])
+    )
+
+
+@router.post("/reindex", response_model=LessonReindexResponse)
+async def reindex_lessons(
+    body: LessonReindexRequest = LessonReindexRequest(),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Regrava no Qdrant os trechos lidos do MySQL.
+
+    Pedido explicito nao espera o intervalo minimo da reindexacao automatica.
+    """
+    lesson_index_service.reset_cooldown()
+    outcome = await lesson_index_service.reindex(
+        db,
+        tutor_id=user["tutor_id"],
+        lesson_id=body.lesson_id,
+        force=body.force,
+        limit=body.limit,
+    )
+    return LessonReindexResponse(**outcome)

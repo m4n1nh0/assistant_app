@@ -375,7 +375,10 @@ Pontos de atencao do fluxo:
 
 - **Transcricao e indexacao sao independentes.** Se o Qdrant estiver fora, o
   trecho continua gravado no MySQL e a aula nao para; so a busca semantica
-  daquele trecho fica pendente.
+  daquele trecho fica pendente. O MySQL e a fonte da verdade e o Qdrant um
+  indice derivado dele, entao trecho sem vetor nunca e trecho perdido: cada
+  segmento guarda o modelo que gerou o seu vetor e a reindexacao refaz o que
+  faltar a partir do banco.
 - **O cadastro da turma ancora os nomes.** O transcritor erra nomes proprios com
   frequencia, entao o LLM recebe a lista de alunos e o backend ainda faz
   casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
@@ -445,15 +448,23 @@ Endpoints principais:
 | `GET /education/students` | Alunos, filtraveis por `class_id` |
 | `POST /education/students/import` | Importacao de alunos por matricula e nome |
 | `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
+| `GET /education/index-status` | Quantos trechos ainda faltam no indice |
+| `POST /education/reindex` | Regrava no Qdrant os trechos lidos do MySQL |
 
 #### Embeddings
 
 O modo educacao usa embeddings semanticos de verdade, com provedor plugavel
 definido em `EMBEDDING_PROVIDER`. Em `auto` a ordem e: `EMBEDDING_BASE_URL`
-(endpoint proprio compativel com a API da OpenAI), LocalAI, Ollama, OpenAI e,
-por ultimo, um hash offline. A dimensao do vetor e detectada na primeira chamada,
-entao trocar de modelo nao exige ajustar configuracao — mas invalida os vetores
-ja gravados, e o backend recusa a colecao antiga em vez de apagar as aulas.
+(endpoint proprio compativel com a API da OpenAI), LocalAI, Ollama, o **modelo
+local em processo**, OpenAI e, por ultimo, um hash offline.
+
+O provedor `local` roda dentro do backend com ONNX (`fastembed`), sem chave e
+sem servidor externo — indexar aula nao pode parar porque uma API paga venceu
+ou porque o servidor de modelos caiu. O padrao e o
+`paraphrase-multilingual-MiniLM-L12-v2`: 384 dimensoes, entende portugues e
+custa ~220 MB baixados no primeiro uso, guardados em `EMBEDDING_CACHE_DIR`. Ele
+vem depois do LocalAI e do Ollama de proposito: se voce ja mantem um deles de pe,
+ele responde mais rapido e sem ocupar memoria do backend.
 
 Para rodar so com infra propria via Ollama:
 
@@ -463,6 +474,34 @@ ollama pull nomic-embed-text
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=nomic-embed-text
 ```
+
+#### Reindexacao
+
+A dimensao do vetor e detectada na primeira chamada, entao trocar de modelo nao
+exige ajustar configuracao — mas invalida os vetores ja gravados, e o backend
+recusa a colecao antiga em vez de apagar as aulas por conta propria.
+
+Cada trecho carrega, no MySQL e no payload do ponto, a assinatura
+`provedor:modelo` que gerou o seu vetor. E dela que sai a fila de reindexacao:
+entra o que nunca foi indexado (Qdrant fora do ar na hora da gravacao) e o que
+foi indexado por outro modelo. Estando no hash, nada com vetor semantico e
+refeito: reescrever um vetor bom com hash pioraria a busca.
+
+Quando uma pergunta de estudo nao acha nada no Qdrant, o backend reconstroi o
+que falta a partir do MySQL e refaz a busca uma unica vez, com intervalo minimo
+de cinco minutos entre tentativas — pergunta sem resposta e comum e nao pode
+virar reindexacao a cada mensagem. **O MySQL nao entra na resposta do chat**,
+so na reconstrucao do indice: a resposta continua saindo do que o Qdrant achar.
+
+Para forcar na mao:
+
+```bash
+curl -X POST .../education/reindex -d '{"lesson_id": "..."}'   # so o que falta
+curl -X POST .../education/reindex -d '{"force": true}'        # troca de modelo
+```
+
+`force` recria a colecao na dimensao nova e recoloca todos os trechos na fila,
+inclusive os de outros professores da instalacao, porque a colecao e uma so.
 
 As colecoes de memoria (`tutor_preferences`, `behavior_guidelines`,
 `approved_instructions`, `automation_knowledge`) continuam no hash legado de 384

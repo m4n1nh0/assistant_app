@@ -920,3 +920,26 @@ class EmbeddingStatusResponse(BaseModel):
     dimensions: Optional[int] = None
     semantic: bool = False
     error: Optional[str] = None
+
+
+class LessonIndexStatusResponse(BaseModel):
+    """Distancia entre a transcricao guardada no MySQL e o indice do Qdrant."""
+    segments: int = 0
+    pending: int = 0
+    embedding: str = ""
+    semantic: bool = False
+
+
+class LessonReindexRequest(BaseModel):
+    lesson_id: Optional[str] = None
+    # Regrava tambem o que ja tem vetor - usado ao trocar de modelo.
+    force: bool = False
+    limit: int = Field(default=600, ge=1, le=5000)
+
+
+class LessonReindexResponse(BaseModel):
+    indexed: int = 0
+    failed: int = 0
+    pending: int = 0
+    embedding: str = ""
+    error: Optional[str] = None

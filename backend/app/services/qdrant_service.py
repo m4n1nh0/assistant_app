@@ -258,6 +258,35 @@ async def ensure_lesson_collection() -> int:
     return dimensions
 
 
+def _sync_rebuild_lesson_collection(dimensions: int) -> None:
+    client = _client()
+    name = lesson_collection_name()
+    try:
+        if client.collection_exists(name):
+            client.delete_collection(name)
+    except Exception as e:
+        logger.warning(f"Falha ao remover a colecao {name}: {e}")
+    client.create_collection(
+        collection_name=name,
+        vectors_config=VectorParams(size=dimensions, distance=Distance.COSINE),
+    )
+    logger.warning(
+        f"Colecao {name} recriada com {dimensions} dimensoes: os vetores "
+        "antigos foram descartados e precisam ser reindexados a partir do MySQL"
+    )
+
+
+async def rebuild_lesson_collection() -> int:
+    """Recria a colecao na dimensao do provedor atual, jogando fora os vetores.
+
+    So faz sentido acompanhada de reindexacao: a transcricao continua no MySQL,
+    entao o que se perde aqui e recuperavel.
+    """
+    dimensions = await embedding_service.resolve_dimensions()
+    await asyncio.to_thread(_sync_rebuild_lesson_collection, dimensions)
+    return dimensions
+
+
 async def index_lesson_segments(
     *,
     tutor_id: str,
@@ -274,6 +303,7 @@ async def index_lesson_segments(
     vectors = await embedding_service.embed_texts(
         [str(item["text"]) for item in usable]
     )
+    signature = embedding_service.active_signature()
 
     points = [
         PointStruct(
@@ -284,6 +314,9 @@ async def index_lesson_segments(
                 "tutor_id": tutor_id,
                 "lesson_id": lesson_id,
                 "discipline": discipline,
+                # Modelo que gerou o vetor: dois modelos podem ter a mesma
+                # dimensao e vetores incomparaveis, e so este campo denuncia.
+                "embedding": signature,
                 "class_group": item.get("class_group") or "",
                 "lesson_date": item.get("lesson_date") or "",
                 "lesson_ts": int(item.get("lesson_ts") or 0),

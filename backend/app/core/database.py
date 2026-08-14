@@ -360,6 +360,9 @@ class LessonSegmentModel(Base):
     duration_ms     = Column(Integer, nullable=False, default=0)
     indexed         = Column(Boolean, nullable=False, default=False)
     qdrant_point_id = Column(String(64), nullable=True)
+    # `provedor:modelo` que gerou o vetor. Guardado aqui, e nao so no Qdrant,
+    # para a reindexacao saber o que esta atrasado sem varrer o indice.
+    embedding_model = Column(String(120), nullable=True)
     created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -459,6 +462,9 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "class_groups": {
             "discipline_id": "VARCHAR(64) NULL",
+        },
+        "lesson_segments": {
+            "embedding_model": "VARCHAR(120) NULL",
         },
     }
     for table_name, columns in additions.items():

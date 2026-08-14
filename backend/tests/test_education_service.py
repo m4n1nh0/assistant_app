@@ -466,6 +466,20 @@ def fake_hits(monkeypatch, hits):
     monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _search)
 
 
+def fake_catch_up(monkeypatch, indexed: int = 0):
+    """Impede que a busca vazia dispare reindexacao de verdade no teste."""
+    from app.services import lesson_index_service
+
+    calls = []
+
+    async def _catch_up(*, tutor_id, reason=""):
+        calls.append(reason)
+        return {"indexed": indexed}
+
+    monkeypatch.setattr(lesson_index_service, "catch_up", _catch_up)
+    return calls
+
+
 def test_study_context_formats_hits_with_discipline_and_date(monkeypatch):
     fake_hits(monkeypatch, [
         {
@@ -486,14 +500,58 @@ def test_study_context_drops_weak_matches(monkeypatch):
     fake_hits(monkeypatch, [
         {"score": 0.05, "discipline": "Historia", "content": "nada a ver"}
     ])
+    fake_catch_up(monkeypatch)
 
     assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
 
 
 def test_study_context_is_empty_without_hits(monkeypatch):
     fake_hits(monkeypatch, [])
+    fake_catch_up(monkeypatch)
 
     assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
+
+
+def test_empty_search_asks_for_a_reindex_before_giving_up(monkeypatch):
+    from app.services import qdrant_service
+
+    attempts = []
+    # A primeira busca nao acha nada; depois da reindexacao o trecho aparece.
+    async def _search(**kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            return []
+        return [{
+            "score": 0.7,
+            "discipline": "Banco de Dados",
+            "lesson_date": "2026-08-13",
+            "content": "normalizacao de tabelas",
+        }]
+
+    monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _search)
+    calls = fake_catch_up(monkeypatch, indexed=12)
+
+    context = run(service.build_study_context(tutor_id="t1", message="normalizacao"))
+
+    assert "normalizacao de tabelas" in context
+    assert len(attempts) == 2
+    assert calls and "sem resultado" in calls[0]
+
+
+def test_reindex_that_writes_nothing_does_not_search_again(monkeypatch):
+    from app.services import qdrant_service
+
+    attempts = []
+
+    async def _search(**kwargs):
+        attempts.append(1)
+        return []
+
+    monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _search)
+    fake_catch_up(monkeypatch, indexed=0)
+
+    assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
+    assert len(attempts) == 1
 
 
 def test_study_context_survives_a_qdrant_failure(monkeypatch):
@@ -503,6 +561,7 @@ def test_study_context_survives_a_qdrant_failure(monkeypatch):
         raise RuntimeError("qdrant fora do ar")
 
     monkeypatch.setattr(qdrant_service, "search_lesson_transcripts", _boom)
+    fake_catch_up(monkeypatch)
 
     assert run(service.build_study_context(tutor_id="t1", message="funcoes")) == ""
 

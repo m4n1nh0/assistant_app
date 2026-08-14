@@ -132,12 +132,23 @@ class Settings(BaseSettings):
     qdrant_vector_size: int = 384
 
     # Embeddings semanticos do modo educacao. "auto" tenta, nesta ordem,
-    # endpoint proprio, LocalAI, Ollama, OpenAI e por fim o hash offline.
+    # endpoint proprio, LocalAI, Ollama, o modelo local em processo, OpenAI e
+    # por fim o hash offline.
     embedding_provider: str = "auto"
     embedding_model: str = ""
     embedding_base_url: str = ""
     embedding_api_key: str = ""
     embedding_dimensions: int = 0
+
+    # Modelo do provedor "local": roda dentro do backend via ONNX, sem chave e
+    # sem servidor externo. 384 dimensoes e ~220 MB baixados no primeiro uso.
+    embedding_local_model: str = (
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    # Onde guardar o modelo baixado. Vazio usa o cache padrao do huggingface;
+    # em container efemero vale apontar para um volume, senao cada deploy
+    # baixa de novo.
+    embedding_cache_dir: str = ""
 
     # Servidores MCP em JSON. Aceita mapa {"nome": {...}} ou lista com "name".
     # stdio: {"fs": {"command": "npx", "args": ["-y", "@mcp/server-fs", "/dir"]}}
