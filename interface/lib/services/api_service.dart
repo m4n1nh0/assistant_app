@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/app_config.dart';
+import 'storage_service.dart';
 
 class ApiService {
   String baseUrl;
@@ -122,6 +123,28 @@ class ApiService {
       message: (data['message'] ?? data['detail'])?.toString() ?? '',
       token: data['token'] as String?,
     );
+  }
+
+  /// Renews the session before it expires. A recorded lesson can outlive the
+  /// token, and every audio chunk after that would come back 401.
+  Future<bool> refreshSession() async {
+    if (_token == null) return false;
+    try {
+      final r = await http
+          .post(Uri.parse('$baseUrl/auth/refresh'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode >= 400) return false;
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      final token = data['token'] as String?;
+      if (data['success'] != true || token == null || token.isEmpty) {
+        return false;
+      }
+      _token = token;
+      await StorageService.saveAuthToken(token);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Validates the current in-memory token and returns its account context.

@@ -62,6 +62,7 @@ def test_import_creates_new_students_and_updates_existing_by_enrollment():
     existing = SimpleNamespace(
         external_id="1001",
         name="Nome antigo",
+        class_id=None,
         class_group="2A",
         subject="Fisica",
         active=False,

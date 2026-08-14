@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../services/api_service.dart';
 import '../services/education_service.dart';
 import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
@@ -16,51 +17,9 @@ import '../utils/theme.dart';
 const _rosterTab = 0;
 const _lessonTab = 1;
 
-/// Turma no sentido pratico do professor: a dupla turma + disciplina que o
-/// cadastro de alunos ja usa.
-typedef _ClassOption = ({String classGroup, String subject});
-
-/// Turmas conhecidas pelo cadastro. Escolher daqui — na aula ou no relatorio —
-/// garante que o texto enviado ao backend seja identico ao do aluno, que e
-/// como as duas pontas sao casadas.
-List<_ClassOption> _classOptions(List<Student>? students) {
-  final options = <_ClassOption>{};
-  for (final student in students ?? const <Student>[]) {
-    final option = (
-      classGroup: student.classGroup.trim(),
-      subject: student.subject.trim(),
-    );
-    if (option.classGroup.isEmpty && option.subject.isEmpty) continue;
-    options.add(option);
-  }
-  return options.toList()
-    ..sort((a, b) {
-      final bySubject = a.subject.compareTo(b.subject);
-      return bySubject != 0 ? bySubject : a.classGroup.compareTo(b.classGroup);
-    });
-}
-
-_ClassOption? _singleOption(List<Student>? students) {
-  final options = _classOptions(students);
-  return options.length == 1 ? options.first : null;
-}
-
-/// Quantos alunos o backend vai considerar na aula. Campo vazio no aluno vale
-/// como coringa, igual ao filtro de `_roster` no router.
-int _rosterSize(List<Student>? students, _ClassOption option) {
-  return (students ?? const <Student>[]).where((student) {
-    final group = student.classGroup.trim();
-    final subject = student.subject.trim();
-    return (group.isEmpty || group == option.classGroup) &&
-        (subject.isEmpty || subject == option.subject);
-  }).length;
-}
-
-String _optionLabel(_ClassOption option) {
-  if (option.classGroup.isEmpty) return '${option.subject} (sem turma)';
-  if (option.subject.isEmpty) return '${option.classGroup} (sem disciplina)';
-  return '${option.classGroup} - ${option.subject}';
-}
+/// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
+/// lista ainda nao chegou.
+typedef _Classes = ValueNotifier<List<ClassGroup>?>;
 
 class EducationDialog extends StatefulWidget {
   const EducationDialog({super.key});
@@ -70,9 +29,9 @@ class EducationDialog extends StatefulWidget {
 }
 
 class _EducationDialogState extends State<EducationDialog> {
-  /// Cadastro compartilhado entre as abas: TURMA escreve, AULA le para avisar
-  /// quando nao ha nomes para ancorar a transcricao. `null` = desconhecido.
-  final _roster = ValueNotifier<List<Student>?>(null);
+  /// Turmas compartilhadas entre as abas: TURMA escreve, AULA e PONTUACOES
+  /// leem. Uma fonte so evita as duas pontas divergirem.
+  final _Classes _classes = ValueNotifier<List<ClassGroup>?>(null);
 
   int? _initialTab;
 
@@ -84,25 +43,24 @@ class _EducationDialogState extends State<EducationDialog> {
 
   @override
   void dispose() {
-    _roster.dispose();
+    _classes.dispose();
     super.dispose();
   }
 
-  /// Primeira vez (turma vazia) abre no cadastro; quem ja tem turma cai
-  /// direto na gravacao.
+  /// Primeira vez (sem turma cadastrada) abre no cadastro; quem ja tem turma
+  /// cai direto na gravacao.
   Future<void> _resolveInitialTab() async {
-    List<Student>? students;
+    List<ClassGroup>? classes;
     try {
-      students = await education.listStudents();
+      classes = await education.listClasses();
     } catch (_) {
       // Sem resposta nao da para saber se e a primeira vez: abre na aula.
     }
     if (!mounted) return;
-    _roster.value = students;
+    _classes.value = classes;
     setState(() {
-      _initialTab = (students != null && students.isEmpty)
-          ? _rosterTab
-          : _lessonTab;
+      _initialTab =
+          (classes != null && classes.isEmpty) ? _rosterTab : _lessonTab;
     });
   }
 
@@ -126,7 +84,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 3,
+                  length: 4,
                   initialIndex: initialTab,
                   child: Column(
                     children: [
@@ -137,21 +95,25 @@ class _EducationDialogState extends State<EducationDialog> {
                         tabs: [
                           Tab(
                               icon: Icon(Icons.groups_outlined, size: 17),
-                              text: '1. TURMA'),
+                              text: '1. TURMAS'),
                           Tab(
                               icon: Icon(Icons.mic_none, size: 17),
-                              text: '2. AULA'),
+                              text: '2. GRAVAR AULA'),
                           Tab(
                               icon: Icon(Icons.emoji_events_outlined, size: 17),
                               text: '3. PONTUACOES'),
+                          Tab(
+                              icon: Icon(Icons.history, size: 17),
+                              text: '4. HISTORICO'),
                         ],
                       ),
                       Expanded(
                         child: TabBarView(
                           children: [
-                            _RosterTab(roster: _roster),
-                            _LessonTab(roster: _roster),
-                            _PointsTab(roster: _roster),
+                            _RosterTab(classes: _classes),
+                            _LessonTab(classes: _classes),
+                            _PointsTab(classes: _classes),
+                            _HistoryTab(classes: _classes),
                           ],
                         ),
                       ),
@@ -210,9 +172,9 @@ class _EducationDialogState extends State<EducationDialog> {
 // --- Aula ------------------------------------------------------------------
 
 class _LessonTab extends StatefulWidget {
-  final ValueNotifier<List<Student>?> roster;
+  final _Classes classes;
 
-  const _LessonTab({required this.roster});
+  const _LessonTab({required this.classes});
 
   @override
   State<_LessonTab> createState() => _LessonTabState();
@@ -224,15 +186,15 @@ class _LessonTabState extends State<_LessonTab> {
   static const _chunkDuration = Duration(seconds: 60);
 
   final _recorder = AudioRecorder();
-  final _subjectCtrl = TextEditingController();
   final _titleCtrl = TextEditingController();
-  final _classCtrl = TextEditingController();
   final _focusCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
 
   Lesson? _lesson;
   Timer? _chunkTimer;
   Timer? _clockTimer;
+  Timer? _retryTimer;
+  Timer? _sessionTimer;
   String? _currentPath;
   DateTime? _startedAt;
 
@@ -244,34 +206,33 @@ class _LessonTabState extends State<_LessonTab> {
   var _uploading = false;
   var _summarising = false;
   var _starting = false;
+  var _sessionExpired = false;
   var _elapsed = Duration.zero;
   var _status = '';
   String? _summary;
   EmbeddingStatus? _embedding;
 
-  /// Turma escolhida na lista. `null` com [_manualEntry] falso significa que
-  /// nada foi selecionado ainda.
-  _ClassOption? _selected;
-  var _manualEntry = false;
+  /// Turmas atendidas pela aula. Mais de uma e aula reunida.
+  final _selected = <String>{};
 
   @override
   void initState() {
     super.initState();
     _loadEmbeddingStatus();
-    _selected = _singleOption(widget.roster.value);
-    widget.roster.addListener(_onRosterChanged);
+    _preselectSingleClass(widget.classes.value);
+    widget.classes.addListener(_onClassesChanged);
   }
 
   @override
   void dispose() {
-    widget.roster.removeListener(_onRosterChanged);
+    widget.classes.removeListener(_onClassesChanged);
     _chunkTimer?.cancel();
     _clockTimer?.cancel();
+    _retryTimer?.cancel();
+    _sessionTimer?.cancel();
     // Sem await no dispose: o recorder e liberado em background.
     _recorder.dispose();
-    _subjectCtrl.dispose();
     _titleCtrl.dispose();
-    _classCtrl.dispose();
     _focusCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -290,24 +251,35 @@ class _LessonTabState extends State<_LessonTab> {
     if (mounted) setState(() => _status = message);
   }
 
-  void _onRosterChanged() {
+  void _onClassesChanged() {
     if (!mounted) return;
-    setState(() => _selected ??= _singleOption(widget.roster.value));
+    setState(() => _preselectSingleClass(widget.classes.value));
+  }
+
+  /// Com uma turma so nao ha o que escolher.
+  void _preselectSingleClass(List<ClassGroup>? classes) {
+    if (_selected.isEmpty && classes != null && classes.length == 1) {
+      _selected.add(classes.first.id);
+    }
+  }
+
+  List<ClassGroup> get _chosen {
+    final classes = widget.classes.value ?? const <ClassGroup>[];
+    return classes.where((item) => _selected.contains(item.id)).toList();
   }
 
   // --- Ciclo da aula -------------------------------------------------------
 
   Future<void> _startLesson() async {
-    final selected = _manualEntry ? null : _selected;
-    final subject =
-        selected != null ? selected.subject : _subjectCtrl.text.trim();
-    final classGroup =
-        selected != null ? selected.classGroup : _classCtrl.text.trim();
-
-    if (subject.isEmpty && classGroup.isEmpty) {
-      _setStatus(_manualEntry
-          ? 'Informe a disciplina antes de iniciar.'
-          : 'Selecione a turma antes de iniciar.');
+    final chosen = _chosen;
+    if (chosen.isEmpty) {
+      _setStatus('Selecione a turma antes de iniciar.');
+      return;
+    }
+    final subjects = chosen.map((item) => item.subject).toSet();
+    final subject = subjects.length == 1 ? subjects.first : '';
+    if (subject.isEmpty) {
+      _setStatus('As turmas escolhidas sao de disciplinas diferentes.');
       return;
     }
     if (!await _recorder.hasPermission()) {
@@ -317,10 +289,12 @@ class _LessonTabState extends State<_LessonTab> {
 
     setState(() => _starting = true);
     try {
+      // Aula de duas horas nao pode esbarrar no fim do token no meio.
+      await api.refreshSession();
       final lesson = await education.createLesson(
         subject: subject,
         title: _titleCtrl.text.trim(),
-        classGroup: classGroup,
+        classIds: chosen.map((item) => item.id).toList(),
       );
       setState(() {
         _lesson = lesson;
@@ -348,6 +322,11 @@ class _LessonTabState extends State<_LessonTab> {
       if (!mounted || _startedAt == null) return;
       setState(() => _elapsed = DateTime.now().difference(_startedAt!));
     });
+    _sessionTimer?.cancel();
+    _sessionTimer = Timer.periodic(
+      const Duration(minutes: 20),
+      (_) => unawaited(api.refreshSession()),
+    );
     if (mounted) setState(() => _recording = true);
   }
 
@@ -386,29 +365,48 @@ class _LessonTabState extends State<_LessonTab> {
     }
   }
 
+  /// Envia a fila em ordem. Bloco que falha continua na fila: perder audio de
+  /// aula por queda de rede ou sessao expirada nao tem volta.
   Future<void> _drainUploads() async {
     if (_uploading) return;
     _uploading = true;
     try {
       while (_pendingUploads.isNotEmpty) {
-        final chunk = _pendingUploads.removeAt(0);
-        await _uploadChunk(chunk);
+        if (!await _uploadChunk(_pendingUploads.first)) {
+          _scheduleRetry();
+          return;
+        }
+        _pendingUploads.removeAt(0);
       }
+      _retryTimer?.cancel();
+      _retryTimer = null;
     } finally {
       _uploading = false;
       if (mounted) setState(() {});
     }
   }
 
-  Future<void> _uploadChunk(_PendingChunk chunk) async {
+  void _scheduleRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(_drainUploads()),
+    );
+  }
+
+  /// `true` quando o bloco pode sair da fila — enviado, vazio ou sumido.
+  Future<bool> _uploadChunk(_PendingChunk chunk) async {
     final lesson = _lesson;
-    if (lesson == null) return;
+    if (lesson == null) return false;
 
     final file = File(chunk.path);
     try {
-      if (!await file.exists()) return;
+      if (!await file.exists()) return true;
       final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return;
+      if (bytes.isEmpty) {
+        await _discard(file);
+        return true;
+      }
 
       final result = await education.uploadAudioChunk(
         lesson.id,
@@ -417,9 +415,11 @@ class _LessonTabState extends State<_LessonTab> {
         durationMs: chunk.durationMs,
       );
 
-      if (!mounted) return;
+      await _discard(file);
+      if (!mounted) return true;
       setState(() {
         _lesson = result.lesson;
+        _sessionExpired = false;
         if (result.segment != null) _segments.add(result.segment!);
         _points.addAll(result.points);
       });
@@ -432,14 +432,32 @@ class _LessonTabState extends State<_LessonTab> {
         _setStatus('Bloco ${result.segment?.sequence ?? "?"} transcrito.');
       }
       _scrollToEnd();
+      return true;
     } catch (e) {
-      _setStatus('Falha ao enviar bloco: $e');
-    } finally {
-      try {
-        if (await file.exists()) await file.delete();
-      } catch (_) {
-        // Arquivo temporario: o SO limpa depois.
-      }
+      if ('$e'.contains('HTTP 401')) return _handleExpiredSession();
+      _setStatus('Falha ao enviar bloco, tentando de novo: $e');
+      return false;
+    }
+  }
+
+  /// Sessao expirada no meio da aula: tenta renovar em silencio e so incomoda
+  /// o professor se nao der. O audio fica na fila em qualquer caso.
+  Future<bool> _handleExpiredSession() async {
+    if (await api.refreshSession()) {
+      _setStatus('Sessao renovada, reenviando o bloco...');
+      return false;
+    }
+    if (mounted) setState(() => _sessionExpired = true);
+    _setStatus('Sessao expirada. Faca login de novo: '
+        '${_pendingUploads.length} bloco(s) seguem guardados aqui.');
+    return false;
+  }
+
+  Future<void> _discard(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Arquivo temporario: o SO limpa depois.
     }
   }
 
@@ -454,6 +472,7 @@ class _LessonTabState extends State<_LessonTab> {
   Future<void> _stopRecording() async {
     _chunkTimer?.cancel();
     _clockTimer?.cancel();
+    _sessionTimer?.cancel();
     if (_recording) await _rotateChunk(restart: false);
     if (mounted) setState(() => _recording = false);
     _setStatus('Gravacao pausada. Envie o resumo quando quiser.');
@@ -471,10 +490,17 @@ class _LessonTabState extends State<_LessonTab> {
 
     if (_recording) await _stopRecording();
     // Espera os blocos pendentes chegarem ao backend, senao o resumo sai sem
-    // o final da aula.
-    while (_pendingUploads.isNotEmpty || _uploading) {
+    // o final da aula. Com a fila travada (sessao caida, backend fora) o
+    // resumo sai assim mesmo em vez de esperar para sempre.
+    final deadline = DateTime.now().add(const Duration(seconds: 90));
+    while ((_pendingUploads.isNotEmpty || _uploading) &&
+        DateTime.now().isBefore(deadline)) {
       _setStatus('Enviando blocos pendentes antes de resumir...');
       await Future.delayed(const Duration(milliseconds: 400));
+    }
+    if (_pendingUploads.isNotEmpty) {
+      _setStatus('${_pendingUploads.length} bloco(s) ainda nao subiram; '
+          'o resumo sai sem eles.');
     }
 
     setState(() => _summarising = true);
@@ -544,23 +570,51 @@ class _LessonTabState extends State<_LessonTab> {
     );
   }
 
-  /// Avisos que mudam o resultado da aula: turma vazia (nomes sem ancora) e
-  /// busca sem embedding semantico. O detalhe tecnico fica no tooltip.
+  /// Avisos que mudam o resultado da aula: fila de envio parada, turma sem
+  /// aluno e busca sem embedding semantico.
   Widget _buildAlerts() {
-    return ValueListenableBuilder<List<Student>?>(
-      valueListenable: widget.roster,
-      builder: (context, students, _) {
+    return ValueListenableBuilder<List<ClassGroup>?>(
+      valueListenable: widget.classes,
+      builder: (context, classes, _) {
+        final students = (classes ?? const <ClassGroup>[])
+            .fold<int>(0, (total, item) => total + item.studentCount);
         final banners = <Widget>[
-          if (students != null && students.isEmpty)
+          if (_sessionExpired || _pendingUploads.isNotEmpty)
+            _Banner(
+              icon: _sessionExpired
+                  ? Icons.lock_clock_outlined
+                  : Icons.cloud_upload_outlined,
+              color: _sessionExpired ? AssistantTheme.danger : AssistantTheme.c4,
+              text: _sessionExpired
+                  ? 'Sessao expirada. Entre de novo na conta: os '
+                      '${_pendingUploads.length} bloco(s) da aula estao '
+                      'guardados e sobem quando a sessao voltar.'
+                  : '${_pendingUploads.length} bloco(s) na fila de envio.',
+              action: TextButton(
+                onPressed: _uploading
+                    ? null
+                    : () async {
+                        if (await api.refreshSession()) {
+                          if (mounted) setState(() => _sessionExpired = false);
+                        }
+                        unawaited(_drainUploads());
+                      },
+                child: const Text('REENVIAR', style: TextStyle(fontSize: 10)),
+              ),
+            ),
+          if (classes != null && students == 0)
             _Banner(
               icon: Icons.groups_outlined,
               color: AssistantTheme.c4,
-              text: 'Nenhum aluno cadastrado. Sem a turma, os nomes ditos na '
-                  'aula entram com a grafia que o transcritor entendeu.',
+              text: classes.isEmpty
+                  ? 'Nenhuma turma cadastrada. Sem turma nao ha nomes para '
+                      'ancorar a transcricao da aula.'
+                  : 'As turmas cadastradas estao sem alunos. Importe a lista '
+                      'antes da aula.',
               action: TextButton(
                 onPressed: () =>
                     DefaultTabController.of(context).animateTo(_rosterTab),
-                child: const Text('CADASTRAR TURMA',
+                child: const Text('ABRIR TURMAS',
                     style: TextStyle(fontSize: 10)),
               ),
             ),
@@ -591,13 +645,15 @@ class _LessonTabState extends State<_LessonTab> {
   }
 
   Widget _buildStartForm() {
-    return ValueListenableBuilder<List<Student>?>(
-      valueListenable: widget.roster,
-      builder: (context, students, _) {
-        final options = _classOptions(students);
-        // Sem cadastro nao ha o que listar: sobra digitar na mao.
-        final manual = _manualEntry || options.isEmpty;
-        final selected = options.contains(_selected) ? _selected : null;
+    return ValueListenableBuilder<List<ClassGroup>?>(
+      valueListenable: widget.classes,
+      builder: (context, classes, _) {
+        final available = classes ?? const <ClassGroup>[];
+        final chosen = _chosen;
+        final students = chosen.fold<int>(
+          0,
+          (total, item) => total + item.studentCount,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -606,25 +662,12 @@ class _LessonTabState extends State<_LessonTab> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
-                  flex: 3,
-                  child: manual
-                      ? _Field(controller: _subjectCtrl, label: 'DISCIPLINA')
-                      : _buildClassPicker(options, selected, students),
-                ),
-                const SizedBox(width: 10),
-                if (manual) ...[
-                  Expanded(
-                    child: _Field(controller: _classCtrl, label: 'TURMA'),
-                  ),
-                  const SizedBox(width: 10),
-                ],
-                Expanded(
                   flex: 2,
                   child: _Field(controller: _titleCtrl, label: 'TEMA DA AULA'),
                 ),
                 const SizedBox(width: 10),
                 FilledButton.icon(
-                  onPressed: _starting ? null : _startLesson,
+                  onPressed: _starting || chosen.isEmpty ? null : _startLesson,
                   icon: const Icon(Icons.fiber_manual_record, size: 15),
                   label: Text(_starting ? 'INICIANDO...' : 'INICIAR AULA'),
                   style: FilledButton.styleFrom(
@@ -634,48 +677,71 @@ class _LessonTabState extends State<_LessonTab> {
                 ),
               ],
             ),
-            if (options.isNotEmpty)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => setState(() => _manualEntry = !_manualEntry),
-                  icon: Icon(
-                    manual ? Icons.list_alt_outlined : Icons.edit_outlined,
-                    size: 13,
-                  ),
-                  label: Text(
-                    manual
-                        ? 'ESCOLHER UMA TURMA CADASTRADA'
-                        : 'AULA DE UMA TURMA NAO CADASTRADA',
-                    style: const TextStyle(fontSize: 10),
-                  ),
-                  style: TextButton.styleFrom(
-                    foregroundColor: AssistantTheme.textMuted,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                  ),
+            const SizedBox(height: 12),
+            Text(
+              chosen.isEmpty
+                  ? 'TURMAS DESTA AULA'
+                  : 'TURMAS DESTA AULA  -  $students ALUNO'
+                      '${students == 1 ? "" : "S"}'
+                      '${chosen.length > 1 ? "  -  AULA REUNIDA" : ""}',
+              style: const TextStyle(
+                fontSize: 9,
+                letterSpacing: 1.5,
+                color: AssistantTheme.textMuted,
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (available.isEmpty)
+              Text(
+                classes == null
+                    ? 'Carregando turmas...'
+                    : 'Cadastre uma turma na aba TURMAS para iniciar a aula.',
+                style: const TextStyle(
+                    fontSize: 11, color: AssistantTheme.textMuted),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final group in available)
+                    FilterChip(
+                      selected: _selected.contains(group.id),
+                      onSelected: (on) => setState(() {
+                        if (on) {
+                          _selected.add(group.id);
+                        } else {
+                          _selected.remove(group.id);
+                        }
+                      }),
+                      label: Text(
+                        '${group.display}  (${group.studentCount})',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      backgroundColor: AssistantTheme.bg2,
+                      selectedColor: AssistantTheme.c3.withValues(alpha: 0.22),
+                      checkmarkColor: AssistantTheme.c3,
+                      side: const BorderSide(color: AssistantTheme.border),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                ],
+              ),
+            if (available.length > 1)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  'Marque mais de uma turma quando a aula for reunida: os '
+                  'alunos de todas entram no reconhecimento de nomes e a '
+                  'pontuacao continua separada por turma no relatorio.',
+                  style: TextStyle(
+                      fontSize: 10, color: AssistantTheme.textMuted),
                 ),
               ),
           ],
         );
       },
-    );
-  }
-
-  Widget _buildClassPicker(
-    List<_ClassOption> options,
-    _ClassOption? selected,
-    List<Student>? students,
-  ) {
-    final size = selected == null ? null : _rosterSize(students, selected);
-
-    return _ClassDropdown(
-      label: size == null
-          ? 'TURMA E DISCIPLINA'
-          : 'TURMA E DISCIPLINA  -  $size ALUNO${size == 1 ? "" : "S"}',
-      hint: 'Selecione a turma',
-      options: options,
-      value: selected,
-      onChanged: (value) => setState(() => _selected = value),
     );
   }
 
@@ -872,9 +938,9 @@ class _PendingChunk {
 // --- Pontuacoes ------------------------------------------------------------
 
 class _PointsTab extends StatefulWidget {
-  final ValueNotifier<List<Student>?> roster;
+  final _Classes classes;
 
-  const _PointsTab({required this.roster});
+  const _PointsTab({required this.classes});
 
   @override
   State<_PointsTab> createState() => _PointsTabState();
@@ -887,7 +953,7 @@ class _PointsTabState extends State<_PointsTab> {
   DateTime? _from;
   DateTime? _to;
   PointsReport? _report;
-  _ClassOption? _selected;
+  ClassGroup? _selected;
   var _loading = false;
   var _status = '';
 
@@ -920,7 +986,7 @@ class _PointsTabState extends State<_PointsTab> {
         dateFrom: _iso(_from),
         dateTo: _iso(_to),
         subject: selected?.subject ?? _subjectCtrl.text.trim(),
-        classGroup: selected?.classGroup,
+        classGroup: selected?.label,
         studentName: _studentCtrl.text.trim(),
       );
       if (mounted) setState(() => _report = report);
@@ -929,6 +995,44 @@ class _PointsTabState extends State<_PointsTab> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Apaga a linha inteira do relatorio — um aluno, num dia, numa disciplina.
+  /// Serve para limpar pontuacao que o transcritor entendeu errado.
+  Future<void> _removeEntry(PointsReportEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Remover pontuacao'),
+        content: Text(
+          'Apagar ${_formatPoints(entry.totalPoints)} ponto(s) de '
+          '${entry.studentName} em ${entry.lessonDate}? '
+          'Sao ${entry.entries.length} registro(s).',
+          style: const TextStyle(color: AssistantTheme.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('REMOVER'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      for (final point in entry.entries) {
+        await education.deletePoint(point.id);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao remover: $e');
+    }
+    await _load();
   }
 
   Future<void> _pickDate({required bool isFrom}) async {
@@ -968,10 +1072,10 @@ class _PointsTabState extends State<_PointsTab> {
               const SizedBox(width: 10),
               Expanded(
                 flex: 2,
-                child: ValueListenableBuilder<List<Student>?>(
-                  valueListenable: widget.roster,
-                  builder: (context, students, _) {
-                    final options = _classOptions(students);
+                child: ValueListenableBuilder<List<ClassGroup>?>(
+                  valueListenable: widget.classes,
+                  builder: (context, classes, _) {
+                    final options = classes ?? const <ClassGroup>[];
                     if (options.isEmpty) {
                       return _Field(
                         controller: _subjectCtrl,
@@ -979,12 +1083,15 @@ class _PointsTabState extends State<_PointsTab> {
                         onSubmitted: (_) => _load(),
                       );
                     }
+                    final selected = options
+                        .where((item) => item.id == _selected?.id)
+                        .firstOrNull;
                     return _ClassDropdown(
-                      label: 'TURMA E DISCIPLINA',
+                      label: 'TURMA',
                       hint: 'Todas as turmas',
                       allLabel: 'Todas as turmas',
                       options: options,
-                      value: options.contains(_selected) ? _selected : null,
+                      value: selected,
                       onChanged: (value) {
                         setState(() => _selected = value);
                         _load();
@@ -1097,6 +1204,12 @@ class _PointsTabState extends State<_PointsTab> {
                                 color: AssistantTheme.c3,
                               ),
                             ),
+                            IconButton(
+                              tooltip: 'Remover esta pontuacao',
+                              icon: const Icon(Icons.delete_outline, size: 15),
+                              color: AssistantTheme.textMuted,
+                              onPressed: () => _removeEntry(entry),
+                            ),
                           ],
                         ),
                       );
@@ -1109,24 +1222,27 @@ class _PointsTabState extends State<_PointsTab> {
   }
 }
 
-// --- Turma -----------------------------------------------------------------
+// --- Turmas ----------------------------------------------------------------
 
 class _RosterTab extends StatefulWidget {
-  final ValueNotifier<List<Student>?> roster;
+  final _Classes classes;
 
-  const _RosterTab({required this.roster});
+  const _RosterTab({required this.classes});
 
   @override
   State<_RosterTab> createState() => _RosterTabState();
 }
 
 class _RosterTabState extends State<_RosterTab> {
-  final _enrollmentCtrl = TextEditingController();
+  final _codeCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
-  final _classCtrl = TextEditingController();
   final _subjectCtrl = TextEditingController();
+
+  final _enrollmentCtrl = TextEditingController();
+  final _studentCtrl = TextEditingController();
   final _aliasCtrl = TextEditingController();
 
+  ClassGroup? _selected;
   List<Student> _students = [];
   var _loading = true;
   var _importing = false;
@@ -1136,55 +1252,173 @@ class _RosterTabState extends State<_RosterTab> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadClasses();
   }
 
   @override
   void dispose() {
-    _enrollmentCtrl.dispose();
+    _codeCtrl.dispose();
     _nameCtrl.dispose();
-    _classCtrl.dispose();
     _subjectCtrl.dispose();
+    _enrollmentCtrl.dispose();
+    _studentCtrl.dispose();
     _aliasCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  void _report(String message, {bool error = false}) {
+    if (!mounted) return;
+    setState(() {
+      _status = message;
+      _statusIsError = error;
+    });
+  }
+
+  Future<void> _loadClasses({String? keepId}) async {
     setState(() => _loading = true);
     try {
-      final students = await education.listStudents();
-      // Sem o mounted o notifier ja pode ter sido descartado com o dialogo.
+      final classes = await education.listClasses();
       if (!mounted) return;
-      widget.roster.value = students;
-      setState(() => _students = students);
+      widget.classes.value = classes;
+      final wanted = keepId ?? _selected?.id;
+      setState(() {
+        _selected = classes.where((item) => item.id == wanted).firstOrNull ??
+            (classes.isEmpty ? null : classes.first);
+      });
+      await _loadStudents();
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _status = 'Falha ao carregar turma: $e';
-          _statusIsError = true;
-        });
-      }
+      _report('Falha ao carregar turmas: $e', error: true);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _add() async {
+  Future<void> _loadStudents() async {
+    final group = _selected;
+    if (group == null) {
+      if (mounted) setState(() => _students = []);
+      return;
+    }
+    try {
+      final students = await education.listStudents(classId: group.id);
+      if (mounted) setState(() => _students = students);
+    } catch (e) {
+      _report('Falha ao carregar alunos: $e', error: true);
+    }
+  }
+
+  // --- Turma ---------------------------------------------------------------
+
+  Future<void> _createClass() async {
+    final code = _codeCtrl.text.trim();
+    if (code.isEmpty) {
+      _report('Informe o codigo da turma.', error: true);
+      return;
+    }
+    try {
+      final group = await education.createClass(
+        code: code,
+        name: _nameCtrl.text.trim(),
+        subject: _subjectCtrl.text.trim(),
+      );
+      _codeCtrl.clear();
+      _nameCtrl.clear();
+      _report('Turma ${group.display} criada.');
+      await _loadClasses(keepId: group.id);
+    } catch (e) {
+      _report('Falha ao criar turma: $e', error: true);
+    }
+  }
+
+  Future<void> _renameClass(ClassGroup group) async {
+    final codeCtrl = TextEditingController(text: group.code);
+    final nameCtrl = TextEditingController(text: group.name);
+    final subjectCtrl = TextEditingController(text: group.subject);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Editar turma'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Field(controller: codeCtrl, label: 'CODIGO'),
+              const SizedBox(height: 8),
+              _Field(controller: nameCtrl, label: 'NOME (EX: PRESENCIAL)'),
+              const SizedBox(height: 8),
+              _Field(controller: subjectCtrl, label: 'DISCIPLINA'),
+              const SizedBox(height: 10),
+              const Text(
+                'Renomear atualiza os alunos vinculados; as aulas ja gravadas '
+                'seguem ligadas a esta turma.',
+                style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('SALVAR'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        await education.updateClass(
+          group.id,
+          code: codeCtrl.text.trim(),
+          name: nameCtrl.text.trim(),
+          subject: subjectCtrl.text.trim(),
+        );
+        _report('Turma atualizada.');
+        await _loadClasses(keepId: group.id);
+      } catch (e) {
+        _report('Falha ao atualizar: $e', error: true);
+      }
+    }
+    codeCtrl.dispose();
+    nameCtrl.dispose();
+    subjectCtrl.dispose();
+  }
+
+  Future<void> _deleteClass(ClassGroup group) async {
+    try {
+      await education.deleteClass(group.id);
+      _report('Turma removida.');
+      await _loadClasses(keepId: '');
+    } catch (e) {
+      _report('$e', error: true);
+    }
+  }
+
+  // --- Alunos --------------------------------------------------------------
+
+  Future<void> _addStudent() async {
+    final group = _selected;
+    if (group == null) {
+      _report('Escolha a turma antes de cadastrar o aluno.', error: true);
+      return;
+    }
     final enrollment = _enrollmentCtrl.text.trim();
-    final name = _nameCtrl.text.trim();
+    final name = _studentCtrl.text.trim();
     if (enrollment.isEmpty || name.isEmpty) {
-      setState(() {
-        _status = 'Informe a matricula e o nome do aluno.';
-        _statusIsError = true;
-      });
+      _report('Informe a matricula e o nome do aluno.', error: true);
       return;
     }
     try {
       await education.createStudent(
         name: name,
         externalId: enrollment,
-        classGroup: _classCtrl.text.trim(),
-        subject: _subjectCtrl.text.trim(),
+        classId: group.id,
         aliases: _aliasCtrl.text
             .split(',')
             .map((item) => item.trim())
@@ -1192,29 +1426,95 @@ class _RosterTabState extends State<_RosterTab> {
             .toList(),
       );
       _enrollmentCtrl.clear();
-      _nameCtrl.clear();
+      _studentCtrl.clear();
       _aliasCtrl.clear();
-      setState(() {
-        _status = 'Aluno cadastrado.';
-        _statusIsError = false;
-      });
-      await _load();
+      _report('Aluno cadastrado.');
+      await _loadClasses(keepId: group.id);
     } catch (e) {
-      setState(() {
-        _status = 'Falha ao cadastrar: $e';
-        _statusIsError = true;
-      });
+      _report('Falha ao cadastrar: $e', error: true);
     }
   }
 
+  Future<void> _editStudent(Student student) async {
+    final nameCtrl = TextEditingController(text: student.name);
+    final aliasCtrl = TextEditingController(text: student.aliases.join(', '));
+    final classes = widget.classes.value ?? const <ClassGroup>[];
+    var target = classes.where((item) => item.id == student.classId).firstOrNull;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: const Text('Editar aluno'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _Field(controller: nameCtrl, label: 'NOME COMPLETO'),
+                const SizedBox(height: 8),
+                _Field(
+                  controller: aliasCtrl,
+                  label: 'APELIDOS (SEPARADOS POR VIRGULA)',
+                ),
+                const SizedBox(height: 8),
+                _ClassDropdown(
+                  label: 'TURMA',
+                  hint: 'Selecione a turma',
+                  options: classes,
+                  value: target,
+                  onChanged: (value) => setDialogState(() => target = value),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'O apelido resolve nome repetido na turma: com dois Adrian, '
+                  'e ele que diz de quem voce falou.',
+                  style:
+                      TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('SALVAR'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        await education.updateStudent(
+          student.id,
+          name: nameCtrl.text.trim(),
+          classId: target?.id,
+          aliases: aliasCtrl.text
+              .split(',')
+              .map((item) => item.trim())
+              .where((item) => item.isNotEmpty)
+              .toList(),
+        );
+        _report('Aluno atualizado.');
+        await _loadClasses();
+      } catch (e) {
+        _report('Falha ao atualizar: $e', error: true);
+      }
+    }
+    nameCtrl.dispose();
+    aliasCtrl.dispose();
+  }
+
   Future<void> _importCsv() async {
-    final classGroup = _classCtrl.text.trim();
-    final subject = _subjectCtrl.text.trim();
-    if (classGroup.isEmpty || subject.isEmpty) {
-      setState(() {
-        _status = 'Informe turma e disciplina antes de importar o CSV.';
-        _statusIsError = true;
-      });
+    final group = _selected;
+    if (group == null) {
+      _report('Escolha a turma que vai receber os alunos.', error: true);
       return;
     }
 
@@ -1256,7 +1556,7 @@ class _RosterTabState extends State<_RosterTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${rows.length} aluno(s) para $classGroup - $subject.',
+                  '${rows.length} aluno(s) para ${group.display}.',
                   style: const TextStyle(color: AssistantTheme.textPrimary),
                 ),
                 const SizedBox(height: 10),
@@ -1279,8 +1579,8 @@ class _RosterTabState extends State<_RosterTab> {
                   ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Matriculas existentes serao atualizadas; as demais serao '
-                  'cadastradas.',
+                  'Matriculas existentes serao atualizadas e passam para esta '
+                  'turma; as demais serao cadastradas.',
                   style: TextStyle(
                     fontSize: 11,
                     color: AssistantTheme.textMuted,
@@ -1304,120 +1604,214 @@ class _RosterTabState extends State<_RosterTab> {
       if (confirmed != true) return;
 
       final result = await education.importStudents(
-        classGroup: classGroup,
-        subject: subject,
+        classId: group.id,
         students: rows,
       );
-      if (!mounted) return;
-      setState(() {
-        _status = 'Importacao concluida: ${result.created} cadastrado(s) e '
-            '${result.updated} atualizado(s).';
-        _statusIsError = false;
-      });
-      await _load();
+      _report('Importacao concluida: ${result.created} cadastrado(s) e '
+          '${result.updated} atualizado(s).');
+      await _loadClasses(keepId: group.id);
     } catch (error) {
-      if (!mounted) return;
       final message = error is FormatException ? error.message : '$error';
-      setState(() {
-        _status = 'Falha ao importar: $message';
-        _statusIsError = true;
-      });
+      _report('Falha ao importar: $message', error: true);
     } finally {
       if (mounted) setState(() => _importing = false);
     }
   }
 
+  // --- UI ------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
+    final classes = widget.classes.value ?? const <ClassGroup>[];
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Passo 1: o cadastro ancora os nomes ouvidos no audio. Sem ele, '
-            'nomes proprios saem com a grafia que o transcritor entendeu, e a '
-            'pontuacao por voz nao acha o aluno. Os apelidos ajudam quando '
-            'voce chama o aluno de outro jeito em sala.',
+            'Passo 1: a turma e o que ancora os nomes ouvidos na aula. Cada '
+            'turma tem a sua lista, e uma aula pode atender mais de uma.',
             style: TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'TURMA e DISCIPLINA valem para o cadastro manual e tambem para o '
-            'CSV importado (colunas: matricula e nome), entao preencha os dois '
-            'antes de importar.',
-            style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: _Field(
-                  controller: _enrollmentCtrl,
-                  label: 'MATRICULA',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 2,
-                child: _Field(controller: _nameCtrl, label: 'NOME COMPLETO'),
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: _Field(controller: _classCtrl, label: 'TURMA')),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _Field(controller: _subjectCtrl, label: 'DISCIPLINA'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: _Field(
-                  controller: _aliasCtrl,
-                  label: 'APELIDOS (SEPARADOS POR VIRGULA)',
-                  onSubmitted: (_) => _add(),
-                ),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton.icon(
-                onPressed: _importing ? null : _importCsv,
-                icon: const Icon(Icons.upload_file_outlined, size: 15),
-                label: Text(_importing ? 'IMPORTANDO...' : 'IMPORTAR CSV'),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: _add,
-                icon: const Icon(Icons.person_add_alt, size: 15),
-                label: const Text('ADICIONAR'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: AssistantTheme.c3,
-                  foregroundColor: AssistantTheme.bg,
-                ),
-              ),
-            ],
           ),
           const SizedBox(height: 10),
           if (_status.isNotEmpty)
-            Text(_status,
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _status,
                 style: TextStyle(
                   fontSize: 11,
                   color: _statusIsError
                       ? AssistantTheme.danger
                       : AssistantTheme.c3,
-                )),
+                ),
+              ),
+            ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(width: 310, child: _buildClassColumn(classes)),
+                      const SizedBox(width: 14),
+                      Expanded(child: _buildStudentColumn()),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClassColumn(List<ClassGroup> classes) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _Panel(
+            title: 'TURMAS',
+            child: classes.isEmpty
+                ? const _EmptyState(
+                    icon: Icons.school_outlined,
+                    text: 'Nenhuma turma.\nCrie a primeira abaixo.',
+                  )
+                : ListView.separated(
+                    itemCount: classes.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 10, color: AssistantTheme.border),
+                    itemBuilder: (_, index) {
+                      final group = classes[index];
+                      final selected = group.id == _selected?.id;
+                      return InkWell(
+                        onTap: () async {
+                          setState(() => _selected = group);
+                          await _loadStudents();
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                selected
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                size: 14,
+                                color: selected
+                                    ? AssistantTheme.c3
+                                    : AssistantTheme.textMuted,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      group.label,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: selected
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                        color: AssistantTheme.textPrimary,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${group.subject.isEmpty ? "sem disciplina" : group.subject}'
+                                      '  -  ${group.studentCount} aluno(s)',
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: AssistantTheme.textMuted),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Editar turma',
+                                icon: const Icon(Icons.edit_outlined, size: 14),
+                                color: AssistantTheme.textMuted,
+                                onPressed: () => _renameClass(group),
+                              ),
+                              IconButton(
+                                tooltip: 'Remover turma',
+                                icon: const Icon(Icons.delete_outline, size: 14),
+                                color: AssistantTheme.textMuted,
+                                onPressed: () => _deleteClass(group),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(child: _Field(controller: _codeCtrl, label: 'CODIGO')),
+            const SizedBox(width: 8),
+            Expanded(child: _Field(controller: _nameCtrl, label: 'NOME')),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: _Field(
+                controller: _subjectCtrl,
+                label: 'DISCIPLINA',
+                onSubmitted: (_) => _createClass(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: _createClass,
+              icon: const Icon(Icons.add, size: 15),
+              label: const Text('CRIAR'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AssistantTheme.c3,
+                foregroundColor: AssistantTheme.bg,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStudentColumn() {
+    final group = _selected;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _Panel(
+            title: group == null
+                ? 'ALUNOS'
+                : 'ALUNOS DE ${group.display.toUpperCase()}',
+            trailing: TextButton.icon(
+              onPressed: _importing || group == null ? null : _importCsv,
+              icon: const Icon(Icons.upload_file_outlined, size: 14),
+              label: Text(
+                _importing ? 'IMPORTANDO...' : 'IMPORTAR CSV',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+            child: group == null
+                ? const _EmptyState(
+                    icon: Icons.groups_outlined,
+                    text: 'Escolha uma turma ao lado.',
+                  )
                 : _students.isEmpty
                     ? const _EmptyState(
                         icon: Icons.groups_outlined,
-                        text: 'Nenhum aluno cadastrado.\n'
-                            'Importe o CSV da turma ou adicione um aluno '
-                            'acima; depois va para a aba AULA.',
+                        text: 'Turma sem alunos.\nImporte o CSV com as '
+                            'colunas matricula e nome.',
                       )
                     : ListView.separated(
                         itemCount: _students.length,
@@ -1428,9 +1822,6 @@ class _RosterTabState extends State<_RosterTab> {
                           final tags = [
                             if (student.externalId?.isNotEmpty == true)
                               'matricula: ${student.externalId}',
-                            if (student.classGroup.isNotEmpty)
-                              student.classGroup,
-                            if (student.subject.isNotEmpty) student.subject,
                             if (student.aliases.isNotEmpty)
                               'apelidos: ${student.aliases.join(", ")}',
                           ].join('  -  ');
@@ -1459,19 +1850,21 @@ class _RosterTabState extends State<_RosterTab> {
                                 ),
                               ),
                               IconButton(
+                                tooltip: 'Editar aluno',
+                                icon: const Icon(Icons.edit_outlined, size: 15),
+                                color: AssistantTheme.textMuted,
+                                onPressed: () => _editStudent(student),
+                              ),
+                              IconButton(
                                 tooltip: 'Remover',
-                                icon:
-                                    const Icon(Icons.delete_outline, size: 16),
+                                icon: const Icon(Icons.delete_outline, size: 15),
                                 color: AssistantTheme.textMuted,
                                 onPressed: () async {
                                   try {
                                     await education.deleteStudent(student.id);
-                                    await _load();
+                                    await _loadClasses();
                                   } catch (e) {
-                                    setState(() {
-                                      _status = 'Falha ao remover: $e';
-                                      _statusIsError = true;
-                                    });
+                                    _report('Falha ao remover: $e', error: true);
                                   }
                                 },
                               ),
@@ -1480,8 +1873,507 @@ class _RosterTabState extends State<_RosterTab> {
                         },
                       ),
           ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: _Field(controller: _enrollmentCtrl, label: 'MATRICULA'),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 2,
+              child: _Field(controller: _studentCtrl, label: 'NOME COMPLETO'),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _Field(
+                controller: _aliasCtrl,
+                label: 'APELIDOS',
+                onSubmitted: (_) => _addStudent(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: _selected == null ? null : _addStudent,
+              icon: const Icon(Icons.person_add_alt, size: 15),
+              label: const Text('ADICIONAR'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AssistantTheme.c3,
+                foregroundColor: AssistantTheme.bg,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// --- Historico de aulas ----------------------------------------------------
+
+class _HistoryTab extends StatefulWidget {
+  final _Classes classes;
+
+  const _HistoryTab({required this.classes});
+
+  @override
+  State<_HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends State<_HistoryTab> {
+  DateTime? _from;
+  DateTime? _to;
+  List<Lesson> _lessons = [];
+  LessonDetail? _detail;
+  var _loading = false;
+  var _showTranscript = false;
+  var _status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _to = DateTime(now.year, now.month, now.day);
+    _from = _to!.subtract(const Duration(days: 30));
+    _load();
+  }
+
+  String? _iso(DateTime? date) => date?.toIso8601String().split('T').first;
+
+  String _when(Lesson lesson) {
+    final start = lesson.startedAt?.toLocal();
+    if (start == null) return 'sem data';
+    final day = '${start.day.toString().padLeft(2, '0')}/'
+        '${start.month.toString().padLeft(2, '0')}/${start.year}';
+    final hour = '${start.hour.toString().padLeft(2, '0')}:'
+        '${start.minute.toString().padLeft(2, '0')}';
+    return '$day $hour';
+  }
+
+  Future<void> _load({String? keepId}) async {
+    setState(() {
+      _loading = true;
+      _status = '';
+    });
+    try {
+      final lessons = await education.listLessons(
+        dateFrom: _iso(_from),
+        dateTo: _iso(_to),
+        limit: 200,
+      );
+      if (!mounted) return;
+      setState(() => _lessons = lessons);
+      final wanted = keepId ?? _detail?.id;
+      if (wanted != null && lessons.any((item) => item.id == wanted)) {
+        await _open(wanted);
+      } else if (mounted) {
+        setState(() => _detail = null);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao carregar aulas: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _open(String lessonId) async {
+    try {
+      final detail = await education.getLesson(lessonId);
+      if (mounted) {
+        setState(() {
+          _detail = detail;
+          _showTranscript = detail.summary == null || detail.summary!.isEmpty;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao abrir a aula: $e');
+    }
+  }
+
+  Future<void> _pickDate({required bool isFrom}) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: (isFrom ? _from : _to) ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    setState(() => isFrom ? _from = picked : _to = picked);
+    await _load();
+  }
+
+  /// Ajuste do vinculo depois da aula: e por aqui que uma aula gravada sem a
+  /// turma certa volta a contar para as pessoas certas.
+  Future<void> _edit(Lesson lesson) async {
+    final titleCtrl = TextEditingController(text: lesson.title);
+    final classes = widget.classes.value ?? const <ClassGroup>[];
+    final chosen = lesson.classIds.toSet();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: const Text('Editar aula'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _Field(controller: titleCtrl, label: 'TEMA DA AULA'),
+                const SizedBox(height: 12),
+                const Text(
+                  'TURMAS ATENDIDAS',
+                  style: TextStyle(
+                    fontSize: 9,
+                    letterSpacing: 1.5,
+                    color: AssistantTheme.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (classes.isEmpty)
+                  const Text(
+                    'Nenhuma turma cadastrada.',
+                    style: TextStyle(
+                        fontSize: 11, color: AssistantTheme.textMuted),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final group in classes)
+                        FilterChip(
+                          selected: chosen.contains(group.id),
+                          onSelected: (on) => setDialogState(() {
+                            if (on) {
+                              chosen.add(group.id);
+                            } else {
+                              chosen.remove(group.id);
+                            }
+                          }),
+                          label: Text(
+                            group.display,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          backgroundColor: AssistantTheme.bg2,
+                          selectedColor:
+                              AssistantTheme.c3.withValues(alpha: 0.22),
+                          checkmarkColor: AssistantTheme.c3,
+                          side: const BorderSide(color: AssistantTheme.border),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                    ],
+                  ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Trocar a turma vale para o relatorio: a pontuacao de aluno '
+                  'reconhecido segue o cadastro dele, e a dos nomes que nao '
+                  'casaram passa a contar para a turma escolhida aqui.',
+                  style:
+                      TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('SALVAR'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        await education.updateLesson(
+          lesson.id,
+          title: titleCtrl.text.trim(),
+          classIds: chosen.toList(),
+        );
+        await _load(keepId: lesson.id);
+        if (mounted) setState(() => _status = 'Aula atualizada.');
+      } catch (e) {
+        if (mounted) setState(() => _status = 'Falha ao salvar: $e');
+      }
+    }
+    titleCtrl.dispose();
+  }
+
+  Future<void> _delete(Lesson lesson) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Apagar aula'),
+        content: Text(
+          'Apagar a aula de ${_when(lesson)}? A transcricao, o resumo e a '
+          'pontuacao dela vao junto.',
+          style: const TextStyle(color: AssistantTheme.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('APAGAR'),
+          ),
         ],
       ),
+    );
+    if (confirmed != true) return;
+    try {
+      await education.deleteLesson(lesson.id);
+      if (mounted) setState(() => _detail = null);
+      await _load(keepId: '');
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao apagar: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _DateButton(
+                label: 'DE',
+                date: _from,
+                onTap: () => _pickDate(isFrom: true),
+              ),
+              const SizedBox(width: 10),
+              _DateButton(
+                label: 'ATE',
+                date: _to,
+                onTap: () => _pickDate(isFrom: false),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.icon(
+                onPressed: _loading ? null : () => _load(),
+                icon: const Icon(Icons.refresh, size: 15),
+                label: const Text('ATUALIZAR'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AssistantTheme.c3,
+                  foregroundColor: AssistantTheme.bg,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${_lessons.length} aula(s)',
+                style: const TextStyle(
+                    fontSize: 11, color: AssistantTheme.textMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_status.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _status,
+                style: const TextStyle(
+                    fontSize: 11, color: AssistantTheme.textSecondary),
+              ),
+            ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(width: 360, child: _buildList()),
+                      const SizedBox(width: 14),
+                      Expanded(child: _buildDetail()),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildList() {
+    return _Panel(
+      title: 'AULAS',
+      child: _lessons.isEmpty
+          ? const _EmptyState(
+              icon: Icons.history,
+              text: 'Nenhuma aula no periodo.',
+            )
+          : ListView.separated(
+              itemCount: _lessons.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(height: 12, color: AssistantTheme.border),
+              itemBuilder: (_, index) {
+                final lesson = _lessons[index];
+                final selected = lesson.id == _detail?.id;
+                final turmas = lesson.classLabels.isEmpty
+                    ? (lesson.classGroup.isEmpty
+                        ? 'sem turma'
+                        : lesson.classGroup)
+                    : lesson.classLabels.join(' + ');
+
+                return InkWell(
+                  onTap: () => _open(lesson.id),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          lesson.isClosed
+                              ? Icons.check_circle_outline
+                              : Icons.fiber_manual_record,
+                          size: 13,
+                          color: lesson.isClosed
+                              ? AssistantTheme.c3
+                              : AssistantTheme.c4,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${_when(lesson)}  -  ${lesson.subject}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                  color: AssistantTheme.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                '$turmas'
+                                '${lesson.title.isEmpty ? "" : "  -  ${lesson.title}"}',
+                                style: const TextStyle(
+                                    fontSize: 10,
+                                    color: AssistantTheme.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Editar tema e turmas',
+                          icon: const Icon(Icons.edit_outlined, size: 14),
+                          color: AssistantTheme.textMuted,
+                          onPressed: () => _edit(lesson),
+                        ),
+                        IconButton(
+                          tooltip: 'Apagar aula',
+                          icon: const Icon(Icons.delete_outline, size: 14),
+                          color: AssistantTheme.textMuted,
+                          onPressed: () => _delete(lesson),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
+  Widget _buildDetail() {
+    final detail = _detail;
+    if (detail == null) {
+      return const _Panel(
+        title: 'AULA',
+        child: _EmptyState(
+          icon: Icons.article_outlined,
+          text: 'Escolha uma aula na lista para ver o resumo, a transcricao '
+              'e a pontuacao.',
+        ),
+      );
+    }
+
+    final hasSummary = detail.summary != null && detail.summary!.isNotEmpty;
+
+    return Column(
+      children: [
+        Expanded(
+          flex: 3,
+          child: _Panel(
+            title: _showTranscript || !hasSummary
+                ? 'TRANSCRICAO  -  ${detail.segments.length} TRECHOS'
+                : 'RESUMO',
+            trailing: hasSummary
+                ? TextButton(
+                    onPressed: () =>
+                        setState(() => _showTranscript = !_showTranscript),
+                    child: Text(
+                      _showTranscript ? 'VER RESUMO' : 'VER TRANSCRICAO',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                  )
+                : null,
+            child: SingleChildScrollView(
+              child: SelectableText(
+                _showTranscript || !hasSummary
+                    ? (detail.segments.isEmpty
+                        ? 'Sem trechos gravados.'
+                        : detail.segments
+                            .map((item) => item.text)
+                            .join('\n\n'))
+                    : detail.summary!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: AssistantTheme.textPrimary,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          flex: 2,
+          child: _Panel(
+            title: 'PONTUACOES DESTA AULA',
+            child: detail.points.isEmpty
+                ? const _EmptyState(
+                    icon: Icons.emoji_events_outlined,
+                    text: 'Nenhuma pontuacao registrada.',
+                  )
+                : ListView.separated(
+                    itemCount: detail.points.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 14, color: AssistantTheme.border),
+                    itemBuilder: (_, index) => _PointTile(
+                      point: detail.points[index],
+                      onDelete: () async {
+                        try {
+                          await education
+                              .deletePoint(detail.points[index].id);
+                          await _open(detail.id);
+                        } catch (e) {
+                          if (mounted) {
+                            setState(() => _status = 'Falha ao remover: $e');
+                          }
+                        }
+                      },
+                    ),
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1556,10 +2448,10 @@ class _Field extends StatelessWidget {
 class _ClassDropdown extends StatelessWidget {
   final String label;
   final String hint;
-  final List<_ClassOption> options;
-  final _ClassOption? value;
+  final List<ClassGroup> options;
+  final ClassGroup? value;
   final String? allLabel;
-  final ValueChanged<_ClassOption?> onChanged;
+  final ValueChanged<ClassGroup?> onChanged;
 
   const _ClassDropdown({
     required this.label,
@@ -1584,7 +2476,7 @@ class _ClassDropdown extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        DropdownButtonFormField<_ClassOption>(
+        DropdownButtonFormField<ClassGroup>(
           initialValue: value,
           isExpanded: true,
           hint: Text(
@@ -1623,7 +2515,7 @@ class _ClassDropdown extends StatelessWidget {
               DropdownMenuItem(
                 value: option,
                 child: Text(
-                  _optionLabel(option),
+                  option.display,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

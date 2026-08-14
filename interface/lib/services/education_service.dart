@@ -38,12 +38,68 @@ class EducationService {
     return jsonDecode(response.body);
   }
 
+  // --- Turmas --------------------------------------------------------------
+
+  Future<List<ClassGroup>> listClasses({String? subject}) async {
+    final uri = Uri.parse('$_baseUrl/education/classes').replace(
+      queryParameters: {
+        if (subject != null && subject.isNotEmpty) 'subject': subject,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    return (_decode(response) as List<dynamic>)
+        .map((item) => ClassGroup.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ClassGroup> createClass({
+    required String code,
+    String name = '',
+    String subject = '',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/classes'),
+      headers: _headers,
+      body: jsonEncode({'code': code, 'name': name, 'subject': subject}),
+    );
+    return ClassGroup.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<ClassGroup> updateClass(
+    String classId, {
+    String? code,
+    String? name,
+    String? subject,
+    bool? active,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/classes/$classId'),
+      headers: _headers,
+      body: jsonEncode({
+        if (code != null) 'code': code,
+        if (name != null) 'name': name,
+        if (subject != null) 'subject': subject,
+        if (active != null) 'active': active,
+      }),
+    );
+    return ClassGroup.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteClass(String classId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/classes/$classId'),
+      headers: _headers,
+    );
+    _decode(response);
+  }
+
   // --- Aulas ---------------------------------------------------------------
 
   Future<Lesson> createLesson({
     required String subject,
     String title = '',
     String classGroup = '',
+    List<String> classIds = const [],
     String? teacher,
   }) async {
     final response = await http.post(
@@ -53,7 +109,26 @@ class EducationService {
         'subject': subject,
         'title': title,
         'class_group': classGroup,
+        'class_ids': classIds,
         if (teacher != null) 'teacher': teacher,
+      }),
+    );
+    return Lesson.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<Lesson> updateLesson(
+    String lessonId, {
+    String? subject,
+    String? title,
+    List<String>? classIds,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/lessons/$lessonId'),
+      headers: _headers,
+      body: jsonEncode({
+        if (subject != null) 'subject': subject,
+        if (title != null) 'title': title,
+        if (classIds != null) 'class_ids': classIds,
       }),
     );
     return Lesson.fromJson(_decode(response) as Map<String, dynamic>);
@@ -209,11 +284,13 @@ class EducationService {
   // --- Turma ---------------------------------------------------------------
 
   Future<List<Student>> listStudents({
+    String? classId,
     String? classGroup,
     String? subject,
   }) async {
     final uri = Uri.parse('$_baseUrl/education/students').replace(
       queryParameters: {
+        if (classId != null && classId.isNotEmpty) 'class_id': classId,
         if (classGroup != null && classGroup.isNotEmpty)
           'class_group': classGroup,
         if (subject != null && subject.isNotEmpty) 'subject': subject,
@@ -229,6 +306,7 @@ class EducationService {
   Future<Student> createStudent({
     required String name,
     String? externalId,
+    String? classId,
     String classGroup = '',
     String subject = '',
     List<String> aliases = const [],
@@ -239,6 +317,7 @@ class EducationService {
       body: jsonEncode({
         'name': name,
         'external_id': externalId,
+        if (classId != null) 'class_id': classId,
         'class_group': classGroup,
         'subject': subject,
         'aliases': aliases,
@@ -248,16 +327,14 @@ class EducationService {
   }
 
   Future<StudentImportResult> importStudents({
-    required String classGroup,
-    required String subject,
+    required String classId,
     required List<StudentCsvRow> students,
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/students/import'),
       headers: _headers,
       body: jsonEncode({
-        'class_group': classGroup,
-        'subject': subject,
+        'class_id': classId,
         'students': students
             .map((student) => {
                   'enrollment': student.enrollment,
@@ -269,6 +346,24 @@ class EducationService {
     return StudentImportResult.fromJson(
       _decode(response) as Map<String, dynamic>,
     );
+  }
+
+  Future<Student> updateStudent(
+    String studentId, {
+    String? name,
+    String? classId,
+    List<String>? aliases,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/students/$studentId'),
+      headers: _headers,
+      body: jsonEncode({
+        if (name != null) 'name': name,
+        if (classId != null) 'class_id': classId,
+        if (aliases != null) 'aliases': aliases,
+      }),
+    );
+    return Student.fromJson(_decode(response) as Map<String, dynamic>);
   }
 
   Future<void> deleteStudent(String studentId) async {
@@ -345,11 +440,48 @@ int _toInt(dynamic value) =>
 DateTime? _toDate(dynamic value) =>
     value == null ? null : DateTime.tryParse(value.toString());
 
+/// Turma como entidade do backend. `label` e o texto que aparece no aluno e
+/// na aula, montado a partir do codigo e do nome.
+class ClassGroup {
+  final String id;
+  final String code;
+  final String name;
+  final String subject;
+  final String label;
+  final bool active;
+  final int studentCount;
+
+  const ClassGroup({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.subject,
+    required this.label,
+    this.active = true,
+    this.studentCount = 0,
+  });
+
+  factory ClassGroup.fromJson(Map<String, dynamic> json) => ClassGroup(
+        id: json['id'].toString(),
+        code: json['code']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        subject: json['subject']?.toString() ?? '',
+        label: json['label']?.toString() ?? '',
+        active: json['active'] != false,
+        studentCount: _toInt(json['student_count']),
+      );
+
+  /// Como a turma aparece nas listas: "3001 Presencial - ARA0040".
+  String get display => subject.isEmpty ? label : '$label - $subject';
+}
+
 class Lesson {
   final String id;
   final String subject;
   final String title;
   final String classGroup;
+  final List<String> classIds;
+  final List<String> classLabels;
   final String status;
   final DateTime? startedAt;
   final DateTime? endedAt;
@@ -365,6 +497,8 @@ class Lesson {
     required this.title,
     required this.classGroup,
     required this.status,
+    this.classIds = const [],
+    this.classLabels = const [],
     this.startedAt,
     this.endedAt,
     this.summary,
@@ -381,6 +515,12 @@ class Lesson {
         subject: json['subject']?.toString() ?? '',
         title: json['title']?.toString() ?? '',
         classGroup: json['class_group']?.toString() ?? '',
+        classIds: ((json['class_ids'] as List<dynamic>?) ?? [])
+            .map((item) => item.toString())
+            .toList(),
+        classLabels: ((json['class_labels'] as List<dynamic>?) ?? [])
+            .map((item) => item.toString())
+            .toList(),
         status: json['status']?.toString() ?? 'recording',
         startedAt: _toDate(json['started_at']),
         endedAt: _toDate(json['ended_at']),
@@ -402,6 +542,8 @@ class LessonDetail extends Lesson {
     required super.title,
     required super.classGroup,
     required super.status,
+    super.classIds,
+    super.classLabels,
     super.startedAt,
     super.endedAt,
     super.summary,
@@ -420,6 +562,8 @@ class LessonDetail extends Lesson {
       subject: lesson.subject,
       title: lesson.title,
       classGroup: lesson.classGroup,
+      classIds: lesson.classIds,
+      classLabels: lesson.classLabels,
       status: lesson.status,
       startedAt: lesson.startedAt,
       endedAt: lesson.endedAt,
@@ -571,6 +715,7 @@ class LessonSummary {
 class Student {
   final String id;
   final String name;
+  final String? classId;
   final String? externalId;
   final String classGroup;
   final String subject;
@@ -580,6 +725,7 @@ class Student {
   Student({
     required this.id,
     required this.name,
+    this.classId,
     this.externalId,
     required this.classGroup,
     required this.subject,
@@ -590,6 +736,7 @@ class Student {
   factory Student.fromJson(Map<String, dynamic> json) => Student(
         id: json['id'].toString(),
         name: json['name']?.toString() ?? '',
+        classId: json['class_id']?.toString(),
         externalId: json['external_id']?.toString(),
         classGroup: json['class_group']?.toString() ?? '',
         subject: json['subject']?.toString() ?? '',

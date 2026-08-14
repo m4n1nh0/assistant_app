@@ -308,12 +308,39 @@ Grava a aula em blocos, transcreve cada bloco, indexa a transcricao no Qdrant e
 gera o resumo sob demanda. Acessivel pelo botao "Modo Aula" no painel esquerdo
 da interface.
 
-As abas seguem a ordem de uso — `1. TURMA`, `2. AULA`, `3. PONTUACOES` — porque
-o cadastro precede a gravacao: e ele que ancora os nomes ouvidos no audio. Com a
-turma vazia o dialogo abre no cadastro e a aba da aula exibe o aviso; com a turma
-ja cadastrada, abre direto na gravacao. A pontuacao nao tem botao: o professor
-cita o aluno em voz alta durante a aula ("meio ponto extra para a Ana pela
-participacao") e o trecho seguinte traz o registro.
+As abas seguem a ordem de uso — `1. TURMAS`, `2. GRAVAR AULA`, `3. PONTUACOES`,
+`4. HISTORICO` — porque o cadastro precede a gravacao: e ele que ancora os nomes
+ouvidos no audio. Sem turma cadastrada o dialogo abre no cadastro; com turma,
+abre direto na gravacao. A pontuacao nao tem botao: o professor cita o aluno em
+voz alta durante a aula ("meio ponto extra para a Ana pela participacao") e o
+trecho seguinte traz o registro. O `4. HISTORICO` lista as aulas do periodo,
+mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema e
+turmas depois — inclusive de aula ja encerrada.
+
+#### Turma como entidade
+
+Turma nao e mais texto repetido no aluno e na aula: e a tabela `class_groups`
+(`code` 3001, `name` Presencial, `subject` ARA0040). O aluno aponta para ela por
+`students.class_id` e a aula por `lesson_class_groups`, um vinculo N:N — e assim
+que uma aula reunida atende duas turmas ao mesmo tempo e que duas turmas da
+mesma disciplina no mesmo dia continuam distintas.
+
+```mermaid
+erDiagram
+    class_groups ||--o{ students : "class_id"
+    class_groups ||--o{ lesson_class_groups : ""
+    lessons ||--o{ lesson_class_groups : "aula reunida tem varias"
+    lessons ||--o{ lesson_points : ""
+    students ||--o{ lesson_points : "student_id"
+```
+
+Os campos de texto `class_group` e `subject` continuam gravados no aluno e na
+aula como copia do rotulo da turma, para consulta por nome seguir funcionando;
+quem manda e o vinculo. Renomear a turma desce o novo rotulo para os alunos
+dela. Na primeira subida do backend, `_backfill_class_groups` deriva as turmas
+dos textos que ja existiam, liga cada aluno a sua e liga cada aula — aula que
+estava sem turma no texto era o jeito antigo de dizer reunida, entao entra ligada
+a todas as turmas da disciplina.
 
 ```mermaid
 flowchart LR
@@ -339,16 +366,32 @@ Pontos de atencao do fluxo:
   frequencia, entao o LLM recebe a lista de alunos e o backend ainda faz
   casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
   a pontuacao e gravada com o nome ouvido e marcada para revisao na interface.
-- **Duas turmas da mesma disciplina se separam pela turma.** A aula nasce com a
-  dupla turma + disciplina escolhida na lista, e so os alunos daquela dupla vao
-  para o casamento de nomes. No relatorio a turma nao vem do ponto — `lesson_points`
-  nao guarda esse campo — e sim de um `LEFT OUTER JOIN` com a aula pelo
-  `lesson_id`, o que tambem vale para pontos ja gravados. O join e externo de
+- **Duas turmas da mesma disciplina se separam pelo vinculo.** Na aba de
+  gravacao, as turmas aparecem como marcadores: marcar uma so restringe o
+  reconhecimento de nomes aos alunos dela, marcar duas faz a aula reunida. Aluno
+  sem turma nenhuma no cadastro segue valendo para qualquer aula, e aula antiga,
+  anterior a tabela de turmas e sem vinculo, ainda cai na comparacao por texto.
+- **A turma do ponto vem do aluno.** `lesson_points` nao guarda esse campo, entao
+  o relatorio resolve com dois `LEFT OUTER JOIN`: o cadastro do aluno primeiro e
+  a aula como reserva, para quando o nome nao casou com ninguem. E por isso que
+  aula reunida ainda fecha nota separada por turma. Os joins sao externos de
   proposito: ponto de aula apagada continua no relatorio, com a turma vazia.
-- **A turma pode ser importada por CSV.** Na aba `TURMA`, informe a turma e a
-  disciplina e selecione um arquivo com as colunas `matricula` e `nome`. Uma
-  matricula nova cria o aluno; uma matricula ja cadastrada atualiza nome, turma e
-  disciplina sem duplicar o registro. Arquivos separados por virgula ou ponto e
+- **Pontuacao so e gravada com prova na transcricao.** Sao tres portas antes de
+  chamar o LLM e depois dele: o trecho precisa conter uma palavra de gatilho
+  (`ponto`, `decimo`, `bonus`, `extra`...), a citacao devolvida precisa existir
+  na transcricao e o nome premiado precisa ter sido dito ali. Sem isso o modelo
+  premia aluno que so aparece na lista da turma enviada no prompt. O que e
+  descartado fica no log.
+- **A sessao e renovada durante a aula.** O token vale 24h; uma aula de duas
+  horas com token velho estourava no meio e os blocos passavam a voltar 401.
+  Agora o app chama `POST /auth/refresh` ao abrir, ao iniciar a aula e a cada 20
+  minutos de gravacao. Bloco que falha no envio **nao e apagado**: fica na fila,
+  e tentado de novo a cada 20 segundos e some da fila so quando o backend
+  confirma.
+- **A turma pode ser importada por CSV.** Na aba `TURMAS`, escolha a turma e
+  selecione um arquivo com as colunas `matricula` e `nome`. Uma matricula nova
+  cria o aluno; uma matricula ja cadastrada atualiza o nome e passa para a turma
+  escolhida, sem duplicar o registro. Arquivos separados por virgula ou ponto e
   virgula sao aceitos.
 - **Aulas longas usam mapa-reducao.** Acima de `EDUCATION_SUMMARY_MAX_CHARS` a
   transcricao e resumida em janelas e depois consolidada, para caber na janela de
@@ -367,7 +410,11 @@ Endpoints principais:
 | `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda |
 | `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
-| `GET /education/students` | Cadastro da turma |
+| `GET /education/classes` | Turmas, com quantos alunos cada uma tem |
+| `POST /education/classes` | Cria a turma (codigo, nome, disciplina) |
+| `PATCH /education/classes/{id}` | Renomeia e desce o rotulo para os alunos |
+| `PATCH /education/lessons/{id}` | Corrige tema e turmas de uma aula gravada |
+| `GET /education/students` | Alunos, filtraveis por `class_id` |
 | `POST /education/students/import` | Importacao de alunos por matricula e nome |
 | `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
 

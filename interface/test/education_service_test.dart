@@ -140,6 +140,64 @@ void main() {
     });
   });
 
+  group('ClassGroup', () {
+    test('parses a class with code, name and student count', () {
+      final group = ClassGroup.fromJson({
+        'id': 'c1',
+        'code': '3001',
+        'name': 'Presencial',
+        'subject': 'ARA0040',
+        'label': '3001 Presencial',
+        'active': true,
+        'student_count': 14,
+      });
+
+      expect(group.label, '3001 Presencial');
+      expect(group.display, '3001 Presencial - ARA0040');
+      expect(group.studentCount, 14);
+    });
+
+    test('display falls back to the label when there is no subject', () {
+      final group = ClassGroup.fromJson({
+        'id': 'c2',
+        'code': '3002',
+        'label': '3002',
+      });
+
+      expect(group.display, '3002');
+      expect(group.studentCount, 0);
+      expect(group.active, isTrue);
+    });
+  });
+
+  group('Lesson classes', () {
+    test('a joint lesson carries every linked class', () {
+      final lesson = Lesson.fromJson({
+        'id': 'l1',
+        'subject': 'ARA0040',
+        'status': 'recording',
+        'class_group': '',
+        'class_ids': ['c1', 'c2'],
+        'class_labels': ['3001 Presencial', '3002 Semipresencial'],
+      });
+
+      expect(lesson.classIds, ['c1', 'c2']);
+      expect(lesson.classLabels.last, '3002 Semipresencial');
+    });
+
+    test('older lesson without links keeps the text field', () {
+      final lesson = Lesson.fromJson({
+        'id': 'l2',
+        'subject': 'ARA0040',
+        'status': 'closed',
+        'class_group': '3001',
+      });
+
+      expect(lesson.classIds, isEmpty);
+      expect(lesson.classGroup, '3001');
+    });
+  });
+
   group('PointsReport', () {
     test('groups totals per student', () {
       final report = PointsReport.fromJson({

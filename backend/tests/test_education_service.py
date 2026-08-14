@@ -84,6 +84,12 @@ def test_empty_roster_keeps_heard_name():
 # --- Extracao de pontuacao -------------------------------------------------
 
 
+TRANSCRIPT = (
+    "pessoal, o Tiago foi no quadro e resolveu a questao, "
+    "entao o Tiago ganhou meio ponto extra hoje"
+)
+
+
 def test_extract_points_maps_names_to_roster(monkeypatch):
     fake_llm(monkeypatch, json.dumps({
         "pontuacoes": [
@@ -91,12 +97,12 @@ def test_extract_points_maps_names_to_roster(monkeypatch):
                 "aluno": "Tiago",
                 "pontos": 0.5,
                 "motivo": "resolveu no quadro",
-                "trecho": "Tiago ganhou meio ponto",
+                "trecho": "o Tiago ganhou meio ponto extra",
             }
         ]
     }))
 
-    entries = run(service.extract_points(text="aula de hoje", roster=ROSTER))
+    entries = run(service.extract_points(text=TRANSCRIPT, roster=ROSTER))
 
     assert len(entries) == 1
     assert entries[0]["student_id"] == "s2"
@@ -108,12 +114,16 @@ def test_extract_points_maps_names_to_roster(monkeypatch):
 def test_extract_points_reads_json_inside_markdown_fence(monkeypatch):
     fenced = (
         "Claro, segue:\n```json\n"
-        '{"pontuacoes": [{"aluno": "Aninha", "pontos": 2}]}\n'
+        '{"pontuacoes": [{"aluno": "Aninha", "pontos": 2, '
+        '"trecho": "dois pontos pra Aninha"}]}\n'
         "```\n"
     )
     fake_llm(monkeypatch, fenced)
 
-    entries = run(service.extract_points(text="aula", roster=ROSTER))
+    entries = run(service.extract_points(
+        text="isso ai, dois pontos pra Aninha pela participacao",
+        roster=ROSTER,
+    ))
 
     assert len(entries) == 1
     assert entries[0]["student_id"] == "s1"
@@ -122,10 +132,19 @@ def test_extract_points_reads_json_inside_markdown_fence(monkeypatch):
 
 def test_extract_points_accepts_points_written_as_text(monkeypatch):
     fake_llm(monkeypatch, json.dumps({
-        "pontuacoes": [{"aluno": "Thiago Souza", "pontos": "1,5 ponto"}]
+        "pontuacoes": [
+            {
+                "aluno": "Thiago Souza",
+                "pontos": "1,5 ponto",
+                "trecho": "o Thiago leva um ponto e meio",
+            }
+        ]
     }))
 
-    entries = run(service.extract_points(text="aula", roster=ROSTER))
+    entries = run(service.extract_points(
+        text="o Thiago leva um ponto e meio pela pergunta",
+        roster=ROSTER,
+    ))
 
     assert entries[0]["points"] == 1.5
 
@@ -133,26 +152,90 @@ def test_extract_points_accepts_points_written_as_text(monkeypatch):
 def test_extract_points_discards_entries_without_name_or_value(monkeypatch):
     fake_llm(monkeypatch, json.dumps({
         "pontuacoes": [
-            {"aluno": "", "pontos": 1},
-            {"aluno": "Thiago Souza", "pontos": 0},
-            {"aluno": "Thiago Souza", "pontos": "nenhum"},
-            {"aluno": "Thiago Souza", "pontos": 999},
+            {"aluno": "", "pontos": 1, "trecho": "ganhou meio ponto extra"},
+            {"aluno": "Tiago", "pontos": 0, "trecho": "ganhou meio ponto extra"},
+            {"aluno": "Tiago", "pontos": "nenhum", "trecho": "meio ponto"},
+            {"aluno": "Tiago", "pontos": 999, "trecho": "meio ponto"},
         ]
     }))
 
-    assert run(service.extract_points(text="aula", roster=ROSTER)) == []
+    assert run(service.extract_points(text=TRANSCRIPT, roster=ROSTER)) == []
+
+
+def test_extract_points_discards_student_never_named_in_the_block(monkeypatch):
+    # O prompt leva a turma inteira; o modelo nao pode premiar quem so
+    # aparece nessa lista.
+    fake_llm(monkeypatch, json.dumps({
+        "pontuacoes": [
+            {
+                "aluno": "Maria Clara Lima",
+                "pontos": 1,
+                "trecho": "o Tiago ganhou meio ponto extra",
+            }
+        ]
+    }))
+
+    assert run(service.extract_points(text=TRANSCRIPT, roster=ROSTER)) == []
+
+
+def test_extract_points_discards_quote_absent_from_the_transcript(monkeypatch):
+    fake_llm(monkeypatch, json.dumps({
+        "pontuacoes": [
+            {
+                "aluno": "Tiago",
+                "pontos": 1,
+                "trecho": "vou dar um ponto para todo mundo que veio hoje",
+            }
+        ]
+    }))
+
+    assert run(service.extract_points(text=TRANSCRIPT, roster=ROSTER)) == []
+
+
+def test_extract_points_accepts_a_quote_reworded_by_the_model(monkeypatch):
+    fake_llm(monkeypatch, json.dumps({
+        "pontuacoes": [
+            {
+                "aluno": "Tiago",
+                "pontos": 0.5,
+                "trecho": "o Tiago ganhou meio ponto extra hoje.",
+            }
+        ]
+    }))
+
+    entries = run(service.extract_points(text=TRANSCRIPT, roster=ROSTER))
+
+    assert len(entries) == 1
+
+
+def test_extract_points_skips_the_llm_when_the_block_has_no_trigger(monkeypatch):
+    calls = fake_llm(monkeypatch, json.dumps({"pontuacoes": []}))
+
+    entries = run(service.extract_points(
+        text="hoje a gente comeca normalizacao de tabelas, terceira forma normal",
+        roster=ROSTER,
+    ))
+
+    assert entries == []
+    assert calls == []
+
+
+def test_mentions_points_ignores_words_that_only_contain_the_trigger():
+    assert not service.mentions_points("vamos apontar as chaves estrangeiras")
+    assert service.mentions_points("isso vale meio ponto")
+    assert service.mentions_points("dou um decimo pra quem responder agora")
 
 
 def test_extract_points_returns_empty_on_unparseable_answer(monkeypatch):
     fake_llm(monkeypatch, "nao identifiquei pontuacoes nesse trecho")
 
-    assert run(service.extract_points(text="aula", roster=ROSTER)) == []
+    assert run(service.extract_points(text=TRANSCRIPT, roster=ROSTER)) == []
 
 
 def test_extract_points_returns_empty_when_llm_fails(monkeypatch):
     fake_llm(monkeypatch, "sem credito", is_error=True)
 
-    assert run(service.extract_points(text="aula", roster=ROSTER)) == []
+    assert run(service.extract_points(text=TRANSCRIPT, roster=ROSTER)) == []
 
 
 def test_extract_points_skips_llm_call_for_blank_text(monkeypatch):
@@ -165,7 +248,7 @@ def test_extract_points_skips_llm_call_for_blank_text(monkeypatch):
 def test_points_prompt_lists_roster_names(monkeypatch):
     calls = fake_llm(monkeypatch, json.dumps({"pontuacoes": []}))
 
-    run(service.extract_points(text="aula", roster=ROSTER))
+    run(service.extract_points(text=TRANSCRIPT, roster=ROSTER))
 
     assert "Ana Paula Ribeiro" in calls[0]["message"]
     assert "Maria Eduarda Alves" in calls[0]["message"]

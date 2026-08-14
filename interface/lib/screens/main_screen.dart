@@ -47,6 +47,9 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       api.setToken(storedToken);
       final account = await api.currentAccount();
       if (account != null) {
+        // Cada abertura devolve o prazo cheio ao token guardado: sessao velha
+        // expirava no meio de uso longo, como uma aula sendo gravada.
+        await api.refreshSession();
         await _activateAccount(account);
         ref.read(isAuthenticatedProvider.notifier).state = true;
       } else {

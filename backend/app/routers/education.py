@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import datetime, time, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from loguru import logger
@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..core.database import (
+    ClassGroupModel,
+    LessonClassGroupModel,
     LessonModel,
     LessonPointModel,
     LessonSegmentModel,
@@ -19,6 +21,9 @@ from ..core.database import (
 )
 from ..core.security import get_current_user
 from ..models.schemas import (
+    ClassGroupCreate,
+    ClassGroupResponse,
+    ClassGroupUpdate,
     EmbeddingStatusResponse,
     LessonCreate,
     LessonDetailResponse,
@@ -55,11 +60,33 @@ router = APIRouter(
 # --- Mapeadores ------------------------------------------------------------
 
 
+def _class_label(item: ClassGroupModel) -> str:
+    parts = [(item.code or "").strip(), (item.name or "").strip()]
+    label = " ".join(part for part in parts if part)
+    return label or (item.subject or "").strip() or "turma"
+
+
+def _class_response(
+    item: ClassGroupModel,
+    student_count: int = 0,
+) -> ClassGroupResponse:
+    return ClassGroupResponse(
+        id=item.id,
+        code=item.code or "",
+        name=item.name or "",
+        subject=item.subject or "",
+        label=_class_label(item),
+        active=bool(item.active),
+        student_count=student_count,
+    )
+
+
 def _student_response(item: StudentModel) -> StudentResponse:
     return StudentResponse(
         id=item.id,
         tutor_id=item.tutor_id,
         name=item.name,
+        class_id=item.class_id,
         class_group=item.class_group or "",
         subject=item.subject or "",
         external_id=item.external_id,
@@ -70,13 +97,18 @@ def _student_response(item: StudentModel) -> StudentResponse:
     )
 
 
-def _lesson_response(item: LessonModel) -> LessonResponse:
+def _lesson_response(
+    item: LessonModel,
+    classes: Sequence[ClassGroupModel] = (),
+) -> LessonResponse:
     return LessonResponse(
         id=item.id,
         tutor_id=item.tutor_id,
         subject=item.subject,
         title=item.title or "",
         class_group=item.class_group or "",
+        class_ids=[group.id for group in classes],
+        class_labels=[_class_label(group) for group in classes],
         teacher=item.teacher,
         status=item.status,
         started_at=item.started_at,
@@ -130,11 +162,87 @@ async def _get_lesson(lesson_id: str, tutor_id: str, db: AsyncSession) -> Lesson
     return lesson
 
 
-async def _roster(lesson: LessonModel, db: AsyncSession) -> List[Dict[str, Any]]:
-    """Alunos da turma da aula, mais os cadastrados sem turma/disciplina.
+async def _classes_of(
+    lesson_ids: Sequence[str],
+    db: AsyncSession,
+) -> Dict[str, List[ClassGroupModel]]:
+    """Turmas de cada aula, numa consulta so."""
+    if not lesson_ids:
+        return {}
+    result = await db.execute(
+        select(LessonClassGroupModel.lesson_id, ClassGroupModel)
+        .join(
+            ClassGroupModel,
+            ClassGroupModel.id == LessonClassGroupModel.class_group_id,
+        )
+        .where(LessonClassGroupModel.lesson_id.in_(list(lesson_ids)))
+    )
+    grouped: Dict[str, List[ClassGroupModel]] = defaultdict(list)
+    for lesson_id, group in result.all():
+        grouped[lesson_id].append(group)
+    for items in grouped.values():
+        items.sort(key=_class_label)
+    return grouped
 
-    O cadastro sem turma funciona como lista geral do usuario, util para quem
-    acompanha uma turma so e nao quer preencher esses campos.
+
+async def _resolve_classes(
+    class_ids: Sequence[str],
+    tutor_id: str,
+    db: AsyncSession,
+) -> List[ClassGroupModel]:
+    """Valida que as turmas informadas existem e sao do proprio usuario."""
+    wanted = [item.strip() for item in class_ids if item and item.strip()]
+    if not wanted:
+        return []
+    result = await db.execute(
+        select(ClassGroupModel).where(
+            ClassGroupModel.tutor_id == tutor_id,
+            ClassGroupModel.id.in_(wanted),
+        )
+    )
+    found = list(result.scalars().all())
+    if len(found) != len(set(wanted)):
+        raise HTTPException(404, "Turma nao encontrada")
+    return found
+
+
+async def _link_classes(
+    lesson: LessonModel,
+    classes: Sequence[ClassGroupModel],
+    db: AsyncSession,
+) -> None:
+    """Refaz o vinculo da aula e reescreve os campos de texto derivados.
+
+    `class_group` e `subject` na aula viram rotulo: uma turma escreve o nome
+    dela, varias deixam a turma vazia — que continua sendo como o resto do
+    codigo le "vale para todas".
+    """
+    await db.execute(
+        sql_delete(LessonClassGroupModel).where(
+            LessonClassGroupModel.lesson_id == lesson.id
+        )
+    )
+    for group in classes:
+        db.add(
+            LessonClassGroupModel(lesson_id=lesson.id, class_group_id=group.id)
+        )
+    if len(classes) == 1:
+        lesson.class_group = _class_label(classes[0])
+        if classes[0].subject:
+            lesson.subject = classes[0].subject
+    elif classes:
+        lesson.class_group = ""
+        subjects = {group.subject for group in classes if group.subject}
+        if len(subjects) == 1:
+            lesson.subject = subjects.pop()
+
+
+async def _roster(lesson: LessonModel, db: AsyncSession) -> List[Dict[str, Any]]:
+    """Alunos que podem ser citados nesta aula.
+
+    Com turmas vinculadas, sao os alunos delas — varias turmas numa aula
+    reunida entram juntas. Aluno sem turma nenhuma no cadastro segue valendo
+    para qualquer aula, e aula antiga sem vinculo cai na comparacao por texto.
     """
     result = await db.execute(
         select(StudentModel).where(
@@ -142,14 +250,24 @@ async def _roster(lesson: LessonModel, db: AsyncSession) -> List[Dict[str, Any]]
             StudentModel.active.is_(True),
         )
     )
+    students = list(result.scalars().all())
+    linked = {group.id for group in (await _classes_of([lesson.id], db)).get(lesson.id, [])}
+    lesson_group = (lesson.class_group or "").strip()
+    lesson_subject = (lesson.subject or "").strip()
     roster = []
-    for student in result.scalars().all():
+    for student in students:
         group = (student.class_group or "").strip()
         subject = (student.subject or "").strip()
-        if group and group != (lesson.class_group or "").strip():
-            continue
-        if subject and subject != (lesson.subject or "").strip():
-            continue
+        if linked:
+            if student.class_id and student.class_id not in linked:
+                continue
+            if not student.class_id and (group or subject):
+                continue
+        else:
+            if group and lesson_group and group != lesson_group:
+                continue
+            if subject and lesson_subject and subject != lesson_subject:
+                continue
         roster.append({
             "id": student.id,
             "name": student.name,
@@ -293,11 +411,151 @@ async def _ingest_segment(
     )
 
 
+# --- Turmas ----------------------------------------------------------------
+
+
+@router.get("/classes", response_model=List[ClassGroupResponse])
+async def list_classes(
+    subject: Optional[str] = None,
+    active_only: bool = True,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(ClassGroupModel).where(
+        ClassGroupModel.tutor_id == user["tutor_id"]
+    )
+    if subject:
+        query = query.where(ClassGroupModel.subject == subject)
+    if active_only:
+        query = query.where(ClassGroupModel.active.is_(True))
+    result = await db.execute(
+        query.order_by(ClassGroupModel.subject, ClassGroupModel.code)
+    )
+    groups = list(result.scalars().all())
+
+    counts = dict(
+        (
+            await db.execute(
+                select(StudentModel.class_id, func.count(StudentModel.id))
+                .where(
+                    StudentModel.tutor_id == user["tutor_id"],
+                    StudentModel.active.is_(True),
+                )
+                .group_by(StudentModel.class_id)
+            )
+        ).all()
+    )
+    return [_class_response(group, counts.get(group.id, 0)) for group in groups]
+
+
+@router.post("/classes", response_model=ClassGroupResponse)
+async def create_class(
+    body: ClassGroupCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    code = body.code.strip()
+    subject = body.subject.strip()
+    if not code and not subject:
+        raise HTTPException(422, "Informe ao menos o codigo da turma")
+
+    duplicate = await db.execute(
+        select(ClassGroupModel).where(
+            ClassGroupModel.tutor_id == user["tutor_id"],
+            ClassGroupModel.code == code,
+            ClassGroupModel.subject == subject,
+        )
+    )
+    existing = duplicate.scalars().first()
+    if existing is not None:
+        raise HTTPException(409, "Ja existe uma turma com esse codigo nessa disciplina")
+
+    group = ClassGroupModel(
+        tutor_id=user["tutor_id"],
+        code=code,
+        name=body.name.strip(),
+        subject=subject,
+    )
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    return _class_response(group)
+
+
+@router.patch("/classes/{class_id}", response_model=ClassGroupResponse)
+async def update_class(
+    class_id: str,
+    body: ClassGroupUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group = await db.get(ClassGroupModel, class_id)
+    if group is None or group.tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Turma nao encontrada")
+
+    if body.code is not None:
+        group.code = body.code.strip()
+    if body.name is not None:
+        group.name = body.name.strip()
+    if body.subject is not None:
+        group.subject = body.subject.strip()
+    if body.active is not None:
+        group.active = body.active
+
+    # Os campos de texto do aluno sao copia da turma: renomear tem de descer.
+    students = (
+        await db.execute(
+            select(StudentModel).where(StudentModel.class_id == group.id)
+        )
+    ).scalars().all()
+    for student in students:
+        student.class_group = _class_label(group)
+        student.subject = group.subject or ""
+
+    await db.commit()
+    await db.refresh(group)
+    return _class_response(group, len(students))
+
+
+@router.delete("/classes/{class_id}")
+async def delete_class(
+    class_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group = await db.get(ClassGroupModel, class_id)
+    if group is None or group.tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Turma nao encontrada")
+
+    linked = (
+        await db.execute(
+            select(func.count(StudentModel.id)).where(
+                StudentModel.class_id == group.id
+            )
+        )
+    ).scalar_one()
+    if linked:
+        raise HTTPException(
+            409,
+            f"A turma tem {linked} aluno(s). Mova ou remova os alunos antes.",
+        )
+
+    await db.execute(
+        sql_delete(LessonClassGroupModel).where(
+            LessonClassGroupModel.class_group_id == group.id
+        )
+    )
+    await db.delete(group)
+    await db.commit()
+    return {"success": True}
+
+
 # --- Alunos ----------------------------------------------------------------
 
 
 @router.get("/students", response_model=List[StudentResponse])
 async def list_students(
+    class_id: Optional[str] = None,
     class_group: Optional[str] = None,
     subject: Optional[str] = None,
     active_only: bool = True,
@@ -305,6 +563,8 @@ async def list_students(
     db: AsyncSession = Depends(get_db),
 ):
     query = select(StudentModel).where(StudentModel.tutor_id == user["tutor_id"])
+    if class_id:
+        query = query.where(StudentModel.class_id == class_id)
     if class_group:
         query = query.where(StudentModel.class_group == class_group)
     if subject:
@@ -334,11 +594,15 @@ async def create_student(
         )
         if duplicate.scalars().first() is not None:
             raise HTTPException(409, "Matricula ja cadastrada")
+    group = None
+    if body.class_id:
+        group = (await _resolve_classes([body.class_id], user["tutor_id"], db))[0]
     student = StudentModel(
         tutor_id=user["tutor_id"],
         name=name,
-        class_group=body.class_group.strip(),
-        subject=body.subject.strip(),
+        class_id=group.id if group else None,
+        class_group=_class_label(group) if group else body.class_group.strip(),
+        subject=(group.subject if group else body.subject).strip(),
         external_id=external_id,
         aliases=[alias.strip() for alias in body.aliases if alias.strip()],
         notes=body.notes,
@@ -356,12 +620,18 @@ async def import_students(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    class_group = body.class_group.strip()
-    subject = body.subject.strip()
-    if not class_group:
-        raise HTTPException(422, "Turma e obrigatoria para importar alunos")
-    if not subject:
-        raise HTTPException(422, "Disciplina e obrigatoria para importar alunos")
+    group = None
+    if body.class_id:
+        group = (await _resolve_classes([body.class_id], user["tutor_id"], db))[0]
+        class_group = _class_label(group)
+        subject = (group.subject or "").strip()
+    else:
+        class_group = body.class_group.strip()
+        subject = body.subject.strip()
+        if not class_group:
+            raise HTTPException(422, "Turma e obrigatoria para importar alunos")
+        if not subject:
+            raise HTTPException(422, "Disciplina e obrigatoria para importar alunos")
 
     incoming: dict[str, tuple[str, str]] = {}
     for index, item in enumerate(body.students, start=2):
@@ -399,6 +669,7 @@ async def import_students(
                     tutor_id=user["tutor_id"],
                     external_id=enrollment,
                     name=name,
+                    class_id=group.id if group else None,
                     class_group=class_group,
                     subject=subject,
                     aliases=[],
@@ -410,6 +681,7 @@ async def import_students(
 
         student.external_id = enrollment
         student.name = name
+        student.class_id = group.id if group else student.class_id
         student.class_group = class_group
         student.subject = subject
         student.active = True
@@ -434,6 +706,11 @@ async def update_student(
     if student is None or student.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Aluno nao encontrado")
 
+    if body.class_id is not None:
+        group = (await _resolve_classes([body.class_id], user["tutor_id"], db))[0]
+        student.class_id = group.id
+        student.class_group = _class_label(group)
+        student.subject = group.subject or ""
     for field in ("name", "class_group", "subject", "external_id", "notes", "active"):
         value = getattr(body, field)
         if value is not None:
@@ -469,7 +746,11 @@ async def create_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    classes = await _resolve_classes(body.class_ids, user["tutor_id"], db)
     subject = body.subject.strip()
+    if not subject and classes:
+        subjects = {group.subject for group in classes if group.subject}
+        subject = subjects.pop() if len(subjects) == 1 else ""
     if not subject:
         raise HTTPException(422, "Disciplina e obrigatoria")
 
@@ -483,9 +764,11 @@ async def create_lesson(
         metadata_=body.metadata,
     )
     db.add(lesson)
+    await db.flush()
+    await _link_classes(lesson, classes, db)
     await db.commit()
     await db.refresh(lesson)
-    return _lesson_response(lesson)
+    return _lesson_response(lesson, classes)
 
 
 @router.get("/lessons", response_model=List[LessonResponse])
@@ -511,7 +794,9 @@ async def list_lessons(
         query = query.where(LessonModel.started_at <= end)
 
     result = await db.execute(query.order_by(LessonModel.started_at.desc()).limit(limit))
-    return [_lesson_response(item) for item in result.scalars().all()]
+    lessons = list(result.scalars().all())
+    classes = await _classes_of([item.id for item in lessons], db)
+    return [_lesson_response(item, classes.get(item.id, [])) for item in lessons]
 
 
 @router.get("/lessons/{lesson_id}", response_model=LessonDetailResponse)
@@ -539,8 +824,9 @@ async def get_lesson(
     )
     points = [_point_response(item) for item in result.scalars().all()]
 
+    classes = (await _classes_of([lesson.id], db)).get(lesson.id, [])
     return LessonDetailResponse(
-        **_lesson_response(lesson).model_dump(),
+        **_lesson_response(lesson, classes).model_dump(),
         segments=segments,
         points=points,
     )
@@ -560,9 +846,17 @@ async def update_lesson(
             setattr(lesson, field, value)
     if body.metadata is not None:
         lesson.metadata_ = body.metadata
+
+    classes = (await _classes_of([lesson.id], db)).get(lesson.id, [])
+    if body.class_ids is not None:
+        # Corrigir o vinculo depois da aula e o caminho para consertar
+        # pontuacao que ficou na turma errada.
+        classes = await _resolve_classes(body.class_ids, user["tutor_id"], db)
+        await _link_classes(lesson, classes, db)
+
     await db.commit()
     await db.refresh(lesson)
-    return _lesson_response(lesson)
+    return _lesson_response(lesson, classes)
 
 
 @router.delete("/lessons/{lesson_id}")
@@ -577,6 +871,11 @@ async def delete_lesson(
     )
     await db.execute(
         sql_delete(LessonPointModel).where(LessonPointModel.lesson_id == lesson_id)
+    )
+    await db.execute(
+        sql_delete(LessonClassGroupModel).where(
+            LessonClassGroupModel.lesson_id == lesson_id
+        )
     )
     await db.delete(lesson)
     await db.commit()
@@ -778,11 +1077,17 @@ async def points_report(
 ):
     """Quanto de extra cada aluno recebeu, por dia, disciplina e turma.
 
-    A turma nao fica no ponto: ela vem da aula que o originou, entao duas
-    turmas da mesma disciplina no mesmo dia so se separam por esse join.
+    A turma nao fica no ponto. Ela vem do cadastro do aluno e, quando o nome
+    nao casou com ninguem, da aula que originou o ponto — nessa ordem, porque
+    aula de turmas reunidas nao tem turma propria.
     """
     query = (
-        select(LessonPointModel, LessonModel.class_group)
+        select(
+            LessonPointModel,
+            StudentModel.class_group,
+            LessonModel.class_group,
+        )
+        .outerjoin(StudentModel, StudentModel.id == LessonPointModel.student_id)
         .outerjoin(LessonModel, LessonModel.id == LessonPointModel.lesson_id)
         .where(LessonPointModel.tutor_id == user["tutor_id"])
     )
@@ -794,12 +1099,15 @@ async def points_report(
         query = query.where(LessonPointModel.lesson_date <= end)
     if subject:
         query = query.where(LessonPointModel.subject == subject)
-    if class_group:
-        query = query.where(LessonModel.class_group == class_group)
 
     result = await db.execute(query.order_by(LessonPointModel.lesson_date))
-    items = [(point, group or "") for point, group in result.all()]
+    items = [
+        (point, (student_group or lesson_group or "").strip())
+        for point, student_group, lesson_group in result.all()
+    ]
 
+    if class_group:
+        items = [(point, group) for point, group in items if group == class_group]
     if student_name:
         wanted = education_service.normalize_name(student_name)
         items = [

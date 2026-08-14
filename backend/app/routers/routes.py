@@ -213,6 +213,26 @@ async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db
     return AuthResponse(success=True, token=token, message="Autenticado com sucesso")
 
 
+@router_auth.post("/refresh", response_model=AuthResponse)
+async def refresh(
+    user: dict = Depends(get_current_user),
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    """Troca um token ainda valido por outro com prazo cheio.
+
+    Sem isso uma aula longa esbarra no fim das 24h do token no meio da
+    gravacao e os blocos de audio passam a voltar 401.
+    """
+    account = await db.get(UserModel, user["uid"])
+    if account is None or not account.is_active:
+        raise HTTPException(401, "Conta inexistente ou desativada")
+    return AuthResponse(
+        success=True,
+        token=account_token(account),
+        message="Sessao renovada",
+    )
+
+
 @router_auth.get("/me")
 async def me(user: dict = Depends(get_current_user)):
     return {

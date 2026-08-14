@@ -665,6 +665,7 @@ class ActionAuditResponse(BaseModel):
 
 class StudentCreate(BaseModel):
     name: str
+    class_id: Optional[str] = None
     class_group: str = ""
     subject: str = ""
     external_id: Optional[str] = None
@@ -675,6 +676,7 @@ class StudentCreate(BaseModel):
 
 class StudentUpdate(BaseModel):
     name: Optional[str] = None
+    class_id: Optional[str] = None
     class_group: Optional[str] = None
     subject: Optional[str] = None
     external_id: Optional[str] = None
@@ -687,6 +689,7 @@ class StudentResponse(BaseModel):
     id: str
     tutor_id: str
     name: str
+    class_id: Optional[str] = None
     class_group: str = ""
     subject: str = ""
     external_id: Optional[str] = None
@@ -702,8 +705,9 @@ class StudentImportItem(BaseModel):
 
 
 class StudentImportRequest(BaseModel):
-    class_group: str
-    subject: str
+    class_id: Optional[str] = None
+    class_group: str = ""
+    subject: str = ""
     students: List[StudentImportItem] = Field(min_length=1, max_length=1000)
 
 
@@ -717,15 +721,41 @@ class LessonCreate(BaseModel):
     subject: str
     title: str = ""
     class_group: str = ""
+    # Turmas atendidas. Mais de uma significa aula reunida.
+    class_ids: List[str] = Field(default_factory=list)
     teacher: Optional[str] = None
     started_at: Optional[datetime] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ClassGroupCreate(BaseModel):
+    code: str = ""
+    name: str = ""
+    subject: str = ""
+
+
+class ClassGroupUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class ClassGroupResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+    subject: str
+    label: str
+    active: bool = True
+    student_count: int = 0
 
 
 class LessonUpdate(BaseModel):
     subject: Optional[str] = None
     title: Optional[str] = None
     class_group: Optional[str] = None
+    class_ids: Optional[List[str]] = None
     teacher: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
@@ -769,6 +799,8 @@ class LessonResponse(BaseModel):
     subject: str
     title: str = ""
     class_group: str = ""
+    class_ids: List[str] = Field(default_factory=list)
+    class_labels: List[str] = Field(default_factory=list)
     teacher: Optional[str] = None
     status: str
     started_at: datetime

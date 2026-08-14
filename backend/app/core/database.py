@@ -17,6 +17,7 @@ from sqlalchemy import (
     text,
 )
 from datetime import datetime, timezone
+from loguru import logger
 from .config import get_settings
 
 settings = get_settings()
@@ -257,11 +258,40 @@ class ShortcutLaunchLogModel(Base):
     launched_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class ClassGroupModel(Base):
+    """Turma como entidade: o texto solto em students/lessons vira vinculo.
+
+    `code` e o numero da turma no sistema da instituicao (3001) e `name` a
+    distincao que o professor usa em sala (Presencial, Semipresencial).
+    """
+
+    __tablename__ = "class_groups"
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id   = Column(String(64), nullable=False, index=True)
+    code       = Column(String(80), nullable=False, default="")
+    name       = Column(String(120), nullable=False, default="")
+    subject    = Column(String(120), nullable=False, default="", index=True)
+    active     = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class LessonClassGroupModel(Base):
+    """Turmas atendidas por uma aula. Aula reunida tem mais de uma linha."""
+
+    __tablename__ = "lesson_class_groups"
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lesson_id      = Column(String(64), nullable=False, index=True)
+    class_group_id = Column(String(64), nullable=False, index=True)
+
+
 class StudentModel(Base):
     __tablename__ = "students"
     id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id    = Column(String(64), nullable=False, index=True)
     name        = Column(String(180), nullable=False)
+    # Vinculo com a turma. As duas colunas de texto seguem preenchidas a
+    # partir dela, para o que ja consulta por nome continuar funcionando.
+    class_id    = Column(String(64), nullable=True, index=True)
     class_group = Column(String(120), nullable=False, default="", index=True)
     subject     = Column(String(120), nullable=False, default="", index=True)
     external_id = Column(String(80), nullable=True)
@@ -327,6 +357,7 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_compatibility_columns)
     await _backfill_account_ownership()
+    await _backfill_class_groups()
 
 
 def _add_compatibility_columns(sync_conn) -> None:
@@ -350,6 +381,9 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "calendar_events": {
             "user_id": "VARCHAR(64) NULL",
+        },
+        "students": {
+            "class_id": "VARCHAR(64) NULL",
         },
     }
     for table_name, columns in additions.items():
@@ -413,6 +447,81 @@ async def seed_admin_notification_config(
     if not payload["telegram_enabled"] and not payload["wa_enabled"]:
         return
     db.add(ConfigModel(key=key, value=json.dumps(payload, ensure_ascii=False)))
+
+
+def derive_class_groups(students, lessons):
+    """Deriva turmas dos textos gravados e devolve (turmas, vinculos de aula).
+
+    Efeito colateral proposital: escreve `class_id` em cada aluno. Aula sem
+    turma no texto era o jeito antigo de dizer turmas reunidas, entao ela sai
+    ligada a todas as turmas da disciplina.
+    """
+    groups: dict[tuple, ClassGroupModel] = {}
+
+    def ensure(tutor_id: str, subject: str, code: str) -> ClassGroupModel:
+        key = (tutor_id, subject, code)
+        group = groups.get(key)
+        if group is None:
+            groups[key] = group = ClassGroupModel(
+                id=str(uuid.uuid4()),
+                tutor_id=tutor_id,
+                code=code,
+                name="",
+                subject=subject,
+            )
+        return group
+
+    for student in students:
+        code = (student.class_group or "").strip()
+        subject = (student.subject or "").strip()
+        if not code and not subject:
+            continue
+        student.class_id = ensure(student.tutor_id, subject, code).id
+
+    links = []
+    for lesson in lessons:
+        code = (lesson.class_group or "").strip()
+        subject = (lesson.subject or "").strip()
+        for (tutor_id, group_subject, group_code), group in groups.items():
+            if tutor_id != lesson.tutor_id:
+                continue
+            if subject and group_subject and group_subject != subject:
+                continue
+            if code and group_code != code:
+                continue
+            links.append(
+                LessonClassGroupModel(
+                    id=str(uuid.uuid4()),
+                    lesson_id=lesson.id,
+                    class_group_id=group.id,
+                )
+            )
+
+    return list(groups.values()), links
+
+
+async def _backfill_class_groups() -> None:
+    """Transforma a turma escrita em texto no aluno e na aula em vinculo.
+
+    Roda uma unica vez: com a tabela de turmas ja populada, sai na hora.
+    """
+    async with AsyncSessionLocal() as db:
+        if (await db.execute(select(ClassGroupModel.id).limit(1))).first():
+            return
+
+        students = list((await db.execute(select(StudentModel))).scalars().all())
+        lessons = list((await db.execute(select(LessonModel))).scalars().all())
+        if not students and not lessons:
+            return
+
+        groups, links = derive_class_groups(students, lessons)
+        for item in groups + links:
+            db.add(item)
+        await db.commit()
+        logger.info(
+            f"Turmas derivadas do cadastro antigo: {len(groups)} turma(s), "
+            f"{len(students)} aluno(s), {len(lessons)} aula(s)."
+        )
 
 
 async def _backfill_account_ownership() -> None:

@@ -25,6 +25,24 @@ settings = get_settings()
 _NAME_MATCH_THRESHOLD = 0.82
 _MAX_POINTS_PER_ENTRY = 100.0
 
+# Sem uma dessas palavras no trecho o professor nao concedeu nada, entao nem
+# chamamos o LLM: menos chamada por aula e, sobretudo, menos chance de o modelo
+# inventar uma concessao a partir da lista de alunos que vai no prompt.
+_POINTS_TRIGGERS = (
+    "ponto",
+    "pontos",
+    "pontinho",
+    "pontuacao",
+    "decimo",
+    "decimos",
+    "bonus",
+    "extra",
+)
+
+# O trecho citado pelo modelo precisa existir mesmo na transcricao. Abaixo
+# desse grau de semelhanca tratamos como alucinacao e descartamos.
+_QUOTE_MATCH_THRESHOLD = 0.75
+
 
 def normalize_name(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", (value or "").lower())
@@ -160,7 +178,11 @@ def _points_prompt(text: str, roster: Sequence[Dict[str, Any]]) -> str:
         "Liste apenas pontuacoes extras que o professor concedeu explicitamente "
         "a um aluno neste trecho. Ignore notas de prova, medias, chamadas, "
         "combinados futuros e hipoteses (\"quem responder ganha ponto\" sem "
-        "alguem receber). Se nada foi concedido, devolva a lista vazia.\n\n"
+        "alguem receber). Se nada foi concedido, devolva a lista vazia.\n"
+        "A lista de alunos serve so para corrigir a grafia do nome: nunca "
+        "premie quem nao foi citado na fala. O campo \"trecho\" tem de ser "
+        "copia literal da transcricao acima, e o valor em \"pontos\" tem de "
+        "ter sido dito pelo professor.\n\n"
         "Formato exato:\n"
         '{"pontuacoes": [{"aluno": "nome", "pontos": 0.5, '
         '"motivo": "por que recebeu", "trecho": "frase do professor"}]}'
@@ -201,14 +223,54 @@ def _coerce_points(value: Any) -> Optional[float]:
     return round(points, 3)
 
 
+def mentions_points(text: str) -> bool:
+    """O trecho fala em pontuacao? Serve de porta para a extracao."""
+    words = set(normalize_name(text).split())
+    return any(trigger in words for trigger in _POINTS_TRIGGERS)
+
+
+def quote_supported(quote: str, text: str) -> bool:
+    """A frase que o modelo diz ter ouvido existe mesmo na transcricao?
+
+    Comparamos normalizado e aceitamos quase-igual, porque o modelo costuma
+    reescrever pontuacao e concordancia ao repetir a fala.
+    """
+    needle = normalize_name(quote)
+    haystack = normalize_name(text)
+    if not needle or not haystack:
+        return False
+    if needle in haystack:
+        return True
+    match = SequenceMatcher(None, needle, haystack).find_longest_match(
+        0, len(needle), 0, len(haystack)
+    )
+    return match.size >= len(needle) * _QUOTE_MATCH_THRESHOLD
+
+
+def name_spoken(heard_name: str, text: str) -> bool:
+    """O nome premiado foi dito no trecho?
+
+    O prompt leva a lista da turma, entao um modelo local as vezes premia
+    alguem que so aparece nessa lista. Sem o nome na fala, descartamos.
+    """
+    words = set(normalize_name(text).split())
+    tokens = [token for token in normalize_name(heard_name).split() if len(token) > 2]
+    return any(token in words for token in tokens)
+
+
 async def extract_points(
     *,
     text: str,
     roster: Sequence[Dict[str, Any]],
     llm: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Devolve as pontuacoes extras citadas no trecho, ja casadas com a turma."""
-    if not text.strip():
+    """Devolve as pontuacoes extras citadas no trecho, ja casadas com a turma.
+
+    Toda entrada precisa passar por tres portas: o trecho falar em pontuacao, a
+    citacao existir na transcricao e o nome premiado ter sido dito. O modelo
+    sozinho premia aluno que nunca foi citado.
+    """
+    if not text.strip() or not mentions_points(text):
         return []
 
     provider = await resolve_llm(llm)
@@ -236,6 +298,19 @@ async def extract_points(
         if not heard_name or points is None:
             continue
 
+        quote = str(item.get("trecho") or "").strip()
+        if not quote_supported(quote, text):
+            logger.info(
+                "Pontuacao descartada: citacao ausente na transcricao "
+                f"(aluno={heard_name!r}, trecho={quote!r})"
+            )
+            continue
+        if not name_spoken(heard_name, text):
+            logger.info(
+                f"Pontuacao descartada: nome nao foi dito no trecho ({heard_name!r})"
+            )
+            continue
+
         match = match_student(heard_name, roster)
         entries.append({
             "student_id": match["student_id"],
@@ -243,7 +318,7 @@ async def extract_points(
             "heard_name": heard_name,
             "points": points,
             "reason": str(item.get("motivo") or "").strip() or None,
-            "quote": str(item.get("trecho") or "").strip() or None,
+            "quote": quote or None,
             "confidence": match["confidence"],
         })
     return entries

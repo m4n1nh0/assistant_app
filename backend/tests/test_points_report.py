@@ -28,6 +28,11 @@ class FakeDb:
         return _Result(self.rows)
 
 
+def _row(name, points, student_group=None, lesson_group=None, **kwargs):
+    """Linha do join: ponto, turma do aluno, turma da aula."""
+    return (_point(name, points, **kwargs), student_group, lesson_group)
+
+
 def _point(name, points, subject="ARA0040", lesson_id="l1", day=13):
     return education.LessonPointModel(
         id=f"{name}-{lesson_id}",
@@ -49,8 +54,8 @@ USER = {"tutor_id": "t1"}
 def test_same_subject_and_day_split_by_class_group():
     db = FakeDb(
         [
-            (_point("Ana", 1.0, lesson_id="l1"), "3001 PRESENCIAL"),
-            (_point("Thiago", 0.5, lesson_id="l2"), "3002 SEMIPRESENCIAL"),
+            _row("Ana", 1.0, lesson_group="3001 PRESENCIAL", lesson_id="l1"),
+            _row("Thiago", 0.5, lesson_group="3002 SEMIPRESENCIAL", lesson_id="l2"),
         ]
     )
 
@@ -63,11 +68,37 @@ def test_same_subject_and_day_split_by_class_group():
     ]
 
 
+def test_joint_lesson_splits_by_the_class_of_each_student():
+    """Aula de turmas reunidas nao tem turma propria: quem separa e o cadastro
+    do aluno."""
+    db = FakeDb(
+        [
+            _row("Ana", 1.0, student_group="3001 PRESENCIAL", lesson_group=""),
+            _row("Thiago", 1.0, student_group="3002 SEMIPRESENCIAL", lesson_group=""),
+        ]
+    )
+
+    report = run(education.points_report(user=USER, db=db))
+
+    assert [entry.class_group for entry in report.students] == [
+        "3001 PRESENCIAL",
+        "3002 SEMIPRESENCIAL",
+    ]
+
+
+def test_student_class_wins_over_the_lesson_class():
+    db = FakeDb([_row("Ana", 1.0, student_group="3002", lesson_group="3001")])
+
+    report = run(education.points_report(user=USER, db=db))
+
+    assert report.students[0].class_group == "3002"
+
+
 def test_points_of_the_same_class_are_summed():
     db = FakeDb(
         [
-            (_point("Ana", 1.0, lesson_id="l1"), "3001"),
-            (_point("Ana", 0.5, lesson_id="l1"), "3001"),
+            _row("Ana", 1.0, student_group="3001", lesson_id="l1"),
+            _row("Ana", 0.5, student_group="3001", lesson_id="l1"),
         ]
     )
 
@@ -79,28 +110,43 @@ def test_points_of_the_same_class_are_summed():
 
 
 def test_orphan_point_keeps_an_empty_class_group():
-    """Aula apagada: o outer join devolve turma nula e o relatorio segue."""
-    db = FakeDb([(_point("Ana", 1.0), None)])
+    """Aula apagada e nome sem cadastro: os dois outer joins voltam nulos e o
+    relatorio segue com a turma vazia."""
+    db = FakeDb([_row("Ana", 1.0)])
 
     report = run(education.points_report(user=USER, db=db))
 
     assert report.students[0].class_group == ""
 
 
-def test_class_group_comes_from_the_lesson_by_outer_join():
-    """A turma nao existe em lesson_points: sai do join com lessons, e ele
-    precisa ser externo para nao sumir com ponto de aula apagada."""
-    db = FakeDb([(_point("Ana", 1.0), "3001")])
+def test_class_group_comes_from_outer_joins():
+    """A turma nao existe em lesson_points. Os joins precisam ser externos ou
+    o ponto de aula apagada, ou de nome sem cadastro, sumiria do relatorio."""
+    db = FakeDb([_row("Ana", 1.0, student_group="3001")])
 
-    run(education.points_report(user=USER, db=db, class_group="3001"))
+    run(education.points_report(user=USER, db=db))
 
     sql = " ".join(db.sql.split())
+    assert "LEFT OUTER JOIN students ON students.id = lesson_points.student_id" in sql
     assert "LEFT OUTER JOIN lessons ON lessons.id = lesson_points.lesson_id" in sql
-    assert "lessons.class_group =" in sql
+
+
+def test_class_group_filter_keeps_only_that_class():
+    db = FakeDb(
+        [
+            _row("Ana", 1.0, student_group="3001"),
+            _row("Thiago", 1.0, student_group="3002"),
+        ]
+    )
+
+    report = run(education.points_report(user=USER, db=db, class_group="3001"))
+
+    assert [entry.student_name for entry in report.students] == ["Ana"]
+    assert report.total_points == 1.0
 
 
 def test_filter_is_echoed_in_the_response():
-    db = FakeDb([(_point("Ana", 1.0), "3001")])
+    db = FakeDb([_row("Ana", 1.0, student_group="3001")])
 
     report = run(education.points_report(user=USER, db=db, class_group="3001"))
 
@@ -110,8 +156,8 @@ def test_filter_is_echoed_in_the_response():
 def test_student_name_filter_still_applies_over_the_join():
     db = FakeDb(
         [
-            (_point("Ana Paula", 1.0), "3001"),
-            (_point("Thiago", 1.0), "3001"),
+            _row("Ana Paula", 1.0, student_group="3001"),
+            _row("Thiago", 1.0, student_group="3001"),
         ]
     )
 
