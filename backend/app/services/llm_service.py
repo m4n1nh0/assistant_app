@@ -26,7 +26,16 @@ def _error_message(error: object) -> str:
         return _sanitize_error(json.dumps(error, ensure_ascii=False))
     if isinstance(error, list):
         return "; ".join(_error_message(item) for item in error)
-    return _sanitize_error(str(error))
+    message = str(error).strip()
+    if message:
+        return _sanitize_error(message)
+    if isinstance(error, httpx.TimeoutException):
+        return f"Timeout ao consultar o provedor ({error.__class__.__name__})"
+    if isinstance(error, httpx.ConnectError):
+        return f"Falha de conexao ao consultar o provedor ({error.__class__.__name__})"
+    if isinstance(error, httpx.NetworkError):
+        return f"Erro de rede ao consultar o provedor ({error.__class__.__name__})"
+    return error.__class__.__name__ or "Erro desconhecido ao consultar o provedor"
 
 
 def _sanitize_error(text: str) -> str:
@@ -382,17 +391,22 @@ async def call_localai(
             is_error=True,
         )
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_LLM_TIMEOUT_SECONDS) as client:
-            model = await _resolve_localai_model(client)
-        return await call_openai_compatible(
-            "localai",
-            settings.localai_api_key,
-            f"{settings.localai_v1_base_url}/chat/completions",
-            model,
-            message,
-            history,
-            system_prompt,
-            require_api_key=False,
+        # O LocalAI pode levar mais de 90 segundos para concluir uma resposta,
+        # sobretudo ao carregar um modelo frio. Consumir o SSE internamente faz
+        # com que os tokens mantenham a conexao ativa, embora este metodo ainda
+        # entregue um LLMResponse unico aos chamadores (resumo, agentes etc.).
+        start = time.monotonic()
+        chunks = [
+            chunk
+            async for chunk in stream_localai(message, history, system_prompt)
+        ]
+        content = "".join(chunks).strip()
+        if not content:
+            raise Exception("LocalAI retornou uma resposta vazia")
+        return LLMResponse(
+            llm="localai",
+            content=content,
+            duration_ms=int((time.monotonic() - start) * 1000),
         )
     except Exception as e:
         error = _log_llm_error("localai", e)

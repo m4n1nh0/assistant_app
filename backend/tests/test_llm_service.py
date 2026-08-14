@@ -23,6 +23,50 @@ def test_error_message_extracts_nested_provider_message_and_redacts_secret():
     assert message == "Incorrect API key provided: [redacted]."
 
 
+def test_error_message_keeps_empty_timeouts_readable():
+    message = llm_service._error_message(httpx.ReadTimeout(""))
+
+    assert "Timeout" in message
+    assert "ReadTimeout" in message
+
+
+def test_call_localai_collects_stream_without_changing_response_contract(monkeypatch):
+    async def _stream(message, history, system_prompt):
+        yield "Resumo "
+        yield "gerado."
+
+    monkeypatch.setattr(
+        llm_service,
+        "settings",
+        SimpleNamespace(localai_base_url="http://localai:8080"),
+    )
+    monkeypatch.setattr(llm_service, "stream_localai", _stream)
+
+    response = run(llm_service.call_localai("aula", [], "resuma"))
+
+    assert response.is_error is False
+    assert response.llm == "localai"
+    assert response.content == "Resumo gerado."
+
+
+def test_call_localai_reports_empty_stream_as_error(monkeypatch):
+    async def _stream(message, history, system_prompt):
+        if False:
+            yield ""
+
+    monkeypatch.setattr(
+        llm_service,
+        "settings",
+        SimpleNamespace(localai_base_url="http://localai:8080"),
+    )
+    monkeypatch.setattr(llm_service, "stream_localai", _stream)
+
+    response = run(llm_service.call_localai("aula", [], "resuma"))
+
+    assert response.is_error is True
+    assert "resposta vazia" in response.content
+
+
 def test_dispatch_single_unknown_service_returns_error_response():
     response = run(
         llm_service.dispatch_single(

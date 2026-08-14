@@ -569,7 +569,11 @@ async def _summarise_within(
     while len(chunks) > 1 and rounds < _MAX_CONDENSE_ROUNDS:
         rounds += 1
         partials: List[str] = []
-        for chunk in chunks:
+        logger.info(
+            f"Resumo ({provider}): condensando {len(chunks)} blocos, "
+            f"rodada {rounds}/{_MAX_CONDENSE_ROUNDS}"
+        )
+        for index, chunk in enumerate(chunks, start=1):
             response = await dispatch_single(
                 provider,
                 _summary_prompt(
@@ -584,9 +588,33 @@ async def _summarise_within(
             )
             if response.is_error:
                 error = response.content
-                logger.warning(f"Resumo parcial falhou ({provider}): {error}")
-                continue
-            partials.append(response.content.strip())
+                logger.warning(
+                    f"Resumo parcial falhou ({provider}, bloco "
+                    f"{index}/{len(chunks)}): {error}"
+                )
+                # Todos os blocos usam o mesmo provedor. Repetir uma chamada
+                # que acabou de falhar (especialmente por timeout) fazia a
+                # requisicao ficar presa por varios minutos e ocultava a causa.
+                return {
+                    "summary": "",
+                    "llm": provider,
+                    "used_segments": 0,
+                    "error": error,
+                }
+            partial = response.content.strip()
+            if not partial:
+                error = "O modelo retornou um resumo parcial vazio"
+                logger.warning(
+                    f"Resumo parcial falhou ({provider}, bloco "
+                    f"{index}/{len(chunks)}): {error}"
+                )
+                return {
+                    "summary": "",
+                    "llm": provider,
+                    "used_segments": 0,
+                    "error": error,
+                }
+            partials.append(partial)
 
         if not partials:
             return {"summary": "", "llm": provider, "used_segments": 0, "error": error}
@@ -629,8 +657,19 @@ async def _summarise_within(
             "error": response.content,
         }
 
+    summary = response.content.strip()
+    if not summary:
+        error = "O modelo retornou um resumo vazio"
+        logger.warning(f"Resumo falhou ({provider}): {error}")
+        return {
+            "summary": "",
+            "llm": provider,
+            "used_segments": 0,
+            "error": error,
+        }
+
     return {
-        "summary": response.content.strip(),
+        "summary": summary,
         "llm": provider,
         "used_segments": len(texts),
         "truncated": truncated,

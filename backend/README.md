@@ -115,6 +115,11 @@ As URLs podem ser informadas com ou sem `http://`. Para hosts internos da
 Railway sem porta, o backend usa `11434` para Ollama e `8080` para LocalAI. Uma
 URL LocalAI que já termina em `/v1` também é aceita sem duplicar esse prefixo.
 
+As chamadas internas ao LocalAI também consomem a resposta por streaming. Isso
+evita que resumos e outros fluxos não incrementais atinjam timeout enquanto um
+modelo local mais lento continua gerando tokens; o contrato HTTP desses fluxos
+permanece uma resposta única.
+
 ### Escolha Automática Do Provedor
 
 Quando o cliente não informa `llm` na requisição de chat — o caso normal, já

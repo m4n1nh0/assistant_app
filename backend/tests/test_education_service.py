@@ -364,6 +364,32 @@ def test_summary_reports_error_when_model_fails(monkeypatch):
     assert outcome["error"] == "modelo offline"
 
 
+def test_long_summary_stops_after_first_provider_failure(monkeypatch):
+    fake_settings(monkeypatch, max_chars=2000, context_tokens=4096)
+    calls = fake_llm(monkeypatch, "Timeout ao consultar o provedor", is_error=True)
+
+    outcome = run(service.generate_summary(
+        discipline="Quimica",
+        title="",
+        segments=["x" * 1500 for _ in range(4)],
+    ))
+
+    assert outcome["summary"] == ""
+    assert "Timeout" in outcome["error"]
+    assert len(calls) == 1
+
+
+def test_summary_reports_empty_model_response(monkeypatch):
+    fake_llm(monkeypatch, "")
+
+    outcome = run(service.generate_summary(
+        discipline="Quimica", title="", segments=["trecho"]
+    ))
+
+    assert outcome["summary"] == ""
+    assert outcome["error"] == "O modelo retornou um resumo vazio"
+
+
 def test_summary_focus_reaches_the_prompt(monkeypatch):
     calls = fake_llm(monkeypatch, "resumo")
 

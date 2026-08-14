@@ -491,7 +491,10 @@ Pontos de atencao do fluxo:
   uma aula de duas horas mandada inteira para um modelo de 2048 tokens nao
   devolve resumo pior, devolve erro. Se o modelo recusar por contexto cheio, o
   backend le o tamanho real da janela na mensagem de erro e refaz o corte uma
-  vez com essa medida.
+  vez com essa medida. No LocalAI, a geracao e consumida por streaming para que
+  modelos mais lentos nao sejam interrompidos enquanto ainda estao produzindo
+  tokens. Se o provedor falhar, o processamento para no bloco atual e devolve
+  a causa, sem repetir o mesmo timeout em todos os blocos restantes.
 - **Blocos repetidos nao viram pontuacao duplicada.** Quando o corte do audio cai
   no meio da frase, a mesma concessao pode ser extraida duas vezes; o backend
   descarta a repeticao comparando aluno, valor e trecho citado.
