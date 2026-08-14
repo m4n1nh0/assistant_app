@@ -3433,31 +3433,75 @@ class _DesktopWindowTile extends StatelessWidget {
   }
 }
 
+/// Marcadores dos servicos de IA ativos, um por servico.
+///
+/// Publico porque e o que o teste do cabecalho renderiza: com dez servicos
+/// ligados a fila nao cabe na largura do painel, e essa e a parte que precisa
+/// continuar visivel em vez de estourar a linha.
+class ChatServiceChips extends StatelessWidget {
+  final AppConfig config;
+  const ChatServiceChips({super.key, required this.config});
+
+  static const _colors = {
+    'backend': AssistantTheme.c1,
+    'claude': AssistantTheme.c4,
+    'gpt': AssistantTheme.c3,
+    'gemini': AssistantTheme.c1,
+    'together': AssistantTheme.c1,
+    'openrouter': AssistantTheme.c2,
+    'deepseek': AssistantTheme.cHF,
+    'grok': AssistantTheme.c5,
+    'localai': AssistantTheme.c3,
+    'llama': AssistantTheme.c2,
+    'hf': AssistantTheme.cHF,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final services =
+        config.activeList.isEmpty ? ['backend'] : config.activeList;
+
+    // Quebra para a linha de baixo em vez de estourar: esconder um servico
+    // atras da borda seria pior do que ocupar mais 20px de altura.
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: services
+          .map((llm) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                      color: (_colors[llm] ?? AssistantTheme.c1)
+                          .withOpacity(0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  config.serviceName(llm).toUpperCase(),
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 8,
+                    letterSpacing: 1,
+                    color: _colors[llm] ?? AssistantTheme.c1,
+                  ),
+                ),
+              ))
+          .toList(),
+    );
+  }
+}
+
 class _ChatHeader extends StatelessWidget {
   final AppConfig config;
   const _ChatHeader({required this.config});
 
   @override
   Widget build(BuildContext context) {
-    final llmColors = {
-      'backend': AssistantTheme.c1,
-      'claude': AssistantTheme.c4,
-      'gpt': AssistantTheme.c3,
-      'gemini': AssistantTheme.c1,
-      'together': AssistantTheme.c1,
-      'openrouter': AssistantTheme.c2,
-      'deepseek': AssistantTheme.cHF,
-      'grok': AssistantTheme.c5,
-      'localai': AssistantTheme.c3,
-      'llama': AssistantTheme.c2,
-      'hf': AssistantTheme.cHF,
-    };
-    final services =
-        config.activeList.isEmpty ? ['backend'] : config.activeList;
-
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      // Altura minima em vez de fixa: a faixa cresce quando os marcadores
+      // precisam de uma segunda linha.
+      constraints: const BoxConstraints(minHeight: 44),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: AssistantTheme.border)),
         color: Color(0xFF090C13),
@@ -3475,28 +3519,7 @@ class _ChatHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          ...services.map((llm) => Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                        color: (llmColors[llm] ?? AssistantTheme.c1)
-                            .withOpacity(0.5)),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    config.serviceName(llm).toUpperCase(),
-                    style: TextStyle(
-                      fontFamily: 'JetBrains Mono',
-                      fontSize: 8,
-                      letterSpacing: 1,
-                      color: llmColors[llm] ?? AssistantTheme.c1,
-                    ),
-                  ),
-                ),
-              )),
+          Expanded(child: ChatServiceChips(config: config)),
         ],
       ),
     );
