@@ -748,6 +748,10 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               (v) => setState(() => _draft.ttsEnabled = v)),
           _Toggle('Enter envia mensagem', _draft.sendMessageOnEnter,
               (v) => setState(() => _draft.sendMessageOnEnter = v)),
+          const _InfoBox(
+            'Ligado: Enter envia e Shift+Enter quebra a linha. Desligado: '
+            'Enter quebra a linha e Ctrl+Enter envia.',
+          ),
           _Toggle(
               'Microfone ativo por nome da assistente',
               _draft.continuousVoiceMode,

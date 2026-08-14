@@ -25,6 +25,7 @@ import '../services/speech_text_formatter.dart';
 import '../services/shortcut_matching.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
+import '../utils/chat_input_shortcuts.dart';
 
 class ChatPanel extends ConsumerStatefulWidget {
   const ChatPanel({super.key});
@@ -3472,8 +3473,8 @@ class ChatServiceChips extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   border: Border.all(
-                      color: (_colors[llm] ?? AssistantTheme.c1)
-                          .withOpacity(0.5)),
+                      color:
+                          (_colors[llm] ?? AssistantTheme.c1).withOpacity(0.5)),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
@@ -4013,14 +4014,10 @@ class _InputArea extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: CallbackShortcuts(
-                  bindings: sendOnEnter
-                      ? <ShortcutActivator, VoidCallback>{
-                          const SingleActivator(LogicalKeyboardKey.enter):
-                              onSend,
-                          const SingleActivator(LogicalKeyboardKey.numpadEnter):
-                              onSend,
-                        }
-                      : const <ShortcutActivator, VoidCallback>{},
+                  bindings: buildChatInputShortcuts(
+                    sendOnEnter: sendOnEnter,
+                    onSend: onSend,
+                  ),
                   child: TextField(
                     controller: controller,
                     style: const TextStyle(
@@ -4029,9 +4026,11 @@ class _InputArea extends StatelessWidget {
                         color: AssistantTheme.textPrimary),
                     maxLines: 3,
                     minLines: 1,
-                    decoration: const InputDecoration(
-                      hintText: 'Digite ou fale um comando...',
-                      hintStyle: TextStyle(
+                    decoration: InputDecoration(
+                      hintText: sendOnEnter
+                          ? 'Digite...  Enter envia · Shift+Enter quebra linha'
+                          : 'Digite...  Ctrl+Enter envia',
+                      hintStyle: const TextStyle(
                         fontFamily: 'JetBrains Mono',
                         fontSize: 12,
                         color: AssistantTheme.textSecondary,

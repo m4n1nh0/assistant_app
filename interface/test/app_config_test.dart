@@ -57,4 +57,12 @@ void main() {
     expect(restored.autoCreateEvents, isTrue);
     expect(restored.toJson()['autoCreateEvents'], isTrue);
   });
+
+  test('send on enter is optional and survives persistence payload', () {
+    expect(AppConfig().sendMessageOnEnter, isTrue);
+
+    final restored = AppConfig.fromJson({'sendMessageOnEnter': false});
+    expect(restored.sendMessageOnEnter, isFalse);
+    expect(restored.toJson()['sendMessageOnEnter'], isFalse);
+  });
 }
