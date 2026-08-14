@@ -17,6 +17,17 @@ ROSTER = [
 ]
 
 
+def fake_settings(monkeypatch, *, max_chars: int, context_tokens: int):
+    monkeypatch.setattr(
+        service,
+        "settings",
+        type("S", (), {
+            "education_summary_max_chars": max_chars,
+            "local_llm_context_tokens": context_tokens,
+        })(),
+    )
+
+
 def fake_llm(monkeypatch, content: str, is_error: bool = False):
     calls = []
 
@@ -315,9 +326,7 @@ def test_summary_uses_single_call_for_short_lesson(monkeypatch):
 
 
 def test_long_lesson_is_summarised_in_two_stages(monkeypatch):
-    monkeypatch.setattr(
-        service, "settings", type("S", (), {"education_summary_max_chars": 2000})()
-    )
+    fake_settings(monkeypatch, max_chars=2000, context_tokens=4096)
     calls = fake_llm(monkeypatch, "resumo parcial")
 
     segments = ["x" * 1500 for _ in range(4)]
@@ -367,6 +376,78 @@ def test_summary_focus_reaches_the_prompt(monkeypatch):
 
     assert "datas de prova" in calls[0]["message"]
     assert "Biologia" in calls[0]["message"]
+
+
+# --- Janela de contexto do resumo ------------------------------------------
+
+
+def test_local_model_window_shrinks_the_transcript_block(monkeypatch):
+    fake_settings(monkeypatch, max_chars=24000, context_tokens=2048)
+
+    budget = service.summary_budget_chars("localai")
+
+    # A aula inteira nao pode ser oferecida a um modelo de 2048 tokens: o
+    # servidor recusa a chamada em vez de resumir pior.
+    assert budget < 4000
+    assert budget > 800
+
+
+def test_cloud_model_keeps_the_configured_window(monkeypatch):
+    fake_settings(monkeypatch, max_chars=24000, context_tokens=2048)
+
+    assert service.summary_budget_chars("claude") == 24000
+
+
+def test_context_limit_is_read_from_the_model_error():
+    localai = (
+        "rpc error: code = Internal desc = request (6224 tokens) exceeds the "
+        "available context size (2048 tokens), try increasing it"
+    )
+    openai = "This model's maximum context length is 8192 tokens, however..."
+
+    assert service.context_limit_from_error(localai) == 2048
+    assert service.context_limit_from_error(openai) == 8192
+    assert service.context_limit_from_error("modelo offline") is None
+
+
+def test_summary_retries_with_the_window_reported_by_the_model(monkeypatch):
+    fake_settings(monkeypatch, max_chars=24000, context_tokens=8192)
+    calls = []
+
+    async def _dispatch(llm, message, history, system_prompt):
+        calls.append(message)
+        if len(calls) == 1:
+            return LLMResponse(
+                llm=llm,
+                content="request (6224 tokens) exceeds the available context "
+                        "size (2048 tokens), try increasing it",
+                is_error=True,
+            )
+        return LLMResponse(llm=llm, content="resumo")
+
+    async def _resolve(preferred=None):
+        return "localai"
+
+    monkeypatch.setattr(service, "dispatch_single", _dispatch)
+    monkeypatch.setattr(service, "resolve_llm", _resolve)
+
+    outcome = run(service.generate_summary(
+        discipline="Banco de Dados", title="", segments=["x " * 1500],
+    ))
+
+    # A primeira tentativa foi em uma janela so; depois do erro a aula e
+    # refatiada pela medida que o proprio modelo informou.
+    assert outcome["summary"] == "resumo"
+    assert len(calls) > 2
+
+
+def test_segment_longer_than_the_window_is_split():
+    windows = service._windows(["frase. " * 2000], 2000)
+
+    assert len(windows) > 1
+    assert all(len(window) <= 2000 for window in windows)
+    # Nada pode se perder na quebra.
+    assert "".join(windows).count("frase") == 2000
 
 
 def test_normalize_name_strips_accents_and_punctuation():

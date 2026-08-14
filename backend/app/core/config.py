@@ -150,6 +150,13 @@ class Settings(BaseSettings):
     education_summary_max_chars: int = 24000
     education_min_segment_chars: int = 12
 
+    # Janela de contexto dos modelos locais (LocalAI, Ollama), em tokens. O
+    # resumo da aula fatia a transcricao por esse numero: mandar uma aula de
+    # duas horas inteira para um modelo de 2048 tokens nao devolve resumo ruim,
+    # devolve erro. Se o seu servidor roda com janela maior, aumente aqui - o
+    # resumo fica melhor e gasta menos chamadas.
+    local_llm_context_tokens: int = 2048
+
     whisper_model: str = "small"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"

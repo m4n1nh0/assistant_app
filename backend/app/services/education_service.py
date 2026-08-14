@@ -382,7 +382,9 @@ def _summary_prompt(
             f"{header}{extra}\n\n"
             "Este e um trecho de uma aula longa. Resuma o trecho preservando "
             "termos tecnicos, definicoes, exemplos e qualquer tarefa ou data "
-            "citada. Nao escreva introducao nem conclusao.\n\n"
+            "citada. Nao escreva introducao nem conclusao. Responda em no "
+            "maximo 8 linhas: os parciais sao juntados depois e precisam caber "
+            "na janela do modelo.\n\n"
             f'Trecho:\n"""\n{transcript}\n"""'
         )
 
@@ -403,20 +405,88 @@ def _summary_prompt(
     )
 
 
+# A janela do modelo e contada em tokens e a transcricao em caracteres. Tres
+# caracteres por token e um cambio pessimista de proposito: estourar a janela
+# custa a chamada inteira, sobrar espaco custa uma frase a menos por bloco.
+_CHARS_PER_TOKEN = 3.0
+# O que ocupa a janela alem da transcricao: as instrucoes do prompt e a
+# resposta que o modelo ainda precisa escrever.
+_PROMPT_TOKENS = 350
+_ANSWER_TOKENS = 700
+_LOCAL_PROVIDERS = frozenset({"localai", "llama"})
+# Rodadas de condensacao antes de aceitar o que ja foi resumido.
+_MAX_CONDENSE_ROUNDS = 4
+
+# Servidores compativeis com a API da OpenAI reclamam de contexto cheio de
+# formas diferentes; todos, porem, dizem o tamanho da janela na mensagem.
+_CONTEXT_LIMIT_PATTERNS = (
+    r"available context size \((\d+) tokens\)",
+    r"maximum context length is (\d+) tokens",
+    r"context length of (\d+) tokens",
+    r"n_ctx[^\d]{0,10}(\d+)",
+)
+
+
+def _budget_from_tokens(context_tokens: int) -> int:
+    usable = int(context_tokens) - _PROMPT_TOKENS - _ANSWER_TOKENS
+    return max(800, int(usable * _CHARS_PER_TOKEN))
+
+
+def summary_budget_chars(provider: str) -> int:
+    """Quantos caracteres de transcricao cabem em uma chamada ao modelo."""
+    ceiling = max(2000, settings.education_summary_max_chars)
+    if provider not in _LOCAL_PROVIDERS:
+        return ceiling
+    return min(ceiling, _budget_from_tokens(settings.local_llm_context_tokens))
+
+
+def context_limit_from_error(message: str) -> Optional[int]:
+    """Le na mensagem de erro a janela real do modelo, quando ele a informa.
+
+    Evita depender do que esta configurado: o servidor local pode ter sido
+    subido com outra janela, e a primeira falha ja diz qual e.
+    """
+    for pattern in _CONTEXT_LIMIT_PATTERNS:
+        found = re.search(pattern, message or "", re.IGNORECASE)
+        if found:
+            return int(found.group(1))
+    return None
+
+
+def _split_piece(piece: str, max_chars: int) -> List[str]:
+    """Parte um trecho maior que a janela, de preferencia no fim de uma frase."""
+    if len(piece) <= max_chars:
+        return [piece]
+
+    parts: List[str] = []
+    rest = piece
+    while len(rest) > max_chars:
+        window = rest[:max_chars]
+        cut = max(window.rfind(". "), window.rfind("? "), window.rfind("! "))
+        if cut < max_chars // 2:
+            cut = window.rfind(" ")
+        cut = max_chars if cut <= 0 else cut + 1
+        parts.append(rest[:cut].strip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        parts.append(rest)
+    return parts
+
+
 def _windows(texts: Sequence[str], max_chars: int) -> List[str]:
     windows: List[str] = []
     current: List[str] = []
     size = 0
     for text in texts:
-        piece = text.strip()
-        if not piece:
-            continue
-        if size + len(piece) > max_chars and current:
-            windows.append("\n".join(current))
-            current = []
-            size = 0
-        current.append(piece)
-        size += len(piece) + 1
+        for piece in _split_piece(text.strip(), max_chars):
+            if not piece:
+                continue
+            if size + len(piece) > max_chars and current:
+                windows.append("\n".join(current))
+                current = []
+                size = 0
+            current.append(piece)
+            size += len(piece) + 1
     if current:
         windows.append("\n".join(current))
     return windows
@@ -468,26 +538,23 @@ async def build_study_context(
     )
 
 
-async def generate_summary(
+async def _summarise_within(
     *,
+    provider: str,
     discipline: str,
     title: str,
-    segments: Sequence[str],
-    llm: Optional[str] = None,
-    focus: str = "",
+    texts: Sequence[str],
+    focus: str,
+    budget: int,
 ) -> Dict[str, Any]:
-    """Resume a aula, condensando em duas etapas quando ela e longa."""
-    texts = [text for text in segments if text and text.strip()]
-    if not texts:
-        return {"summary": "", "llm": "", "used_segments": 0}
+    """Condensa a aula em rodadas ate ela caber em uma unica chamada."""
+    chunks = _windows(texts, budget)
+    error = ""
+    truncated = False
 
-    provider = await resolve_llm(llm)
-    max_chars = max(2000, settings.education_summary_max_chars)
-    chunks = _windows(texts, max_chars)
-
-    if len(chunks) > 1:
-        # Aula de 2h nao cabe na janela de contexto de um modelo local, entao
-        # resumimos cada bloco e depois resumimos os resumos.
+    rounds = 0
+    while len(chunks) > 1 and rounds < _MAX_CONDENSE_ROUNDS:
+        rounds += 1
         partials: List[str] = []
         for chunk in chunks:
             response = await dispatch_single(
@@ -503,24 +570,38 @@ async def generate_summary(
                 _SUMMARY_SYSTEM_PROMPT,
             )
             if response.is_error:
-                logger.warning(
-                    f"Resumo parcial falhou ({provider}): {response.content}"
-                )
+                error = response.content
+                logger.warning(f"Resumo parcial falhou ({provider}): {error}")
                 continue
             partials.append(response.content.strip())
 
         if not partials:
-            return {"summary": "", "llm": provider, "used_segments": 0}
-        transcript = "\n\n".join(partials)
-    else:
-        transcript = chunks[0]
+            return {"summary": "", "llm": provider, "used_segments": 0, "error": error}
+
+        condensed = _windows(partials, budget)
+        if len(condensed) >= len(chunks):
+            # Os parciais pararam de encolher; mais uma rodada so gastaria
+            # chamada. Fica o que ja coube, e o prompt final pede ao modelo que
+            # avise que a transcricao esta truncada.
+            logger.warning(
+                f"Resumo: condensacao estagnou em {len(condensed)} blocos, "
+                "usando o primeiro"
+            )
+            chunks = condensed[:1]
+            truncated = True
+            break
+        chunks = condensed
+
+    if len(chunks) > 1:
+        chunks = chunks[:1]
+        truncated = True
 
     response = await dispatch_single(
         provider,
         _summary_prompt(
             discipline=discipline,
             title=title,
-            transcript=transcript,
+            transcript=chunks[0],
             focus=focus,
         ),
         [],
@@ -528,10 +609,65 @@ async def generate_summary(
     )
     if response.is_error:
         logger.warning(f"Resumo falhou ({provider}): {response.content}")
-        return {"summary": "", "llm": provider, "used_segments": 0, "error": response.content}
+        return {
+            "summary": "",
+            "llm": provider,
+            "used_segments": 0,
+            "error": response.content,
+        }
 
     return {
         "summary": response.content.strip(),
         "llm": provider,
         "used_segments": len(texts),
+        "truncated": truncated,
     }
+
+
+async def generate_summary(
+    *,
+    discipline: str,
+    title: str,
+    segments: Sequence[str],
+    llm: Optional[str] = None,
+    focus: str = "",
+) -> Dict[str, Any]:
+    """Resume a aula respeitando a janela de contexto do modelo escolhido."""
+    texts = [text for text in segments if text and text.strip()]
+    if not texts:
+        return {"summary": "", "llm": "", "used_segments": 0}
+
+    provider = await resolve_llm(llm)
+    budget = summary_budget_chars(provider)
+    outcome = await _summarise_within(
+        provider=provider,
+        discipline=discipline,
+        title=title,
+        texts=texts,
+        focus=focus,
+        budget=budget,
+    )
+    if outcome["summary"]:
+        return outcome
+
+    # O modelo recusou por contexto cheio e disse o tamanho real da janela:
+    # refaz uma vez com a medida dele em vez da configurada.
+    limit = context_limit_from_error(str(outcome.get("error") or ""))
+    if limit is None:
+        return outcome
+
+    corrected = _budget_from_tokens(limit)
+    if corrected >= budget:
+        return outcome
+
+    logger.info(
+        f"Resumo refeito com a janela informada pelo modelo: {limit} tokens"
+    )
+    return await _summarise_within(
+        provider=provider,
+        discipline=discipline,
+        title=title,
+        texts=texts,
+        focus=focus,
+        budget=corrected,
+    )

@@ -414,9 +414,14 @@ Pontos de atencao do fluxo:
   cria o aluno; uma matricula ja cadastrada atualiza o nome e passa para a turma
   escolhida, sem duplicar o registro. Arquivos separados por virgula ou ponto e
   virgula sao aceitos.
-- **Aulas longas usam mapa-reducao.** Acima de `EDUCATION_SUMMARY_MAX_CHARS` a
-  transcricao e resumida em janelas e depois consolidada, para caber na janela de
-  contexto de modelos locais.
+- **Aulas longas usam mapa-reducao.** A transcricao e resumida em janelas e
+  depois consolidada, em quantas rodadas forem necessarias, ate caber em uma
+  chamada. Com modelo local a janela sai de `LOCAL_LLM_CONTEXT_TOKENS`
+  (2048 por padrao, o mesmo do LocalAI) e nao de `EDUCATION_SUMMARY_MAX_CHARS`:
+  uma aula de duas horas mandada inteira para um modelo de 2048 tokens nao
+  devolve resumo pior, devolve erro. Se o modelo recusar por contexto cheio, o
+  backend le o tamanho real da janela na mensagem de erro e refaz o corte uma
+  vez com essa medida.
 - **Blocos repetidos nao viram pontuacao duplicada.** Quando o corte do audio cai
   no meio da frase, a mesma concessao pode ser extraida duas vezes; o backend
   descarta a repeticao comparando aluno, valor e trecho citado.
