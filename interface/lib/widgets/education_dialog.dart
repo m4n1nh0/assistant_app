@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 
 import '../services/api_service.dart';
 import '../services/education_service.dart';
+import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
 
@@ -2049,6 +2050,8 @@ class _HistoryTabState extends State<_HistoryTab> {
   LessonDetail? _detail;
   var _loading = false;
   var _showTranscript = false;
+  var _summarising = false;
+  var _exporting = false;
   var _status = '';
 
   @override
@@ -2263,6 +2266,114 @@ class _HistoryTabState extends State<_HistoryTab> {
     }
   }
 
+  /// Resumo de aula antiga: o backend le a transcricao guardada e devolve o
+  /// texto, mesmo que a aula ja esteja encerrada.
+  Future<void> _summarise(LessonDetail detail) async {
+    setState(() {
+      _summarising = true;
+      _status = 'Gerando resumo da aula...';
+    });
+    try {
+      final summary = await education.generateSummary(detail.id);
+      await _open(detail.id);
+      if (mounted) {
+        setState(() {
+          _showTranscript = false;
+          _status = 'Resumo pronto (${summary.llm}, '
+              '${summary.usedSegments} trechos).';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao resumir: $e');
+    } finally {
+      if (mounted) setState(() => _summarising = false);
+    }
+  }
+
+  Future<void> _exportPdf(LessonDetail detail) async {
+    final summary = detail.summary;
+    if (summary == null || summary.isEmpty) {
+      setState(() => _status = 'Gere o resumo antes de exportar.');
+      return;
+    }
+
+    setState(() => _exporting = true);
+    try {
+      final bytes = await buildLessonSummaryPdf(
+        lesson: detail,
+        summary: summary,
+        points: detail.points,
+      );
+      final path = await FilePicker.saveFile(
+        dialogTitle: 'Salvar resumo da aula',
+        fileName: lessonPdfFilename(detail),
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        bytes: bytes,
+      );
+      if (path == null) return;
+      // No desktop o file_picker devolve o caminho e nao grava sozinho.
+      final file = File(path.toLowerCase().endsWith('.pdf') ? path : '$path.pdf');
+      if (!await file.exists() || await file.length() != bytes.length) {
+        await file.writeAsBytes(bytes);
+      }
+      if (mounted) setState(() => _status = 'PDF salvo em ${file.path}');
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao exportar: $e');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Widget _buildDetailActions(LessonDetail detail, bool hasSummary) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            detail.segments.isEmpty
+                ? 'Aula sem trechos gravados.'
+                : '${detail.segments.length} trecho(s), '
+                    '${detail.transcriptChars} caracteres.',
+            style: const TextStyle(
+                fontSize: 11, color: AssistantTheme.textMuted),
+          ),
+        ),
+        OutlinedButton.icon(
+          onPressed: _summarising || detail.segments.isEmpty
+              ? null
+              : () => _summarise(detail),
+          icon: const Icon(Icons.summarize_outlined, size: 14),
+          label: Text(
+            _summarising
+                ? 'RESUMINDO...'
+                : hasSummary
+                    ? 'REFAZER RESUMO'
+                    : 'GERAR RESUMO',
+            style: const TextStyle(fontSize: 10),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AssistantTheme.c2,
+            side: const BorderSide(color: AssistantTheme.border2),
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed:
+              _exporting || !hasSummary ? null : () => _exportPdf(detail),
+          icon: const Icon(Icons.picture_as_pdf_outlined, size: 14),
+          label: Text(
+            _exporting ? 'GERANDO...' : 'EXPORTAR PDF',
+            style: const TextStyle(fontSize: 10),
+          ),
+          style: FilledButton.styleFrom(
+            backgroundColor: AssistantTheme.c3,
+            foregroundColor: AssistantTheme.bg,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -2428,6 +2539,8 @@ class _HistoryTabState extends State<_HistoryTab> {
 
     return Column(
       children: [
+        _buildDetailActions(detail, hasSummary),
+        const SizedBox(height: 10),
         Expanded(
           flex: 3,
           child: _Panel(

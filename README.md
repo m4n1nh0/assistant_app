@@ -315,7 +315,8 @@ abre direto na gravacao. A pontuacao nao tem botao: o professor cita o aluno em
 voz alta durante a aula ("meio ponto extra para a Ana pela participacao") e o
 trecho seguinte traz o registro. O `4. HISTORICO` lista as aulas do periodo,
 mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema e
-turmas depois — inclusive de aula ja encerrada.
+turmas depois — inclusive de aula ja encerrada. De la tambem se pede o resumo
+de uma aula antiga e se exporta o resultado em PDF.
 
 #### Disciplina, turma e horario
 
@@ -395,6 +396,13 @@ Pontos de atencao do fluxo:
   na transcricao e o nome premiado precisa ter sido dito ali. Sem isso o modelo
   premia aluno que so aparece na lista da turma enviada no prompt. O que e
   descartado fica no log.
+- **O PDF do resumo sai da propria interface.** O documento e montado com o
+  `pdf` puro Dart a partir do markdown do resumo, com a paleta do aplicativo:
+  faixa escura no cabecalho, etiquetas em caixa alta com espacamento e o verde
+  de destaque nas divisorias. O corpo e claro porque resumo de aula acaba
+  impresso. Roboto vai embutido em `interface/assets/fonts` — sem uma TTF de
+  verdade o `pdf` cai na Helvetica interna, que nao tem acento e devolveria
+  "normalizacao" no lugar de "normalização".
 - **A sessao e renovada durante a aula.** O token vale 24h; uma aula de duas
   horas com token velho estourava no meio e os blocos passavam a voltar 401.
   Agora o app chama `POST /auth/refresh` ao abrir, ao iniciar a aula e a cada 20
