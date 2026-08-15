@@ -78,6 +78,37 @@ def test_empty_candidates_returns_empty_string(monkeypatch):
     assert run(service.pick_auto_llm([])) == ""
 
 
+def test_rank_auto_llms_returns_free_providers_before_paid(monkeypatch):
+    fake_statuses(
+        monkeypatch,
+        {
+            "claude": status("claude", balance_ok=True),
+            "localai": status("localai"),
+            "llama": status("llama"),
+        },
+    )
+
+    ranked = run(service.rank_auto_llms(["claude", "localai", "llama"], "study"))
+
+    assert ranked == ["localai", "llama", "claude"]
+
+
+def test_rank_auto_llms_can_exclude_unavailable_providers(monkeypatch):
+    offline = status("localai")
+    offline.available = False
+    offline.online = False
+    fake_statuses(
+        monkeypatch,
+        {"localai": offline, "llama": status("llama")},
+    )
+
+    ranked = run(service.rank_auto_llms(
+        ["localai", "llama"], "study", available_only=True
+    ))
+
+    assert ranked == ["llama"]
+
+
 # --- Rota por tarefa -------------------------------------------------------
 
 

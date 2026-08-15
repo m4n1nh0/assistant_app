@@ -382,7 +382,12 @@ async def _resolve_localai_model(client: httpx.AsyncClient) -> str:
 
 
 async def call_localai(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    *,
+    max_tokens: int = 2000,
+    reasoning_effort: Optional[str] = None,
 ) -> LLMResponse:
     if not settings.localai_base_url:
         return LLMResponse(
@@ -398,7 +403,13 @@ async def call_localai(
         start = time.monotonic()
         chunks = [
             chunk
-            async for chunk in stream_localai(message, history, system_prompt)
+            async for chunk in stream_localai(
+                message,
+                history,
+                system_prompt,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+            )
         ]
         content = "".join(chunks).strip()
         if not content:
@@ -417,8 +428,36 @@ async def call_localai(
         )
 
 
+def _localai_chat_payload(
+    *,
+    model: str,
+    messages: List[dict],
+    max_tokens: int,
+    reasoning_effort: Optional[str],
+) -> dict:
+    payload = {
+        "model": model,
+        "max_tokens": max(1, int(max_tokens)),
+        "messages": messages,
+        "stream": True,
+    }
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+        if reasoning_effort == "none":
+            # Versoes e templates diferentes do LocalAI reconhecem um dos
+            # dois campos. Enviar ambos tornou o comportamento consistente no
+            # modelo de producao minicpm5.
+            payload["metadata"] = {"enable_thinking": "false"}
+    return payload
+
+
 async def stream_localai(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    *,
+    max_tokens: int = 2000,
+    reasoning_effort: Optional[str] = None,
 ) -> AsyncIterator[str]:
     if not settings.localai_base_url:
         raise Exception("LOCALAI_BASE_URL nao configurada")
@@ -427,16 +466,17 @@ async def stream_localai(
                _format_history(history) + [{"role": "user", "content": message}]
     async with httpx.AsyncClient(timeout=180) as client:
         model = await _resolve_localai_model(client)
+        payload = _localai_chat_payload(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
         async with client.stream(
             "POST",
             f"{settings.localai_v1_base_url}/chat/completions",
             headers=_localai_headers(),
-            json={
-                "model": model,
-                "max_tokens": 2000,
-                "messages": messages,
-                "stream": True,
-            },
+            json=payload,
         ) as response:
             if response.is_error:
                 await response.aread()
@@ -463,16 +503,27 @@ async def stream_localai(
 
 
 async def call_llama(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    *,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     try:
         start = time.monotonic()
         messages = [{"role": "system", "content": system_prompt}] + \
                    _format_history(history) + [{"role": "user", "content": message}]
+        payload = {
+            "model": settings.ollama_model,
+            "messages": messages,
+            "stream": False,
+        }
+        if max_tokens is not None:
+            payload["options"] = {"num_predict": max(1, int(max_tokens))}
         async with httpx.AsyncClient(timeout=180) as client:
             resp = await client.post(
                 f"{settings.ollama_base_url}/api/chat",
-                json={"model": settings.ollama_model, "messages": messages, "stream": False},
+                json=payload,
             )
         data = _json_response(resp)
         if resp.is_error:
@@ -579,7 +630,25 @@ async def dispatch_single(
     message: str,
     history: List[Message],
     system_prompt: str,
+    *,
+    max_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> LLMResponse:
+    if llm == "localai":
+        return await call_localai(
+            message,
+            history,
+            system_prompt,
+            max_tokens=max_tokens or 2000,
+            reasoning_effort=reasoning_effort,
+        )
+    if llm == "llama":
+        return await call_llama(
+            message,
+            history,
+            system_prompt,
+            max_tokens=max_tokens,
+        )
     caller = LLM_CALLERS.get(llm)
     if not caller:
         return LLMResponse(llm=llm, content=f"Serviço '{llm}' desconhecido", is_error=True)

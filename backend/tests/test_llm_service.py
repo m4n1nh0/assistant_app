@@ -30,8 +30,23 @@ def test_error_message_keeps_empty_timeouts_readable():
     assert "ReadTimeout" in message
 
 
+def test_localai_summary_payload_disables_thinking():
+    payload = llm_service._localai_chat_payload(
+        model="minicpm5",
+        messages=[{"role": "user", "content": "resuma"}],
+        max_tokens=192,
+        reasoning_effort="none",
+    )
+
+    assert payload["max_tokens"] == 192
+    assert payload["reasoning_effort"] == "none"
+    assert payload["metadata"] == {"enable_thinking": "false"}
+    assert payload["stream"] is True
+
+
 def test_call_localai_collects_stream_without_changing_response_contract(monkeypatch):
-    async def _stream(message, history, system_prompt):
+    async def _stream(message, history, system_prompt, **options):
+        assert options == {"max_tokens": 2000, "reasoning_effort": None}
         yield "Resumo "
         yield "gerado."
 
@@ -50,7 +65,7 @@ def test_call_localai_collects_stream_without_changing_response_contract(monkeyp
 
 
 def test_call_localai_reports_empty_stream_as_error(monkeypatch):
-    async def _stream(message, history, system_prompt):
+    async def _stream(message, history, system_prompt, **options):
         if False:
             yield ""
 

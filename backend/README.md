@@ -120,6 +120,15 @@ evita que resumos e outros fluxos não incrementais atinjam timeout enquanto um
 modelo local mais lento continua gerando tokens; o contrato HTTP desses fluxos
 permanece uma resposta única.
 
+Nos resumos de aula, o backend envia `reasoning_effort=none`, limita a saída e
+executa um workflow LangGraph com fallback. A ordem automática prioriza LocalAI
+e Ollama disponíveis; depois usa no máximo
+`EDUCATION_SUMMARY_MAX_PROVIDERS` provedores. Cada tentativa é limitada por
+`EDUCATION_SUMMARY_PROVIDER_TIMEOUT_SECONDS`. Defina
+`EDUCATION_SUMMARY_ALLOW_PAID_FALLBACK=false` para impedir que o resumo use uma
+API paga depois que os provedores locais falharem. A janela configurada em
+`LOCAL_LLM_CONTEXT_TOKENS` deve ser igual à `LOCALAI_CONTEXT_SIZE` do serviço.
+
 ### Escolha Automática Do Provedor
 
 Quando o cliente não informa `llm` na requisição de chat — o caso normal, já
@@ -170,7 +179,7 @@ LOCALAI_ADDRESS=:8080
 LOCALAI_MODELS_PATH=/models
 LOCALAI_BACKENDS_PATH=/models/.backends
 LOCALAI_EXTERNAL_BACKENDS=llama-cpp
-LOCALAI_CONTEXT_SIZE=2048
+LOCALAI_CONTEXT_SIZE=8192
 LOCALAI_THREADS=4
 LOCALAI_AGENT_POOL_DEFAULT_MODEL=minicpm5-1b-claude-opus-fable5-v2-thinking
 PRELOAD_MODELS=[{"id":"localai@minicpm5-1b-claude-opus-fable5-v2-thinking"}]

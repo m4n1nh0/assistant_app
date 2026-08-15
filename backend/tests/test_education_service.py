@@ -31,15 +31,24 @@ def fake_settings(monkeypatch, *, max_chars: int, context_tokens: int):
 def fake_llm(monkeypatch, content: str, is_error: bool = False):
     calls = []
 
-    async def _dispatch(llm, message, history, system_prompt):
-        calls.append({"llm": llm, "message": message, "system": system_prompt})
+    async def _dispatch(llm, message, history, system_prompt, **options):
+        calls.append({
+            "llm": llm,
+            "message": message,
+            "system": system_prompt,
+            "options": options,
+        })
         return LLMResponse(llm=llm, content=content, is_error=is_error)
 
     async def _resolve(preferred=None):
         return preferred or "llama"
 
+    async def _providers(preferred=None):
+        return [await _resolve(preferred)]
+
     monkeypatch.setattr(service, "dispatch_single", _dispatch)
     monkeypatch.setattr(service, "resolve_llm", _resolve)
+    monkeypatch.setattr(service, "_summary_provider_candidates", _providers)
     return calls
 
 
@@ -364,6 +373,31 @@ def test_summary_reports_error_when_model_fails(monkeypatch):
     assert outcome["error"] == "modelo offline"
 
 
+def test_summary_graph_falls_back_to_next_free_provider(monkeypatch):
+    calls = []
+
+    async def _providers(preferred=None):
+        return ["localai", "llama"]
+
+    async def _dispatch(llm, message, history, system_prompt, **options):
+        calls.append(llm)
+        if llm == "localai":
+            return LLMResponse(llm=llm, content="modelo lento", is_error=True)
+        return LLMResponse(llm=llm, content="resumo pelo Ollama")
+
+    monkeypatch.setattr(service, "_summary_provider_candidates", _providers)
+    monkeypatch.setattr(service, "dispatch_single", _dispatch)
+
+    outcome = run(service.generate_summary(
+        discipline="Quimica", title="", segments=["trecho"]
+    ))
+
+    assert outcome["summary"] == "resumo pelo Ollama"
+    assert outcome["llm"] == "llama"
+    assert calls == ["localai", "llama"]
+    assert [item["success"] for item in outcome["attempts"]] == [False, True]
+
+
 def test_long_summary_stops_after_first_provider_failure(monkeypatch):
     fake_settings(monkeypatch, max_chars=2000, context_tokens=4096)
     calls = fake_llm(monkeypatch, "Timeout ao consultar o provedor", is_error=True)
@@ -404,6 +438,46 @@ def test_summary_focus_reaches_the_prompt(monkeypatch):
     assert "Biologia" in calls[0]["message"]
 
 
+def test_localai_summary_disables_thinking_and_limits_output(monkeypatch):
+    calls = fake_llm(monkeypatch, "resumo")
+
+    outcome = run(service.generate_summary(
+        discipline="Banco de Dados",
+        title="",
+        segments=["trecho"],
+        llm="localai",
+    ))
+
+    assert outcome["summary"] == "resumo"
+    assert calls[0]["options"] == {
+        "max_tokens": service._FINAL_SUMMARY_MAX_TOKENS,
+        "reasoning_effort": "none",
+    }
+
+
+def test_summary_candidates_can_forbid_paid_fallback(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "settings",
+        type("S", (), {
+            "active_llms": ["claude", "localai", "llama"],
+            "education_summary_allow_paid_fallback": False,
+            "education_summary_max_providers": 3,
+        })(),
+    )
+
+    async def _rank(candidates, task, available_only=False):
+        assert task == "study"
+        assert available_only is True
+        return ["localai", "llama", "claude"]
+
+    monkeypatch.setattr(service, "rank_auto_llms", _rank)
+
+    providers = run(service._summary_provider_candidates(None))
+
+    assert providers == ["localai", "llama"]
+
+
 # --- Janela de contexto do resumo ------------------------------------------
 
 
@@ -440,7 +514,7 @@ def test_summary_retries_with_the_window_reported_by_the_model(monkeypatch):
     fake_settings(monkeypatch, max_chars=24000, context_tokens=8192)
     calls = []
 
-    async def _dispatch(llm, message, history, system_prompt):
+    async def _dispatch(llm, message, history, system_prompt, **options):
         calls.append(message)
         if len(calls) == 1:
             return LLMResponse(
@@ -458,7 +532,10 @@ def test_summary_retries_with_the_window_reported_by_the_model(monkeypatch):
     monkeypatch.setattr(service, "resolve_llm", _resolve)
 
     outcome = run(service.generate_summary(
-        discipline="Banco de Dados", title="", segments=["x " * 1500],
+        discipline="Banco de Dados",
+        title="",
+        segments=["x " * 1500],
+        llm="localai",
     ))
 
     # A primeira tentativa foi em uma janela so; depois do erro a aula e

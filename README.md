@@ -419,7 +419,12 @@ flowchart LR
     Extract --> Roster[Casa nome com a turma]
     Roster --> Points[(lesson_points MySQL)]
     Segment --> Summary[POST .../summary]
-    Summary --> Doc[Resumo estruturado]
+    Summary --> SummaryGraph[LangGraph de resumo]
+    SummaryGraph --> Attempt[Tenta provedor free-first]
+    Attempt --> Validate{Resumo valido no prazo?}
+    Validate -->|sim| Doc[Resumo estruturado]
+    Validate -->|nao| Fallback[Proximo provedor ate o limite]
+    Fallback --> Attempt
     Segment --> Edit[PATCH .../segments/id]
     Edit --> Segment
     Edit --> Reembed[Substitui vetor no Qdrant]
@@ -487,14 +492,20 @@ Pontos de atencao do fluxo:
 - **Aulas longas usam mapa-reducao.** A transcricao e resumida em janelas e
   depois consolidada, em quantas rodadas forem necessarias, ate caber em uma
   chamada. Com modelo local a janela sai de `LOCAL_LLM_CONTEXT_TOKENS`
-  (2048 por padrao, o mesmo do LocalAI) e nao de `EDUCATION_SUMMARY_MAX_CHARS`:
-  uma aula de duas horas mandada inteira para um modelo de 2048 tokens nao
-  devolve resumo pior, devolve erro. Se o modelo recusar por contexto cheio, o
+  (8192 por padrao, o mesmo recomendado para o LocalAI) e nao de
+  `EDUCATION_SUMMARY_MAX_CHARS`: uma aula longa mandada inteira para um modelo
+  com janela menor nao devolve resumo pior, devolve erro. Se o modelo recusar
+  por contexto cheio, o
   backend le o tamanho real da janela na mensagem de erro e refaz o corte uma
-  vez com essa medida. No LocalAI, a geracao e consumida por streaming para que
+  vez com essa medida. Um workflow LangGraph tenta primeiro os provedores locais
+  gratuitos que o health check confirmou (`localai`, depois `llama`) e avanca
+  para os demais por custo quando a tentativa falha ou excede
+  `EDUCATION_SUMMARY_PROVIDER_TIMEOUT_SECONDS`. Fallback pago pode ser proibido
+  com `EDUCATION_SUMMARY_ALLOW_PAID_FALLBACK=false`. No LocalAI, o thinking e
+  desligado somente para resumos e a geracao e consumida por streaming para que
   modelos mais lentos nao sejam interrompidos enquanto ainda estao produzindo
-  tokens. Se o provedor falhar, o processamento para no bloco atual e devolve
-  a causa, sem repetir o mesmo timeout em todos os blocos restantes.
+  tokens. Se um bloco falhar, a tentativa daquele provedor para imediatamente,
+  sem repetir o mesmo timeout nos blocos restantes.
 - **Blocos repetidos nao viram pontuacao duplicada.** Quando o corte do audio cai
   no meio da frase, a mesma concessao pode ser extraida duas vezes; o backend
   descarta a repeticao comparando aluno, valor e trecho citado.
@@ -724,7 +735,7 @@ LOCALAI_ADDRESS=:8080
 LOCALAI_MODELS_PATH=/models
 LOCALAI_BACKENDS_PATH=/models/.backends
 LOCALAI_EXTERNAL_BACKENDS=llama-cpp
-LOCALAI_CONTEXT_SIZE=2048
+LOCALAI_CONTEXT_SIZE=8192
 LOCALAI_THREADS=4
 LOCALAI_AGENT_POOL_DEFAULT_MODEL=minicpm5-1b-claude-opus-fable5-v2-thinking
 PRELOAD_MODELS=[{"id":"localai@minicpm5-1b-claude-opus-fable5-v2-thinking"}]

@@ -6,16 +6,18 @@ indexacao no Qdrant (para o resumo depois recuperar contexto) e a extracao de
 pontuacoes extras citadas pelo professor.
 """
 
+import asyncio
 import json
 import re
 import unicodedata
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, TypedDict
 
+from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
 from ..core.config import get_settings
-from .llm_routing_service import pick_auto_llm
+from .llm_routing_service import FREE_LOCAL_LLMS, pick_auto_llm, rank_auto_llms
 from .llm_service import dispatch_single
 
 settings = get_settings()
@@ -416,6 +418,8 @@ _ANSWER_TOKENS = 700
 _LOCAL_PROVIDERS = frozenset({"localai", "llama"})
 # Rodadas de condensacao antes de aceitar o que ja foi resumido.
 _MAX_CONDENSE_ROUNDS = 4
+_PARTIAL_SUMMARY_MAX_TOKENS = 192
+_FINAL_SUMMARY_MAX_TOKENS = 512
 
 # Servidores compativeis com a API da OpenAI reclamam de contexto cheio de
 # formas diferentes; todos, porem, dizem o tamanho da janela na mensagem.
@@ -551,6 +555,28 @@ async def build_study_context(
     )
 
 
+async def _dispatch_summary(
+    provider: str,
+    prompt: str,
+    *,
+    max_tokens: int,
+):
+    """Chama o modelo com opcoes adequadas a uma tarefa de resumo.
+
+    Modelos LocalAI de raciocinio podem gastar toda a saida em ``reasoning`` e
+    nunca preencher ``content``. Resumo e uma tarefa de extracao/condensacao,
+    por isso desativamos thinking apenas aqui; o chat continua inalterado.
+    """
+    return await dispatch_single(
+        provider,
+        prompt,
+        [],
+        _SUMMARY_SYSTEM_PROMPT,
+        max_tokens=max_tokens,
+        reasoning_effort="none" if provider == "localai" else None,
+    )
+
+
 async def _summarise_within(
     *,
     provider: str,
@@ -574,7 +600,7 @@ async def _summarise_within(
             f"rodada {rounds}/{_MAX_CONDENSE_ROUNDS}"
         )
         for index, chunk in enumerate(chunks, start=1):
-            response = await dispatch_single(
+            response = await _dispatch_summary(
                 provider,
                 _summary_prompt(
                     discipline=discipline,
@@ -583,8 +609,7 @@ async def _summarise_within(
                     focus=focus,
                     partial=True,
                 ),
-                [],
-                _SUMMARY_SYSTEM_PROMPT,
+                max_tokens=_PARTIAL_SUMMARY_MAX_TOKENS,
             )
             if response.is_error:
                 error = response.content
@@ -637,7 +662,7 @@ async def _summarise_within(
         chunks = chunks[:1]
         truncated = True
 
-    response = await dispatch_single(
+    response = await _dispatch_summary(
         provider,
         _summary_prompt(
             discipline=discipline,
@@ -645,8 +670,7 @@ async def _summarise_within(
             transcript=chunks[0],
             focus=focus,
         ),
-        [],
-        _SUMMARY_SYSTEM_PROMPT,
+        max_tokens=_FINAL_SUMMARY_MAX_TOKENS,
     )
     if response.is_error:
         logger.warning(f"Resumo falhou ({provider}): {response.content}")
@@ -676,20 +700,15 @@ async def _summarise_within(
     }
 
 
-async def generate_summary(
+async def _summarise_provider(
     *,
+    provider: str,
     discipline: str,
     title: str,
-    segments: Sequence[str],
-    llm: Optional[str] = None,
-    focus: str = "",
+    texts: Sequence[str],
+    focus: str,
 ) -> Dict[str, Any]:
-    """Resume a aula respeitando a janela de contexto do modelo escolhido."""
-    texts = [text for text in segments if text and text.strip()]
-    if not texts:
-        return {"summary": "", "llm": "", "used_segments": 0}
-
-    provider = await resolve_llm(llm)
+    """Executa um provedor e adapta uma vez a janela informada por ele."""
     budget = summary_budget_chars(provider)
     outcome = await _summarise_within(
         provider=provider,
@@ -723,3 +742,160 @@ async def generate_summary(
         focus=focus,
         budget=corrected,
     )
+
+
+async def _summary_provider_candidates(preferred: Optional[str]) -> List[str]:
+    """Monta a fila free-first usada pelo workflow de resumo."""
+    if preferred:
+        return [await resolve_llm(preferred)]
+
+    configured = list(getattr(settings, "active_llms", []) or [])
+    if not configured:
+        return [await resolve_llm(None)]
+
+    ranked = await rank_auto_llms(
+        configured,
+        "study",
+        available_only=True,
+    )
+    allow_paid = bool(
+        getattr(settings, "education_summary_allow_paid_fallback", True)
+    )
+    if not allow_paid:
+        ranked = [provider for provider in ranked if provider in FREE_LOCAL_LLMS]
+
+    if not ranked:
+        # Mantem uma tentativa para devolver ao usuario o erro concreto do
+        # provedor configurado, em vez de um generico "nenhum disponivel".
+        ranked = [await resolve_llm(None)]
+
+    maximum = max(1, int(getattr(settings, "education_summary_max_providers", 3)))
+    return ranked[:maximum]
+
+
+class SummaryGraphState(TypedDict, total=False):
+    discipline: str
+    title: str
+    texts: List[str]
+    focus: str
+    requested_llm: Optional[str]
+    providers: List[str]
+    provider_index: int
+    outcome: Dict[str, Any]
+    attempts: List[Dict[str, Any]]
+
+
+async def _summary_resolve_node(state: SummaryGraphState) -> Dict[str, Any]:
+    providers = await _summary_provider_candidates(state.get("requested_llm"))
+    logger.info(f"Resumo LangGraph: fila de provedores {providers}")
+    return {"providers": providers, "provider_index": 0, "attempts": []}
+
+
+async def _summary_run_node(state: SummaryGraphState) -> Dict[str, Any]:
+    provider = state["providers"][state["provider_index"]]
+    timeout = max(
+        10,
+        int(getattr(settings, "education_summary_provider_timeout_seconds", 180)),
+    )
+    started = asyncio.get_running_loop().time()
+    try:
+        outcome = await asyncio.wait_for(
+            _summarise_provider(
+                provider=provider,
+                discipline=state["discipline"],
+                title=state["title"],
+                texts=state["texts"],
+                focus=state["focus"],
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        outcome = {
+            "summary": "",
+            "llm": provider,
+            "used_segments": 0,
+            "error": f"Tempo limite de {timeout}s excedido ao gerar o resumo",
+        }
+    except Exception as exc:
+        detail = str(exc).strip() or exc.__class__.__name__
+        logger.exception(f"Resumo LangGraph falhou em {provider}: {detail}")
+        outcome = {
+            "summary": "",
+            "llm": provider,
+            "used_segments": 0,
+            "error": detail,
+        }
+
+    elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+    attempt = {
+        "provider": provider,
+        "duration_ms": elapsed_ms,
+        "success": bool(outcome.get("summary")),
+        "error": outcome.get("error"),
+    }
+    return {
+        "outcome": outcome,
+        "attempts": [*state.get("attempts", []), attempt],
+    }
+
+
+def _summary_route_after_attempt(state: SummaryGraphState) -> str:
+    if state["outcome"].get("summary"):
+        return "done"
+    if state["provider_index"] + 1 >= len(state["providers"]):
+        return "done"
+    return "fallback"
+
+
+async def _summary_fallback_node(state: SummaryGraphState) -> Dict[str, Any]:
+    current = state["providers"][state["provider_index"]]
+    next_index = state["provider_index"] + 1
+    following = state["providers"][next_index]
+    logger.warning(
+        f"Resumo LangGraph: {current} falhou; tentando fallback {following}"
+    )
+    return {"provider_index": next_index}
+
+
+def _build_summary_graph():
+    workflow = StateGraph(SummaryGraphState)
+    workflow.add_node("resolve_providers", _summary_resolve_node)
+    workflow.add_node("run_provider", _summary_run_node)
+    workflow.add_node("fallback", _summary_fallback_node)
+    workflow.add_edge(START, "resolve_providers")
+    workflow.add_edge("resolve_providers", "run_provider")
+    workflow.add_conditional_edges(
+        "run_provider",
+        _summary_route_after_attempt,
+        {"fallback": "fallback", "done": END},
+    )
+    workflow.add_edge("fallback", "run_provider")
+    return workflow.compile()
+
+
+summary_graph = _build_summary_graph()
+
+
+async def generate_summary(
+    *,
+    discipline: str,
+    title: str,
+    segments: Sequence[str],
+    llm: Optional[str] = None,
+    focus: str = "",
+) -> Dict[str, Any]:
+    """Resume a aula com LangGraph, janela adaptativa e fallback free-first."""
+    texts = [text for text in segments if text and text.strip()]
+    if not texts:
+        return {"summary": "", "llm": "", "used_segments": 0}
+
+    result = await summary_graph.ainvoke({
+        "discipline": discipline,
+        "title": title,
+        "texts": texts,
+        "focus": focus,
+        "requested_llm": llm,
+    })
+    outcome = dict(result["outcome"])
+    outcome["attempts"] = result.get("attempts", [])
+    return outcome

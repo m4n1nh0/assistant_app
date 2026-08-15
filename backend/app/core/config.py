@@ -160,13 +160,16 @@ class Settings(BaseSettings):
     education_segment_seconds: int = 60
     education_summary_max_chars: int = 24000
     education_min_segment_chars: int = 12
+    education_summary_provider_timeout_seconds: int = 180
+    education_summary_max_providers: int = 3
+    education_summary_allow_paid_fallback: bool = True
 
     # Janela de contexto dos modelos locais (LocalAI, Ollama), em tokens. O
     # resumo da aula fatia a transcricao por esse numero: mandar uma aula de
-    # duas horas inteira para um modelo de 2048 tokens nao devolve resumo ruim,
-    # devolve erro. Se o seu servidor roda com janela maior, aumente aqui - o
-    # resumo fica melhor e gasta menos chamadas.
-    local_llm_context_tokens: int = 2048
+    # duas horas inteira para um modelo com janela pequena nao devolve resumo
+    # ruim, devolve erro. Se o seu servidor roda com janela maior, aumente aqui
+    # - o resumo fica melhor e gasta menos chamadas.
+    local_llm_context_tokens: int = 8192
 
     whisper_model: str = "small"
     whisper_device: str = "cpu"

@@ -105,11 +105,34 @@ def _task_tier(provider: str, balance_ok: bool | None, task: str) -> int:
 
 
 async def pick_auto_llm(candidates: list[str], task: str = "general") -> str:
+    ranked = await rank_auto_llms(candidates, task)
+    return ranked[0] if ranked else ""
+
+
+async def rank_auto_llms(
+    candidates: list[str],
+    task: str = "general",
+    *,
+    available_only: bool = False,
+) -> list[str]:
+    """Ordena provedores por custo/capacidade preservando desempates.
+
+    O chat precisa manter o comportamento historico e pode pedir que um
+    provedor configurado explique a propria indisponibilidade. Workflows com
+    fallback, por outro lado, usam ``available_only`` para nao gastar uma
+    tentativa com um provedor que o health check ja marcou como offline.
+    """
     if not candidates:
-        return ""
+        return []
     statuses = await get_llm_statuses()
-    ranked = sorted(
-        candidates,
+    pool = [
+        provider
+        for provider in candidates
+        if not available_only
+        or (provider in statuses and statuses[provider].available)
+    ]
+    return sorted(
+        pool,
         key=lambda provider: (
             _task_tier(
                 provider,
@@ -119,7 +142,6 @@ async def pick_auto_llm(candidates: list[str], task: str = "general") -> str:
             candidates.index(provider),
         ),
     )
-    return ranked[0]
 
 
 async def pick_for_message(candidates: list[str], message: str) -> tuple[str, str]:
