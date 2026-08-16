@@ -137,6 +137,10 @@ inequívoca pelo contexto da disciplina. Esse tratamento acontece apenas no
 texto resumido; a transcrição original continua disponível para conferência e
 correção manual.
 
+Como a geração pode demorar, sua conclusão dispara um aviso global acima da
+tela atual. Ele identifica a disciplina, o provedor utilizado e quantos trechos
+foram processados, mesmo quando o diálogo que iniciou o resumo já foi fechado.
+
 ### Calendários
 
 Em **Configurações > Agendas**, cada usuário pode conectar contas Google

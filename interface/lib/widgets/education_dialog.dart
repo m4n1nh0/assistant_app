@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 
 import '../services/api_service.dart';
 import '../services/education_service.dart';
+import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
@@ -527,6 +528,12 @@ class _LessonTabState extends State<_LessonTab> {
         lesson.id,
         focus: _focusCtrl.text.trim(),
         closeLesson: close,
+      );
+      InAppNotificationService.showSummaryReady(
+        discipline: lesson.discipline,
+        title: lesson.title,
+        llm: summary.llm,
+        usedSegments: summary.usedSegments,
       );
       if (!mounted) return;
       setState(() {
@@ -2341,6 +2348,12 @@ class _HistoryTabState extends State<_HistoryTab> {
     });
     try {
       final summary = await education.generateSummary(detail.id);
+      InAppNotificationService.showSummaryReady(
+        discipline: detail.discipline,
+        title: detail.title,
+        llm: summary.llm,
+        usedSegments: summary.usedSegments,
+      );
       await _open(detail.id);
       if (mounted) {
         setState(() {

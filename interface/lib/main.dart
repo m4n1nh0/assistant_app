@@ -9,6 +9,7 @@ import 'screens/config_screen.dart';
 import 'screens/main_screen.dart';
 import 'utils/theme.dart';
 import 'models/hive_adapters.dart';
+import 'services/in_app_notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +47,7 @@ class AssistantApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return _StartupWindowMaximizer(
       child: MaterialApp(
+        navigatorKey: appNavigatorKey,
         title: 'Assistente',
         debugShowCheckedModeBanner: false,
         theme: AssistantTheme.darkTheme,

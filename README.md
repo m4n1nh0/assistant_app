@@ -456,6 +456,11 @@ Pontos de atencao do fluxo:
   evidentemente transcritas de forma errada e reorganizar frases quebradas. A
   transcricao original nao e alterada. Trecho ainda ambiguo e omitido ou
   marcado como incerto, nunca completado com um fato inventado.
+- **A interface avisa quando termina.** A geracao pode continuar por alguns
+  minutos; quando o backend devolve o resumo, um aviso global aparece acima da
+  aba ou dialogo atual com disciplina, provedor e quantidade de trechos. O
+  aviso continua funcionando se o dialogo que iniciou a geracao tiver sido
+  fechado e pode ser dispensado manualmente.
 - **Semestre encerra uso, nao apaga historia.** Disciplinas e turmas arquivadas
   deixam os seletores operacionais, enquanto aulas, pontos, transcricoes e
   alunos seguem no banco. Codigo e nome de disciplina podem se repetir em um
