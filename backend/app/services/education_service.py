@@ -361,8 +361,12 @@ def is_duplicate_point(
 
 _SUMMARY_SYSTEM_PROMPT = (
     "Voce resume aulas a partir da transcricao do audio. Escreva em portugues "
-    "brasileiro, de forma objetiva e fiel ao que foi dito. Nunca invente "
-    "conteudo que nao esta na transcricao."
+    "brasileiro, de forma objetiva e fiel ao que foi dito. Corrija "
+    "silenciosamente erros evidentes de reconhecimento de fala quando a "
+    "disciplina, o tema e o restante da frase tornarem a correcao inequivoca. "
+    "Nunca invente conteudo para completar um trecho sem sentido; quando nao "
+    "for possivel recuperar o significado com seguranca, omita o detalhe ou "
+    "marque-o como incerto."
 )
 
 
@@ -384,7 +388,10 @@ def _summary_prompt(
             f"{header}{extra}\n\n"
             "Este e um trecho de uma aula longa. Resuma o trecho preservando "
             "termos tecnicos, definicoes, exemplos e qualquer tarefa ou data "
-            "citada. Nao escreva introducao nem conclusao. Responda em no "
+            "citada. Normalize frases quebradas e corrija palavras claramente "
+            "transcritas de forma errada usando o contexto da disciplina, sem "
+            "criar fatos nem completar passagens ambiguas. Nao escreva "
+            "introducao nem conclusao. Responda em no "
             "maximo 8 linhas: os parciais sao juntados depois e precisam caber "
             "na janela do modelo.\n\n"
             f'Trecho:\n"""\n{transcript}\n"""'
@@ -401,8 +408,11 @@ def _summary_prompt(
         "houver)\n"
         "## Duvidas levantadas\n(perguntas da turma e as respostas; omita se "
         "nao houver)\n\n"
-        "Se a transcricao estiver truncada ou confusa em algum ponto, diga isso "
-        "em vez de preencher com suposicao.\n\n"
+        "Antes de redigir, ajuste mentalmente frases quebradas e erros evidentes "
+        "de reconhecimento de fala usando a disciplina, o tema e as frases "
+        "vizinhas. Use no resumo a forma corrigida quando ela for inequivoca. "
+        "Se a transcricao continuar truncada ou ambigua, omita o detalhe ou "
+        "declare a incerteza em vez de preencher com suposicao.\n\n"
         f'Transcricao:\n"""\n{transcript}\n"""'
     )
 

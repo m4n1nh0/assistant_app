@@ -420,7 +420,8 @@ flowchart LR
     Roster --> Points[(lesson_points MySQL)]
     Segment --> Summary[POST .../summary]
     Summary --> SummaryGraph[LangGraph de resumo]
-    SummaryGraph --> Attempt[Tenta provedor free-first]
+    SummaryGraph --> Repair[Corrige erros inequivocos no contexto]
+    Repair --> Attempt[Tenta provedor free-first]
     Attempt --> Validate{Resumo valido no prazo?}
     Validate -->|sim| Doc[Resumo estruturado]
     Validate -->|nao| Fallback[Proximo provedor ate o limite]
@@ -450,6 +451,11 @@ Pontos de atencao do fluxo:
   Qdrant. Se o indice estiver indisponivel, a correcao fica salva e entra na
   reindexacao pendente. Um resumo feito antes da correcao e invalidado para nao
   continuar mostrando a palavra errada e deve ser gerado novamente.
+- **O resumo recupera frases reconheciveis.** Antes de redigir, o LLM usa
+  disciplina, tema e frases vizinhas para corrigir silenciosamente palavras
+  evidentemente transcritas de forma errada e reorganizar frases quebradas. A
+  transcricao original nao e alterada. Trecho ainda ambiguo e omitido ou
+  marcado como incerto, nunca completado com um fato inventado.
 - **Semestre encerra uso, nao apaga historia.** Disciplinas e turmas arquivadas
   deixam os seletores operacionais, enquanto aulas, pontos, transcricoes e
   alunos seguem no banco. Codigo e nome de disciplina podem se repetir em um
@@ -471,13 +477,13 @@ Pontos de atencao do fluxo:
   premia aluno que so aparece na lista da turma enviada no prompt. O que e
   descartado fica no log.
 - **O PDF do resumo sai da propria interface.** O documento e montado com o
-  `pdf` puro Dart a partir do markdown do resumo, com a paleta do aplicativo:
-  faixa escura no cabecalho, etiquetas em caixa alta com espacamento e o verde
-  de destaque nas divisorias. O corpo e claro porque resumo de aula acaba
-  impresso. Roboto vai embutido em `interface/assets/fonts` — sem uma TTF de
-  verdade o `pdf` cai na Helvetica interna, que nao tem acento e devolveria
-  "normalizacao" no lugar de "normalização". O semestre aparece no cabecalho e
-  no nome sugerido para o arquivo.
+  `pdf` a partir do markdown do resumo e mostrado primeiro em uma tela de
+  preview renderizada pelo `printing`; o seletor de arquivo so abre depois da
+  confirmacao. O cabecalho usa fundo verde-claro, texto escuro, faixa lateral e
+  selo do semestre, preservando contraste na tela e na impressao. Roboto vai
+  embutido em `interface/assets/fonts` — sem uma TTF de verdade o `pdf` cai na
+  Helvetica interna, que nao tem acento e devolveria "normalizacao" no lugar de
+  "normalização". O semestre tambem aparece no nome sugerido para o arquivo.
 - **A sessao e renovada durante a aula.** O token vale 24h; uma aula de duas
   horas com token velho estourava no meio e os blocos passavam a voltar 401.
   Agora o app chama `POST /auth/refresh` ao abrir, ao iniciar a aula e a cada 20
@@ -495,8 +501,8 @@ Pontos de atencao do fluxo:
   (8192 por padrao, o mesmo recomendado para o LocalAI) e nao de
   `EDUCATION_SUMMARY_MAX_CHARS`: uma aula longa mandada inteira para um modelo
   com janela menor nao devolve resumo pior, devolve erro. Se o modelo recusar
-  por contexto cheio, o
-  backend le o tamanho real da janela na mensagem de erro e refaz o corte uma
+  por contexto cheio, o backend le o tamanho real da janela na mensagem de erro
+  e refaz o corte uma
   vez com essa medida. Um workflow LangGraph tenta primeiro os provedores locais
   gratuitos que o health check confirmou (`localai`, depois `llama`) e avanca
   para os demais por custo quando a tentativa falha ou excede

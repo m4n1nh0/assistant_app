@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:printing/printing.dart';
 import 'package:record/record.dart';
 
 import '../services/api_service.dart';
@@ -2368,9 +2370,23 @@ class _HistoryTabState extends State<_HistoryTab> {
         summary: summary,
         points: detail.points,
       );
+      if (!mounted) return;
+      final fileName = lessonPdfFilename(detail);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _LessonPdfPreviewDialog(
+          bytes: bytes,
+          fileName: fileName,
+        ),
+      );
+      if (confirmed != true) {
+        if (mounted) setState(() => _status = 'Exportacao cancelada.');
+        return;
+      }
       final path = await FilePicker.saveFile(
         dialogTitle: 'Salvar resumo da aula',
-        fileName: lessonPdfFilename(detail),
+        fileName: fileName,
         type: FileType.custom,
         allowedExtensions: const ['pdf'],
         bytes: bytes,
@@ -2427,7 +2443,7 @@ class _HistoryTabState extends State<_HistoryTab> {
               _exporting || !hasSummary ? null : () => _exportPdf(detail),
           icon: const Icon(Icons.picture_as_pdf_outlined, size: 14),
           label: Text(
-            _exporting ? 'GERANDO...' : 'EXPORTAR PDF',
+            _exporting ? 'PREPARANDO...' : 'VISUALIZAR PDF',
             style: const TextStyle(fontSize: 10),
           ),
           style: FilledButton.styleFrom(
@@ -2704,6 +2720,144 @@ class _HistoryTabState extends State<_HistoryTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _LessonPdfPreviewDialog extends StatelessWidget {
+  final Uint8List bytes;
+  final String fileName;
+
+  const _LessonPdfPreviewDialog({
+    required this.bytes,
+    required this.fileName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final width = (size.width - 48).clamp(280.0, 1100.0).toDouble();
+    final height = (size.height - 48).clamp(360.0, 820.0).toDouble();
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      backgroundColor: AssistantTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(18, 12, 10, 12),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: AssistantTheme.border2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.preview_outlined,
+                    size: 18,
+                    color: AssistantTheme.c3,
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'PRÉ-VISUALIZAÇÃO DO PDF',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2,
+                            color: AssistantTheme.textPrimary,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Confira o documento antes de escolher onde salvar.',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AssistantTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Fechar preview',
+                    onPressed: () => Navigator.of(context).pop(false),
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: PdfPreview(
+                build: (_) async => bytes,
+                pdfFileName: fileName,
+                useActions: false,
+                allowPrinting: false,
+                allowSharing: false,
+                canChangePageFormat: false,
+                canChangeOrientation: false,
+                canDebug: false,
+                maxPageWidth: 720,
+                padding: const EdgeInsets.all(18),
+                scrollViewDecoration: const BoxDecoration(
+                  color: Color(0xFFE6EBF1),
+                ),
+                pdfPreviewPageDecoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                onError: (_, error) => Center(
+                  child: Text(
+                    'Não foi possível visualizar o PDF: $error',
+                    style: const TextStyle(color: AssistantTheme.danger),
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: AssistantTheme.border2),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('CANCELAR'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    icon: const Icon(Icons.save_alt, size: 16),
+                    label: const Text('SALVAR PDF'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AssistantTheme.c3,
+                      foregroundColor: AssistantTheme.bg,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

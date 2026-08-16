@@ -125,6 +125,18 @@ legados são migrados somente para o primeiro admin.
 As credenciais e URLs dos provedores de LLM são configurações de
 infraestrutura do backend e devem ser fornecidas por variáveis de ambiente.
 
+### Resumos E PDF
+
+No histórico do modo educação, a ação **Visualizar PDF** gera o documento em
+memória e abre uma pré-visualização paginada. O arquivo só é gravado depois de
+**Salvar PDF**. O cabeçalho do documento é claro, com texto escuro, destaque
+verde e selo do semestre para continuar legível tanto na tela quanto impresso.
+
+O resumo pode normalizar palavras e frases quebradas quando a correção é
+inequívoca pelo contexto da disciplina. Esse tratamento acontece apenas no
+texto resumido; a transcrição original continua disponível para conferência e
+correção manual.
+
 ### Calendários
 
 Em **Configurações > Agendas**, cada usuário pode conectar contas Google

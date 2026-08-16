@@ -438,6 +438,21 @@ def test_summary_focus_reaches_the_prompt(monkeypatch):
     assert "Biologia" in calls[0]["message"]
 
 
+def test_summary_prompt_repairs_only_unambiguous_transcription_errors(monkeypatch):
+    calls = fake_llm(monkeypatch, "resumo")
+
+    run(service.generate_summary(
+        discipline="Banco de Dados",
+        title="Normalizacao",
+        segments=["a terceira forma normau evita dependencia transitiva"],
+    ))
+
+    prompt = calls[0]["message"]
+    assert "erros evidentes de reconhecimento de fala" in prompt
+    assert "quando ela for inequivoca" in prompt
+    assert "em vez de preencher com suposicao" in prompt
+
+
 def test_localai_summary_disables_thinking_and_limits_output(monkeypatch):
     calls = fake_llm(monkeypatch, "resumo")
 

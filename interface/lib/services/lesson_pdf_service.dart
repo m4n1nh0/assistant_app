@@ -10,17 +10,19 @@ import 'education_service.dart';
 ///
 /// O documento nasce do resumo em markdown que o backend devolve. O corpo e
 /// claro de proposito — resumo de aula costuma ser impresso e distribuido —,
-/// e a identidade vem da faixa escura do cabecalho, da paleta e das etiquetas
-/// em caixa alta com espacamento, do mesmo jeito que na interface.
+/// e a identidade vem do cabecalho claro, da paleta e das etiquetas em caixa
+/// alta com espacamento, do mesmo jeito que na interface.
 
 // Paleta espelhada de AssistantTheme.
-const _bg = PdfColor.fromInt(0xFF07090E);
 const _accent = PdfColor.fromInt(0xFF34D399);
-const _accentSoft = PdfColor.fromInt(0xFF38BDF8);
+const _accentDark = PdfColor.fromInt(0xFF087F5B);
+const _accentSoft = PdfColor.fromInt(0xFF1677A6);
 const _ink = PdfColor.fromInt(0xFF111827);
 const _inkSoft = PdfColor.fromInt(0xFF44566B);
 const _rule = PdfColor.fromInt(0xFFD8E0EA);
 const _panel = PdfColor.fromInt(0xFFF3F6FA);
+const _header = PdfColor.fromInt(0xFFF0F9F6);
+const _headerBadge = PdfColor.fromInt(0xFFFFFFFF);
 
 enum SummaryBlockKind { heading, bullet, paragraph }
 
@@ -192,49 +194,80 @@ pw.Widget _buildBanner(Lesson lesson, String turmas) {
   return pw.Container(
     width: double.infinity,
     margin: const pw.EdgeInsets.only(bottom: 4),
-    padding: const pw.EdgeInsets.fromLTRB(24, 22, 24, 20),
-    color: _bg,
-    child: pw.Column(
+    padding: const pw.EdgeInsets.fromLTRB(18, 20, 18, 18),
+    decoration: const pw.BoxDecoration(
+      color: _header,
+      border: pw.Border(
+        left: pw.BorderSide(color: _accentDark, width: 5),
+        bottom: pw.BorderSide(color: _rule, width: 1),
+      ),
+    ),
+    child: pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text(
-          'RESUMO DA AULA',
-          style: pw.TextStyle(
-            fontSize: 9,
-            letterSpacing: 3,
-            color: _accent,
-            fontWeight: pw.FontWeight.bold,
+        pw.Expanded(
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'RESUMO DA AULA',
+                style: pw.TextStyle(
+                  fontSize: 9,
+                  letterSpacing: 3,
+                  color: _accentDark,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                lesson.discipline,
+                style: pw.TextStyle(
+                  fontSize: 19,
+                  color: _ink,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              if (lesson.title.isNotEmpty) ...[
+                pw.SizedBox(height: 2),
+                pw.Text(
+                  lesson.title,
+                  style: const pw.TextStyle(
+                    fontSize: 12,
+                    color: _accentSoft,
+                  ),
+                ),
+              ],
+              pw.SizedBox(height: 10),
+              pw.Text(
+                [
+                  if (turmas.isNotEmpty) 'Turma: $turmas',
+                  if (lesson.startedAt != null) _formatDate(lesson.startedAt),
+                  '${lesson.segmentCount} trechos gravados',
+                ].join('   |   '),
+                style: const pw.TextStyle(fontSize: 9, color: _inkSoft),
+              ),
+            ],
           ),
         ),
-        pw.SizedBox(height: 8),
-        pw.Text(
-          lesson.discipline,
-          style: pw.TextStyle(
-            fontSize: 19,
-            color: PdfColors.white,
-            fontWeight: pw.FontWeight.bold,
-          ),
-        ),
-        if (lesson.title.isNotEmpty) ...[
-          pw.SizedBox(height: 2),
-          pw.Text(
-            lesson.title,
-            style: const pw.TextStyle(fontSize: 12, color: _accentSoft),
+        if (lesson.semester.isNotEmpty) ...[
+          pw.SizedBox(width: 12),
+          pw.Container(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: pw.BoxDecoration(
+              color: _headerBadge,
+              border: pw.Border.all(color: _accent),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+            ),
+            child: pw.Text(
+              lesson.semester,
+              style: pw.TextStyle(
+                fontSize: 9,
+                color: _accentDark,
+                fontWeight: pw.FontWeight.bold,
+              ),
+            ),
           ),
         ],
-        pw.SizedBox(height: 10),
-        pw.Text(
-          [
-            if (lesson.semester.isNotEmpty) 'Semestre: ${lesson.semester}',
-            if (turmas.isNotEmpty) 'Turma: $turmas',
-            if (lesson.startedAt != null) _formatDate(lesson.startedAt),
-            '${lesson.segmentCount} trechos gravados',
-          ].join('   |   '),
-          style: const pw.TextStyle(
-            fontSize: 9,
-            color: PdfColor.fromInt(0xFF8BA3BE),
-          ),
-        ),
       ],
     ),
   );

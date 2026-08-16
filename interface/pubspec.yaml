@@ -44,6 +44,7 @@ dependencies:
   edge_tts: ^0.1.5
   file_picker: ^11.0.3
   pdf: ^3.11.1
+  printing: ^5.14.3
 
 dev_dependencies:
   flutter_test:
