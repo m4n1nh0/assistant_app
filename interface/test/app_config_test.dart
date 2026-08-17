@@ -65,4 +65,16 @@ void main() {
     expect(restored.sendMessageOnEnter, isFalse);
     expect(restored.toJson()['sendMessageOnEnter'], isFalse);
   });
+
+  test('calendar reminder minutes survive backend and local payloads', () {
+    final fromBackend = NotifConfig.fromJson({
+      'notify_15min': true,
+      'reminder_minutes': 30,
+    });
+    expect(fromBackend.reminderMinutes, 30);
+    expect(fromBackend.toJson()['reminderMinutes'], 30);
+
+    final clamped = NotifConfig.fromJson({'reminderMinutes': 9999});
+    expect(clamped.reminderMinutes, 1440);
+  });
 }

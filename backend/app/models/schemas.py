@@ -151,6 +151,7 @@ class NotifConfig(BaseModel):
     wa_sid: str = ""
     wa_enabled: bool = False
     notify_15min: bool = True
+    reminder_minutes: int = Field(default=15, ge=5, le=1440)
     notify_on_time: bool = True
     fallback_enabled: bool = True
     include_link: bool = True

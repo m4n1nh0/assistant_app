@@ -1003,6 +1003,7 @@ class ApiService {
         'wa_sid': config.waSid,
         'wa_enabled': config.waEnabled,
         'notify_15min': config.notify15min,
+        'reminder_minutes': config.reminderMinutes,
         'notify_on_time': config.notifyOnTime,
         'fallback_enabled': config.fallbackEnabled,
         'include_link': config.includeLink,

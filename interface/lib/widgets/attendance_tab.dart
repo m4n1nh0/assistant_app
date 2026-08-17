@@ -446,8 +446,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     const SizedBox(height: 12),
                     const Text(
                       'Os eventos aparecerao no painel de proximos eventos e '
-                      'usarao os lembretes configurados para 15 minutos antes '
-                      'e/ou no horario da aula.',
+                      'usarao a antecedencia e o aviso no horario configurados '
+                      'na tela de Notificacoes.',
                       style: TextStyle(
                         color: AssistantTheme.textSecondary,
                         fontSize: 10,

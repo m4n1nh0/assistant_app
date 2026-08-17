@@ -408,6 +408,11 @@ das contas estão documentados em
 | POST | `/notifications/test/telegram` | Testar Telegram |
 | POST | `/notifications/test/whatsapp` | Testar WhatsApp |
 
+`reminder_minutes` define a antecedência dos eventos entre 5 e 1.440 minutos
+(15 por padrão). `notify_15min` permanece como o sinal para ligar/desligar o
+aviso antecipado por compatibilidade, enquanto `notify_on_time` controla o aviso
+no horário. O scheduler e a interface usam o mesmo valor persistido por usuário.
+
 ### Voz
 
 | Método | Rota | Descrição |

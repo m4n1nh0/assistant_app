@@ -153,8 +153,11 @@ No **Modo Aula > 5. Presença**, a chamada oferece somente as turmas previstas
 para o dia e as ordena pelo horário. O botão de agenda do quadro de relatórios
 sincroniza em lote as turmas do semestre corrente com uma conta conectada: uma
 confirmação cria as séries semanais até o fim escolhido. Esses eventos entram
-no painel lateral e usam os lembretes de 15 minutos antes/no horário sem criar
-temporizadores duplicados nas atualizações periódicas.
+no painel lateral e usam a antecedência editável em **Notificações** (de 5 a
+1.440 minutos, 15 por padrão) e o aviso opcional no horário, sem criar
+temporizadores duplicados nas atualizações periódicas. A interface mostra o
+aviso visual; Telegram e WhatsApp são enviados somente pelo scheduler do
+backend para não duplicar mensagens quando o aplicativo está aberto.
 
 ## Ações Locais E Segurança
 

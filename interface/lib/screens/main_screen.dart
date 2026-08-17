@@ -5,7 +5,6 @@ import 'package:window_manager/window_manager.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../services/calendar_service.dart';
-import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
@@ -210,28 +209,27 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   void _scheduleNotifications(List<CalendarEvent> events) {
     final config = ref.read(configProvider);
-    final notifSvc = NotificationService(config.notif, config.assistantName);
     final activeKeys = <String>{};
 
     for (final event in events) {
       if (!event.isUpcoming) continue;
+      final reminderMinutes = config.notif.reminderMinutes;
       final ms15 = event.startTime
-          .subtract(const Duration(minutes: 15))
+          .subtract(Duration(minutes: reminderMinutes))
           .difference(DateTime.now())
           .inMilliseconds;
       final ms0 = event.startTime.difference(DateTime.now()).inMilliseconds;
 
       if (config.notif.notify15min && ms15 > 0 && !event.notified15) {
-        final key = '${event.id}:15';
+        final key = '${event.id}:advance:$reminderMinutes';
         activeKeys.add(key);
         _scheduleEventNotification(key, Duration(milliseconds: ms15), () async {
           ref.read(eventsProvider.notifier).markNotified(event.id, true);
-          final msg = notifSvc.buildEventMessage(event, is15min: true);
-          await notifSvc.send(msg, event: event);
           ref.read(chatProvider.notifier).addMessage(ChatMessage(
                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                 role: 'system',
-                content: '⏰ **Lembrete:** ${event.title} em 15 minutos',
+                content: '⏰ **Lembrete:** ${event.title} em '
+                    '$reminderMinutes minutos',
               ));
         });
       }
@@ -241,8 +239,6 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         activeKeys.add(key);
         _scheduleEventNotification(key, Duration(milliseconds: ms0), () async {
           ref.read(eventsProvider.notifier).markNotified(event.id, false);
-          final msg = notifSvc.buildEventMessage(event, is15min: false);
-          await notifSvc.send(msg, event: event);
           ref.read(chatProvider.notifier).addMessage(ChatMessage(
                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                 role: 'system',

@@ -16,7 +16,7 @@ class NotificationService {
   NotificationService(this.config, this.assistantName);
 
   String buildEventMessage(CalendarEvent event, {required bool is15min}) {
-    final when = is15min ? 'em 15 minutos' : 'agora';
+    final when = is15min ? 'em ${config.reminderMinutes} minutos' : 'agora';
     final buf = StringBuffer();
     buf.write('🔔 [$assistantName] ${event.title} — $when');
     if (config.includeLink && event.meetingUrl != null) {

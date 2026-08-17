@@ -39,6 +39,20 @@ def _bool_value(value: Any, fallback: bool = False) -> bool:
     return bool(value)
 
 
+def _int_value(
+    value: Any,
+    *,
+    fallback: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = fallback
+    return max(minimum, min(maximum, parsed))
+
+
 async def load_notif_config(
     db: AsyncSession | None = None,
     user_id: str | None = None,
@@ -137,6 +151,12 @@ async def load_notif_config(
         notify_15min=_bool_value(
             _pick(data, "notify_15min", "notify15min", default=None),
             fallback=True,
+        ),
+        reminder_minutes=_int_value(
+            _pick(data, "reminder_minutes", "reminderMinutes", default=15),
+            fallback=15,
+            minimum=5,
+            maximum=1440,
         ),
         notify_on_time=_bool_value(
             _pick(data, "notify_on_time", "notifyOnTime", default=None),

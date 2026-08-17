@@ -522,14 +522,20 @@ flowchart LR
     Schedule --> Batch[Sincronizar agenda em lote]
     Batch --> Series[Series semanais Google ou Microsoft]
     Series --> Calendar[Proximos eventos]
-    Calendar --> Reminder15[Lembrete 15 min antes]
+    Calendar --> ReminderAdvance[Lembrete com antecedencia configuravel]
     Calendar --> Reminder0[Lembrete no horario]
 ```
 
 Os eventos entram no painel `PROXIMOS EVENTOS` na sincronizacao de calendario,
-feita a cada cinco minutos, e usam as opcoes de notificacao ja configuradas. O
+feita a cada cinco minutos, e usam as opcoes de notificacao ja configuradas. Em
+`Configuracoes > Notificacoes`, a antecedencia pode ser editada entre 5 e 1.440
+minutos (15 por padrao), e o aviso exatamente no horario pode ser ligado ou
+desligado separadamente. O
 aplicativo mantem um unico temporizador por evento e tipo de lembrete, portanto
-as sincronizacoes periodicas nao multiplicam avisos para a mesma aula.
+as sincronizacoes periodicas nao multiplicam avisos para a mesma aula. A
+interface usa esses temporizadores apenas para o aviso visual; Telegram e
+WhatsApp ficam a cargo do scheduler do backend, inclusive com o app fechado,
+evitando que os dois lados enviem a mesma mensagem.
 
 O relatorio educacional em PDF passa por uma tela de preview e consolida tres
 quadros: horarios de aula por dia e disciplina, presencas/ausencias no periodo e

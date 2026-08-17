@@ -627,6 +627,7 @@ async def seed_admin_notification_config(
         "wa_sid": settings.wa_sid,
         "wa_enabled": bool(settings.wa_number),
         "notify_15min": True,
+        "reminder_minutes": 15,
         "notify_on_time": True,
         "fallback_enabled": True,
         "include_link": True,

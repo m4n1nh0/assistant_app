@@ -108,23 +108,42 @@ async def _sync_user(user_id: str):
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
 
-        key_15 = f"{user_id}:{event.id}:15"
+        reminder_minutes = notif_cfg.reminder_minutes
+        key_15 = f"{user_id}:{event.id}:advance:{reminder_minutes}"
         diff_15 = (start - now).total_seconds()
-        if 0 < diff_15 <= 900 and key_15 not in _notified:
+        if (
+            notif_cfg.notify_15min
+            and 0 < diff_15 <= reminder_minutes * 60
+            and key_15 not in _notified
+        ):
             _notified.add(key_15)
-            msg = build_event_message(event, is_15min=True)
+            msg = build_event_message(
+                event,
+                is_15min=True,
+                reminder_minutes=reminder_minutes,
+            )
             await send_notification(msg, notif_cfg, event=event)
-            logger.info(f"Sent 15-min reminder: {event.title}")
+            logger.info(
+                f"Sent {reminder_minutes}-min reminder: {event.title}"
+            )
 
             try:
                 from ..routers.websocket import broadcast_event_reminder
-                await broadcast_event_reminder(user_id, event.title, 15)
+                await broadcast_event_reminder(
+                    user_id,
+                    event.title,
+                    reminder_minutes,
+                )
             except Exception:
                 pass
 
         key_0 = f"{user_id}:{event.id}:0"
         diff_0 = (start - now).total_seconds()
-        if -60 < diff_0 <= 60 and key_0 not in _notified:
+        if (
+            notif_cfg.notify_on_time
+            and -300 < diff_0 <= 60
+            and key_0 not in _notified
+        ):
             _notified.add(key_0)
             msg = build_event_message(event, is_15min=False)
             await send_notification(msg, notif_cfg, event=event)

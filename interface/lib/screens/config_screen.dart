@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_provider.dart';
 import '../services/storage_service.dart';
@@ -33,6 +34,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _tgChatCtrl = TextEditingController();
   final _waNumCtrl = TextEditingController();
   final _waTokCtrl = TextEditingController();
+  final _reminderMinutesCtrl = TextEditingController();
   final _gcalClientCtrl = TextEditingController();
   final _gcalSecretCtrl = TextEditingController();
   final _msClientCtrl = TextEditingController();
@@ -83,6 +85,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _tgChatCtrl.text = _draft.notif.tgChatId;
     _waNumCtrl.text = _draft.notif.waNumber;
     _waTokCtrl.text = _draft.notif.waToken;
+    _reminderMinutesCtrl.text = '${_draft.notif.reminderMinutes}';
   }
 
   Future<void> _loadNotificationConfig() async {
@@ -137,6 +140,14 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _draft.notif.waNumber = _waNumCtrl.text.trim();
     _draft.notif.waToken = _waTokCtrl.text.trim();
     _draft.notif.waEnabled = _draft.notif.waNumber.isNotEmpty;
+    final reminderMinutes = int.tryParse(_reminderMinutesCtrl.text.trim());
+    if (reminderMinutes == null ||
+        reminderMinutes < 5 ||
+        reminderMinutes > 1440) {
+      _showSnack('A antecedencia deve ficar entre 5 e 1440 minutos.');
+      return;
+    }
+    _draft.notif.reminderMinutes = reminderMinutes;
 
     try {
       _draft.notif = await api.saveNotificationConfig(_draft.notif);
@@ -639,10 +650,22 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                   'Configure o número e token, depois clique "Salvar" antes de testar')),
         ]),
         _SectionCard(title: '⚙ CONFIGURAÇÕES DE ALERTA', children: [
-          _Toggle('Notificar 15 min antes', _draft.notif.notify15min,
+          _Toggle('Notificar com antecedência', _draft.notif.notify15min,
               (v) => setState(() => _draft.notif.notify15min = v)),
-          _Toggle('Notificar no horário', _draft.notif.notifyOnTime,
+          if (_draft.notif.notify15min)
+            _Field(
+              'ANTECEDÊNCIA EM MINUTOS',
+              _reminderMinutesCtrl,
+              hint: 'Ex.: 10, 30, 60 ou 1440',
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            ),
+          _Toggle('Notificar também no horário', _draft.notif.notifyOnTime,
               (v) => setState(() => _draft.notif.notifyOnTime = v)),
+          const _InfoBox(
+            'O horário do aviso acompanha o evento no calendário. Para aulas, '
+            'altere o horário no cadastro da turma antes de sincronizar a agenda.',
+          ),
           _Toggle(
               'Fallback (Telegram → WhatsApp)',
               _draft.notif.fallbackEnabled,
@@ -821,6 +844,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _tgChatCtrl,
       _waNumCtrl,
       _waTokCtrl,
+      _reminderMinutesCtrl,
       _gcalClientCtrl,
       _gcalSecretCtrl,
       _msClientCtrl,
@@ -933,8 +957,14 @@ class _Field extends StatelessWidget {
   final String? hint;
   final bool obscure;
   final int maxLines;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
   const _Field(this.label, this.ctrl,
-      {this.hint, this.obscure = false, this.maxLines = 1});
+      {this.hint,
+      this.obscure = false,
+      this.maxLines = 1,
+      this.keyboardType,
+      this.inputFormatters});
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -951,6 +981,8 @@ class _Field extends StatelessWidget {
               controller: ctrl,
               obscureText: obscure,
               maxLines: maxLines,
+              keyboardType: keyboardType,
+              inputFormatters: inputFormatters,
               style: const TextStyle(
                   fontFamily: 'JetBrains Mono',
                   fontSize: 12,

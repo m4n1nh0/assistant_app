@@ -122,10 +122,18 @@ async def send_notification(
     return result
 
 
-def build_event_message(event: CalendarEvent, *, is_15min: bool) -> str:
+def build_event_message(
+    event: CalendarEvent,
+    *,
+    is_15min: bool,
+    reminder_minutes: int = 15,
+) -> str:
     time_str = event.start_time.strftime("%H:%M")
     src_map = {"google": "📗 Google Calendar", "teams": "📘 Teams", "outlook": "📙 Outlook"}
     src = src_map.get(event.source, event.source)
     if is_15min:
-        return f"⏰ Em 15 minutos:\n\n📅 {event.title}\n🕐 {time_str}\n📌 {src}"
+        return (
+            f"⏰ Em {reminder_minutes} minutos:\n\n"
+            f"📅 {event.title}\n🕐 {time_str}\n📌 {src}"
+        )
     return f"🔔 Começando AGORA:\n\n📅 {event.title}\n🕐 {time_str}\n📌 {src}"

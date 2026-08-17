@@ -277,6 +277,7 @@ class NotifConfig {
   bool waEnabled;
 
   bool notify15min;
+  int reminderMinutes;
   bool notifyOnTime;
   bool fallbackEnabled;
   bool includeLink;
@@ -291,6 +292,7 @@ class NotifConfig {
     this.waSid = '',
     this.waEnabled = false,
     this.notify15min = true,
+    this.reminderMinutes = 15,
     this.notifyOnTime = true,
     this.fallbackEnabled = true,
     this.includeLink = true,
@@ -306,6 +308,7 @@ class NotifConfig {
         'waSid': waSid,
         'waEnabled': waEnabled,
         'notify15min': notify15min,
+        'reminderMinutes': reminderMinutes,
         'notifyOnTime': notifyOnTime,
         'fallbackEnabled': fallbackEnabled,
         'includeLink': includeLink,
@@ -321,6 +324,10 @@ class NotifConfig {
         waSid: j['waSid'] ?? j['wa_sid'] ?? '',
         waEnabled: j['waEnabled'] ?? j['wa_enabled'] ?? false,
         notify15min: j['notify15min'] ?? j['notify_15min'] ?? true,
+        reminderMinutes: AppConfig._intValue(
+          j['reminderMinutes'] ?? j['reminder_minutes'],
+          fallback: 15,
+        ).clamp(5, 1440),
         notifyOnTime: j['notifyOnTime'] ?? j['notify_on_time'] ?? true,
         fallbackEnabled: j['fallbackEnabled'] ?? j['fallback_enabled'] ?? true,
         includeLink: j['includeLink'] ?? j['include_link'] ?? true,

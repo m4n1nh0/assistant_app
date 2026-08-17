@@ -110,4 +110,25 @@ void main() {
 
     expect(result['created_series'], 3);
   });
+
+  test('notification config sends the editable reminder minutes', () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'PUT');
+      expect(request.url.path, '/notifications/config');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['reminder_minutes'], 30);
+      return http.Response(
+        '{"notify_15min":true,"reminder_minutes":30}',
+        200,
+      );
+    });
+
+    final saved = await http.runWithClient(
+      () => svc.saveNotificationConfig(NotifConfig(reminderMinutes: 30)),
+      () => client,
+    );
+
+    expect(saved.reminderMinutes, 30);
+  });
 }

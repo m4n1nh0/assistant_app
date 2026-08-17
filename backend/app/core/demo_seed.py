@@ -140,6 +140,7 @@ async def seed_config(db: AsyncSession) -> None:
         "telegram_enabled": False,
         "wa_enabled": False,
         "notify_15min": True,
+        "reminder_minutes": 15,
         "notify_on_time": True,
     })
     print("  ✓ Config inserida")

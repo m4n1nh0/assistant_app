@@ -330,10 +330,15 @@ de semestre, não duplica as séries mesmo em outro dia. Turmas sem horário ini
 falha e não geram eventos com hora inventada.
 
 Depois da criação, os próximos encontros entram no painel lateral na
-sincronização automática, que ocorre a cada cinco minutos. As opções de
-notificação já configuradas continuam valendo: lembrete 15 minutos antes, no
-horário, Telegram e/ou WhatsApp. A aplicação mantém somente um temporizador por
-evento para não repetir o aviso a cada atualização do calendário.
+sincronização automática, que ocorre a cada cinco minutos. Em **Configurações >
+Notificações**, a antecedência pode ser qualquer valor entre 5 e 1.440 minutos;
+15 minutos continua sendo o padrão. O aviso no horário é uma opção separada, e
+Telegram e/ou WhatsApp usam o mesmo valor salvo. O agendador do backend também
+respeita essa configuração quando a interface está fechada. A aplicação mantém
+somente um temporizador por evento para não repetir o aviso a cada atualização
+do calendário. A interface usa esse temporizador para o aviso visual; os canais
+Telegram e WhatsApp são enviados pelo backend, evitando duas mensagens iguais
+quando a janela desktop também está aberta.
 
 ## Teste da integração
 
