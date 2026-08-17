@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from starlette.requests import Request
+
 from app.routers import attendance
 from app.main import _safe_request_path
 
@@ -55,6 +57,21 @@ def _session(**changes):
     return SimpleNamespace(**values)
 
 
+def _request(accept_language=""):
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/education/attendance/check-in/token",
+            "query_string": b"",
+            "headers": [(b"accept-language", accept_language.encode("ascii"))],
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 1234),
+            "scheme": "http",
+        }
+    )
+
+
 def test_dynamic_token_is_hashed_before_storage_or_lookup():
     token = "temporary-secret-token"
 
@@ -83,6 +100,7 @@ def test_public_page_escapes_content_and_never_echoes_html():
     response = attendance._check_in_page(
         title="<script>alert(1)</script>",
         message="Turma <b>teste</b>",
+        language="pt",
         open_for_check_in=True,
     )
     html = response.body.decode("utf-8")
@@ -90,6 +108,49 @@ def test_public_page_escapes_content_and_never_echoes_html():
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert "Turma &lt;b&gt;teste&lt;/b&gt;" in html
+
+
+def test_public_language_follows_browser_and_explicit_selection():
+    request = _request("fr-FR;q=0.9, es-ES;q=0.8, en;q=0.7")
+
+    assert attendance._public_language(request) == "es"
+    assert attendance._public_language(request, "en-US") == "en"
+    assert attendance._public_language(_request("de-DE")) == "pt"
+
+
+def test_public_page_renders_spanish_and_keeps_all_language_choices():
+    response = attendance._check_in_page(
+        title="Confirmar asistencia",
+        message="Ingrese su matrícula.",
+        language="es",
+        open_for_check_in=True,
+    )
+    html = response.body.decode("utf-8")
+
+    assert '<html lang="es">' in html
+    assert "CONFIRMAR ASISTENCIA" in html
+    assert "Ingrese su matrícula" in html
+    assert '?lang=pt' in html
+    assert '?lang=es' in html
+    assert '?lang=en' in html
+    assert 'action="?lang=es"' in html
+    assert response.headers["content-language"] == "es"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_public_page_renders_english_privacy_and_form_labels():
+    response = attendance._check_in_page(
+        title="Confirm attendance",
+        message="Enter your student ID.",
+        language="en",
+        open_for_check_in=True,
+    )
+    html = response.body.decode("utf-8")
+
+    assert '<html lang="en">' in html
+    assert "Student ID" in html
+    assert "CONFIRM ATTENDANCE" in html
+    assert "used only to confirm attendance" in html
 
 
 def test_duplicate_check_in_is_idempotent():

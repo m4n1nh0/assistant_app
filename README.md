@@ -464,6 +464,10 @@ chamada ficara aberta e gera um QR Code. Cada abertura usa um token aleatorio de
 alta entropia; o banco guarda apenas seu hash. O QR aponta para uma pagina
 publica e responsiva do proprio backend, onde o aluno informa a matricula. O
 link nao contem nomes, matriculas, turma ou credenciais do professor.
+O idioma segue automaticamente a preferencia do navegador entre portugues,
+espanhol e ingles. A pagina tambem exibe `Português`, `Español` e `English` no
+topo; `?lang=pt`, `?lang=es` ou `?lang=en` permite abrir o link diretamente no
+idioma desejado, e a escolha permanece durante a confirmacao.
 
 Ao abrir a chamada, `attendance_rosters` recebe uma copia da lista atual. Essa
 foto preserva o calculo de presentes e ausentes mesmo que um aluno seja movido
