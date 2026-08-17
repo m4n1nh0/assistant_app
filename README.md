@@ -261,7 +261,8 @@ grafo compilado em `backend/app/services/chat_graph_service.py`:
 
 ```mermaid
 flowchart TD
-    Start([START]) --> Detect[Detectar acao local]
+    Health[Health paralelo: endpoint, saldo e modelo] --> Start([START])
+    Start --> Detect[Detectar acao local]
     Detect --> Shortcut[Resolver atalho do usuario]
     Shortcut --> Ctx[Classificar tarefa e recuperar contexto]
     Ctx --> Route{Rota}
@@ -271,6 +272,8 @@ flowchart TD
     Route -->|multi| Multi[Despachar provedores em paralelo]
     Route -->|chain| Chain[Despachar provedores em cadeia]
     Agent --> Handoff{Transferir?}
+    Agent -->|provedor falhou| Fallback[Atualizar cache e tentar proximo]
+    Fallback --> Agent
     Handoff -->|sim| Agent
     Handoff -->|nao| End([END])
     Ack --> End
@@ -290,6 +293,13 @@ pode transferir a conversa (A2A) quando o pedido nao for seu. A transferencia e
 validada pelo orquestrador — destino desconhecido ou ja visitado encerra o
 repasse, e `AGENT_MAX_HANDOFFS` limita a cadeia. Os modos `multi` e `chain`
 continuam despachando direto, sem especialistas.
+
+O preflight consulta os provedores em paralelo e valida disponibilidade,
+saldo quando a API o expõe e o modelo de chat configurado. LocalAI e Ollama
+são priorizados nas tarefas compatíveis. Se uma geração real revelar saldo
+insuficiente, modelo sem acesso ou credencial inválida, esse sinal atualiza o
+cache compartilhado e o modo `single` tenta o próximo provedor. No modo
+`chain`, um refinador com erro não substitui a última resposta válida.
 
 | Especialista | Atende | Ferramentas |
 | --- | --- | --- |

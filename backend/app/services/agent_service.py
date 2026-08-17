@@ -22,7 +22,7 @@ from ..core.config import get_settings
 from ..models.schemas import LLMResponse, Message
 from . import langchain_agent_service, mcp_service
 from .assistant_tools import ASSISTANT_TOOLS
-from .llm_routing_service import pick_auto_llm
+from .llm_routing_service import rank_auto_llms
 
 settings = get_settings()
 
@@ -197,10 +197,16 @@ async def run_agents(
     response = LLMResponse(llm="backend", content="", is_error=True)
 
     for hop in range(max_handoffs + 1):
-        provider = requested_llm or await pick_auto_llm(
-            active_llms, specialist.routing_task
+        providers = (
+            [requested_llm]
+            if requested_llm
+            else await rank_auto_llms(
+                active_llms,
+                specialist.routing_task,
+                available_only=True,
+            )
         )
-        if not provider:
+        if not providers:
             return AgentOutcome(
                 response=LLMResponse(
                     llm="backend",
@@ -214,16 +220,25 @@ async def run_agents(
         allow_handoff = hop < max_handoffs
         tools = await build_tools(specialist, allow_handoff=allow_handoff)
 
-        response, trace = await langchain_agent_service.run_with_tools(
-            provider,
-            message,
-            history,
-            f"{system_prompt}\n\n{specialist.instructions}",
-            tools,
-            max_iterations=max(1, settings.agent_max_tool_iterations),
-            stop_tools={HANDOFF_TOOL_NAME} if allow_handoff else set(),
-        )
-        tool_trace.extend(trace)
+        trace: list[dict[str, Any]] = []
+        for provider in providers:
+            response, trace = await langchain_agent_service.run_with_tools(
+                provider,
+                message,
+                history,
+                f"{system_prompt}\n\n{specialist.instructions}",
+                tools,
+                max_iterations=max(1, settings.agent_max_tool_iterations),
+                stop_tools={HANDOFF_TOOL_NAME} if allow_handoff else set(),
+            )
+            tool_trace.extend(trace)
+            if not response.is_error or trace or requested_llm:
+                break
+            logger.warning(
+                "Agente {}: {} falhou; tentando proximo provedor disponivel",
+                specialist.id,
+                provider,
+            )
 
         handoff = _find_handoff(trace)
         if handoff is None:

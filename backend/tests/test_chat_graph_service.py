@@ -177,10 +177,11 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""
 
-    async def pick_provider(candidates, task="general"):
+    async def rank_providers(candidates, task="general", available_only=False):
         assert candidates == ["llama", "gpt"]
         assert task == "general"
-        return "llama"
+        assert available_only is True
+        return ["llama", "gpt"]
 
     async def run_with_tools(
         provider, message, history, system_prompt, tools, **kwargs
@@ -193,7 +194,7 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
 
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
     monkeypatch.setattr(
-        chat_graph_service.agent_service, "pick_auto_llm", pick_provider
+        chat_graph_service.agent_service, "rank_auto_llms", rank_providers
     )
     monkeypatch.setattr(
         chat_graph_service.agent_service.langchain_agent_service,
@@ -222,12 +223,17 @@ def test_multi_route_dispatches_all_active_providers(monkeypatch):
             LLMResponse(llm="claude", content="B"),
         ]
 
+    async def rank(llms, task="general", available_only=False):
+        assert available_only is True
+        return llms
+
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
     monkeypatch.setattr(
         chat_graph_service.langchain_agent_service,
         "dispatch_multi",
         dispatch,
     )
+    monkeypatch.setattr(chat_graph_service, "rank_auto_llms", rank)
 
     result = run_graph(
         mode=ResponseModeEnum.multi,
@@ -248,12 +254,17 @@ def test_chain_route_dispatches_providers_in_order(monkeypatch):
         assert llms == ["claude", "gpt"]
         return LLMResponse(llm="gpt", content="Resposta refinada")
 
+    async def rank(llms, task="general", available_only=False):
+        assert available_only is True
+        return llms
+
     monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
     monkeypatch.setattr(
         chat_graph_service.langchain_agent_service,
         "dispatch_chain",
         dispatch,
     )
+    monkeypatch.setattr(chat_graph_service, "rank_auto_llms", rank)
 
     result = run_graph(
         mode=ResponseModeEnum.chain,

@@ -379,34 +379,34 @@ async def dispatch_chain(
     system_prompt: str,
 ) -> LLMResponse:
     current = message
-    last: LLMResponse | None = None
+    last_success: LLMResponse | None = None
     for index, provider in enumerate(providers):
-        last = await dispatch_single(
+        response = await dispatch_single(
             provider,
             current,
             history,
             system_prompt,
         )
-        if last.is_error:
+        if response.is_error:
             continue
+        last_success = response
         if index < len(providers) - 1:
             label = settings.llm_labels.get(provider, provider.upper())
             current = (
-                f'Contexto ({label}): "{last.content[:800]}"\n\n'
+                f'Contexto ({label}): "{response.content[:800]}"\n\n'
                 f'Pergunta original: "{message}"\n\n'
                 "Melhore e expanda esta resposta:"
             )
 
-    if last is None:
+    if last_success is None:
         return LLMResponse(
             llm="chain",
             content="Nenhum servico disponivel",
             is_error=True,
         )
     return LLMResponse(
-        llm=providers[-1],
-        content=f"**Resposta em etapas:**\n\n{last.content}",
-        duration_ms=last.duration_ms,
-        tokens_used=last.tokens_used,
-        is_error=last.is_error,
+        llm=last_success.llm,
+        content=f"**Resposta em etapas:**\n\n{last_success.content}",
+        duration_ms=last_success.duration_ms,
+        tokens_used=last_success.tokens_used,
     )

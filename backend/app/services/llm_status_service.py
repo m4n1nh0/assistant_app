@@ -20,7 +20,9 @@ _cache: dict[str, LLMStatus] | None = None
 _cache_at = 0.0
 _refresh_task: asyncio.Task | None = None
 
-_REDIS_KEY = "assistant:llm_status"
+# Sufixo versionado impede que um deploy novo reutilize por cinco minutos um
+# snapshot criado antes da validacao de modelo/capacidade de chat.
+_REDIS_KEY = "assistant:llm_status:v2"
 
 _PROVIDER_ORDER = [
     "claude",
@@ -121,6 +123,92 @@ async def get_ready_llms() -> list[str]:
     return [llm for llm in settings.active_llms if llm in available]
 
 
+def _runtime_failure_status(provider: str, error: str) -> LLMStatus:
+    clean_error = _sanitize_error(error)[:500]
+    lowered = clean_error.lower()
+    credit_failure = any(
+        marker in lowered
+        for marker in (
+            "credit balance",
+            "insufficient credit",
+            "insufficient_quota",
+            "billing",
+            "saldo",
+            "sem credito",
+        )
+    )
+    model_failure = any(
+        marker in lowered
+        for marker in (
+            "model does not exist",
+            "model `",
+            "not a chat model",
+            "modelo de chat",
+            "model not found",
+            "modelo nao encontrado",
+            "do not have access",
+            "nao tem acesso",
+        )
+    )
+    auth_failure = any(
+        marker in lowered
+        for marker in (
+            "invalid api key",
+            "incorrect api key",
+            "unauthorized",
+            "authentication",
+        )
+    )
+
+    if credit_failure:
+        status = "limited"
+        online = True
+        balance_ok: bool | None = False
+    elif model_failure:
+        status = "model_unavailable"
+        online = True
+        balance_ok = None
+    elif auth_failure:
+        status = "invalid_credentials"
+        online = True
+        balance_ok = None
+    else:
+        status = "offline"
+        online = False
+        balance_ok = None
+
+    return LLMStatus(
+        id=provider,
+        label=_label(provider),
+        configured=bool(_provider_key(provider)),
+        online=online,
+        available=False,
+        has_balance_check=credit_failure,
+        balance_ok=balance_ok,
+        status=status,
+        error=clean_error or "Falha ao usar o provedor",
+    )
+
+
+async def mark_llm_failure(provider: str, error: str) -> None:
+    """Realimenta o health cache quando uma geracao real falha.
+
+    Listar modelos prova que o endpoint e a chave respondem, mas nao prova
+    saldo, permissao de projeto ou compatibilidade de chat. A chamada real e
+    o sinal mais forte e precisa retirar o provedor das proximas selecoes.
+    """
+
+    global _cache, _cache_at
+
+    if provider not in _PROVIDER_ORDER:
+        return
+    updated = dict(_cache or {})
+    updated[provider] = _runtime_failure_status(provider, error)
+    _cache = updated
+    _cache_at = time.monotonic()
+    await _write_shared_cache(updated)
+
+
 async def get_statuses_fast() -> dict[str, LLMStatus]:
     """Return cached statuses instantly; if cache is cold, return key-based statuses and
     kick off a background refresh so the next call will have real data."""
@@ -158,15 +246,15 @@ def _is_cache_fresh(cache: dict[str, LLMStatus], now: float) -> bool:
 
 def _provider_key(provider: str) -> str:
     return {
-        "claude": settings.claude_api_key,
-        "gpt": settings.openai_api_key,
-        "together": settings.together_api_key,
-        "openrouter": settings.openrouter_api_key,
-        "deepseek": settings.deepseek_api_key,
-        "gemini": settings.gemini_api_key,
-        "grok": settings.grok_api_key,
-        "hf": settings.huggingface_api_key,
-        "localai": settings.localai_base_url,
+        "claude": getattr(settings, "claude_api_key", ""),
+        "gpt": getattr(settings, "openai_api_key", ""),
+        "together": getattr(settings, "together_api_key", ""),
+        "openrouter": getattr(settings, "openrouter_api_key", ""),
+        "deepseek": getattr(settings, "deepseek_api_key", ""),
+        "gemini": getattr(settings, "gemini_api_key", ""),
+        "grok": getattr(settings, "grok_api_key", ""),
+        "hf": getattr(settings, "huggingface_api_key", ""),
+        "localai": getattr(settings, "localai_base_url", ""),
         "llama": "local",  # always "configured" (local Ollama)
     }.get(provider, "")
 
@@ -236,6 +324,70 @@ def _status(
         status=status,
         error=error,
     )
+
+
+def _model_unavailable(provider: str, model: str) -> LLMStatus:
+    return LLMStatus(
+        id=provider,
+        label=_label(provider),
+        configured=True,
+        online=True,
+        available=False,
+        status="model_unavailable",
+        error=f"Modelo de chat '{model}' indisponivel ou sem acesso",
+    )
+
+
+def _model_id_without_policy(model: str) -> str:
+    """Remove apenas o sufixo de roteamento HF, preservando org/model."""
+
+    head, separator, tail = model.rpartition("/")
+    if ":" in tail:
+        tail = tail.split(":", 1)[0]
+    return f"{head}{separator}{tail}" if separator else tail
+
+
+def _listed_model_ids(data: Any) -> set[str]:
+    raw_models = data.get("data", []) if isinstance(data, dict) else []
+    return {
+        str(model.get("id"))
+        for model in raw_models
+        if isinstance(model, dict) and model.get("id")
+    }
+
+
+async def _check_chat_model_endpoint(
+    client: httpx.AsyncClient,
+    provider: str,
+    url: str,
+    *,
+    key: str,
+    model: str,
+    headers: dict[str, str] | None = None,
+) -> LLMStatus:
+    if not key:
+        return _missing(provider)
+    try:
+        resp = await client.get(url, headers=headers)
+        if resp.is_error:
+            return _status(
+                provider,
+                configured=True,
+                online=False,
+                error=_response_error(resp),
+            )
+        model_ids = _listed_model_ids(_safe_json(resp))
+        wanted = _model_id_without_policy(model.strip())
+        if not wanted or wanted not in model_ids:
+            return _model_unavailable(provider, wanted or model)
+        return _status(provider, configured=True, online=True)
+    except Exception as exc:
+        return _status(
+            provider,
+            configured=True,
+            online=False,
+            error=_exception_error(exc),
+        )
 
 
 async def _check_json_endpoint(
@@ -391,21 +543,23 @@ async def _check_gemini(client: httpx.AsyncClient) -> LLMStatus:
 
 
 async def _check_grok(client: httpx.AsyncClient) -> LLMStatus:
-    return await _check_json_endpoint(
+    return await _check_chat_model_endpoint(
         client,
         "grok",
         f"{settings.grok_chat_base_url}/models",
         key=settings.grok_api_key,
+        model=settings.active_grok_model,
         headers={"Authorization": f"Bearer {settings.grok_api_key}"},
     )
 
 
 async def _check_hf(client: httpx.AsyncClient) -> LLMStatus:
-    return await _check_json_endpoint(
+    return await _check_chat_model_endpoint(
         client,
         "hf",
         "https://router.huggingface.co/v1/models",
         key=settings.huggingface_api_key,
+        model=settings.huggingface_model,
         headers={"Authorization": f"Bearer {settings.huggingface_api_key}"},
     )
 

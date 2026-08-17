@@ -30,3 +30,16 @@ def test_localai_v1_path_is_not_duplicated():
     )
 
     assert settings.localai_v1_base_url == "https://localai.example.com/v1"
+
+
+def test_groq_key_selects_the_groq_model_instead_of_the_xai_model():
+    settings = Settings(
+        _env_file=None,
+        GROQ_API_KEY="gsk_test",
+        groq_model="llama-3.1-8b-instant",
+        grok_model="grok-3",
+    )
+
+    assert settings.uses_groq_cloud is True
+    assert settings.active_grok_model == "llama-3.1-8b-instant"
+    assert settings.grok_chat_base_url == "https://api.groq.com/openai/v1"

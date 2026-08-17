@@ -28,7 +28,7 @@ from .launcher_service import (
     build_registration_context,
     find_shortcut_in_message,
 )
-from .llm_routing_service import detect_task, pick_auto_llm
+from .llm_routing_service import detect_task, rank_auto_llms
 from .llm_status_service import get_llm_statuses
 from .education_action_service import build_education_open_action
 
@@ -388,7 +388,15 @@ async def _dispatch_multi(state: ChatGraphState) -> dict[str, Any]:
     if requested_llm and requested_llm not in active_llms:
         return {"responses": [await _unavailable_response(requested_llm)]}
 
-    llms = [requested_llm] if requested_llm else active_llms
+    llms = (
+        [requested_llm]
+        if requested_llm
+        else await rank_auto_llms(
+            active_llms,
+            state.get("task_kind") or "general",
+            available_only=True,
+        )
+    )
     if not llms:
         return {"responses": [await _unavailable_response()]}
 
@@ -408,7 +416,15 @@ async def _dispatch_chain(state: ChatGraphState) -> dict[str, Any]:
     if requested_llm and requested_llm not in active_llms:
         return {"responses": [await _unavailable_response(requested_llm)]}
 
-    llms = [requested_llm] if requested_llm else active_llms
+    llms = (
+        [requested_llm]
+        if requested_llm
+        else await rank_auto_llms(
+            active_llms,
+            state.get("task_kind") or "general",
+            available_only=True,
+        )
+    )
     if not llms:
         return {"responses": [await _unavailable_response()]}
 

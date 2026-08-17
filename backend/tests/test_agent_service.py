@@ -17,10 +17,10 @@ def no_mcp(monkeypatch):
 
 
 def fake_provider(monkeypatch, provider: str = "llama"):
-    async def _pick(candidates, task="general"):
-        return provider
+    async def _rank(candidates, task="general", available_only=False):
+        return [provider]
 
-    monkeypatch.setattr(service, "pick_auto_llm", _pick)
+    monkeypatch.setattr(service, "rank_auto_llms", _rank)
 
 
 def scripted_runs(monkeypatch, scripts):
@@ -283,10 +283,10 @@ def test_specialist_instructions_reach_the_prompt(monkeypatch):
 def test_requested_provider_overrides_the_router(monkeypatch):
     no_mcp(monkeypatch)
 
-    async def _pick(candidates, task="general"):
+    async def _rank(candidates, task="general", available_only=False):
         raise AssertionError("roteador nao deve ser consultado")
 
-    monkeypatch.setattr(service, "pick_auto_llm", _pick)
+    monkeypatch.setattr(service, "rank_auto_llms", _rank)
     calls = scripted_runs(monkeypatch, [
         (LLMResponse(llm="claude", content="ok"), []),
     ])
@@ -307,10 +307,10 @@ def test_requested_provider_overrides_the_router(monkeypatch):
 def test_no_provider_available_returns_controlled_error(monkeypatch):
     no_mcp(monkeypatch)
 
-    async def _pick(candidates, task="general"):
-        return ""
+    async def _rank(candidates, task="general", available_only=False):
+        return []
 
-    monkeypatch.setattr(service, "pick_auto_llm", _pick)
+    monkeypatch.setattr(service, "rank_auto_llms", _rank)
 
     outcome = run(service.run_agents(
         message="oi",
@@ -322,3 +322,29 @@ def test_no_provider_available_returns_controlled_error(monkeypatch):
 
     assert outcome.response.is_error is True
     assert "Nenhum agente" in outcome.response.content
+
+
+def test_automatic_agent_falls_back_until_local_provider_answers(monkeypatch):
+    no_mcp(monkeypatch)
+
+    async def _rank(candidates, task="general", available_only=False):
+        assert available_only is True
+        return ["claude", "localai"]
+
+    monkeypatch.setattr(service, "rank_auto_llms", _rank)
+    calls = scripted_runs(monkeypatch, [
+        (LLMResponse(llm="claude", content="sem saldo", is_error=True), []),
+        (LLMResponse(llm="localai", content="resposta local"), []),
+    ])
+
+    outcome = run(service.run_agents(
+        message="explique este erro de codigo",
+        history=[],
+        system_prompt="system",
+        task="code",
+        active_llms=["claude", "localai"],
+    ))
+
+    assert [call["provider"] for call in calls] == ["claude", "localai"]
+    assert outcome.provider == "localai"
+    assert outcome.response.content == "resposta local"

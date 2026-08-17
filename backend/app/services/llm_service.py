@@ -8,6 +8,7 @@ import httpx
 
 from ..core.config import get_settings
 from ..models.schemas import LLMResponse, Message
+from .llm_status_service import mark_llm_failure
 
 settings = get_settings()
 _ERROR_LOG_TTL_SECONDS = 300
@@ -332,7 +333,11 @@ async def call_grok(
             resp = await client.post(
                 f"{settings.grok_chat_base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.grok_api_key}"},
-                json={"model": settings.active_grok_model, "max_tokens": 2000, "messages": messages},
+                json={
+                    "model": settings.active_grok_model,
+                    "max_tokens": 2000,
+                    "messages": messages,
+                },
             )
         data = _json_response(resp)
         if resp.is_error:
@@ -635,24 +640,33 @@ async def dispatch_single(
     reasoning_effort: Optional[str] = None,
 ) -> LLMResponse:
     if llm == "localai":
-        return await call_localai(
+        response = await call_localai(
             message,
             history,
             system_prompt,
             max_tokens=max_tokens or 2000,
             reasoning_effort=reasoning_effort,
         )
-    if llm == "llama":
-        return await call_llama(
+    elif llm == "llama":
+        response = await call_llama(
             message,
             history,
             system_prompt,
             max_tokens=max_tokens,
         )
-    caller = LLM_CALLERS.get(llm)
-    if not caller:
-        return LLMResponse(llm=llm, content=f"Serviço '{llm}' desconhecido", is_error=True)
-    return await caller(message, history, system_prompt)
+    else:
+        caller = LLM_CALLERS.get(llm)
+        if not caller:
+            return LLMResponse(
+                llm=llm,
+                content=f"Serviço '{llm}' desconhecido",
+                is_error=True,
+            )
+        response = await caller(message, history, system_prompt)
+
+    if response.is_error:
+        await mark_llm_failure(llm, response.content)
+    return response
 
 
 async def dispatch_multi(
@@ -672,23 +686,25 @@ async def dispatch_chain(
     system_prompt: str,
 ) -> LLMResponse:
     current = message
-    last: Optional[LLMResponse] = None
+    last_success: Optional[LLMResponse] = None
     for i, llm in enumerate(llms):
-        last = await dispatch_single(llm, current, history, system_prompt)
-        if last.is_error:
+        response = await dispatch_single(llm, current, history, system_prompt)
+        if response.is_error:
             continue
+        last_success = response
         if i < len(llms) - 1:
             current = (
-                f'Contexto ({_service_label(llm)}): "{last.content[:800]}"\n\n'
+                f'Contexto ({_service_label(llm)}): '
+                f'"{response.content[:800]}"\n\n'
                 f'Pergunta original: "{message}"\n\n'
                 f"Melhore e expanda esta resposta:"
             )
-    if last is None:
+    if last_success is None:
         return LLMResponse(llm="chain", content="Nenhum serviço disponível", is_error=True)
     return LLMResponse(
-        llm=llms[-1],
-        content=f"**Resposta em etapas:**\n\n{last.content}",
-        duration_ms=last.duration_ms,
+        llm=last_success.llm,
+        content=f"**Resposta em etapas:**\n\n{last_success.content}",
+        duration_ms=last_success.duration_ms,
     )
 
 

@@ -125,3 +125,31 @@ def test_langchain_chain_passes_previous_structured_content(monkeypatch):
     assert "Resposta de claude" in requests[1][1]
     assert response.llm == "gpt"
     assert response.content.endswith("Resposta de gpt")
+
+
+def test_langchain_chain_keeps_local_answer_when_cloud_refinement_fails(
+    monkeypatch,
+):
+    async def single(provider, message, history, system_prompt):
+        if provider == "localai":
+            return LLMResponse(llm=provider, content="Resposta local valida")
+        return LLMResponse(
+            llm=provider,
+            content="saldo insuficiente",
+            is_error=True,
+        )
+
+    monkeypatch.setattr(langchain_agent_service, "dispatch_single", single)
+
+    response = run(
+        langchain_agent_service.dispatch_chain(
+            ["localai", "claude"],
+            "Pergunta original",
+            [],
+            "system",
+        )
+    )
+
+    assert response.llm == "localai"
+    assert response.is_error is False
+    assert response.content.endswith("Resposta local valida")

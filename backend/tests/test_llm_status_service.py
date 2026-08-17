@@ -221,10 +221,13 @@ def test_get_ready_llms_intersects_configured_with_available(monkeypatch):
 def test_check_grok_uses_configured_chat_base_url(monkeypatch):
     captured = {}
 
-    async def fake_check_json_endpoint(client, provider, url, *, key, headers=None):
+    async def fake_check_chat_model_endpoint(
+        client, provider, url, *, key, model, headers=None
+    ):
         captured["provider"] = provider
         captured["url"] = url
         captured["key"] = key
+        captured["model"] = model
         return service._status(provider, configured=True, online=True)
 
     monkeypatch.setattr(
@@ -233,10 +236,15 @@ def test_check_grok_uses_configured_chat_base_url(monkeypatch):
         SimpleNamespace(
             grok_api_key="gsk_valid_test",
             grok_chat_base_url="https://api.groq.com/openai/v1",
+            active_grok_model="llama-3.1-8b-instant",
             llm_labels={"grok": "Groq"},
         ),
     )
-    monkeypatch.setattr(service, "_check_json_endpoint", fake_check_json_endpoint)
+    monkeypatch.setattr(
+        service,
+        "_check_chat_model_endpoint",
+        fake_check_chat_model_endpoint,
+    )
 
     status = run(service._check_grok(client=None))
 
@@ -245,7 +253,102 @@ def test_check_grok_uses_configured_chat_base_url(monkeypatch):
         "provider": "grok",
         "url": "https://api.groq.com/openai/v1/models",
         "key": "gsk_valid_test",
+        "model": "llama-3.1-8b-instant",
     }
+
+
+def test_chat_model_check_rejects_missing_model_before_generation(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "llama-3.1-8b-instant"}]},
+        )
+
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(llm_labels={"grok": "Groq"}),
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        status = run(
+            service._check_chat_model_endpoint(
+                client,
+                "grok",
+                "https://api.groq.com/openai/v1/models",
+                key="secret",
+                model="llama-3.3-70b-versatile",
+            )
+        )
+    finally:
+        run(client.aclose())
+
+    assert status.online is True
+    assert status.available is False
+    assert status.status == "model_unavailable"
+    assert "llama-3.3-70b-versatile" in (status.error or "")
+
+
+def test_chat_model_check_accepts_hf_policy_suffix(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "openai/gpt-oss-120b"}]},
+        )
+
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(llm_labels={"hf": "Hugging Face"}),
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        status = run(
+            service._check_chat_model_endpoint(
+                client,
+                "hf",
+                "https://router.huggingface.co/v1/models",
+                key="secret",
+                model="openai/gpt-oss-120b:preferred",
+            )
+        )
+    finally:
+        run(client.aclose())
+
+    assert status.available is True
+
+
+def test_runtime_credit_failure_removes_provider_from_cached_selection(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "settings",
+        SimpleNamespace(
+            claude_api_key="secret",
+            llm_labels={"claude": "Claude"},
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_cache",
+        {"claude": service._status("claude", configured=True, online=True)},
+    )
+
+    async def no_shared_write(_cache):
+        return None
+
+    monkeypatch.setattr(service, "_write_shared_cache", no_shared_write)
+
+    run(
+        service.mark_llm_failure(
+            "claude",
+            "Your credit balance is too low to access the Anthropic API.",
+        )
+    )
+
+    status = service._cache["claude"]
+    assert status.available is False
+    assert status.status == "limited"
+    assert status.balance_ok is False
 
 
 def test_check_localai_detects_model_without_requiring_api_key(monkeypatch):

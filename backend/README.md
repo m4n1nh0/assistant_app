@@ -144,14 +144,29 @@ nesta ordem de prioridade:
 Empates dentro do mesmo nível seguem a ordem de `active_llms`. Provedores sem
 crédito ou offline nunca entram na disputa, porque já são excluídos de
 `available_llms`. Isso vale para `POST /chat/`, `POST /chat/stream` e o
-WebSocket; os modos `multi` e `chain` continuam usando a lista inteira.
+WebSocket. Antes da seleção, os health checks são executados em paralelo. Groq
+e Hugging Face também precisam expor o modelo configurado na lista atual de
+modelos de chat; uma chave válida, sozinha, não torna o provedor utilizável.
 
-Os status de disponibilidade e saldo são cacheados no Redis
-(chave `assistant:llm_status`, mesmo TTL do cache em memória: 300s quando há
+No modo `single`, uma falha não executa novamente todo o roteamento às cegas: o
+provedor é retirado do cache e o agente tenta o próximo candidato ranqueado,
+até chegar a LocalAI/Ollama quando forem as opções disponíveis. `multi` e
+`chain` usam a mesma lista filtrada e ranqueada. Em `chain`, se um refinador
+falhar, a última resposta válida é preservada em vez de ser substituída pelo
+erro.
+
+Os status de disponibilidade e saldo são cacheados no Redis (chave versionada
+`assistant:llm_status:v2`, mesmo TTL do cache em memória: 300s quando há
 algum provedor disponível, 30s quando todos falharam). Assim um processo que
 sobe do zero aproveita a varredura feita por outro em vez de refazer as dez
 verificações — duas delas batem em API de saldo. Sem Redis, cada processo
 mantém apenas o cache local, sem erro.
+
+Alguns provedores, como a Anthropic, permitem listar modelos mesmo quando a
+conta não possui saldo suficiente. Por isso erros reais de crédito, permissão,
+credencial ou modelo também realimentam imediatamente o cache compartilhado;
+as requisições seguintes deixam de selecionar aquele provedor até a próxima
+verificação.
 
 ### Railway
 

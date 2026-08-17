@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from app.models.schemas import ChatRequest
+from app.models.schemas import ChatRequest, LLMResponse
 from app.services import llm_service
 
 
@@ -80,6 +80,50 @@ def test_call_localai_reports_empty_stream_as_error(monkeypatch):
 
     assert response.is_error is True
     assert "resposta vazia" in response.content
+
+
+def test_dispatch_real_failure_updates_provider_availability(monkeypatch):
+    recorded = []
+
+    async def fail(_message, _history, _system_prompt):
+        return LLMResponse(
+            llm="claude",
+            content="Your credit balance is too low",
+            is_error=True,
+        )
+
+    async def mark(provider, error):
+        recorded.append((provider, error))
+
+    monkeypatch.setitem(llm_service.LLM_CALLERS, "claude", fail)
+    monkeypatch.setattr(llm_service, "mark_llm_failure", mark)
+
+    response = run(llm_service.dispatch_single("claude", "ola", [], "system"))
+
+    assert response.is_error is True
+    assert recorded == [("claude", "Your credit balance is too low")]
+
+
+def test_dispatch_chain_preserves_last_success_after_refiner_error(monkeypatch):
+    async def dispatch(provider, message, history, system_prompt, **options):
+        if provider == "localai":
+            return LLMResponse(llm=provider, content="Resposta local")
+        return LLMResponse(llm=provider, content="sem credito", is_error=True)
+
+    monkeypatch.setattr(llm_service, "dispatch_single", dispatch)
+
+    response = run(
+        llm_service.dispatch_chain(
+            ["localai", "claude"],
+            "pergunta",
+            [],
+            "system",
+        )
+    )
+
+    assert response.llm == "localai"
+    assert response.is_error is False
+    assert response.content.endswith("Resposta local")
 
 
 def test_dispatch_single_unknown_service_returns_error_response():
