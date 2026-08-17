@@ -519,7 +519,22 @@ void main() {
       final session = AttendanceSession.fromJson({
         'id': 'a1',
         'class_id': 'c1',
+        'class_ids': ['c1', 'c2'],
         'class_label': '3001 Presencial',
+        'classes': [
+          {
+            'class_id': 'c1',
+            'class_label': '3001 Presencial',
+            'discipline': 'Banco de Dados',
+            'expected_count': 2,
+          },
+          {
+            'class_id': 'c2',
+            'class_label': '3002 Presencial',
+            'discipline': 'Banco de Dados',
+            'expected_count': 1,
+          },
+        ],
         'discipline': 'Banco de Dados',
         'semester': '2026.2',
         'attendance_date': '2026-08-16',
@@ -533,6 +548,8 @@ void main() {
             'student_id': 's1',
             'enrollment': '2026001',
             'student_name': 'Ana',
+            'class_id': 'c1',
+            'class_label': '3001 Presencial',
             'source': 'qr',
             'checked_in_at': '2026-08-16T18:30:00Z',
           }
@@ -547,7 +564,10 @@ void main() {
       });
 
       expect(session.records.single.studentName, 'Ana');
+      expect(session.records.single.classLabel, '3001 Presencial');
       expect(session.absentStudents.single.studentName, 'Bruno');
+      expect(session.classIds, ['c1', 'c2']);
+      expect(session.classCount, 2);
       expect(session.absentCount, 1);
       expect(session.presenceRate, .5);
       expect(session.open, isTrue);
@@ -558,26 +578,29 @@ void main() {
         ApiService(backendUrl: 'https://public-backend.test'),
       );
       final client = MockClient(
-        (_) async => http.Response(
-          '{'
-          '"id":"a1",'
-          '"class_id":"c1",'
-          '"class_label":"3001",'
-          '"discipline":"Banco de Dados",'
-          '"attendance_date":"2026-08-16",'
-          '"opened_at":"2026-08-16T18:00:00Z",'
-          '"expires_at":"2026-08-16T18:15:00Z",'
-          '"open":true,'
-          '"check_in_url":"http://internal:8000/education/attendance/check-in/t",'
-          '"check_in_path":"/education/attendance/check-in/t"'
-          '}',
-          200,
-        ),
+        (request) async {
+          expect(request.body, contains('"class_ids":["c1","c2"]'));
+          return http.Response(
+            '{'
+            '"id":"a1",'
+            '"class_id":"c1",'
+            '"class_label":"3001",'
+            '"discipline":"Banco de Dados",'
+            '"attendance_date":"2026-08-16",'
+            '"opened_at":"2026-08-16T18:00:00Z",'
+            '"expires_at":"2026-08-16T18:15:00Z",'
+            '"open":true,'
+            '"check_in_url":"http://internal:8000/education/attendance/check-in/t",'
+            '"check_in_path":"/education/attendance/check-in/t"'
+            '}',
+            200,
+          );
+        },
       );
 
       final session = await http.runWithClient(
         () => service.createAttendanceSession(
-          classId: 'c1',
+          classIds: const ['c1', 'c2'],
           attendanceDate: '2026-08-16',
         ),
         () => client,

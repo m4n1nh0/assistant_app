@@ -213,6 +213,32 @@ def test_attendance_list_is_scoped_to_authenticated_tutor():
     assert "attendance_sessions.tutor_id = 'tutor-1'" in sql
 
 
+def test_multi_class_call_keeps_requested_order_and_tutor_scope():
+    first = SimpleNamespace(id="class-1", tutor_id="tutor-1")
+    second = SimpleNamespace(id="class-2", tutor_id="tutor-1")
+    db = QueryDb([first, second])
+
+    groups = run(
+        attendance._owned_groups(
+            ["class-2", "class-1", "class-2"],
+            "tutor-1",
+            db,
+        )
+    )
+
+    assert [group.id for group in groups] == ["class-2", "class-1"]
+    sql = str(db.queries[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "class_groups.tutor_id = 'tutor-1'" in sql
+    assert "class_groups.id IN ('class-2', 'class-1')" in sql
+
+
+def test_attendance_payload_accepts_several_classes():
+    body = attendance.AttendanceSessionCreate(class_ids=["class-1", "class-2"])
+
+    assert body.class_id is None
+    assert body.class_ids == ["class-1", "class-2"]
+
+
 def test_delete_attendance_removes_records_roster_and_owned_session():
     session = _session(tutor_id="tutor-1")
     db = DeleteDb(session)
@@ -232,6 +258,7 @@ def test_delete_attendance_removes_records_roster_and_owned_session():
     assert response == {"ok": True}
     assert any("DELETE FROM attendance_records" in query for query in sql)
     assert any("DELETE FROM attendance_rosters" in query for query in sql)
+    assert any("DELETE FROM attendance_session_classes" in query for query in sql)
     assert db.deleted == [session]
     assert db.commits == 1
 
@@ -265,3 +292,12 @@ def test_record_table_prevents_duplicate_student_in_the_same_session():
     }
 
     assert "uq_attendance_record_session_student" in constraints
+
+
+def test_session_class_table_prevents_duplicate_class_in_the_same_call():
+    constraints = {
+        constraint.name
+        for constraint in attendance.AttendanceSessionClassModel.__table__.constraints
+    }
+
+    assert "uq_attendance_session_class" in constraints

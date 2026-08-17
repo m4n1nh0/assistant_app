@@ -529,17 +529,20 @@ class EducationService {
   // --- Chamada e presenca --------------------------------------------------
 
   Future<AttendanceSession> createAttendanceSession({
-    required String classId,
+    required List<String> classIds,
     required String attendanceDate,
     int durationMinutes = 15,
     String title = '',
     String? lessonId,
   }) async {
+    if (classIds.isEmpty) {
+      throw ArgumentError.value(classIds, 'classIds', 'Selecione uma turma');
+    }
     final response = await http.post(
       Uri.parse('$_baseUrl/education/attendance/sessions'),
       headers: _headers,
       body: jsonEncode({
-        'class_id': classId,
+        'class_ids': classIds,
         'attendance_date': attendanceDate,
         'duration_minutes': durationMinutes,
         'title': title,
@@ -1156,11 +1159,17 @@ class AttendanceStudent {
   final String studentId;
   final String enrollment;
   final String studentName;
+  final String classId;
+  final String classLabel;
+  final String discipline;
 
   const AttendanceStudent({
     required this.studentId,
     required this.enrollment,
     required this.studentName,
+    this.classId = '',
+    this.classLabel = '',
+    this.discipline = '',
   });
 
   factory AttendanceStudent.fromJson(Map<String, dynamic> json) =>
@@ -1168,6 +1177,9 @@ class AttendanceStudent {
         studentId: json['student_id']?.toString() ?? '',
         enrollment: json['enrollment']?.toString() ?? '',
         studentName: json['student_name']?.toString() ?? '',
+        classId: json['class_id']?.toString() ?? '',
+        classLabel: json['class_label']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
       );
 }
 
@@ -1181,6 +1193,9 @@ class AttendanceRecord extends AttendanceStudent {
     required super.studentId,
     required super.enrollment,
     required super.studentName,
+    super.classId,
+    super.classLabel,
+    super.discipline,
     required this.source,
     this.checkedInAt,
   });
@@ -1191,8 +1206,36 @@ class AttendanceRecord extends AttendanceStudent {
         studentId: json['student_id']?.toString() ?? '',
         enrollment: json['enrollment']?.toString() ?? '',
         studentName: json['student_name']?.toString() ?? '',
+        classId: json['class_id']?.toString() ?? '',
+        classLabel: json['class_label']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
         source: json['source']?.toString() ?? '',
         checkedInAt: _toDate(json['checked_in_at']),
+      );
+}
+
+class AttendanceClass {
+  final String classId;
+  final String classLabel;
+  final String discipline;
+  final String semester;
+  final int expectedCount;
+
+  const AttendanceClass({
+    required this.classId,
+    required this.classLabel,
+    this.discipline = '',
+    this.semester = '',
+    this.expectedCount = 0,
+  });
+
+  factory AttendanceClass.fromJson(Map<String, dynamic> json) =>
+      AttendanceClass(
+        classId: json['class_id']?.toString() ?? '',
+        classLabel: json['class_label']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
+        semester: json['semester']?.toString() ?? '',
+        expectedCount: _toInt(json['expected_count']),
       );
 }
 
@@ -1200,6 +1243,8 @@ class AttendanceSession {
   final String id;
   final String classId;
   final String classLabel;
+  final List<String> classIds;
+  final List<AttendanceClass> classes;
   final String discipline;
   final String semester;
   final String attendanceDate;
@@ -1222,6 +1267,8 @@ class AttendanceSession {
     required this.discipline,
     required this.attendanceDate,
     required this.open,
+    this.classIds = const [],
+    this.classes = const [],
     this.semester = '',
     this.title = '',
     this.lessonId,
@@ -1237,35 +1284,52 @@ class AttendanceSession {
 
   int get absentCount => (expectedCount - presentCount).clamp(0, expectedCount);
 
+  int get classCount => classes.isNotEmpty
+      ? classes.length
+      : (classIds.isEmpty ? 1 : classIds.length);
+
   double get presenceRate =>
       expectedCount == 0 ? 0 : presentCount / expectedCount;
 
-  factory AttendanceSession.fromJson(Map<String, dynamic> json) =>
-      AttendanceSession(
-        id: json['id']?.toString() ?? '',
-        classId: json['class_id']?.toString() ?? '',
-        classLabel: json['class_label']?.toString() ?? '',
-        discipline: json['discipline']?.toString() ?? '',
-        semester: json['semester']?.toString() ?? '',
-        attendanceDate: json['attendance_date']?.toString() ?? '',
-        title: json['title']?.toString() ?? '',
-        lessonId: json['lesson_id']?.toString(),
-        openedAt: _toDate(json['opened_at']),
-        expiresAt: _toDate(json['expires_at']),
-        closedAt: _toDate(json['closed_at']),
-        open: json['open'] == true,
-        checkInUrl: json['check_in_url']?.toString() ?? '',
-        expectedCount: _toInt(json['expected_count']),
-        presentCount: _toInt(json['present_count']),
-        records: ((json['records'] as List<dynamic>?) ?? [])
-            .map((item) =>
-                AttendanceRecord.fromJson(item as Map<String, dynamic>))
-            .toList(),
-        absentStudents: ((json['absent_students'] as List<dynamic>?) ?? [])
-            .map((item) =>
-                AttendanceStudent.fromJson(item as Map<String, dynamic>))
-            .toList(),
-      );
+  factory AttendanceSession.fromJson(Map<String, dynamic> json) {
+    final parsedClasses = ((json['classes'] as List<dynamic>?) ?? [])
+        .map((item) => AttendanceClass.fromJson(item as Map<String, dynamic>))
+        .toList();
+    final primaryClassId = json['class_id']?.toString() ?? '';
+    final parsedClassIds = ((json['class_ids'] as List<dynamic>?) ?? [])
+        .map((item) => item.toString())
+        .toList();
+    if (parsedClassIds.isEmpty && primaryClassId.isNotEmpty) {
+      parsedClassIds.add(primaryClassId);
+    }
+    return AttendanceSession(
+      id: json['id']?.toString() ?? '',
+      classId: primaryClassId,
+      classLabel: json['class_label']?.toString() ?? '',
+      classIds: parsedClassIds,
+      classes: parsedClasses,
+      discipline: json['discipline']?.toString() ?? '',
+      semester: json['semester']?.toString() ?? '',
+      attendanceDate: json['attendance_date']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      lessonId: json['lesson_id']?.toString(),
+      openedAt: _toDate(json['opened_at']),
+      expiresAt: _toDate(json['expires_at']),
+      closedAt: _toDate(json['closed_at']),
+      open: json['open'] == true,
+      checkInUrl: json['check_in_url']?.toString() ?? '',
+      expectedCount: _toInt(json['expected_count']),
+      presentCount: _toInt(json['present_count']),
+      records: ((json['records'] as List<dynamic>?) ?? [])
+          .map(
+              (item) => AttendanceRecord.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      absentStudents: ((json['absent_students'] as List<dynamic>?) ?? [])
+          .map((item) =>
+              AttendanceStudent.fromJson(item as Map<String, dynamic>))
+          .toList(),
+    );
+  }
 }
 
 class AttendanceReport {

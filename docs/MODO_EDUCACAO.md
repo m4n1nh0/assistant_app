@@ -91,7 +91,13 @@ sequenceDiagram
 A confirmação é obrigatória. O comando abre a aba adequada, mas não inicia a
 gravação, não liga o microfone da aula e não gera QR Code sozinho. Para uma
 chamada escolar, a interface abre diretamente `5. Presença`; a turma do dia
-continua sujeita à seleção e confirmação normais.
+continua sujeita à seleção e confirmação normais. Quando há duas ou mais turmas
+no dia, todas vêm selecionadas e compartilham uma única sessão e um único QR
+Code; a seleção pode ser revisada antes da abertura.
+
+Cada item em **Chamadas no período** oferece **Relatório exclusivo desta
+chamada**. Ele separa os alunos por turma, informa matrícula e situação
+presente/ausente e pode ser copiado em texto para o ambiente da faculdade.
 
 ## Segurança da chamada
 

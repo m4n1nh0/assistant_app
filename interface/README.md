@@ -152,7 +152,11 @@ procedimento de infraestrutura, callbacks, consulta e criação de eventos está
 [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
 
 No **Modo Aula > 5. Presença**, a chamada oferece somente as turmas previstas
-para o dia e as ordena pelo horário. O botão de agenda do quadro de relatórios
+para o dia, ordena pelo horário e seleciona todas automaticamente. Um único QR
+Code reúne os alunos das turmas escolhidas. Cada chamada mantém a turma de
+origem de cada aluno e oferece um relatório próprio copiável, com matrículas e
+situação presente/ausente, para transcrição no ambiente acadêmico. O botão de
+agenda do quadro de relatórios
 sincroniza em lote as turmas do semestre corrente com uma conta conectada: uma
 confirmação cria as séries semanais até o fim escolhido. Esses eventos entram
 no painel lateral e usam a antecedência editável em **Notificações** (de 5 a

@@ -754,7 +754,9 @@ class StudentBulkDeleteResponse(BaseModel):
 
 
 class AttendanceSessionCreate(BaseModel):
-    class_id: str
+    # `class_id` mantem clientes antigos; novos clientes enviam `class_ids`.
+    class_id: Optional[str] = None
+    class_ids: List[str] = Field(default_factory=list, max_length=20)
     attendance_date: Optional[str] = None
     duration_minutes: int = Field(default=15, ge=1, le=180)
     title: str = Field(default="", max_length=255)
@@ -772,18 +774,34 @@ class AttendanceRecordResponse(BaseModel):
     student_name: str
     source: str
     checked_in_at: datetime
+    class_id: str = ""
+    class_label: str = ""
+    discipline: str = ""
 
 
 class AttendanceStudentResponse(BaseModel):
     student_id: str
     enrollment: str
     student_name: str
+    class_id: str = ""
+    class_label: str = ""
+    discipline: str = ""
+
+
+class AttendanceClassResponse(BaseModel):
+    class_id: str
+    class_label: str
+    discipline: str = ""
+    semester: str = ""
+    expected_count: int = 0
 
 
 class AttendanceSessionResponse(BaseModel):
     id: str
     class_id: str
     class_label: str
+    class_ids: List[str] = Field(default_factory=list)
+    classes: List[AttendanceClassResponse] = Field(default_factory=list)
     discipline: str
     semester: str = ""
     attendance_date: str

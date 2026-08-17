@@ -409,8 +409,9 @@ e cada dia pode ter mais de uma turma. Na aba de gravacao, as turmas que tem
 aula hoje aparecem primeiro, sob o titulo do dia, e ja vem marcadas — e dai que
 sai a aula reunida sem ninguem precisar lembrar quais turmas sao. Na chamada,
 o seletor fica restrito a essas mesmas turmas do dia, ordenadas pelo horario, e
-a primeira ja vem selecionada. Isso impede abrir o QR para uma turma de outro
-dia por engano.
+todas ja vêm selecionadas. Uma única sessão e um único QR reúnem seus alunos;
+o professor ainda pode retirar uma turma antes de gerar o código. Isso impede
+abrir o QR para uma turma de outro dia por engano.
 
 ```mermaid
 erDiagram
@@ -422,7 +423,8 @@ erDiagram
     lessons ||--o{ lesson_segments : "transcricao"
     lessons ||--o{ lesson_points : ""
     students ||--o{ lesson_points : "student_id"
-    class_groups ||--o{ attendance_sessions : "chamadas"
+    class_groups ||--o{ attendance_session_classes : "turmas da chamada"
+    attendance_sessions ||--o{ attendance_session_classes : "QR unico"
     class_groups ||--o{ class_calendar_series : "agenda semanal"
     attendance_sessions ||--o{ attendance_rosters : "lista congelada"
     attendance_sessions ||--o{ attendance_records : "presentes"
@@ -464,9 +466,15 @@ erDiagram
         datetime expires_at
         int expected_count
     }
+    attendance_session_classes {
+        string session_id
+        string class_group_id
+        int expected_count
+    }
     attendance_rosters {
         string session_id
         string student_id
+        string class_group_id
         string enrollment
         string student_name
     }
@@ -526,8 +534,9 @@ flowchart LR
 #### Chamada por QR Code e relatorios
 
 Na aba `5. PRESENCA`, o sistema mostra somente as turmas previstas para o dia,
-na ordem do horario, e seleciona automaticamente a primeira. O professor define
-por quantos minutos a chamada ficara aberta e gera um QR Code. Cada abertura usa um token aleatorio de
+na ordem do horario, e seleciona automaticamente todas elas. O professor pode
+revisar a seleção, define por quantos minutos a chamada ficará aberta e gera um
+único QR Code para o conjunto. Cada abertura usa um token aleatorio de
 alta entropia; o banco guarda apenas seu hash. O QR aponta para uma pagina
 publica e responsiva do proprio backend, onde o aluno informa a matricula. O
 link nao contem nomes, matriculas, turma ou credenciais do professor.
@@ -542,6 +551,9 @@ ou excluido depois. Reenviar a mesma matricula e idempotente e uma restricao no
 banco impede duplicidade ate quando chegam duas confirmacoes simultaneas. O
 professor acompanha a lista atualizada a cada cinco segundos, pode marcar ou
 remover uma presenca manualmente e encerrar o QR antes do vencimento.
+Cada chamada possui ainda um relatório exclusivo, agrupado por turma, com
+matrícula, aluno e situação. O botão de relatório permite copiar esse texto
+diretamente para transcrição no ambiente da faculdade.
 
 ```mermaid
 sequenceDiagram
@@ -549,16 +561,16 @@ sequenceDiagram
     participant A as Assistente
     participant B as Backend
     participant E as Estudante
-    A->>A: Filtra turmas de hoje e seleciona a primeira
-    P->>A: Confere a turma e gera QR
-    A->>B: POST /education/attendance/sessions
-    B-->>A: URL temporaria + lista congelada
+    A->>A: Filtra turmas de hoje e seleciona todas
+    P->>A: Confere as turmas e gera um QR
+    A->>B: POST /education/attendance/sessions com class_ids
+    B-->>A: URL temporaria + listas congeladas por turma
     E->>B: Abre QR e informa matricula
-    B->>B: Valida token, prazo e turma
+    B->>B: Valida token, prazo e lista reunida
     B-->>E: Presenca confirmada
     A->>B: GET /sessions/{id} a cada 5s
     B-->>A: Presentes e ausentes
-    P->>A: Visualiza relatorio em PDF
+    P->>A: Copia o relatorio exclusivo da chamada
 ```
 
 O botao de agenda na mesma aba sincroniza de uma vez todas as turmas ativas do
@@ -714,7 +726,7 @@ Endpoints principais:
 | `GET /education/students` | Alunos, filtraveis por `class_id` |
 | `POST /education/students/import` | Importacao de alunos por matricula e nome |
 | `POST /education/students/bulk-delete` | Exclui varios alunos da turma em uma operacao |
-| `POST /education/attendance/sessions` | Abre chamada temporaria e devolve a URL do QR |
+| `POST /education/attendance/sessions` | Abre uma chamada para `class_ids` e devolve a URL do QR único |
 | `GET /education/attendance/sessions` | Lista chamadas, presentes e ausentes por periodo/turma |
 | `POST /education/attendance/sessions/{id}/close` | Encerra a chamada antes do vencimento |
 | `DELETE /education/attendance/sessions/{id}` | Exclui uma chamada e seus dados de presença após confirmação |

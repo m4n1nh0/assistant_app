@@ -48,6 +48,63 @@ DateTime semesterEnd(String semester, DateTime fallback) {
       fallback.month <= 6 ? 30 : 31);
 }
 
+String attendanceSessionTranscript(AttendanceSession session) {
+  final classes = session.classes.isNotEmpty
+      ? session.classes
+      : [
+          AttendanceClass(
+            classId: session.classId,
+            classLabel: session.classLabel,
+            discipline: session.discipline,
+            semester: session.semester,
+            expectedCount: session.expectedCount,
+          ),
+        ];
+  final students = <AttendanceStudent>[
+    ...session.records,
+    ...session.absentStudents,
+  ];
+  final presentIds = session.records.map((item) => item.studentId).toSet();
+  final buffer = StringBuffer()
+    ..writeln('RELATORIO DE CHAMADA')
+    ..writeln('Data: ${session.attendanceDate}')
+    ..writeln(
+      'Turmas: ${classes.map((item) => item.classLabel).join(' | ')}',
+    )
+    ..writeln(
+      'Resultado: ${session.presentCount} presentes, '
+      '${session.absentCount} ausentes, ${session.expectedCount} alunos',
+    );
+  if (session.title.trim().isNotEmpty) {
+    buffer.writeln('Aula: ${session.title.trim()}');
+  }
+
+  for (final group in classes) {
+    final roster = students.where((student) {
+      if (student.classId.isNotEmpty) return student.classId == group.classId;
+      return classes.length == 1;
+    }).toList()
+      ..sort((a, b) => a.studentName.compareTo(b.studentName));
+    final present = roster
+        .where((student) => presentIds.contains(student.studentId))
+        .length;
+    buffer
+      ..writeln()
+      ..writeln(
+        '${group.classLabel} | ${group.discipline} | ${group.semester}',
+      )
+      ..writeln('$present/${roster.length} presentes')
+      ..writeln('MATRICULA | ALUNO | SITUACAO');
+    for (final student in roster) {
+      buffer.writeln(
+        '${student.enrollment} | ${student.studentName} | '
+        '${presentIds.contains(student.studentId) ? 'PRESENTE' : 'AUSENTE'}',
+      );
+    }
+  }
+  return buffer.toString().trimRight();
+}
+
 class AttendanceTab extends StatefulWidget {
   final ValueNotifier<List<ClassGroup>?> classes;
 
@@ -60,7 +117,7 @@ class AttendanceTab extends StatefulWidget {
 class _AttendanceTabState extends State<AttendanceTab> {
   final _titleCtrl = TextEditingController();
   final _manualEnrollmentCtrl = TextEditingController();
-  ClassGroup? _selectedClass;
+  Set<String> _selectedClassIds = {};
   AttendanceSession? _activeSession;
   List<AttendanceSession> _sessions = [];
   List<ClassGroup> _reportClasses = [];
@@ -106,10 +163,9 @@ class _AttendanceTabState extends State<AttendanceTab> {
     );
     if (!mounted) return;
     setState(() {
-      _selectedClass = todayClasses
-              .where((group) => group.id == _selectedClass?.id)
-              .firstOrNull ??
-          (todayClasses.isEmpty ? null : todayClasses.first);
+      final available = todayClasses.map((group) => group.id).toSet();
+      final retained = _selectedClassIds.intersection(available);
+      _selectedClassIds = retained.isEmpty ? available : retained;
     });
   }
 
@@ -148,22 +204,31 @@ class _AttendanceTabState extends State<AttendanceTab> {
   }
 
   Future<void> _createSession() async {
-    final group = _selectedClass;
-    if (group == null) {
-      _report('Escolha uma turma para abrir a chamada.', error: true);
+    final todayClasses = attendanceClassesForDay(
+      widget.classes.value ?? const <ClassGroup>[],
+      DateTime.now().weekday,
+    );
+    final selected = todayClasses
+        .where((group) => _selectedClassIds.contains(group.id))
+        .toList();
+    if (selected.isEmpty) {
+      _report('Escolha ao menos uma turma para abrir a chamada.', error: true);
       return;
     }
     setState(() => _creating = true);
     try {
       final session = await education.createAttendanceSession(
-        classId: group.id,
+        classIds: selected.map((group) => group.id).toList(),
         attendanceDate: _date(DateTime.now()),
         durationMinutes: _durationMinutes,
         title: _titleCtrl.text.trim(),
       );
       if (!mounted) return;
       setState(() => _activeSession = session);
-      _report('QR Code gerado. A chamada fecha em $_durationMinutes minutos.');
+      _report(
+        'QR Code unico gerado para ${selected.length} turma(s). '
+        'A chamada fecha em $_durationMinutes minutos.',
+      );
       await _loadReports();
     } catch (e) {
       _report('Falha ao abrir chamada: $e', error: true);
@@ -185,6 +250,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
           id: updated.id,
           classId: updated.classId,
           classLabel: updated.classLabel,
+          classIds: updated.classIds,
+          classes: updated.classes,
           discipline: updated.discipline,
           attendanceDate: updated.attendanceDate,
           open: updated.open,
@@ -226,7 +293,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Excluir chamada?'),
         content: Text(
-          'A chamada de ${session.attendanceDate} da turma '
+          'A chamada de ${session.attendanceDate} das turmas '
           '${session.classLabel}, com ${session.presentCount} presença(s), '
           'será excluída permanentemente. A turma e os alunos permanecerão '
           'cadastrados.',
@@ -280,6 +347,8 @@ class _AttendanceTabState extends State<AttendanceTab> {
             id: updated.id,
             classId: updated.classId,
             classLabel: updated.classLabel,
+            classIds: updated.classIds,
+            classes: updated.classes,
             discipline: updated.discipline,
             attendanceDate: updated.attendanceDate,
             open: updated.open,
@@ -312,6 +381,13 @@ class _AttendanceTabState extends State<AttendanceTab> {
     } catch (e) {
       _report('Falha ao remover presenca: $e', error: true);
     }
+  }
+
+  Future<void> _openSessionReport(AttendanceSession session) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _AttendanceSessionReportDialog(session: session),
+    );
   }
 
   Future<void> _pickDate({required bool from}) async {
@@ -608,35 +684,97 @@ class _AttendanceTabState extends State<AttendanceTab> {
     );
   }
 
+  Future<void> _selectTodayClasses(List<ClassGroup> todayClasses) async {
+    if (todayClasses.isEmpty || _activeSession?.open == true) return;
+    var draft = Set<String>.of(_selectedClassIds);
+    final selected = await showDialog<Set<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Turmas desta chamada'),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'As turmas previstas para hoje ja estao selecionadas. '
+                  'Todos os alunos usarao o mesmo QR Code.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                for (final group in todayClasses)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: draft.contains(group.id),
+                    title: Text(group.display),
+                    subtitle: Text(group.scheduleLabel),
+                    onChanged: (checked) => setDialogState(() {
+                      if (checked == true) {
+                        draft.add(group.id);
+                      } else {
+                        draft.remove(group.id);
+                      }
+                    }),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => setDialogState(
+                () => draft = todayClasses.map((item) => item.id).toSet(),
+              ),
+              child: const Text('SELECIONAR TODAS'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: draft.isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, draft),
+              child: const Text('APLICAR'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() => _selectedClassIds = selected);
+    }
+  }
+
   Widget _buildToolbar(List<ClassGroup> todayClasses) => Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
             flex: 3,
-            child: DropdownButtonFormField<ClassGroup>(
-              initialValue: _selectedClass,
-              isExpanded: true,
-              decoration: _decoration('TURMA DE HOJE'),
-              hint: Text(
-                todayClasses.isEmpty
-                    ? 'Nenhuma turma prevista hoje'
-                    : 'Selecione a turma',
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11),
-              ),
-              items: todayClasses
-                  .map((group) => DropdownMenuItem(
-                        value: group,
-                        child: Text(
-                          group.display,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      ))
-                  .toList(),
-              onChanged: _activeSession?.open == true
+            child: InkWell(
+              onTap: _activeSession?.open == true
                   ? null
-                  : (group) => setState(() => _selectedClass = group),
+                  : () => _selectTodayClasses(todayClasses),
+              borderRadius: BorderRadius.circular(4),
+              child: InputDecorator(
+                decoration: _decoration('TURMAS DE HOJE - QR UNICO'),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        todayClasses.isEmpty
+                            ? 'Nenhuma turma prevista hoje'
+                            : '${_selectedClassIds.length} de ${todayClasses.length} selecionada(s)',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
+                    const Icon(Icons.arrow_drop_down, size: 18),
+                  ],
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -674,7 +812,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
           FilledButton.icon(
             onPressed: _creating ||
                     _activeSession?.open == true ||
-                    _selectedClass == null
+                    _selectedClassIds.isEmpty
                 ? null
                 : _createSession,
             icon: _creating
@@ -713,6 +851,11 @@ class _AttendanceTabState extends State<AttendanceTab> {
                     ),
                   ),
                 IconButton(
+                  tooltip: 'Relatorio exclusivo desta chamada',
+                  onPressed: () => _openSessionReport(session),
+                  icon: const Icon(Icons.assignment_outlined, size: 17),
+                ),
+                IconButton(
                   tooltip: 'Excluir chamada',
                   onPressed: _deletingSessionId != null
                       ? null
@@ -733,9 +876,9 @@ class _AttendanceTabState extends State<AttendanceTab> {
       child: session == null
           ? _AttendanceEmpty(
               icon: Icons.qr_code_2,
-              text: _selectedClass == null
+              text: _selectedClassIds.isEmpty
                   ? 'Nenhuma turma esta prevista para hoje. Confira os dias de aula no cadastro da turma.'
-                  : 'A turma de hoje ja foi selecionada. Gere o QR Code para iniciar a chamada.',
+                  : 'As turmas de hoje ja foram selecionadas. Gere um unico QR Code para iniciar a chamada.',
             )
           : Column(
               children: [
@@ -812,12 +955,26 @@ class _AttendanceTabState extends State<AttendanceTab> {
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
-                                  child: Text(
-                                    '${record.studentName}  -  ${record.enrollment}',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: AssistantTheme.textPrimary,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${record.studentName}  -  ${record.enrollment}',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AssistantTheme.textPrimary,
+                                        ),
+                                      ),
+                                      if (session.classCount > 1)
+                                        Text(
+                                          record.classLabel,
+                                          style: const TextStyle(
+                                            fontSize: 8,
+                                            color: AssistantTheme.textMuted,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                                 Text(
@@ -857,6 +1014,16 @@ class _AttendanceTabState extends State<AttendanceTab> {
               fontWeight: FontWeight.w600,
             ),
           ),
+          if (session.classCount > 1) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${session.classCount} turmas reunidas em um unico QR Code',
+              style: const TextStyle(
+                color: AssistantTheme.c2,
+                fontSize: 10,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             '${session.presentCount} presentes de ${session.expectedCount}',
@@ -1083,6 +1250,15 @@ class _AttendanceTabState extends State<AttendanceTab> {
                                   ),
                                 ),
                                 IconButton(
+                                  tooltip: 'Relatorio exclusivo desta chamada',
+                                  onPressed: () => _openSessionReport(session),
+                                  icon: const Icon(
+                                    Icons.assignment_outlined,
+                                    size: 16,
+                                    color: AssistantTheme.c1,
+                                  ),
+                                ),
+                                IconButton(
                                   tooltip: 'Excluir chamada',
                                   onPressed: _deletingSessionId != null
                                       ? null
@@ -1157,6 +1333,8 @@ class _AttendancePanel extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AssistantTheme.textMuted,
                       fontSize: 9,
@@ -1231,6 +1409,189 @@ class _AttendanceDateButton extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           foregroundColor: AssistantTheme.textSecondary,
           side: const BorderSide(color: AssistantTheme.border2),
+        ),
+      );
+}
+
+class _AttendanceSessionReportDialog extends StatelessWidget {
+  final AttendanceSession session;
+
+  const _AttendanceSessionReportDialog({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final transcript = attendanceSessionTranscript(session);
+    return Dialog(
+      backgroundColor: AssistantTheme.surface,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 680),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.assignment_outlined,
+                    color: AssistantTheme.c1,
+                  ),
+                  const SizedBox(width: 9),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'RELATORIO DESTA CHAMADA',
+                          style: TextStyle(
+                            color: AssistantTheme.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        Text(
+                          'Formato direto para copiar ao ambiente da faculdade',
+                          style: TextStyle(
+                            color: AssistantTheme.textMuted,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _SessionMetric(
+                    value: '${session.classCount}',
+                    label: 'turmas',
+                  ),
+                  const SizedBox(width: 8),
+                  _SessionMetric(
+                    value: '${session.presentCount}',
+                    label: 'presentes',
+                    color: AssistantTheme.c3,
+                  ),
+                  const SizedBox(width: 8),
+                  _SessionMetric(
+                    value: '${session.absentCount}',
+                    label: 'ausentes',
+                    color: AssistantTheme.c4,
+                  ),
+                  const Spacer(),
+                  Text(
+                    session.attendanceDate,
+                    style: const TextStyle(
+                      color: AssistantTheme.textSecondary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AssistantTheme.bg2,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AssistantTheme.border2),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      transcript,
+                      style: const TextStyle(
+                        color: AssistantTheme.textPrimary,
+                        fontSize: 11,
+                        height: 1.55,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('FECHAR'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: transcript));
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Relatorio copiado. Pronto para colar no ambiente da faculdade.',
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.copy_all_outlined, size: 16),
+                    label: const Text('COPIAR PARA A FACULDADE'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AssistantTheme.c3,
+                      foregroundColor: AssistantTheme.bg,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionMetric extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+
+  const _SessionMetric({
+    required this.value,
+    required this.label,
+    this.color = AssistantTheme.c1,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: color.withOpacity(.08),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: color.withOpacity(.45)),
+        ),
+        child: Row(
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: AssistantTheme.textMuted,
+                fontSize: 9,
+              ),
+            ),
+          ],
         ),
       );
 }

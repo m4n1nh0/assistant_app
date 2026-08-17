@@ -8,13 +8,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import delete as sql_delete, select
+from sqlalchemy import delete as sql_delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
     AttendanceRecordModel,
     AttendanceRosterModel,
+    AttendanceSessionClassModel,
     AttendanceSessionModel,
     ClassGroupModel,
     LessonModel,
@@ -24,6 +25,7 @@ from ..core.database import (
 from ..core.security import get_current_user
 from ..core.rate_limit import rate_limit
 from ..models.schemas import (
+    AttendanceClassResponse,
     AttendanceRecordCreate,
     AttendanceRecordResponse,
     AttendanceReportResponse,
@@ -57,7 +59,7 @@ _PUBLIC_TEXT = {
             "Informe sua matrícula para registrar a presença nesta aula."
         ),
         "failed_title": "Não foi possível confirmar",
-        "enrollment_not_found": "Matrícula não encontrada nesta turma.",
+        "enrollment_not_found": "Matrícula não encontrada nas turmas desta chamada.",
         "confirmed_title": "Presença confirmada",
         "confirmed_message": "Obrigado, {name}. Sua presença foi registrada.",
         "already_message": "{name}, sua presença já estava registrada.",
@@ -83,7 +85,7 @@ _PUBLIC_TEXT = {
             "Ingrese su matrícula para registrar la asistencia a esta clase."
         ),
         "failed_title": "No se pudo confirmar",
-        "enrollment_not_found": "Matrícula no encontrada en este grupo.",
+        "enrollment_not_found": "Matrícula no encontrada en los grupos de esta asistencia.",
         "confirmed_title": "Asistencia confirmada",
         "confirmed_message": "Gracias, {name}. Su asistencia fue registrada.",
         "already_message": "{name}, su asistencia ya estaba registrada.",
@@ -109,7 +111,7 @@ _PUBLIC_TEXT = {
             "Enter your student ID to record attendance for this class."
         ),
         "failed_title": "Unable to confirm attendance",
-        "enrollment_not_found": "Student ID not found in this class.",
+        "enrollment_not_found": "Student ID not found in this attendance roster.",
         "confirmed_title": "Attendance confirmed",
         "confirmed_message": "Thank you, {name}. Your attendance was recorded.",
         "already_message": "{name}, your attendance was already recorded.",
@@ -179,15 +181,32 @@ def _parse_iso_date(value: Optional[str], field: str) -> Optional[str]:
         raise HTTPException(422, f"{field} deve usar o formato AAAA-MM-DD") from exc
 
 
-async def _owned_group(
-    class_id: str,
+async def _owned_groups(
+    class_ids: list[str],
     tutor_id: str,
     db: AsyncSession,
-) -> ClassGroupModel:
-    group = await db.get(ClassGroupModel, class_id)
-    if group is None or group.tutor_id != tutor_id:
-        raise HTTPException(404, "Turma nao encontrada")
-    return group
+) -> list[ClassGroupModel]:
+    wanted = list(dict.fromkeys(item.strip() for item in class_ids if item.strip()))
+    if not wanted:
+        raise HTTPException(422, "Selecione ao menos uma turma")
+    if len(wanted) > 20:
+        raise HTTPException(422, "Selecione no maximo 20 turmas")
+    groups = list(
+        (
+            await db.execute(
+                select(ClassGroupModel).where(
+                    ClassGroupModel.id.in_(wanted),
+                    ClassGroupModel.tutor_id == tutor_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {group.id: group for group in groups}
+    if len(by_id) != len(wanted):
+        raise HTTPException(404, "Uma ou mais turmas nao foram encontradas")
+    return [by_id[item] for item in wanted]
 
 
 async def _owned_session(
@@ -208,6 +227,17 @@ async def _session_response(
     check_in_url: str = "",
     check_in_path: str = "",
 ) -> AttendanceSessionResponse:
+    session_classes = list(
+        (
+            await db.execute(
+                select(AttendanceSessionClassModel)
+                .where(AttendanceSessionClassModel.session_id == session.id)
+                .order_by(AttendanceSessionClassModel.class_label)
+            )
+        )
+        .scalars()
+        .all()
+    )
     records = list(
         (
             await db.execute(
@@ -231,10 +261,33 @@ async def _session_response(
         .all()
     )
     present_ids = {record.student_id for record in records}
+    roster_by_student = {student.student_id: student for student in roster}
+    classes = [
+        AttendanceClassResponse(
+            class_id=item.class_group_id,
+            class_label=item.class_label or "",
+            discipline=item.discipline or "",
+            semester=item.semester or "",
+            expected_count=item.expected_count,
+        )
+        for item in session_classes
+    ]
+    if not classes:
+        classes = [
+            AttendanceClassResponse(
+                class_id=session.class_group_id,
+                class_label=session.class_label or "",
+                discipline=session.discipline or "",
+                semester=session.semester or "",
+                expected_count=session.expected_count,
+            )
+        ]
     return AttendanceSessionResponse(
         id=session.id,
         class_id=session.class_group_id,
         class_label=session.class_label or "",
+        class_ids=[item.class_id for item in classes],
+        classes=classes,
         discipline=session.discipline or "",
         semester=session.semester or "",
         attendance_date=session.attendance_date,
@@ -256,6 +309,20 @@ async def _session_response(
                 student_name=record.student_name,
                 source=record.source,
                 checked_in_at=record.checked_in_at,
+                class_id=(
+                    getattr(roster_by_student.get(record.student_id), "class_group_id", "")
+                    or session.class_group_id
+                ),
+                class_label=(
+                    getattr(roster_by_student.get(record.student_id), "class_label", "")
+                    or session.class_label
+                    or ""
+                ),
+                discipline=(
+                    getattr(roster_by_student.get(record.student_id), "discipline", "")
+                    or session.discipline
+                    or ""
+                ),
             )
             for record in records
         ],
@@ -264,6 +331,19 @@ async def _session_response(
                 student_id=student.student_id,
                 enrollment=student.enrollment,
                 student_name=student.student_name,
+                class_id=(
+                    getattr(student, "class_group_id", "") or session.class_group_id
+                ),
+                class_label=(
+                    getattr(student, "class_label", "")
+                    or session.class_label
+                    or ""
+                ),
+                discipline=(
+                    getattr(student, "discipline", "")
+                    or session.discipline
+                    or ""
+                ),
             )
             for student in roster
             if student.student_id not in present_ids
@@ -278,9 +358,12 @@ async def create_attendance_session(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    group = await _owned_group(body.class_id.strip(), user["tutor_id"], db)
-    if not group.active:
-        raise HTTPException(409, "A turma esta encerrada")
+    requested_ids = [*body.class_ids]
+    if body.class_id:
+        requested_ids.insert(0, body.class_id)
+    groups = await _owned_groups(requested_ids, user["tutor_id"], db)
+    if any(not group.active for group in groups):
+        raise HTTPException(409, "Uma das turmas esta encerrada")
     if body.lesson_id:
         lesson = await db.get(LessonModel, body.lesson_id)
         if lesson is None or lesson.tutor_id != user["tutor_id"]:
@@ -293,7 +376,6 @@ async def create_attendance_session(
             await db.execute(
                 select(AttendanceSessionModel).where(
                     AttendanceSessionModel.tutor_id == user["tutor_id"],
-                    AttendanceSessionModel.class_group_id == group.id,
                     AttendanceSessionModel.closed_at.is_(None),
                 )
             )
@@ -310,7 +392,7 @@ async def create_attendance_session(
                 select(StudentModel)
                 .where(
                     StudentModel.tutor_id == user["tutor_id"],
-                    StudentModel.class_id == group.id,
+                    StudentModel.class_id.in_([group.id for group in groups]),
                     StudentModel.active.is_(True),
                 )
                 .order_by(StudentModel.name)
@@ -319,13 +401,26 @@ async def create_attendance_session(
         .scalars()
         .all()
     )
+    group_by_id = {group.id: group for group in groups}
+    students_by_group = {
+        group.id: [student for student in students if student.class_id == group.id]
+        for group in groups
+    }
+    labels = [_class_label(group) for group in groups]
+    disciplines = list(
+        dict.fromkeys((group.discipline or "").strip() for group in groups if group.discipline)
+    )
+    semesters = list(
+        dict.fromkeys((group.semester or "").strip() for group in groups if group.semester)
+    )
     token = secrets.token_urlsafe(32)
     session = AttendanceSessionModel(
         tutor_id=user["tutor_id"],
-        class_group_id=group.id,
-        class_label=_class_label(group),
-        discipline=group.discipline or "",
-        semester=group.semester or "",
+        # O primeiro id mantem a leitura por clientes e registros antigos.
+        class_group_id=groups[0].id,
+        class_label=" + ".join(labels)[:180],
+        discipline=", ".join(disciplines)[:180],
+        semester=" / ".join(semesters)[:16],
         lesson_id=body.lesson_id,
         attendance_date=attendance_date,
         title=body.title.strip(),
@@ -336,13 +431,28 @@ async def create_attendance_session(
     )
     db.add(session)
     await db.flush()
+    for group in groups:
+        db.add(
+            AttendanceSessionClassModel(
+                session_id=session.id,
+                class_group_id=group.id,
+                class_label=_class_label(group),
+                discipline=group.discipline or "",
+                semester=group.semester or "",
+                expected_count=len(students_by_group[group.id]),
+            )
+        )
     for student in students:
+        group = group_by_id.get(student.class_id)
         db.add(
             AttendanceRosterModel(
                 session_id=session.id,
                 student_id=student.id,
                 enrollment=(student.external_id or "").strip(),
                 student_name=student.name,
+                class_group_id=student.class_id,
+                class_label=_class_label(group) if group else "",
+                discipline=(group.discipline or "") if group else "",
             )
         )
     await db.commit()
@@ -371,7 +481,15 @@ async def list_attendance_sessions(
         AttendanceSessionModel.tutor_id == user["tutor_id"]
     )
     if class_id:
-        query = query.where(AttendanceSessionModel.class_group_id == class_id)
+        linked_sessions = select(AttendanceSessionClassModel.session_id).where(
+            AttendanceSessionClassModel.class_group_id == class_id
+        )
+        query = query.where(
+            or_(
+                AttendanceSessionModel.class_group_id == class_id,
+                AttendanceSessionModel.id.in_(linked_sessions),
+            )
+        )
     start = _parse_iso_date(date_from, "Data inicial")
     end = _parse_iso_date(date_to, "Data final")
     if start:
@@ -439,6 +557,11 @@ async def delete_attendance_session(
             AttendanceRosterModel.session_id == session_id
         )
     )
+    await db.execute(
+        sql_delete(AttendanceSessionClassModel).where(
+            AttendanceSessionClassModel.session_id == session_id
+        )
+    )
     await db.delete(session)
     await db.commit()
     return {"ok": True}
@@ -460,7 +583,7 @@ async def _register_attendance(
         )
     ).scalars().first()
     if roster_entry is None:
-        raise HTTPException(404, "Matricula nao encontrada nesta turma")
+        raise HTTPException(404, "Matricula nao encontrada nesta chamada")
 
     existing = (
         await db.execute(

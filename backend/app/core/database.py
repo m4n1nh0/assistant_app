@@ -360,7 +360,7 @@ class StudentModel(Base):
 
 
 class AttendanceSessionModel(Base):
-    """Janela temporaria de chamada aberta pelo professor para uma turma."""
+    """Janela temporaria de chamada com um QR para uma ou mais turmas."""
 
     __tablename__ = "attendance_sessions"
     id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -377,6 +377,26 @@ class AttendanceSessionModel(Base):
     opened_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     expires_at      = Column(DateTime, nullable=False, index=True)
     closed_at       = Column(DateTime, nullable=True)
+
+
+class AttendanceSessionClassModel(Base):
+    """Turmas reunidas em uma unica sessao de chamada."""
+
+    __tablename__ = "attendance_session_classes"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "class_group_id",
+            name="uq_attendance_session_class",
+        ),
+    )
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id     = Column(String(64), nullable=False, index=True)
+    class_group_id = Column(String(64), nullable=False, index=True)
+    class_label    = Column(String(180), nullable=False, default="")
+    discipline     = Column(String(180), nullable=False, default="")
+    semester       = Column(String(16), nullable=False, default="")
+    expected_count = Column(Integer, nullable=False, default=0)
 
 
 class AttendanceRecordModel(Base):
@@ -408,6 +428,9 @@ class AttendanceRosterModel(Base):
     student_id   = Column(String(64), nullable=False, index=True)
     enrollment   = Column(String(80), nullable=False, default="")
     student_name = Column(String(180), nullable=False)
+    class_group_id = Column(String(64), nullable=True, index=True)
+    class_label    = Column(String(180), nullable=False, default="")
+    discipline     = Column(String(180), nullable=False, default="")
 
 
 class LessonModel(Base):
@@ -554,6 +577,11 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "lesson_segments": {
             "embedding_model": "VARCHAR(120) NULL",
+        },
+        "attendance_rosters": {
+            "class_group_id": "VARCHAR(64) NULL",
+            "class_label": "VARCHAR(180) NOT NULL DEFAULT ''",
+            "discipline": "VARCHAR(180) NOT NULL DEFAULT ''",
         },
     }
     for table_name, columns in additions.items():

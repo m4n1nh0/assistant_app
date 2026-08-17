@@ -240,14 +240,30 @@ Iterable<pw.Widget> _attendanceSection(AttendanceSession session) sync* {
       ),
     ),
   );
+  final includeClass = session.classCount > 1;
   final present = session.records
-      .map((record) => [record.enrollment, record.studentName, 'Presente'])
+      .map((record) => [
+            record.enrollment,
+            record.studentName,
+            if (includeClass) record.classLabel,
+            'Presente'
+          ])
       .toList();
   final absent = session.absentStudents
-      .map((student) => [student.enrollment, student.studentName, 'Ausente'])
+      .map((student) => [
+            student.enrollment,
+            student.studentName,
+            if (includeClass) student.classLabel,
+            'Ausente'
+          ])
       .toList();
   yield _table(
-    headers: const ['Matrícula', 'Aluno', 'Situação'],
+    headers: [
+      'Matrícula',
+      'Aluno',
+      if (includeClass) 'Turma',
+      'Situação',
+    ],
     rows: [...present, ...absent],
   );
 }
