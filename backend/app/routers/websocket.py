@@ -15,6 +15,7 @@ from ..services.chat_graph_service import run_chat_graph
 from ..services.llm_status_service import get_ready_llms
 from ..services.llm_routing_service import pick_auto_llm
 from ..services.runtime_config_service import load_notif_config
+from ..services.microsoft_identity_service import hydrate_microsoft_account
 from ..services.voice_service import transcribe_audio, text_to_speech
 
 router = APIRouter(tags=["WebSocket"])
@@ -87,7 +88,11 @@ async def _load_calendar_accounts(
 
     return (
         [account for account in google_accounts if account.get("refresh_token")],
-        [account for account in microsoft_accounts if account.get("refresh_token")],
+        [
+            hydrated
+            for account in microsoft_accounts
+            if (hydrated := hydrate_microsoft_account(account)).get("refresh_token")
+        ],
     )
 
 

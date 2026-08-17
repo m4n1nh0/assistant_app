@@ -14,6 +14,7 @@ from ..core.database import (
 from ..services.calendar_service import fetch_all_account_events
 from ..services.notification_service import send_notification, build_event_message
 from ..services.runtime_config_service import load_notif_config
+from ..services.microsoft_identity_service import hydrate_microsoft_account
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -86,7 +87,11 @@ async def _load_calendar_accounts(
 
     return (
         [account for account in google_accounts if account.get("refresh_token")],
-        [account for account in microsoft_accounts if account.get("refresh_token")],
+        [
+            hydrated
+            for account in microsoft_accounts
+            if (hydrated := hydrate_microsoft_account(account)).get("refresh_token")
+        ],
     )
 
 

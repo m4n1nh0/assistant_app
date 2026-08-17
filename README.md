@@ -8,8 +8,9 @@ LLM.
 O projeto foi pensado para rodar localmente, com dados e credenciais sensiveis
 fora do repositorio. O arquivo `backend/.env.example` documenta apenas as
 variaveis de infraestrutura e provedores que continuam vindo do ambiente. As
-configuracoes de notificacao e calendario sao persistidas no banco pela propria
-aplicacao.
+configuracoes de notificacao e as autorizações das contas de calendário são
+persistidas no banco pela própria aplicação. Segredos de aplicações OAuth, como
+o App Registration Microsoft multitenant, permanecem no ambiente do backend.
 
 ## Arquitetura
 
@@ -159,9 +160,35 @@ flowchart TD
     BackendConfig --> CalendarAccounts[(Contas de calendario)]
 
     Env[backend/.env local] --> Runtime[Settings de infraestrutura]
+    SecretManager[Secret manager do deploy] --> Runtime
+    Runtime --> MicrosoftApp[App Registration Microsoft multitenant]
     Runtime --> Backend[Backend FastAPI]
     ConfigTable --> Backend
     CalendarAccounts --> Backend
+```
+
+Conexao de uma conta Microsoft:
+
+```mermaid
+sequenceDiagram
+    actor U as Usuario
+    participant UI as Flutter
+    participant API as Backend
+    participant MS as Login oficial Microsoft
+    participant DB as Banco cifrado
+    participant Graph as Microsoft Graph
+
+    U->>UI: Conectar Microsoft
+    UI->>API: GET /calendar/microsoft/start
+    API-->>UI: URL oficial com state + PKCE
+    UI->>MS: Abre navegador
+    MS->>U: Login, MFA, consentimento e politicas
+    MS->>API: Callback com codigo temporario
+    API->>MS: Troca codigo no servidor
+    API->>Graph: Le nome e email da conta
+    API->>DB: Guarda refresh token cifrado
+    UI->>API: Consulta status sem tokens
+    API-->>UI: Conta, email e estado
 ```
 
 Entre as preferencias locais esta **Enter envia mensagem**. Ligada, `Enter`
@@ -747,9 +774,11 @@ cd backend
 cp .env.example .env
 ```
 
-Preencha apenas o que for necessario para rodar localmente. Credenciais de
-notificacao e OAuth de calendario devem ser configuradas pela tela da aplicacao,
-pois sao salvas no banco.
+Preencha apenas o que for necessario para rodar localmente. Configurações de
+notificação e a aplicação OAuth Google continuam seguindo seus fluxos atuais.
+O App Registration Microsoft é configuração exclusiva do backend por
+`MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET` e tenant `common`;
+usuários conectam somente a própria conta pela tela.
 
 ### Usuários E Convites Administrativos
 

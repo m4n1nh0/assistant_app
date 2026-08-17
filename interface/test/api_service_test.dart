@@ -111,6 +111,44 @@ void main() {
     expect(result['created_series'], 3);
   });
 
+  test('reconexao Microsoft envia somente o identificador publico da conta',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/calendar/microsoft/start');
+      expect(request.url.queryParameters, {'account_id': 'microsoft-1'});
+      expect(request.body, isEmpty);
+      return http.Response(
+        '{"auth_url":"https://login.microsoftonline.com/common/oauth2/v2.0/authorize",'
+        '"account_id":"microsoft-1"}',
+        200,
+      );
+    });
+
+    final result = await http.runWithClient(
+      () => svc.startMicrosoftCalendarAuth(accountId: 'microsoft-1'),
+      () => client,
+    );
+
+    expect(result.accountId, 'microsoft-1');
+    expect(result.authUrl, startsWith('https://login.microsoftonline.com/'));
+  });
+
+  test('conta Microsoft mostra email e necessidade de reconexao', () {
+    final account = CalendarAccount.fromJson({
+      'id': 'microsoft-1',
+      'provider': 'microsoft',
+      'label': 'Professora Ana',
+      'email': 'ana@example.edu',
+      'connected': false,
+      'status': 'reconnect_required',
+    });
+
+    expect(account.email, 'ana@example.edu');
+    expect(account.statusLabel, 'RECONECTAR');
+  });
+
   test('notification config sends the editable reminder minutes', () async {
     final svc = ApiService(backendUrl: 'https://backend.test');
     final client = MockClient((request) async {

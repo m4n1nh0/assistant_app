@@ -114,6 +114,13 @@ class Settings(BaseSettings):
             "MS_TENANT_ID",
         ),
     )
+    credential_encryption_key: str = Field(
+        "",
+        validation_alias=AliasChoices(
+            "CREDENTIAL_ENCRYPTION_KEY",
+            "OAUTH_TOKEN_ENCRYPTION_KEY",
+        ),
+    )
 
     database_url: str = Field(
         default="mysql+aiomysql://assistant:assistant@localhost:3306/assistant",

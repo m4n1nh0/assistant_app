@@ -37,9 +37,6 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _reminderMinutesCtrl = TextEditingController();
   final _gcalClientCtrl = TextEditingController();
   final _gcalSecretCtrl = TextEditingController();
-  final _msClientCtrl = TextEditingController();
-  final _msSecretCtrl = TextEditingController();
-  final _msTenantCtrl = TextEditingController();
   final _backendUrlCtrl = TextEditingController();
   bool _backendTestBusy = false;
   final _voicePreviewPlayer = NeuralAudioPlayer();
@@ -72,12 +69,19 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _populateNotifFields();
     _gcalClientCtrl.text = _draft.calendar.gcalClientId;
     _gcalSecretCtrl.text = _draft.calendar.gcalClientSecret;
-    _msClientCtrl.text = _draft.calendar.msClientId;
-    _msSecretCtrl.text = _draft.calendar.msClientSecret;
-    _msTenantCtrl.text = _draft.calendar.msTenantId.isEmpty
-        ? 'common'
-        : _draft.calendar.msTenantId;
+    _clearLegacyMicrosoftCredentials();
     _backendUrlCtrl.text = _draft.backendUrl;
+  }
+
+  Future<void> _clearLegacyMicrosoftCredentials() async {
+    if (_draft.calendar.msClientId.isEmpty &&
+        _draft.calendar.msClientSecret.isEmpty) {
+      return;
+    }
+    _draft.calendar.msClientId = '';
+    _draft.calendar.msClientSecret = '';
+    _draft.calendar.msTenantId = 'common';
+    await StorageService.saveConfig(_draft);
   }
 
   void _populateNotifFields() {
@@ -159,18 +163,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 
     final gcalClientId = _gcalClientCtrl.text.trim();
     final gcalClientSecret = _gcalSecretCtrl.text.trim();
-    final msClientId = _msClientCtrl.text.trim();
-    final msClientSecret = _msSecretCtrl.text.trim();
-    final msTenantId = _msTenantCtrl.text.trim().isEmpty
-        ? 'common'
-        : _msTenantCtrl.text.trim();
 
     if ((gcalClientId.isEmpty) != (gcalClientSecret.isEmpty)) {
       _showSnack('Preencha Client ID e Client Secret do Google.');
-      return;
-    }
-    if ((msClientId.isEmpty) != (msClientSecret.isEmpty)) {
-      _showSnack('Preencha Client ID e Client Secret da Microsoft.');
       return;
     }
 
@@ -179,13 +174,6 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         await api.saveGoogleOAuthApp(
           clientId: gcalClientId,
           clientSecret: gcalClientSecret,
-        );
-      }
-      if (msClientId.isNotEmpty && msClientSecret.isNotEmpty) {
-        await api.saveMicrosoftOAuthApp(
-          clientId: msClientId,
-          clientSecret: msClientSecret,
-          tenantId: msTenantId,
         );
       }
     } catch (e) {
@@ -202,9 +190,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _draft.calendar.gcalRefreshToken = '';
     _draft.calendar.gcalEnabled =
         _calendarAccounts['google']?.any((item) => item.connected) == true;
-    _draft.calendar.msClientId = msClientId;
-    _draft.calendar.msClientSecret = msClientSecret;
-    _draft.calendar.msTenantId = msTenantId;
+    _draft.calendar.msClientId = '';
+    _draft.calendar.msClientSecret = '';
+    _draft.calendar.msTenantId = 'common';
     _draft.calendar.msRefreshToken = '';
     _draft.calendar.msEnabled =
         _calendarAccounts['microsoft']?.any((item) => item.connected) == true;
@@ -304,24 +292,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     });
   }
 
-  Future<void> _openMicrosoftAuthorization() async {
+  Future<void> _openMicrosoftAuthorization({String? accountId}) async {
     await _runCalendarAction(() async {
-      final clientId = _msClientCtrl.text.trim();
-      final clientSecret = _msSecretCtrl.text.trim();
-      final tenantId = _msTenantCtrl.text.trim().isEmpty
-          ? 'common'
-          : _msTenantCtrl.text.trim();
-      if ((clientId.isEmpty) != (clientSecret.isEmpty)) {
-        throw Exception('preencha Client ID e Client Secret da Microsoft');
-      }
-
-      final result = clientId.isNotEmpty
-          ? await api.connectMicrosoftCalendar(
-              clientId: clientId,
-              clientSecret: clientSecret,
-              tenantId: tenantId,
-            )
-          : await api.startMicrosoftCalendarAuth();
+      final result = await api.startMicrosoftCalendarAuth(
+        accountId: accountId,
+      );
       if (result.authUrl.isEmpty || result.accountId.isEmpty) {
         throw Exception('backend nao retornou a URL de autorizacao Microsoft');
       }
@@ -701,20 +676,17 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           ),
         ]),
         _SectionCard(title: 'MICROSOFT (Teams + Outlook)', children: [
-          _InfoBox(
-              'Informe as credenciais OAuth uma vez ou use as que ja estao salvas no backend. O botao libera leitura e criacao de eventos. Reconecte contas antigas para autorizar escrita.'),
-          _Field('CLIENT ID', _msClientCtrl,
-              hint: 'Microsoft Application Client ID'),
-          _Field('CLIENT SECRET', _msSecretCtrl,
-              hint: 'Microsoft Client Secret', obscure: true),
-          _Field('TENANT', _msTenantCtrl, hint: 'common'),
+          const _InfoBox(
+              'Entre com sua conta pessoal, corporativa ou educacional na pagina oficial da Microsoft. Senha, MFA e politicas da organizacao sao tratados somente pela Microsoft; o assistente nunca recebe sua senha.'),
           _ActionBtn(
-            label: _calendarBusy ? 'Aguarde...' : 'Conectar Outlook',
-            onTap: _openMicrosoftAuthorization,
+            label: _calendarBusy ? 'Aguarde...' : 'Conectar Microsoft',
+            onTap: () => _openMicrosoftAuthorization(),
           ),
           _CalendarAccountList(
             accounts: _calendarAccounts['microsoft'] ?? const [],
             onRemove: _disconnectCalendarAccount,
+            onReconnect: (account) =>
+                _openMicrosoftAuthorization(accountId: account.id),
           ),
         ]),
       ]);
@@ -847,9 +819,6 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _reminderMinutesCtrl,
       _gcalClientCtrl,
       _gcalSecretCtrl,
-      _msClientCtrl,
-      _msSecretCtrl,
-      _msTenantCtrl,
       _backendUrlCtrl,
     ]) {
       c.dispose();
@@ -862,10 +831,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 class _CalendarAccountList extends StatelessWidget {
   final List<CalendarAccount> accounts;
   final Future<void> Function(CalendarAccount account) onRemove;
+  final Future<void> Function(CalendarAccount account)? onReconnect;
 
   const _CalendarAccountList({
     required this.accounts,
     required this.onRemove,
+    this.onReconnect,
   });
 
   @override
@@ -910,21 +881,37 @@ class _CalendarAccountList extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        account.label.isEmpty
-                            ? account.provider
-                            : account.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'JetBrains Mono',
-                          fontSize: 10.5,
-                          color: AssistantTheme.textSecondary,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            account.label.isEmpty
+                                ? account.provider
+                                : account.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 10.5,
+                              color: AssistantTheme.textSecondary,
+                            ),
+                          ),
+                          if (account.email?.isNotEmpty == true)
+                            Text(
+                              account.email!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 8.5,
+                                color: AssistantTheme.textMuted,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     Text(
-                      account.connected ? 'ATIVA' : 'PENDENTE',
+                      account.statusLabel,
                       style: TextStyle(
                         fontFamily: 'JetBrains Mono',
                         fontSize: 8,
@@ -933,6 +920,16 @@ class _CalendarAccountList extends StatelessWidget {
                             : AssistantTheme.textMuted,
                       ),
                     ),
+                    if (onReconnect != null)
+                      IconButton(
+                        tooltip: 'Reconectar conta',
+                        onPressed: () => onReconnect!(account),
+                        icon: const Icon(
+                          Icons.refresh,
+                          size: 16,
+                          color: AssistantTheme.c2,
+                        ),
+                      ),
                     IconButton(
                       onPressed: () => onRemove(account),
                       icon: const Icon(

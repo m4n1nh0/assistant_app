@@ -108,7 +108,8 @@ Na primeira abertura, o app exibe a tela de configuracao. Nela voce define:
 - Nome do assistente, seu nome e perfil de atendimento
 - Senha de acesso
 - Canais e preferências de notificação
-- Credenciais OAuth e contas de agenda
+- Credenciais OAuth Google e contas de agenda; para Microsoft, login da própria
+  conta pelo navegador oficial, com estado, reconexão e desconexão
 - Preferências de voz, inicialização e comportamento da interface
 
 Se o backend habilitar `REGISTRATION_INVITE_REQUIRED`, a tela de acesso também
@@ -144,9 +145,10 @@ foram processados, mesmo quando o diálogo que iniciou o resumo já foi fechado.
 ### Calendários
 
 Em **Configurações > Agendas**, cada usuário pode conectar contas Google
-Calendar e Microsoft Outlook/Teams. O procedimento para criar as credenciais
-OAuth, cadastrar callbacks locais ou do Railway, consultar a agenda pela
-conversa e testar a criação de eventos está em
+Calendar e Microsoft Outlook/Teams. Na Microsoft, a interface não recebe
+Client ID, Client Secret, tenant, código OAuth nem tokens: ela apenas abre o
+login oficial e consulta do backend o nome, e-mail e estado da conexão. O
+procedimento de infraestrutura, callbacks, consulta e criação de eventos está em
 [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
 
 No **Modo Aula > 5. Presença**, a chamada oferece somente as turmas previstas

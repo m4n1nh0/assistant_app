@@ -336,6 +336,9 @@ async def change_password(
 import json as _json
 import uuid as _uuid
 import hashlib as _hashlib
+import base64 as _base64
+import html as _html
+import secrets as _secrets
 from datetime import date as _date, datetime as _datetime, timezone as _timezone
 from fastapi import APIRouter, Query, Depends, Body, Request
 from fastapi.responses import HTMLResponse
@@ -356,7 +359,16 @@ from ..services.calendar_service import (
     create_microsoft_account_event,
     fetch_all_account_events,
     get_google_auth_url, get_microsoft_auth_url,
-    exchange_google_code, exchange_microsoft_code,
+    exchange_google_code, exchange_microsoft_code, fetch_microsoft_profile,
+    microsoft_auth_error_message, MicrosoftAuthenticationError,
+    validate_microsoft_session,
+)
+from ..services.credential_storage_service import (
+    encrypt_credential,
+)
+from ..services.microsoft_identity_service import (
+    hydrate_microsoft_account,
+    microsoft_application_config,
 )
 from ..core.database import (
     get_db,
@@ -503,58 +515,10 @@ async def _save_google_oauth_app(
 
 
 async def _load_microsoft_oauth_app(db: AsyncSession, user_id: str) -> dict:
-    data = _json_value(
-        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_MS_APP)),
-        {},
-    )
-    legacy = _json_value(
-        await db.get(ConfigModel, scoped_config_key(user_id, _KEY_MS)),
-        {},
-    )
-    accounts = await _load_account_store(db, _KEY_MS_ACCOUNTS, user_id)
-    account = next(
-        (
-            item
-            for item in reversed(accounts)
-            if item.get("client_id") and item.get("client_secret")
-        ),
-        {},
-    )
-    return {
-        "client_id": (
-            data.get("client_id")
-            or legacy.get("client_id")
-            or settings.microsoft_oauth_client_id
-            or account.get("client_id", "")
-        ),
-        "client_secret": (
-            data.get("client_secret")
-            or legacy.get("client_secret")
-            or settings.microsoft_oauth_client_secret
-            or account.get("client_secret", "")
-        ),
-        "tenant_id": (
-            data.get("tenant_id")
-            or legacy.get("tenant_id")
-            or settings.microsoft_oauth_tenant_id
-            or account.get("tenant_id", "common")
-        ),
-    }
-
-
-async def _save_microsoft_oauth_app(
-    db: AsyncSession,
-    client_id: str,
-    client_secret: str,
-    tenant_id: str,
-    user_id: str,
-) -> None:
-    await _replace_config(db, _KEY_MS_APP, {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "tenant_id": tenant_id or "common",
-        "updated_at": _now_iso(),
-    }, user_id)
+    # A single multitenant application belongs to the deployment, not to an
+    # end user. Keeping these values in environment/secret-manager settings is
+    # what lets the UI offer only the official Microsoft login.
+    return microsoft_application_config()
 
 
 async def _load_account_store(
@@ -591,11 +555,18 @@ def _now_iso() -> str:
 
 
 def _sanitize_account(account: dict, provider: str) -> dict:
+    stored_status = str(account.get("connection_status") or "")
+    connected = bool(account.get("refresh_token")) and stored_status not in {
+        "authorization_pending", "reconnect_required"
+    }
     return {
         "id": account.get("id", ""),
         "provider": provider,
         "label": account.get("label") or provider.title(),
-        "connected": bool(account.get("refresh_token")),
+        "connected": connected,
+        "status": stored_status or ("connected" if connected else "pending"),
+        "display_name": account.get("display_name"),
+        "email": account.get("email"),
         "tenant_id": account.get("tenant_id"),
         "created_at": account.get("created_at"),
         "updated_at": account.get("updated_at"),
@@ -699,11 +670,12 @@ async def _load_microsoft_accounts(
             "updated_at": legacy.get("updated_at"),
         })
 
-    return [
-        account
-        for account in _dedupe_accounts(accounts)
-        if include_pending or account.get("refresh_token")
-    ]
+    result: list[dict] = []
+    for stored in _dedupe_accounts(accounts):
+        if not include_pending and not stored.get("refresh_token"):
+            continue
+        result.append(hydrate_microsoft_account(stored))
+    return result
 
 
 def _dedupe_accounts(accounts: list[dict]) -> list[dict]:
@@ -764,12 +736,14 @@ def _read_oauth_state(state: str, provider: str) -> tuple[str, str]:
 
 def _oauth_result_page(title: str, message: str, ok: bool = True) -> HTMLResponse:
     color = "#1edc8f" if ok else "#ff5c7a"
+    safe_title = _html.escape(title)
+    safe_message = _html.escape(message)
     return HTMLResponse(f"""<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
+  <title>{safe_title}</title>
   <style>
     body {{
       margin: 0;
@@ -793,8 +767,8 @@ def _oauth_result_page(title: str, message: str, ok: bool = True) -> HTMLRespons
 </head>
 <body>
   <main>
-    <h1>{title}</h1>
-    <p>{message}</p>
+    <h1>{safe_title}</h1>
+    <p>{safe_message}</p>
   </main>
 </body>
 </html>""")
@@ -1130,7 +1104,9 @@ async def calendar_status(
     google_app = await _load_google_oauth_app(db, user["uid"])
     microsoft_app = await _load_microsoft_oauth_app(db, user["uid"])
     google_connected = [a for a in google_accounts if a.get("refresh_token")]
-    microsoft_connected = [a for a in microsoft_accounts if a.get("refresh_token")]
+    microsoft_connected = [
+        a for a in microsoft_accounts if _sanitize_account(a, "microsoft")["connected"]
+    ]
 
     return {
         "google": {
@@ -1147,6 +1123,10 @@ async def calendar_status(
             "has_credentials": bool(
                 microsoft_app.get("client_id") and microsoft_app.get("client_secret")
             ),
+            "configured": bool(
+                microsoft_app.get("client_id") and microsoft_app.get("client_secret")
+            ),
+            "requires_app_registration": True,
             "accounts": [_sanitize_account(a, "microsoft") for a in microsoft_accounts],
         },
     }
@@ -1163,6 +1143,26 @@ async def calendar_accounts(
     microsoft_accounts = await _load_microsoft_accounts(
         db, user["uid"], include_pending=True
     )
+    for account in microsoft_accounts:
+        if (
+            not account.get("refresh_token")
+            or account.get("connection_status") == "authorization_pending"
+        ):
+            continue
+        try:
+            await validate_microsoft_session(account)
+        except MicrosoftAuthenticationError:
+            account["connection_status"] = "reconnect_required"
+            await _upsert_account(
+                db,
+                _KEY_MS_ACCOUNTS,
+                str(account.get("id") or ""),
+                {"connection_status": "reconnect_required"},
+                user["uid"],
+            )
+        except Exception:
+            # A network outage does not mean that the user's grant was revoked.
+            pass
     return {
         "google": [_sanitize_account(a, "google") for a in google_accounts],
         "microsoft": [_sanitize_account(a, "microsoft") for a in microsoft_accounts],
@@ -1423,67 +1423,63 @@ async def google_auth_url(
 
 # ── Microsoft ─────────────────────────────────────────────────────────────────
 
-class MicrosoftConnectRequest(_BM):
-    client_id: str
-    client_secret: str
-    tenant_id: _Opt[str] = "common"
-    label: _Opt[str] = None
-    account_id: _Opt[str] = None
-
-
-class MicrosoftOAuthAppRequest(_BM):
-    client_id: str
-    client_secret: str
-    tenant_id: _Opt[str] = "common"
-
-
 @router_calendar.put("/microsoft/oauth-app")
 async def microsoft_oauth_app(
-    body: MicrosoftOAuthAppRequest,
     user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    if not body.client_id or not body.client_secret:
-        raise HTTPException(400, "client_id e client_secret da Microsoft sao obrigatorios.")
-    await _save_microsoft_oauth_app(
-        db,
-        body.client_id,
-        body.client_secret,
-        body.tenant_id or "common",
-        user["uid"],
+    raise HTTPException(
+        410,
+        "A configuracao Microsoft agora pertence ao backend. O administrador "
+        "deve definir MICROSOFT_OAUTH_CLIENT_ID e MICROSOFT_OAUTH_CLIENT_SECRET.",
     )
-    return {"ok": True, "message": "Credenciais OAuth da Microsoft salvas no banco."}
 
 
 @router_calendar.get("/microsoft/start")
 async def ms_start(
     request: Request,
+    account_id: str | None = Query(None),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Starts browser OAuth using the app credentials stored in the database."""
+    """Starts an official Microsoft browser login; secrets stay on the server."""
     app = await _load_microsoft_oauth_app(db, user["uid"])
     client_id = app.get("client_id", "")
     client_secret = app.get("client_secret", "")
     tenant_id = app.get("tenant_id") or "common"
     if not client_id or not client_secret:
         raise HTTPException(
-            400,
-            "Credenciais OAuth do aplicativo Microsoft nao configuradas no banco de dados.",
+            503,
+            "A conexao Microsoft ainda nao foi configurada pelo administrador "
+            "deste sistema.",
         )
 
-    account_id = _new_account_id("microsoft")
+    existing_accounts = await _load_microsoft_accounts(
+        db, user["uid"], include_pending=True
+    )
+    if account_id and not any(item.get("id") == account_id for item in existing_accounts):
+        raise HTTPException(404, "Conta Microsoft nao encontrada para reconexao.")
+    account_id = account_id or _new_account_id("microsoft")
     redirect_uri = _oauth_redirect_uri(request, "microsoft")
+    code_verifier = _secrets.token_urlsafe(64)
+    code_challenge = _base64.urlsafe_b64encode(
+        _hashlib.sha256(code_verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
     await _upsert_account(
         db,
         _KEY_MS_ACCOUNTS,
         account_id,
         {
-            "label": "Microsoft Calendar",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "tenant_id": tenant_id,
+            "label": next(
+                (
+                    item.get("label")
+                    for item in existing_accounts
+                    if item.get("id") == account_id
+                ),
+                "Microsoft",
+            ),
             "redirect_uri": redirect_uri,
+            "pkce_verifier": encrypt_credential(code_verifier),
+            "connection_status": "authorization_pending",
         },
         user["uid"],
     )
@@ -1492,6 +1488,7 @@ async def ms_start(
         tenant_id,
         state=_oauth_state(user["uid"], "microsoft", account_id),
         redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
     )
     return {
         "auth_url": url,
@@ -1503,90 +1500,71 @@ async def ms_start(
 
 @router_calendar.post("/microsoft/connect")
 async def ms_connect(
-    body: MicrosoftConnectRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Saves Microsoft credentials and returns the OAuth URL to open in the browser."""
-    account_id = body.account_id or _new_account_id("microsoft")
-    tenant_id = body.tenant_id or "common"
-    redirect_uri = _oauth_redirect_uri(request, "microsoft")
-    await _save_microsoft_oauth_app(
-        db,
-        body.client_id,
-        body.client_secret,
-        tenant_id,
-        user["uid"],
+    raise HTTPException(
+        410,
+        "Use Conectar Microsoft. Credenciais do aplicativo nao sao aceitas pela API.",
     )
-    await _upsert_account(
-        db,
-        _KEY_MS_ACCOUNTS,
-        account_id,
-        {
-            "label": body.label or "Microsoft Calendar",
-            "client_id": body.client_id,
-            "client_secret": body.client_secret,
-            "tenant_id": tenant_id,
-            "redirect_uri": redirect_uri,
-        },
-        user["uid"],
-    )
-    url = get_microsoft_auth_url(
-        body.client_id,
-        tenant_id,
-        state=_oauth_state(user["uid"], "microsoft", account_id),
-        redirect_uri=redirect_uri,
-    )
-    return {
-        "auth_url": url,
-        "account_id": account_id,
-        "next": "Open this URL, authorize, and POST the code to /calendar/microsoft/callback",
-    }
 
 
 @router_calendar.post("/microsoft/callback")
 async def ms_callback(
-    request: Request,
-    body: CalendarCallbackRequest = Body(...),
     user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Exchanges the OAuth code for a refresh token and persists it."""
-    accounts = await _load_microsoft_accounts(
-        db, user["uid"], include_pending=True
+    raise HTTPException(
+        410,
+        "O codigo de autorizacao Microsoft e processado somente pelo callback do backend.",
     )
-    account = _find_account(accounts, body.account_id) or {}
-    app = await _load_microsoft_oauth_app(db, user["uid"])
-    account_id = account.get("id") or body.account_id or _new_account_id("microsoft")
-    client_id     = account.get("client_id") or app.get("client_id", "")
-    client_secret = account.get("client_secret") or app.get("client_secret", "")
-    tenant_id     = account.get("tenant_id") or app.get("tenant_id") or "common"
+
+
+async def _complete_microsoft_oauth(
+    request: Request,
+    *,
+    code: str,
+    account_id: str,
+    user_id: str,
+    db: AsyncSession,
+) -> dict:
+    """Exchanges a one-time code without ever routing it through the frontend."""
+    accounts = await _load_microsoft_accounts(
+        db, user_id, include_pending=True
+    )
+    account = _find_account(accounts, account_id)
+    if not account or not account.get("pkce_verifier"):
+        raise HTTPException(400, "A tentativa de conexao expirou. Inicie novamente.")
+    app = await _load_microsoft_oauth_app(db, user_id)
+    client_id = app.get("client_id", "")
+    client_secret = app.get("client_secret", "")
+    tenant_id = app.get("tenant_id") or "common"
     if not client_id or not client_secret:
-        raise HTTPException(400, "Credenciais OAuth da Microsoft não configuradas no banco de dados.")
+        raise HTTPException(503, "A integracao Microsoft nao esta configurada.")
     redirect_uri = account.get("redirect_uri")
     if not redirect_uri:
         redirect_uri = _oauth_redirect_uri(request, "microsoft")
-    refresh = await exchange_microsoft_code(
-        body.code,
+    token_data = await exchange_microsoft_code(
+        code,
         client_id,
         client_secret,
         tenant_id,
         redirect_uri or "https://login.microsoftonline.com/common/oauth2/nativeclient",
+        code_verifier=account.get("pkce_verifier"),
     )
+    profile = await fetch_microsoft_profile(str(token_data["access_token"]))
+    label = profile.get("display_name") or profile.get("email") or "Microsoft"
     await _upsert_account(
         db,
         _KEY_MS_ACCOUNTS,
         account_id,
         {
-            "label": account.get("label") or "Microsoft Calendar",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "tenant_id": tenant_id,
+            "label": label,
             "redirect_uri": redirect_uri,
-            "refresh_token": refresh,
+            "refresh_token": encrypt_credential(str(token_data["refresh_token"])),
+            "pkce_verifier": None,
+            "connection_status": "connected",
+            **profile,
         },
-        user["uid"],
+        user_id,
     )
     return {
         "ok": True,
@@ -1605,7 +1583,19 @@ async def microsoft_oauth_callback(
     db: AsyncSession = Depends(get_db),
 ):
     if error:
-        detail = error_description or error
+        detail = microsoft_auth_error_message(error, error_description or "")
+        if state:
+            try:
+                user_id, account_id = _read_oauth_state(state, "microsoft")
+                await _upsert_account(
+                    db,
+                    _KEY_MS_ACCOUNTS,
+                    account_id,
+                    {"connection_status": "reconnect_required", "pkce_verifier": None},
+                    user_id,
+                )
+            except Exception:
+                pass
         return _oauth_result_page(
             "Autorizacao Microsoft cancelada",
             f"A Microsoft retornou: {detail}. Voce pode fechar esta aba.",
@@ -1622,16 +1612,44 @@ async def microsoft_oauth_callback(
         account = await db.get(UserModel, user_id)
         if account is None or not account.is_active:
             raise HTTPException(401, "Conta do OAuth nao esta ativa.")
-        result = await ms_callback(
+        result = await _complete_microsoft_oauth(
             request=request,
-            body=CalendarCallbackRequest(code=code, account_id=account_id),
-            user={"uid": user_id},
+            code=code,
+            account_id=account_id,
+            user_id=user_id,
             db=db,
         )
-    except Exception as exc:
+    except MicrosoftAuthenticationError as exc:
+        try:
+            await _upsert_account(
+                db,
+                _KEY_MS_ACCOUNTS,
+                account_id,
+                {"connection_status": "reconnect_required", "pkce_verifier": None},
+                user_id,
+            )
+        except Exception:
+            pass
+        return _oauth_result_page(
+            "Microsoft requer atencao",
+            f"{exc} Voce pode fechar esta aba.",
+            ok=False,
+        )
+    except Exception:
+        try:
+            await _upsert_account(
+                db,
+                _KEY_MS_ACCOUNTS,
+                account_id,
+                {"connection_status": "reconnect_required", "pkce_verifier": None},
+                user_id,
+            )
+        except Exception:
+            pass
         return _oauth_result_page(
             "Falha ao conectar Microsoft",
-            f"{exc}. Verifique o redirect URI no Azure e tente novamente.",
+            "Nao foi possivel concluir a conexao. Tente novamente; se a sua "
+            "organizacao exigir aprovacao, procure o administrador Microsoft.",
             ok=False,
         )
     return _oauth_result_page(
@@ -1647,6 +1665,7 @@ async def ms_disconnect(
 ):
     await _delete_config(db, _KEY_MS_ACCOUNTS, user["uid"])
     await _delete_config(db, _KEY_MS, user["uid"])
+    await _delete_config(db, _KEY_MS_APP, user["uid"])
     return {"ok": True, "message": "Microsoft Calendar desconectado."}
 
 
@@ -1672,23 +1691,7 @@ async def ms_auth_url(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    account = _find_account(
-        await _load_microsoft_accounts(db, user["uid"], include_pending=True),
-        None,
-    ) or {}
-    app = await _load_microsoft_oauth_app(db, user["uid"])
-    client_id = account.get("client_id") or app.get("client_id", "")
-    tenant_id = account.get("tenant_id") or app.get("tenant_id") or "common"
-    if not client_id:
-        raise HTTPException(400, "Credenciais OAuth da Microsoft não configuradas no banco de dados.")
-    account_id = account.get("id") or _new_account_id("microsoft")
-    return {
-        "url": get_microsoft_auth_url(
-            client_id,
-            tenant_id,
-            state=_oauth_state(user["uid"], "microsoft", account_id),
-        )
-    }
+    raise HTTPException(410, "Use /calendar/microsoft/start para iniciar o login seguro.")
 
 
 from fastapi import APIRouter

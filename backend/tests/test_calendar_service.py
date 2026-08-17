@@ -42,16 +42,62 @@ class FakeAsyncClient:
         return self.__class__.response
 
 
-def test_oauth_urls_request_calendar_write_scopes():
+def test_oauth_urls_request_calendar_write_scopes_and_microsoft_pkce():
     google = parse_qs(urlparse(calendar_service.get_google_auth_url("g")).query)
     microsoft = parse_qs(
-        urlparse(calendar_service.get_microsoft_auth_url("m")).query
+        urlparse(
+            calendar_service.get_microsoft_auth_url(
+                "m", state="signed-state", code_challenge="challenge"
+            )
+        ).query
     )
 
     assert google["scope"] == [
         "https://www.googleapis.com/auth/calendar.events"
     ]
-    assert microsoft["scope"] == ["Calendars.ReadWrite offline_access"]
+    scopes = set(microsoft["scope"][0].split())
+    assert {"Calendars.ReadWrite", "User.Read", "offline_access"} <= scopes
+    assert microsoft["state"] == ["signed-state"]
+    assert microsoft["code_challenge"] == ["challenge"]
+    assert microsoft["code_challenge_method"] == ["S256"]
+
+
+def test_microsoft_code_exchange_keeps_pkce_and_returns_session(monkeypatch):
+    monkeypatch.setattr(calendar_service.httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.calls = []
+    FakeAsyncClient.response = FakeResponse({
+        "access_token": "access-only-in-backend",
+        "refresh_token": "persistent-session",
+    })
+
+    result = run(calendar_service.exchange_microsoft_code(
+        "one-time-code",
+        "application-id",
+        "server-secret",
+        redirect_uri="https://app.example/calendar/microsoft/oauth-callback",
+        code_verifier="pkce-verifier",
+    ))
+
+    _, request = FakeAsyncClient.calls[0]
+    assert request["data"]["code_verifier"] == "pkce-verifier"
+    assert result["refresh_token"] == "persistent-session"
+
+
+def test_microsoft_policy_errors_are_safe_and_actionable(monkeypatch):
+    monkeypatch.setattr(calendar_service.httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.response = FakeResponse({
+        "error": "access_denied",
+        "error_description": "AADSTS53003: Blocked by Conditional Access",
+    }, is_error=True)
+
+    try:
+        run(calendar_service.exchange_microsoft_code(
+            "code", "client", "secret", code_verifier="verifier"
+        ))
+        assert False, "the exchange should fail"
+    except calendar_service.MicrosoftAuthenticationError as exc:
+        assert "politica da organizacao" in str(exc)
+        assert "AADSTS" not in str(exc)
 
 
 def test_create_google_event_posts_to_primary_calendar(monkeypatch):

@@ -157,15 +157,39 @@ verificação apresentadas pelo Google.
 
 ## Microsoft Outlook e Teams
 
-O Microsoft Graph usa permissões delegadas:
+Na interface, o usuário não informa Client ID, Client Secret nem tenant. Ele
+clica em **Conectar Microsoft** e entra na página oficial da Microsoft com sua
+própria conta. Isso inclui contas pessoais, corporativas e educacionais; senha,
+MFA e Conditional Access nunca passam pelo Assistente.
+
+### Limitação inevitável do Microsoft Identity Platform
+
+Authorization Code, Device Code e os fluxos do MSAL exigem um `client_id`: a
+Microsoft precisa saber qual aplicativo pede acesso. Portanto, não é possível
+eliminar o **App Registration** nem substituí-lo por login e senha. Device Code
+também não elimina essa dependência e oferece uma experiência pior para este
+aplicativo com backend Web.
+
+Não é necessário registrar o aplicativo no tenant da Estácio ou de cada
+instituição. O responsável pelo deploy registra **uma aplicação multitenant**
+em um tenant sob seu controle. Usuários externos entram por `/common`; o tenant
+deles cria o service principal mediante consentimento, se a política local
+permitir. Se a organização bloquear consentimento do usuário ou exigir
+aprovação administrativa, o Assistente informa isso e não tenta contornar a
+política.
+
+O Microsoft Graph usa as seguintes permissões delegadas:
 
 ```text
 Calendars.ReadWrite
 offline_access
+User.Read
+openid profile email
 ```
 
 `Calendars.ReadWrite` permite consultar e criar eventos em nome do usuário
-conectado. `offline_access` permite renovar a sessão da integração.
+conectado. `offline_access` permite renovar a sessão; `User.Read` e os escopos
+OpenID identificam a conta exibida na interface.
 
 ### 1. Registrar o aplicativo
 
@@ -173,15 +197,13 @@ conectado. `offline_access` permite renovar a sessão da integração.
 2. Abra **Entra ID > Registros de aplicativo**.
 3. Clique em **Novo registro**.
 4. Informe o nome `Assistente Calendar`.
-5. Escolha o tipo de conta:
-   - **Contas em qualquer diretório organizacional e contas Microsoft
-     pessoais** para Microsoft 365, Outlook.com e Hotmail;
-   - **Contas somente neste diretório organizacional** para uso exclusivo de
-     uma organização.
+5. Escolha **Contas em qualquer diretório organizacional e contas Microsoft
+   pessoais**.
 6. Clique em **Registrar**.
 7. Na página **Visão geral**, copie o **ID do aplicativo (cliente)**.
-8. Para uma organização específica, copie também o **ID do diretório
-   (locatário)**.
+
+Esse registro pertence à infraestrutura do projeto. Professores e demais
+usuários não veem nem configuram seus dados.
 
 ### 2. Configurar o callback
 
@@ -202,16 +224,16 @@ conectado. `offline_access` permite renovar a sessão da integração.
 
 6. Salve a configuração.
 
-O Assistente usa o fluxo Authorization Code. Não é necessário habilitar
-**Concessão implícita**.
+O Assistente usa Authorization Code com PKCE, `state` assinado e callback no
+backend. Não habilite **Concessão implícita** nem **fluxos de cliente público**.
 
 ### 3. Adicionar as permissões
 
 1. Abra **Permissões de API > Adicionar uma permissão**.
 2. Selecione **Microsoft Graph**.
 3. Selecione **Permissões delegadas**.
-4. Adicione `Calendars.ReadWrite`.
-5. Adicione `offline_access`.
+4. Adicione `Calendars.ReadWrite` e `User.Read`.
+5. Confirme também `offline_access`, `openid`, `profile` e `email`.
 6. Salve.
 
 Uma organização pode exigir que um administrador conceda consentimento às
@@ -226,28 +248,37 @@ aplicativo.
 4. Clique em **Adicionar**.
 5. Copie imediatamente o conteúdo da coluna **Valor**.
 
-No Assistente, use o **Valor** como Client Secret. O **ID do segredo** não é a
-credencial. Anote a data de expiração para substituir o segredo antes do
-vencimento.
+Use o **Valor** como `MICROSOFT_OAUTH_CLIENT_SECRET` no secret manager do
+backend. O **ID do segredo** não é a credencial. Anote a expiração e substitua
+o segredo antes do vencimento. Em instalações empresariais, uma credencial de
+certificado pode substituir o segredo em uma evolução da camada de aplicação.
 
-### 5. Definir o tenant
+### 5. Configurar o backend
 
-| Tipo de conta do registro | Tenant no Assistente |
-|---|---|
-| Organizações e contas pessoais | `common` |
-| Somente uma organização | ID do diretório (tenant) |
-| Somente organizações, multitenant | `organizations` |
+Defina no `.env` local ou, em produção, no secret manager:
+
+```dotenv
+MICROSOFT_OAUTH_CLIENT_ID=ID-do-aplicativo
+MICROSOFT_OAUTH_CLIENT_SECRET=valor-do-segredo
+MICROSOFT_OAUTH_TENANT_ID=common
+CREDENTIAL_ENCRYPTION_KEY=valor-aleatorio-longo-e-estavel
+```
+
+O tenant `common` aceita descoberta de contas pessoais e de organizações
+quando o App Registration foi criado com o tipo de conta indicado acima.
+`CREDENTIAL_ENCRYPTION_KEY` cifra os refresh tokens no banco; sua troca exige
+que as contas armazenadas sejam reconectadas.
 
 ### 6. Conectar ao Assistente
 
 1. Abra **Configurações > Agendas > Microsoft (Teams + Outlook)**.
-2. Preencha:
-   - **Client ID**: ID do aplicativo (cliente);
-   - **Client Secret**: conteúdo da coluna Valor;
-   - **Tenant**: valor correspondente ao registro.
-3. Clique em **Conectar Outlook**.
-4. Entre com a conta Microsoft e aceite as permissões.
-5. Volte ao Assistente e confirme que a conta aparece como conectada.
+2. Clique em **Conectar Microsoft**.
+3. Entre na página oficial Microsoft e conclua senha, MFA e consentimento.
+4. Volte ao Assistente e confira nome, e-mail e estado **ATIVA**.
+
+Use o ícone de reconexão quando a sessão for revogada, expirar ou passar a
+exigir nova política. O ícone de exclusão desconecta a conta apagando do
+backend o refresh token correspondente.
 
 ## Usar o calendário pela conversa
 
@@ -385,8 +416,17 @@ pelo backend.
 
 ### `invalid_client` na Microsoft
 
-Confirme que o Client ID e o Client Secret pertencem ao mesmo registro, que o
-segredo não expirou e que foi usado o conteúdo da coluna **Valor**.
+O administrador do deploy deve confirmar que
+`MICROSOFT_OAUTH_CLIENT_ID` e `MICROSOFT_OAUTH_CLIENT_SECRET` pertencem ao mesmo
+registro, que o segredo não expirou e que foi usado o conteúdo da coluna
+**Valor**.
+
+### Consentimento administrativo ou Conditional Access
+
+Essas políticas pertencem ao tenant da conta conectada. Solicite ao
+administrador da organização que avalie o aplicativo e as permissões
+delegadas. O Assistente não usa ROPC, Basic Auth nem tenta ignorar MFA ou uma
+política de acesso.
 
 ### Permissão insuficiente para criar um evento
 
@@ -400,14 +440,16 @@ apresentadas.
 
 ## Segurança
 
-- Não coloque Client Secrets ou tokens no repositório.
+- Não coloque Client Secrets ou tokens no repositório nem na interface.
 - Não compartilhe credenciais em mensagens ou capturas de tela.
 - Use HTTPS no Railway e em qualquer ambiente publicado.
 - Restrinja os usuários de teste e o público do aplicativo ao necessário.
 - Remova no provedor as credenciais que não estiverem em uso.
 
-As credenciais e os tokens das contas conectadas são armazenados pelo backend
-no banco de dados e separados por usuário do Assistente.
+O segredo do App Registration fica somente no ambiente/secret manager do
+backend. Refresh tokens são cifrados no banco e separados por usuário. Access
+tokens existem apenas em memória durante chamadas ao Graph; nenhum token é
+devolvido à interface ou registrado em logs.
 
 ## Referências oficiais
 
@@ -415,5 +457,8 @@ no banco de dados e separados por usuário do Assistente.
 - [Google OAuth para aplicações de servidor web](https://developers.google.com/identity/protocols/oauth2/web-server?hl=pt-BR)
 - [Google Auth Platform: público e usuários de teste](https://support.google.com/cloud/answer/15549945)
 - [Microsoft Entra: registrar um aplicativo](https://learn.microsoft.com/entra/identity-platform/quickstart-register-app)
+- [Microsoft Entra: fluxo Authorization Code](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow)
+- [Microsoft Entra: converter para multitenant](https://learn.microsoft.com/entra/identity-platform/howto-convert-app-to-be-multi-tenant)
+- [Microsoft Entra: consentimento de aplicações](https://learn.microsoft.com/entra/identity-platform/application-consent-experience)
 - [Microsoft Entra: configurar Redirect URI](https://learn.microsoft.com/entra/identity-platform/how-to-add-redirect-uri)
 - [Microsoft Graph: permissões](https://learn.microsoft.com/graph/permissions-reference)

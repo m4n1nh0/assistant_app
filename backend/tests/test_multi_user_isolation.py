@@ -62,6 +62,24 @@ def test_calendar_oauth_state_binds_provider_user_and_account():
         routes._read_oauth_state(state, "microsoft")
 
 
+def test_microsoft_account_response_never_contains_credentials():
+    public = routes._sanitize_account({
+        "id": "microsoft-1",
+        "label": "Professor",
+        "email": "professor@example.edu",
+        "client_id": "application-id",
+        "client_secret": "server-secret",
+        "refresh_token": "refresh-token",
+        "connection_status": "connected",
+    }, "microsoft")
+
+    assert public["connected"] is True
+    assert public["email"] == "professor@example.edu"
+    assert "client_id" not in public
+    assert "client_secret" not in public
+    assert "refresh_token" not in public
+
+
 def test_legacy_users_table_receives_multi_user_columns():
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as connection:

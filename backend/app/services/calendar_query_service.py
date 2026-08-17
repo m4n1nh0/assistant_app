@@ -15,6 +15,7 @@ from ..models.schemas import CalendarEvent, Message
 from . import langchain_agent_service
 from .calendar_service import fetch_account_events_with_errors
 from .llm_routing_service import pick_auto_llm
+from .microsoft_identity_service import hydrate_microsoft_account
 
 
 class CalendarQueryPlan(BaseModel):
@@ -451,7 +452,12 @@ async def _load_user_accounts(user_id: str) -> tuple[list[dict], list[dict]]:
                 **microsoft_legacy,
             })
 
-    return _dedupe_accounts(google), _dedupe_accounts(microsoft)
+    return (
+        _dedupe_accounts(google),
+        _dedupe_accounts([
+            hydrate_microsoft_account(account) for account in microsoft
+        ]),
+    )
 
 
 async def execute_calendar_query(

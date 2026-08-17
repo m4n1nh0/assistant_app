@@ -869,84 +869,22 @@ class ApiService {
     return finishGoogleCalendarAuth(code);
   }
 
-  Future<String> getMicrosoftAuthUrl() async {
-    final r = await http.get(Uri.parse('$baseUrl/calendar/microsoft/auth-url'),
-        headers: _headers);
-    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String;
-  }
-
-  Future<CalendarConnectResult> startMicrosoftCalendarAuth() async {
+  Future<CalendarConnectResult> startMicrosoftCalendarAuth({
+    String? accountId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/calendar/microsoft/start').replace(
+      queryParameters: accountId?.trim().isNotEmpty == true
+          ? {'account_id': accountId!.trim()}
+          : null,
+    );
     final r = await http.get(
-      Uri.parse('$baseUrl/calendar/microsoft/start'),
+      uri,
       headers: _headers,
     );
     final data = jsonDecode(r.body) as Map<String, dynamic>;
     _throwIfHttpError(r,
         data: data, fallback: 'Falha ao iniciar Microsoft Calendar');
     return CalendarConnectResult.fromJson(data);
-  }
-
-  Future<void> saveMicrosoftOAuthApp({
-    required String clientId,
-    required String clientSecret,
-    String tenantId = 'common',
-  }) async {
-    final r = await http.put(
-      Uri.parse('$baseUrl/calendar/microsoft/oauth-app'),
-      headers: _headers,
-      body: jsonEncode({
-        'client_id': clientId,
-        'client_secret': clientSecret,
-        'tenant_id': tenantId,
-      }),
-    );
-    final data = jsonDecode(r.body) as Map<String, dynamic>;
-    _throwIfHttpError(r,
-        data: data, fallback: 'Falha ao salvar credenciais Microsoft');
-  }
-
-  Future<CalendarConnectResult> connectMicrosoftCalendar({
-    required String clientId,
-    required String clientSecret,
-    String tenantId = 'common',
-    String? label,
-    String? accountId,
-  }) async {
-    final r = await http.post(
-      Uri.parse('$baseUrl/calendar/microsoft/connect'),
-      headers: _headers,
-      body: jsonEncode({
-        'client_id': clientId,
-        'client_secret': clientSecret,
-        'tenant_id': tenantId,
-        if (label?.trim().isNotEmpty ?? false) 'label': label!.trim(),
-        if (accountId?.trim().isNotEmpty ?? false)
-          'account_id': accountId!.trim(),
-      }),
-    );
-    final data = jsonDecode(r.body) as Map<String, dynamic>;
-    _throwIfHttpError(r,
-        data: data, fallback: 'Falha ao iniciar Microsoft Calendar');
-    return CalendarConnectResult.fromJson(data);
-  }
-
-  Future<Map<String, dynamic>> finishMicrosoftCalendarAuth(
-    String code, {
-    String? accountId,
-  }) async {
-    final r = await http.post(
-      Uri.parse('$baseUrl/calendar/microsoft/callback'),
-      headers: _headers,
-      body: jsonEncode({
-        'code': code,
-        if (accountId?.trim().isNotEmpty ?? false)
-          'account_id': accountId!.trim(),
-      }),
-    );
-    final data = jsonDecode(r.body) as Map<String, dynamic>;
-    _throwIfHttpError(r,
-        data: data, fallback: 'Falha ao concluir Microsoft Calendar');
-    return data;
   }
 
   Future<Map<String, List<CalendarAccount>>> listCalendarAccounts() async {
@@ -1160,6 +1098,8 @@ class CalendarAccount {
   final String label;
   final bool connected;
   final String? tenantId;
+  final String? email;
+  final String status;
 
   const CalendarAccount({
     required this.id,
@@ -1167,7 +1107,16 @@ class CalendarAccount {
     required this.label,
     required this.connected,
     this.tenantId,
+    this.email,
+    this.status = 'pending',
   });
+
+  String get statusLabel {
+    if (connected) return 'ATIVA';
+    if (status == 'reconnect_required') return 'RECONECTAR';
+    if (status == 'authorization_pending') return 'AUTORIZANDO';
+    return 'PENDENTE';
+  }
 
   factory CalendarAccount.fromJson(Map<String, dynamic> json) =>
       CalendarAccount(
@@ -1176,6 +1125,8 @@ class CalendarAccount {
         label: json['label']?.toString() ?? '',
         connected: json['connected'] == true,
         tenantId: (json['tenant_id'] ?? json['tenantId'])?.toString(),
+        email: json['email']?.toString(),
+        status: json['status']?.toString() ?? 'pending',
       );
 }
 

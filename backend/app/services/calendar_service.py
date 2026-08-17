@@ -12,7 +12,35 @@ from ..models.schemas import CalendarEvent, CalendarConfig
 settings = get_settings()
 
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-MICROSOFT_CALENDAR_SCOPE = "Calendars.ReadWrite offline_access"
+MICROSOFT_CALENDAR_SCOPE = (
+    "openid profile email offline_access User.Read Calendars.ReadWrite"
+)
+
+
+class MicrosoftAuthenticationError(RuntimeError):
+    """Safe, user-facing Microsoft authentication failure."""
+
+
+def microsoft_auth_error_message(error: str, description: str = "") -> str:
+    combined = f"{error} {description}".lower()
+    if "aadsts53003" in combined or "conditional access" in combined:
+        return (
+            "O acesso foi bloqueado por uma politica da organizacao Microsoft. "
+            "Entre em contato com o administrador da sua instituicao."
+        )
+    if "aadsts65001" in combined or "admin consent" in combined:
+        return (
+            "A organizacao exige consentimento administrativo para esta integracao. "
+            "Solicite a aprovacao do administrador Microsoft."
+        )
+    if "access_denied" in combined or "aadsts65004" in combined:
+        return "A autorizacao Microsoft foi cancelada ou recusada."
+    if "invalid_grant" in combined or "interaction_required" in combined:
+        return "A sessao Microsoft expirou ou foi revogada. Reconecte a conta."
+    return (
+        "A Microsoft nao concluiu a autenticacao. Tente novamente ou consulte "
+        "o administrador da sua organizacao."
+    )
 
 
 def get_google_auth_url(
@@ -160,6 +188,7 @@ def get_microsoft_auth_url(
     tenant_id: str = "common",
     state: str | None = None,
     redirect_uri: str = "https://login.microsoftonline.com/common/oauth2/nativeclient",
+    code_challenge: str | None = None,
 ) -> str:
     params = {
         "client_id": client_id,
@@ -171,6 +200,9 @@ def get_microsoft_auth_url(
     }
     if state:
         params["state"] = state
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
     qs = urlencode(params)
     return f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize?{qs}"
 
@@ -181,23 +213,52 @@ async def exchange_microsoft_code(
     client_secret: str,
     tenant_id: str = "common",
     redirect_uri: str = "https://login.microsoftonline.com/common/oauth2/nativeclient",
-) -> str:
+    code_verifier: str | None = None,
+) -> dict:
+    payload = {
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+        "scope": MICROSOFT_CALENDAR_SCOPE,
+    }
+    if code_verifier:
+        payload["code_verifier"] = code_verifier
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
-            data={
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-                "scope": MICROSOFT_CALENDAR_SCOPE,
-            },
+            data=payload,
         )
     data = resp.json()
     if "error" in data:
-        raise Exception(data.get("error_description", data["error"]))
-    return data["refresh_token"]
+        raise MicrosoftAuthenticationError(microsoft_auth_error_message(
+            str(data.get("error", "")), str(data.get("error_description", ""))
+        ))
+    if not data.get("refresh_token") or not data.get("access_token"):
+        raise MicrosoftAuthenticationError(
+            "A Microsoft nao retornou uma sessao persistente. Autorize novamente."
+        )
+    return data
+
+
+async def fetch_microsoft_profile(access_token: str) -> dict:
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            "https://graph.microsoft.com/v1.0/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"$select": "id,displayName,mail,userPrincipalName"},
+        )
+    data = response.json()
+    if response.is_error or "error" in data:
+        raise MicrosoftAuthenticationError(
+            "A conta foi autorizada, mas o perfil Microsoft nao pode ser lido."
+        )
+    return {
+        "microsoft_user_id": str(data.get("id") or ""),
+        "display_name": str(data.get("displayName") or ""),
+        "email": str(data.get("mail") or data.get("userPrincipalName") or ""),
+    }
 
 
 async def _get_ms_access_token(
@@ -216,8 +277,20 @@ async def _get_ms_access_token(
         )
     data = resp.json()
     if "error" in data:
-        raise Exception(data.get("error_description", data["error"]))
+        raise MicrosoftAuthenticationError(microsoft_auth_error_message(
+            str(data.get("error", "")), str(data.get("error_description", ""))
+        ))
     return data["access_token"]
+
+
+async def validate_microsoft_session(account: dict) -> None:
+    """Checks whether a stored delegated session can still mint access tokens."""
+    await _get_ms_access_token(
+        account.get("client_id", ""),
+        account.get("client_secret", ""),
+        account.get("tenant_id", "common"),
+        account.get("refresh_token", ""),
+    )
 
 
 async def fetch_microsoft_events(

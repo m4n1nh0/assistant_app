@@ -29,20 +29,4 @@ class CalendarService {
         .join('&');
     return 'https://accounts.google.com/o/oauth2/auth?$qs';
   }
-
-  String getMicrosoftAuthUrl() {
-    final tenant = config.msTenantId.isEmpty ? 'common' : config.msTenantId;
-    final params = {
-      'client_id': config.msClientId,
-      'response_type': 'code',
-      'redirect_uri':
-          'https://login.microsoftonline.com/common/oauth2/nativeclient',
-      'scope': 'Calendars.ReadWrite offline_access',
-      'response_mode': 'query',
-    };
-    final qs = params.entries
-        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
-        .join('&');
-    return 'https://login.microsoftonline.com/$tenant/oauth2/v2.0/authorize?$qs';
-  }
 }

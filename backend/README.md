@@ -374,14 +374,15 @@ Nas rotas abreviadas abaixo, `{provider}` representa os endpoints concretos
 | GET | `/calendar/events` | Listar eventos das contas conectadas |
 | POST | `/calendar/events` | Criar evento confirmado em uma conta conectada |
 | POST | `/calendar/class-agenda` | Criar em lote séries semanais dos horários das turmas |
-| GET | `/calendar/status` | Consultar credenciais e contas configuradas, sem expor segredos |
+| GET | `/calendar/status` | Consultar disponibilidade e contas configuradas, sem expor segredos |
 | GET | `/calendar/accounts` | Listar contas Google e Microsoft, inclusive conexões pendentes |
-| PUT | `/calendar/{provider}/oauth-app` | Salvar as credenciais do aplicativo OAuth |
-| GET | `/calendar/{provider}/start` | Criar uma conexão usando as credenciais já salvas |
-| POST | `/calendar/{provider}/connect` | Salvar credenciais e iniciar uma conexão |
-| POST | `/calendar/{provider}/callback` | Trocar manualmente o código OAuth e persistir a conta |
+| PUT | `/calendar/google/oauth-app` | Salvar as credenciais do aplicativo OAuth Google |
+| GET | `/calendar/{provider}/start` | Criar conexão; Microsoft aceita `account_id` para reconexão |
+| POST | `/calendar/google/connect` | Salvar credenciais Google e iniciar uma conexão |
+| POST | `/calendar/google/callback` | Trocar manualmente o código OAuth Google |
 | GET | `/calendar/{provider}/oauth-callback` | Público: callback aberto pelo navegador |
-| GET | `/calendar/{provider}/auth-url` | Obter URL OAuth pelo fluxo de compatibilidade |
+| PUT/POST | `/calendar/microsoft/oauth-app` e `/connect` | Removidos (`410`): segredos Microsoft não entram pela API |
+| POST | `/calendar/microsoft/callback` | Removido (`410`): o código só chega ao callback público do backend |
 | DELETE | `/calendar/{provider}/accounts/{account_id}` | Desconectar uma conta específica |
 | DELETE | `/calendar/{provider}/disconnect` | Desconectar todas as contas do provedor |
 
@@ -393,6 +394,14 @@ dependendo da confirmação da interface antes do `POST /calendar/events`.
 O endpoint `class-agenda` também exige confirmação, valida que todas as turmas
 ativas pertencem ao professor autenticado e grava um fingerprint por horário,
 conta e fim de período para tornar a repetição idempotente.
+
+A Microsoft usa Authorization Code com PKCE e `state` assinado. Um único App
+Registration multitenant é configurado no ambiente do backend; usuários entram
+por `common` na página oficial e as políticas de MFA, consentimento e
+Conditional Access do tenant são respeitadas. O segredo do aplicativo não é
+salvo por usuário. Refresh tokens são cifrados com
+`CREDENTIAL_ENCRYPTION_KEY`; access tokens permanecem somente em memória e
+nunca aparecem em respostas ou logs.
 
 O cadastro dos clientes OAuth, escopos, callbacks locais e Railway e a conexão
 das contas estão documentados em
