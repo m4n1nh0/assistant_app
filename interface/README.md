@@ -161,6 +161,12 @@ temporizadores duplicados nas atualizações periódicas. A interface mostra o
 aviso visual; Telegram e WhatsApp são enviados somente pelo scheduler do
 backend para não duplicar mensagens quando o aplicativo está aberto.
 
+O acesso normal ao **Modo Aula** abre uma **Visão geral** inspirada em um painel
+acadêmico: semestres ativos ou encerrados, turmas com quantidade de alunos,
+grade semanal de horários e atalhos para presença, históricos, pontuações e
+PDFs. Os quadros usam os mesmos modelos e serviços das abas existentes; não há
+uma segunda cópia dos dados.
+
 Em **1. Turmas**, **Criar exemplo para apresentação** prepara uma disciplina,
 uma turma do semestre corrente e três alunos fictícios sem duplicar registros.
 Comandos falados como `Dani, vamos iniciar a aula` e `Dani, faça a chamada dos

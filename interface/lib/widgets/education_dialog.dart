@@ -16,12 +16,16 @@ import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
+import 'education_dashboard.dart';
 
 /// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
 /// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
-const _rosterTab = 0;
-const _lessonTab = 1;
-const _attendanceTab = 4;
+const _dashboardTab = 0;
+const _rosterTab = 1;
+const _lessonTab = 2;
+const _pointsTab = 3;
+const _historyTab = 4;
+const _attendanceTab = 5;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -55,8 +59,9 @@ class _EducationDialogState extends State<EducationDialog> {
     super.dispose();
   }
 
-  /// Primeira vez (sem turma cadastrada) abre no cadastro; quem ja tem turma
-  /// cai direto na gravacao.
+  /// Primeira vez (sem turma cadastrada) abre no cadastro. O acesso comum
+  /// mostra a visao geral; comandos de aula e chamada continuam abrindo a aba
+  /// operacional correspondente.
   Future<void> _resolveInitialTab() async {
     List<ClassGroup>? classes;
     try {
@@ -71,8 +76,10 @@ class _EducationDialogState extends State<EducationDialog> {
         _initialTab = _rosterTab;
       } else if (widget.startAt == 'attendance') {
         _initialTab = _attendanceTab;
-      } else {
+      } else if (widget.startAt == 'lesson') {
         _initialTab = _lessonTab;
+      } else {
+        _initialTab = _dashboardTab;
       }
     });
   }
@@ -88,7 +95,7 @@ class _EducationDialogState extends State<EducationDialog> {
         side: const BorderSide(color: AssistantTheme.border2),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1020, maxHeight: 760),
+        constraints: const BoxConstraints(maxWidth: 1160, maxHeight: 820),
         child: Column(
           children: [
             _buildHeader(context),
@@ -97,44 +104,66 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 5,
+                  length: 6,
                   initialIndex: initialTab,
-                  child: Column(
-                    children: [
-                      const TabBar(
-                        indicatorColor: AssistantTheme.c3,
-                        labelColor: AssistantTheme.c3,
-                        unselectedLabelColor: AssistantTheme.textMuted,
-                        tabs: [
-                          Tab(
-                              icon: Icon(Icons.groups_outlined, size: 17),
-                              text: '1. TURMAS'),
-                          Tab(
-                              icon: Icon(Icons.mic_none, size: 17),
-                              text: '2. GRAVAR AULA'),
-                          Tab(
-                              icon: Icon(Icons.emoji_events_outlined, size: 17),
-                              text: '3. PONTUACOES'),
-                          Tab(
-                              icon: Icon(Icons.history, size: 17),
-                              text: '4. HISTORICO'),
-                          Tab(
-                              icon: Icon(Icons.how_to_reg_outlined, size: 17),
-                              text: '5. PRESENCA'),
-                        ],
-                      ),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            _RosterTab(classes: _classes),
-                            _LessonTab(classes: _classes),
-                            _PointsTab(classes: _classes),
-                            _HistoryTab(classes: _classes),
-                            AttendanceTab(classes: _classes),
+                  child: Builder(
+                    builder: (tabContext) => Column(
+                      children: [
+                        const TabBar(
+                          isScrollable: true,
+                          indicatorColor: AssistantTheme.c3,
+                          labelColor: AssistantTheme.c3,
+                          unselectedLabelColor: AssistantTheme.textMuted,
+                          tabs: [
+                            Tab(
+                                icon: Icon(Icons.dashboard_outlined, size: 17),
+                                text: 'VISAO GERAL'),
+                            Tab(
+                                icon: Icon(Icons.groups_outlined, size: 17),
+                                text: '1. TURMAS'),
+                            Tab(
+                                icon: Icon(Icons.mic_none, size: 17),
+                                text: '2. GRAVAR AULA'),
+                            Tab(
+                                icon:
+                                    Icon(Icons.emoji_events_outlined, size: 17),
+                                text: '3. PONTUACOES'),
+                            Tab(
+                                icon: Icon(Icons.history, size: 17),
+                                text: '4. HISTORICO'),
+                            Tab(
+                                icon: Icon(Icons.how_to_reg_outlined, size: 17),
+                                text: '5. PRESENCA'),
                           ],
                         ),
-                      ),
-                    ],
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              EducationDashboard(
+                                classes: _classes,
+                                onOpenClasses: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_rosterTab),
+                                onOpenPoints: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_pointsTab),
+                                onOpenHistory: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_historyTab),
+                                onOpenAttendance: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_attendanceTab),
+                              ),
+                              _RosterTab(classes: _classes),
+                              _LessonTab(classes: _classes),
+                              _PointsTab(classes: _classes),
+                              _HistoryTab(classes: _classes),
+                              AttendanceTab(classes: _classes),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

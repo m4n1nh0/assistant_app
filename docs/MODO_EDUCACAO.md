@@ -1,6 +1,11 @@
 # Modo Educação
 
-O Modo Aula reúne o fluxo acadêmico do professor em cinco abas:
+O Modo Aula reúne o fluxo acadêmico do professor em uma visão geral e cinco
+abas operacionais:
+
+- **Visão geral**: painel com semestres, turmas e quantidade de alunos, agenda
+  semanal e atalhos para relatórios. Cada quadro abre a área operacional
+  correspondente e pode ser atualizado sem fechar o Modo Aula.
 
 1. cadastro de disciplinas, turmas, horários e alunos;
 2. gravação e transcrição de aulas;
@@ -11,6 +16,10 @@ O Modo Aula reúne o fluxo acadêmico do professor em cinco abas:
 Os registros são separados por professor. Disciplinas e turmas pertencem a um
 semestre no formato `AAAA.1` ou `AAAA.2`; encerrar o semestre remove essas
 entidades dos fluxos atuais sem apagar o histórico.
+
+O botão **Modo Aula** abre a visão geral quando já há turmas cadastradas.
+Comandos estruturados para iniciar aula ou fazer chamada continuam abrindo
+diretamente `2. Gravar Aula` ou `5. Presença`, respectivamente.
 
 ## Preparar uma apresentação
 
