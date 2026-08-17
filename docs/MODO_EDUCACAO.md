@@ -84,6 +84,12 @@ hash. A página pública mostra somente os dados necessários e aceita portuguê
 espanhol e inglês. O aluno informa a matrícula; senhas e dados da sessão do
 professor nunca são enviados para essa página.
 
+Uma chamada criada por engano ou somente para teste pode ser removida pelo
+ícone **Excluir chamada**, tanto no painel da chamada atual quanto na lista
+**Chamadas no período**. A interface pede confirmação e exclui apenas a chamada,
+suas presenças e a fotografia da lista daquele dia; turma, alunos e aula não são
+apagados.
+
 ## Documentação relacionada
 
 - [README principal](../README.md), com arquitetura e modelo de dados.

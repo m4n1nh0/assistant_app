@@ -588,5 +588,24 @@ void main() {
         'https://public-backend.test/education/attendance/check-in/t',
       );
     });
+
+    test('deletes a complete attendance session', () async {
+      final service = EducationService(
+        ApiService(backendUrl: 'https://public-backend.test'),
+      );
+      final client = MockClient((request) async {
+        expect(request.method, 'DELETE');
+        expect(
+          request.url.path,
+          '/education/attendance/sessions/attendance-1',
+        );
+        return http.Response('{"ok":true}', 200);
+      });
+
+      await http.runWithClient(
+        () => service.deleteAttendanceSession('attendance-1'),
+        () => client,
+      );
+    });
   });
 }

@@ -71,6 +71,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
   int _durationMinutes = 15;
   bool _loading = true;
   bool _creating = false;
+  String? _deletingSessionId;
   bool _exporting = false;
   bool _syncingAgenda = false;
   String _status = '';
@@ -216,6 +217,54 @@ class _AttendanceTabState extends State<AttendanceTab> {
       await _loadReports();
     } catch (e) {
       _report('Falha ao encerrar chamada: $e', error: true);
+    }
+  }
+
+  Future<void> _deleteSession(AttendanceSession session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir chamada?'),
+        content: Text(
+          'A chamada de ${session.attendanceDate} da turma '
+          '${session.classLabel}, com ${session.presentCount} presença(s), '
+          'será excluída permanentemente. A turma e os alunos permanecerão '
+          'cadastrados.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('EXCLUIR CHAMADA'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AssistantTheme.danger,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deletingSessionId = session.id);
+    try {
+      await education.deleteAttendanceSession(session.id);
+      if (!mounted) return;
+      setState(() {
+        if (_activeSession?.id == session.id) _activeSession = null;
+        _sessions.removeWhere((item) => item.id == session.id);
+      });
+      _report('Chamada de ${session.attendanceDate} excluída.');
+      await _loadReports();
+    } catch (e) {
+      _report('Falha ao excluir chamada: $e', error: true);
+    } finally {
+      if (mounted && _deletingSessionId == session.id) {
+        setState(() => _deletingSessionId = null);
+      }
     }
   }
 
@@ -649,13 +698,38 @@ class _AttendanceTabState extends State<AttendanceTab> {
     return _AttendancePanel(
       title:
           session == null ? 'CHAMADA ATUAL' : session.classLabel.toUpperCase(),
-      trailing: session?.open == true
-          ? TextButton.icon(
-              onPressed: _closeSession,
-              icon: const Icon(Icons.stop_circle_outlined, size: 14),
-              label: const Text('ENCERRAR', style: TextStyle(fontSize: 10)),
-            )
-          : null,
+      trailing: session == null
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (session.open)
+                  TextButton.icon(
+                    onPressed: _closeSession,
+                    icon: const Icon(Icons.stop_circle_outlined, size: 14),
+                    label: const Text(
+                      'ENCERRAR',
+                      style: TextStyle(fontSize: 10),
+                    ),
+                  ),
+                IconButton(
+                  tooltip: 'Excluir chamada',
+                  onPressed: _deletingSessionId != null
+                      ? null
+                      : () => _deleteSession(session),
+                  icon: _deletingSessionId == session.id
+                      ? const SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(
+                          Icons.delete_outline,
+                          size: 17,
+                          color: AssistantTheme.danger,
+                        ),
+                ),
+              ],
+            ),
       child: session == null
           ? _AttendanceEmpty(
               icon: Icons.qr_code_2,
@@ -1007,6 +1081,24 @@ class _AttendanceTabState extends State<AttendanceTab> {
                                       ),
                                     ],
                                   ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Excluir chamada',
+                                  onPressed: _deletingSessionId != null
+                                      ? null
+                                      : () => _deleteSession(session),
+                                  icon: _deletingSessionId == session.id
+                                      ? const SizedBox.square(
+                                          dimension: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.delete_outline,
+                                          size: 16,
+                                          color: AssistantTheme.danger,
+                                        ),
                                 ),
                               ],
                             );

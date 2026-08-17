@@ -594,6 +594,14 @@ class EducationService {
     );
   }
 
+  Future<void> deleteAttendanceSession(String sessionId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/attendance/sessions/$sessionId'),
+      headers: _headers,
+    );
+    _decode(response);
+  }
+
   Future<AttendanceSession> addManualAttendance(
     String sessionId,
     String enrollment,

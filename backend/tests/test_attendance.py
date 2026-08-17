@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.routers import attendance
@@ -45,6 +46,27 @@ class QueryDb:
 
     async def refresh(self, _item):
         return None
+
+
+class DeleteDb:
+    def __init__(self, session):
+        self.session = session
+        self.queries = []
+        self.deleted = []
+        self.commits = 0
+
+    async def get(self, _model, item_id):
+        return self.session if item_id == self.session.id else None
+
+    async def execute(self, query):
+        self.queries.append(query)
+        return _Result()
+
+    async def delete(self, item):
+        self.deleted.append(item)
+
+    async def commit(self):
+        self.commits += 1
 
 
 def _session(**changes):
@@ -189,6 +211,51 @@ def test_attendance_list_is_scoped_to_authenticated_tutor():
 
     sql = str(db.queries[0].compile(compile_kwargs={"literal_binds": True}))
     assert "attendance_sessions.tutor_id = 'tutor-1'" in sql
+
+
+def test_delete_attendance_removes_records_roster_and_owned_session():
+    session = _session(tutor_id="tutor-1")
+    db = DeleteDb(session)
+
+    response = run(
+        attendance.delete_attendance_session(
+            session_id=session.id,
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    sql = [
+        str(query.compile(compile_kwargs={"literal_binds": True}))
+        for query in db.queries
+    ]
+    assert response == {"ok": True}
+    assert any("DELETE FROM attendance_records" in query for query in sql)
+    assert any("DELETE FROM attendance_rosters" in query for query in sql)
+    assert db.deleted == [session]
+    assert db.commits == 1
+
+
+def test_delete_attendance_rejects_a_session_from_another_tutor():
+    session = _session(tutor_id="tutor-2")
+    db = DeleteDb(session)
+
+    try:
+        run(
+            attendance.delete_attendance_session(
+                session_id=session.id,
+                user={"tutor_id": "tutor-1"},
+                db=db,
+            )
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 404
+    else:
+        raise AssertionError("A chamada de outro professor nao pode ser excluida")
+
+    assert db.queries == []
+    assert db.deleted == []
+    assert db.commits == 0
 
 
 def test_record_table_prevents_duplicate_student_in_the_same_session():

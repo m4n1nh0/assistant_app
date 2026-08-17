@@ -701,6 +701,7 @@ Endpoints principais:
 | `POST /education/attendance/sessions` | Abre chamada temporaria e devolve a URL do QR |
 | `GET /education/attendance/sessions` | Lista chamadas, presentes e ausentes por periodo/turma |
 | `POST /education/attendance/sessions/{id}/close` | Encerra a chamada antes do vencimento |
+| `DELETE /education/attendance/sessions/{id}` | Exclui uma chamada e seus dados de presença após confirmação |
 | `POST /education/attendance/sessions/{id}/records` | Registra presenca manual pelo professor |
 | `GET/POST /education/attendance/check-in/{token}` | Pagina publica e confirmacao por matricula |
 | `GET /education/attendance/report` | Consolida totais e chamadas para o relatorio |

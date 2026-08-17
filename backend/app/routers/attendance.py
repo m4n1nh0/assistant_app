@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import delete as sql_delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -418,6 +418,30 @@ async def close_attendance_session(
         await db.commit()
         await db.refresh(session)
     return await _session_response(session, db)
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_attendance_session(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exclui uma chamada e somente os dados de presenca vinculados a ela."""
+
+    session = await _owned_session(session_id, user["tutor_id"], db)
+    await db.execute(
+        sql_delete(AttendanceRecordModel).where(
+            AttendanceRecordModel.session_id == session_id
+        )
+    )
+    await db.execute(
+        sql_delete(AttendanceRosterModel).where(
+            AttendanceRosterModel.session_id == session_id
+        )
+    )
+    await db.delete(session)
+    await db.commit()
+    return {"ok": True}
 
 
 async def _register_attendance(

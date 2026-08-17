@@ -96,6 +96,78 @@ void main() {
     classes.dispose();
   });
 
+  testWidgets('deletes a call from the report after confirmation',
+      (tester) async {
+    final classes = ValueNotifier<List<ClassGroup>?>(const []);
+    var deleted = false;
+    var deleteRequests = 0;
+    final client = MockClient((request) async {
+      if (request.method == 'DELETE' &&
+          request.url.path.endsWith('/attendance/sessions/a-history')) {
+        deleteRequests++;
+        deleted = true;
+        return http.Response('{"ok":true}', 200);
+      }
+      if (request.method == 'GET' &&
+          request.url.path.endsWith('/attendance/sessions')) {
+        return http.Response(
+          deleted
+              ? '[]'
+              : '[{'
+                  '"id":"a-history",'
+                  '"class_id":"c1",'
+                  '"class_label":"3001 Presencial",'
+                  '"discipline":"Banco de Dados",'
+                  '"semester":"2026.2",'
+                  '"attendance_date":"2026-08-17",'
+                  '"opened_at":"2026-08-17T18:00:00Z",'
+                  '"expires_at":"2026-08-17T18:15:00Z",'
+                  '"open":false,'
+                  '"expected_count":2,'
+                  '"present_count":0,'
+                  '"records":[],'
+                  '"absent_students":[]'
+                  '}]',
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    });
+
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 1000,
+                height: 700,
+                child: AttendanceTab(classes: classes),
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(find.textContaining('3001 Presencial'), findsOneWidget);
+        await tester.tap(find.byTooltip('Excluir chamada'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Excluir chamada?'), findsOneWidget);
+        expect(find.text('EXCLUIR CHAMADA'), findsOneWidget);
+        await tester.tap(find.text('EXCLUIR CHAMADA'));
+        await tester.pumpAndSettle();
+
+        expect(deleteRequests, 1);
+        expect(find.textContaining('3001 Presencial'), findsNothing);
+      },
+      () => client,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    classes.dispose();
+  });
+
   test('attendance uses only today classes ordered by start time', () {
     const classes = [
       ClassGroup(
