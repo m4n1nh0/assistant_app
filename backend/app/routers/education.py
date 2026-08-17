@@ -84,9 +84,9 @@ router = APIRouter(
 
 _WEEKDAYS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
 _PRESENTATION_STUDENTS = (
-    ("DEMO001", "Ana Souza (Demo)"),
-    ("DEMO002", "Bruno Lima (Demo)"),
-    ("DEMO003", "Carla Mendes (Demo)"),
+    ("DEMO001", "2026001", "Ana Souza (Demo)"),
+    ("DEMO002", "2026002", "Bruno Lima (Demo)"),
+    ("DEMO003", "2026003", "Carla Mendes (Demo)"),
 )
 
 
@@ -185,9 +185,17 @@ async def create_presentation_demo(
         ))
 
     students_created = 0
-    for enrollment, name in _PRESENTATION_STUDENTS:
-        student_id = _presentation_id(tutor_id, semester, f"student-{enrollment}")
-        if await db.get(StudentModel, student_id) is not None:
+    students_updated = 0
+    for legacy_key, enrollment, name in _PRESENTATION_STUDENTS:
+        # A chave legada preserva o ID dos exemplos ja criados. Assim, executar
+        # novamente a demonstracao converte DEMO001..003 em matriculas numericas
+        # sem duplicar os alunos existentes.
+        student_id = _presentation_id(tutor_id, semester, f"student-{legacy_key}")
+        existing_student = await db.get(StudentModel, student_id)
+        if existing_student is not None:
+            if existing_student.external_id != enrollment:
+                existing_student.external_id = enrollment
+                students_updated += 1
             continue
         db.add(StudentModel(
             id=student_id,
@@ -211,6 +219,7 @@ async def create_presentation_demo(
         "discipline_created": discipline_created,
         "class_created": class_created,
         "students_created": students_created,
+        "students_updated": students_updated,
         "message": (
             f"Demonstracao pronta: DEMO-IA, turma DEMO-{semester}, "
             "com 3 alunos ficticios e horario no dia de hoje."

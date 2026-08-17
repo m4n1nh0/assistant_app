@@ -20,10 +20,13 @@ operação autenticada cria, no semestre corrente:
 - disciplina `DEMO-IA - Inteligência Artificial Aplicada`;
 - turma `DEMO-AAAA.S - Turma de apresentação`;
 - horário das 19h às 21h no dia da semana atual;
-- três alunos fictícios com matrículas `DEMO001`, `DEMO002` e `DEMO003`.
+- três alunos fictícios com matrículas numéricas `2026001`, `2026002` e
+  `2026003`.
 
 A criação é idempotente: clicar novamente devolve a mesma disciplina e turma,
-sem duplicar alunos. Os nomes recebem o sufixo `(Demo)` e podem ser removidos
+sem duplicar alunos. Exemplos antigos com matrículas `DEMO001` a `DEMO003` são
+convertidos para as novas matrículas numéricas. Os nomes recebem o sufixo
+`(Demo)` e podem ser removidos
 pelas telas normais depois da apresentação.
 
 O endpoint correspondente é:
