@@ -443,4 +443,16 @@ void main() {
       expect(result.total, 28);
     });
   });
+
+  group('StudentBulkDeleteResult', () {
+    test('parses requested and deleted totals', () {
+      final result = StudentBulkDeleteResult.fromJson({
+        'requested': 4,
+        'deleted': 3,
+      });
+
+      expect(result.requested, 4);
+      expect(result.deleted, 3);
+    });
+  });
 }

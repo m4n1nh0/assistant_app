@@ -500,6 +500,9 @@ Pontos de atencao do fluxo:
   cria o aluno; uma matricula ja cadastrada atualiza o nome e passa para a turma
   escolhida, sem duplicar o registro. Arquivos separados por virgula ou ponto e
   virgula sao aceitos.
+- **Alunos podem ser excluidos em lote.** Na lista da turma, marque alunos
+  individualmente ou use `Selecionar todos` e confirme uma unica exclusao. A
+  operacao so atinge alunos daquela turma e preserva as pontuacoes ja gravadas.
 - **Aulas longas usam mapa-reducao.** A transcricao e resumida em janelas e
   depois consolidada, em quantas rodadas forem necessarias, ate caber em uma
   chamada. Com modelo local a janela sai de `LOCAL_LLM_CONTEXT_TOKENS`
@@ -543,6 +546,7 @@ Endpoints principais:
 | `PATCH /education/lessons/{id}` | Corrige tema e turmas de uma aula gravada |
 | `GET /education/students` | Alunos, filtraveis por `class_id` |
 | `POST /education/students/import` | Importacao de alunos por matricula e nome |
+| `POST /education/students/bulk-delete` | Exclui varios alunos da turma em uma operacao |
 | `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
 | `GET /education/index-status` | Quantos trechos ainda faltam no indice |
 | `POST /education/reindex` | Regrava no Qdrant os trechos lidos do MySQL |

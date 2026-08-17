@@ -480,6 +480,23 @@ class EducationService {
     _decode(response);
   }
 
+  Future<StudentBulkDeleteResult> deleteStudents({
+    required String classId,
+    required Iterable<String> studentIds,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/students/bulk-delete'),
+      headers: _headers,
+      body: jsonEncode({
+        'class_id': classId,
+        'student_ids': studentIds.toList(),
+      }),
+    );
+    return StudentBulkDeleteResult.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
+  }
+
   // --- Busca e diagnostico -------------------------------------------------
 
   Future<List<TranscriptHit>> search(
@@ -964,6 +981,22 @@ class StudentImportResult {
         created: (json['created'] as num?)?.toInt() ?? 0,
         updated: (json['updated'] as num?)?.toInt() ?? 0,
         total: (json['total'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class StudentBulkDeleteResult {
+  final int requested;
+  final int deleted;
+
+  const StudentBulkDeleteResult({
+    required this.requested,
+    required this.deleted,
+  });
+
+  factory StudentBulkDeleteResult.fromJson(Map<String, dynamic> json) =>
+      StudentBulkDeleteResult(
+        requested: _toInt(json['requested']),
+        deleted: _toInt(json['deleted']),
       );
 }
 

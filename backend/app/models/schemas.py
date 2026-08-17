@@ -717,6 +717,16 @@ class StudentImportResponse(BaseModel):
     total: int
 
 
+class StudentBulkDeleteRequest(BaseModel):
+    class_id: str
+    student_ids: List[str] = Field(min_length=1, max_length=1000)
+
+
+class StudentBulkDeleteResponse(BaseModel):
+    requested: int
+    deleted: int
+
+
 class LessonCreate(BaseModel):
     discipline: str
     semester: str = ""

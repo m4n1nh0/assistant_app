@@ -1341,8 +1341,10 @@ class _RosterTabState extends State<_RosterTab> {
   Discipline? _newDiscipline;
   List<Discipline> _disciplines = [];
   List<Student> _students = [];
+  final Set<String> _selectedStudentIds = {};
   var _loading = true;
   var _importing = false;
+  var _deletingStudents = false;
   var _status = '';
   var _statusIsError = false;
 
@@ -1401,12 +1403,23 @@ class _RosterTabState extends State<_RosterTab> {
   Future<void> _loadStudents() async {
     final group = _selected;
     if (group == null) {
-      if (mounted) setState(() => _students = []);
+      if (mounted) {
+        setState(() {
+          _students = [];
+          _selectedStudentIds.clear();
+        });
+      }
       return;
     }
     try {
       final students = await education.listStudents(classId: group.id);
-      if (mounted) setState(() => _students = students);
+      if (mounted) {
+        setState(() {
+          _students = students;
+          final availableIds = students.map((student) => student.id).toSet();
+          _selectedStudentIds.retainAll(availableIds);
+        });
+      }
     } catch (e) {
       _report('Falha ao carregar alunos: $e', error: true);
     }
@@ -1568,6 +1581,63 @@ class _RosterTabState extends State<_RosterTab> {
   }
 
   // --- Alunos --------------------------------------------------------------
+
+  Future<void> _deleteStudents(List<Student> students) async {
+    final group = _selected;
+    if (group == null || students.isEmpty || _deletingStudents) return;
+
+    final count = students.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: Text(count == 1 ? 'Excluir aluno' : 'Excluir alunos em lote'),
+        content: SizedBox(
+          width: 440,
+          child: Text(
+            count == 1
+                ? 'Excluir ${students.first.name} da turma ${group.display}? '
+                    'As pontuacoes ja registradas serao preservadas.'
+                : 'Excluir $count alunos da turma ${group.display}? '
+                    'As pontuacoes ja registradas serao preservadas.',
+            style: const TextStyle(color: AssistantTheme.textPrimary),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style:
+                FilledButton.styleFrom(backgroundColor: AssistantTheme.danger),
+            child: Text(count == 1 ? 'EXCLUIR' : 'EXCLUIR $count'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deletingStudents = true);
+    try {
+      final result = await education.deleteStudents(
+        classId: group.id,
+        studentIds: students.map((student) => student.id),
+      );
+      _selectedStudentIds.clear();
+      _report(
+        result.deleted == 1
+            ? 'Aluno excluido.'
+            : '${result.deleted} alunos excluidos.',
+      );
+      await _loadClasses(keepId: group.id);
+    } catch (e) {
+      _report('Falha ao excluir alunos: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _deletingStudents = false);
+    }
+  }
 
   Future<void> _addStudent() async {
     final group = _selected;
@@ -1960,6 +2030,11 @@ class _RosterTabState extends State<_RosterTab> {
 
   Widget _buildStudentColumn() {
     final group = _selected;
+    final selectedStudents = _students
+        .where((student) => _selectedStudentIds.contains(student.id))
+        .toList();
+    final allSelected =
+        _students.isNotEmpty && selectedStudents.length == _students.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1969,13 +2044,38 @@ class _RosterTabState extends State<_RosterTab> {
             title: group == null
                 ? 'ALUNOS'
                 : 'ALUNOS DE ${group.display.toUpperCase()}',
-            trailing: TextButton.icon(
-              onPressed: _importing || group == null ? null : _importCsv,
-              icon: const Icon(Icons.upload_file_outlined, size: 14),
-              label: Text(
-                _importing ? 'IMPORTANDO...' : 'IMPORTAR CSV',
-                style: const TextStyle(fontSize: 10),
-              ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selectedStudents.isNotEmpty) ...[
+                  TextButton.icon(
+                    onPressed: _deletingStudents
+                        ? null
+                        : () => _deleteStudents(selectedStudents),
+                    icon: _deletingStudents
+                        ? const SizedBox.square(
+                            dimension: 13,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_outline, size: 14),
+                    label: Text(
+                      _deletingStudents
+                          ? 'EXCLUINDO...'
+                          : 'EXCLUIR (${selectedStudents.length})',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                TextButton.icon(
+                  onPressed: _importing || group == null ? null : _importCsv,
+                  icon: const Icon(Icons.upload_file_outlined, size: 14),
+                  label: Text(
+                    _importing ? 'IMPORTANDO...' : 'IMPORTAR CSV',
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                ),
+              ],
             ),
             child: group == null
                 ? const _EmptyState(
@@ -1988,66 +2088,128 @@ class _RosterTabState extends State<_RosterTab> {
                         text: 'Turma sem alunos.\nImporte o CSV com as '
                             'colunas matricula e nome.',
                       )
-                    : ListView.separated(
-                        itemCount: _students.length,
-                        separatorBuilder: (_, __) => const Divider(
-                            height: 12, color: AssistantTheme.border),
-                        itemBuilder: (_, index) {
-                          final student = _students[index];
-                          final tags = [
-                            if (student.externalId?.isNotEmpty == true)
-                              'matricula: ${student.externalId}',
-                            if (student.aliases.isNotEmpty)
-                              'apelidos: ${student.aliases.join(", ")}',
-                          ].join('  -  ');
-
-                          return Row(
+                    : Column(
+                        children: [
+                          Row(
                             children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      student.name,
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        color: AssistantTheme.textPrimary,
-                                      ),
-                                    ),
-                                    if (tags.isNotEmpty)
-                                      Text(
-                                        tags,
-                                        style: const TextStyle(
-                                            fontSize: 10,
-                                            color: AssistantTheme.textMuted),
-                                      ),
-                                  ],
+                              Checkbox(
+                                value: allSelected,
+                                onChanged: _deletingStudents
+                                    ? null
+                                    : (checked) => setState(() {
+                                          if (checked == true) {
+                                            _selectedStudentIds.addAll(
+                                              _students.map(
+                                                (student) => student.id,
+                                              ),
+                                            );
+                                          } else {
+                                            _selectedStudentIds.clear();
+                                          }
+                                        }),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              Text(
+                                selectedStudents.isEmpty
+                                    ? 'Selecionar todos'
+                                    : '${selectedStudents.length} de '
+                                        '${_students.length} selecionados',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: AssistantTheme.textMuted,
                                 ),
                               ),
-                              IconButton(
-                                tooltip: 'Editar aluno',
-                                icon: const Icon(Icons.edit_outlined, size: 15),
-                                color: AssistantTheme.textMuted,
-                                onPressed: () => _editStudent(student),
-                              ),
-                              IconButton(
-                                tooltip: 'Remover',
-                                icon:
-                                    const Icon(Icons.delete_outline, size: 15),
-                                color: AssistantTheme.textMuted,
-                                onPressed: () async {
-                                  try {
-                                    await education.deleteStudent(student.id);
-                                    await _loadClasses();
-                                  } catch (e) {
-                                    _report('Falha ao remover: $e',
-                                        error: true);
-                                  }
-                                },
-                              ),
                             ],
-                          );
-                        },
+                          ),
+                          const Divider(
+                            height: 8,
+                            color: AssistantTheme.border,
+                          ),
+                          Expanded(
+                            child: ListView.separated(
+                              itemCount: _students.length,
+                              separatorBuilder: (_, __) => const Divider(
+                                height: 12,
+                                color: AssistantTheme.border,
+                              ),
+                              itemBuilder: (_, index) {
+                                final student = _students[index];
+                                final tags = [
+                                  if (student.externalId?.isNotEmpty == true)
+                                    'matricula: ${student.externalId}',
+                                  if (student.aliases.isNotEmpty)
+                                    'apelidos: ${student.aliases.join(", ")}',
+                                ].join('  -  ');
+
+                                return Row(
+                                  children: [
+                                    Checkbox(
+                                      value: _selectedStudentIds
+                                          .contains(student.id),
+                                      onChanged: _deletingStudents
+                                          ? null
+                                          : (checked) => setState(() {
+                                                if (checked == true) {
+                                                  _selectedStudentIds
+                                                      .add(student.id);
+                                                } else {
+                                                  _selectedStudentIds
+                                                      .remove(student.id);
+                                                }
+                                              }),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            student.name,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              color: AssistantTheme.textPrimary,
+                                            ),
+                                          ),
+                                          if (tags.isNotEmpty)
+                                            Text(
+                                              tags,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: AssistantTheme.textMuted,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Editar aluno',
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        size: 15,
+                                      ),
+                                      color: AssistantTheme.textMuted,
+                                      onPressed: _deletingStudents
+                                          ? null
+                                          : () => _editStudent(student),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Excluir aluno',
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        size: 15,
+                                      ),
+                                      color: AssistantTheme.textMuted,
+                                      onPressed: _deletingStudents
+                                          ? null
+                                          : () => _deleteStudents([student]),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
           ),
         ),

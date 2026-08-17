@@ -49,6 +49,8 @@ from ..models.schemas import (
     LessonUpdate,
     PointsReportEntry,
     PointsReportResponse,
+    StudentBulkDeleteRequest,
+    StudentBulkDeleteResponse,
     StudentCreate,
     StudentImportRequest,
     StudentImportResponse,
@@ -1127,6 +1129,39 @@ async def update_student(
     await db.commit()
     await db.refresh(student)
     return _student_response(student)
+
+
+@router.post("/students/bulk-delete", response_model=StudentBulkDeleteResponse)
+async def bulk_delete_students(
+    body: StudentBulkDeleteRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove varios alunos, sempre dentro de uma unica turma do tutor."""
+    class_id = body.class_id.strip()
+    student_ids = {
+        student_id.strip()
+        for student_id in body.student_ids
+        if student_id.strip()
+    }
+    if not class_id or not student_ids:
+        raise HTTPException(422, "Turma e alunos sao obrigatorios")
+
+    result = await db.execute(
+        select(StudentModel).where(
+            StudentModel.tutor_id == user["tutor_id"],
+            StudentModel.class_id == class_id,
+            StudentModel.id.in_(student_ids),
+        )
+    )
+    students = list(result.scalars().all())
+    for student in students:
+        await db.delete(student)
+    await db.commit()
+    return StudentBulkDeleteResponse(
+        requested=len(student_ids),
+        deleted=len(students),
+    )
 
 
 @router.delete("/students/{student_id}")
