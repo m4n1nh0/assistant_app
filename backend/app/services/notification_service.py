@@ -1,7 +1,85 @@
 import httpx
+from html import escape
 from loguru import logger
 from typing import Optional, List
 from ..models.schemas import NotifConfig, NotifResult, CalendarEvent
+
+
+def _telegram_error_message(status_code: int, description: str) -> str:
+    """Traduz erros conhecidos sem devolver token ou URL sensivel."""
+
+    detail = description.strip()
+    lowered = detail.lower()
+    if status_code == 401 or "unauthorized" in lowered:
+        return "Token do bot invalido. Gere ou copie novamente o token no BotFather."
+    if "chat not found" in lowered:
+        return (
+            "Chat ID nao encontrado. Abra a conversa com o bot no Telegram, "
+            "envie /start e confira o Chat ID."
+        )
+    if status_code == 403 or "bot was blocked" in lowered:
+        return "O bot foi bloqueado ou nao tem permissao para enviar a esse chat."
+    if status_code == 429 or "too many requests" in lowered:
+        return (
+            "O Telegram limitou os envios. Aguarde alguns instantes e "
+            "tente novamente."
+        )
+    if "can't parse entities" in lowered:
+        return "O Telegram recusou a formatacao da mensagem."
+    if detail:
+        return f"Telegram recusou o envio: {detail}"
+    return f"Telegram recusou o envio (HTTP {status_code})."
+
+
+def _telegram_text(
+    message: str,
+    config: NotifConfig,
+    event: Optional[CalendarEvent],
+    assistant_name: str,
+) -> str:
+    text = f"<b>{escape(assistant_name)}</b>\n\n{escape(message)}"
+    if event and config.include_link and event.meeting_url:
+        safe_url = escape(event.meeting_url, quote=True)
+        text += f'\n\n🔗 <a href="{safe_url}">Entrar na reunião</a>'
+    return text
+
+
+async def _deliver_telegram(
+    message: str,
+    config: NotifConfig,
+    event: Optional[CalendarEvent] = None,
+    assistant_name: str = "Assistente",
+) -> tuple[bool, str]:
+    if not config.telegram_token or not config.telegram_chat_id:
+        return False, "Preencha o token do bot e o Chat ID."
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{config.telegram_token}/sendMessage",
+                json={
+                    "chat_id": config.telegram_chat_id,
+                    "text": _telegram_text(message, config, event, assistant_name),
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False,
+                },
+            )
+        try:
+            data = resp.json()
+        except ValueError:
+            return False, f"Resposta invalida do Telegram (HTTP {resp.status_code})."
+        if not data.get("ok"):
+            return False, _telegram_error_message(
+                resp.status_code,
+                str(data.get("description", "")),
+            )
+        return True, "Telegram conectado e mensagem de teste enviada."
+    except httpx.TimeoutException:
+        return False, "O Telegram demorou para responder. Tente novamente."
+    except httpx.HTTPError:
+        return False, "Nao foi possivel conectar ao Telegram a partir do backend."
+    except Exception:
+        return False, "Falha inesperada ao enviar a mensagem pelo Telegram."
 
 
 async def send_telegram(
@@ -10,31 +88,24 @@ async def send_telegram(
     event: Optional[CalendarEvent] = None,
     assistant_name: str = "Assistente",
 ) -> bool:
-    if not config.telegram_token or not config.telegram_chat_id:
-        return False
-    try:
-        text = f"<b>{assistant_name}</b>\n\n{message}"
-        if event and config.include_link and event.meeting_url:
-            text += f'\n\n🔗 <a href="{event.meeting_url}">Entrar na reunião</a>'
-
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"https://api.telegram.org/bot{config.telegram_token}/sendMessage",
-                json={
-                    "chat_id": config.telegram_chat_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": False,
-                },
-            )
-        data = resp.json()
-        if not data.get("ok"):
-            raise Exception(data.get("description", "Unknown error"))
+    ok, message_or_error = await _deliver_telegram(
+        message,
+        config,
+        event,
+        assistant_name,
+    )
+    if ok:
         logger.info(f"Telegram sent: {message[:60]}")
         return True
-    except Exception as e:
-        logger.error(f"Telegram error: {e}")
-        return False
+    logger.error("Telegram error: {}", message_or_error)
+    return False
+
+
+async def test_telegram_connection(config: NotifConfig) -> tuple[bool, str]:
+    return await _deliver_telegram(
+        "✅ Assistente conectado! Notificações ativas.",
+        config,
+    )
 
 
 async def send_whatsapp(message: str, config: NotifConfig) -> bool:

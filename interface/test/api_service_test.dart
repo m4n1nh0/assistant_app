@@ -169,4 +169,34 @@ void main() {
 
     expect(saved.reminderMinutes, 30);
   });
+
+  test('teste do Telegram passa pelo backend e preserva o diagnostico',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/notifications/test/telegram');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['telegram_token'], 'bot-token');
+      expect(body['telegram_chat_id'], 'chat-1');
+      return http.Response(
+        '{"ok":false,"message":"Chat ID nao encontrado. Envie /start."}',
+        200,
+      );
+    });
+
+    final result = await http.runWithClient(
+      () => svc.testTelegram(
+        NotifConfig(
+          tgToken: 'bot-token',
+          tgChatId: 'chat-1',
+          tgEnabled: true,
+        ),
+      ),
+      () => client,
+    );
+
+    expect(result.ok, isFalse);
+    expect(result.message, contains('/start'));
+  });
 }

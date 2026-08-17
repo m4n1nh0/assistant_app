@@ -371,6 +371,11 @@ do calendário. A interface usa esse temporizador para o aviso visual; os canais
 Telegram e WhatsApp são enviados pelo backend, evitando duas mensagens iguais
 quando a janela desktop também está aberta.
 
+O botão **Testar Telegram** também usa o backend e mostra um diagnóstico
+específico para token inválido, Chat ID inexistente, bot bloqueado, limite de
+envios, timeout ou falha de rede. Para uma conversa privada nova, abra o bot no
+Telegram e envie `/start` antes do teste.
+
 ## Teste da integração
 
 1. Confirme que a conta aparece em **Configurações > Agendas**.

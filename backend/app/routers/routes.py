@@ -1737,13 +1737,15 @@ async def send_notif(
 
 @router_notif.post("/test/telegram")
 async def test_telegram(
+    body: NotifConfig | None = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from ..services.notification_service import send_telegram
-    cfg = await _notif_cfg(db, user["uid"])
-    ok = await send_telegram("✅ Assistente conectado! Notificações ativas.", cfg)
-    return {"ok": ok}
+    from ..services.notification_service import test_telegram_connection
+
+    cfg = body or await _notif_cfg(db, user["uid"])
+    ok, message = await test_telegram_connection(cfg)
+    return {"ok": ok, "message": message}
 
 
 @router_notif.post("/test/whatsapp")

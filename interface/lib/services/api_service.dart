@@ -964,10 +964,23 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
-  Future<bool> testTelegram() async {
-    final r = await http.post(Uri.parse('$baseUrl/notifications/test/telegram'),
-        headers: _headers);
-    return (jsonDecode(r.body) as Map<String, dynamic>)['ok'] == true;
+  Future<NotificationTestResult> testTelegram(NotifConfig config) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/notifications/test/telegram'),
+      headers: _headers,
+      body: jsonEncode({
+        'telegram_token': config.tgToken,
+        'telegram_chat_id': config.tgChatId,
+        'telegram_enabled': true,
+      }),
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    _throwIfHttpError(
+      r,
+      data: data,
+      fallback: 'Falha ao testar o Telegram',
+    );
+    return NotificationTestResult.fromJson(data);
   }
 
   Future<bool> testWhatsApp() async {
@@ -1075,6 +1088,19 @@ class ApiService {
 }
 
 final api = ApiService();
+
+class NotificationTestResult {
+  final bool ok;
+  final String message;
+
+  const NotificationTestResult({required this.ok, required this.message});
+
+  factory NotificationTestResult.fromJson(Map<String, dynamic> json) =>
+      NotificationTestResult(
+        ok: json['ok'] == true,
+        message: json['message']?.toString() ?? '',
+      );
+}
 
 class CalendarConnectResult {
   final String authUrl;

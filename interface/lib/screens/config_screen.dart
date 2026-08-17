@@ -7,7 +7,6 @@ import '../services/api_service.dart';
 import '../services/external_launcher_service.dart';
 import '../services/neural_tts_service.dart';
 import '../services/neural_audio_player.dart';
-import '../services/notification_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
@@ -39,6 +38,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _gcalSecretCtrl = TextEditingController();
   final _backendUrlCtrl = TextEditingController();
   bool _backendTestBusy = false;
+  bool _telegramTestBusy = false;
   final _voicePreviewPlayer = NeuralAudioPlayer();
   bool _voiceTestBusy = false;
   Map<String, List<CalendarAccount>> _calendarAccounts = const {
@@ -203,6 +203,34 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     if (mounted) {
       ref.read(isAuthenticatedProvider.notifier).state = false;
       Navigator.pushReplacementNamed(context, '/main');
+    }
+  }
+
+  Future<void> _testTelegram() async {
+    if (_telegramTestBusy) return;
+    final token = _tgTokenCtrl.text.trim();
+    final chatId = _tgChatCtrl.text.trim();
+    if (token.isEmpty || chatId.isEmpty) {
+      _showSnack('Preencha o token do bot e o Chat ID.');
+      return;
+    }
+
+    setState(() => _telegramTestBusy = true);
+    try {
+      final result = await api.testTelegram(
+        NotifConfig(
+          tgToken: token,
+          tgChatId: chatId,
+          tgEnabled: true,
+        ),
+      );
+      _showSnack(result.ok ? '✅ ${result.message}' : '❌ ${result.message}');
+    } catch (e) {
+      _showSnack(
+        '❌ ${e.toString().replaceFirst('Exception: ', '')}',
+      );
+    } finally {
+      if (mounted) setState(() => _telegramTestBusy = false);
     }
   }
 
@@ -587,20 +615,10 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           _Field('CHAT ID', _tgChatCtrl,
               hint: 'Seu chat ID (use @userinfobot)'),
           _ActionBtn(
-              label: '📨 Testar Telegram',
-              onTap: () async {
-                final svc = NotificationService(
-                  NotifConfig(
-                      tgToken: _tgTokenCtrl.text.trim(),
-                      tgChatId: _tgChatCtrl.text.trim(),
-                      tgEnabled: true),
-                  _nameCtrl.text.isEmpty ? 'Assistente' : _nameCtrl.text,
-                );
-                final ok = await svc.testTelegram();
-                _showSnack(ok
-                    ? '✅ Telegram funcionando!'
-                    : '❌ Erro — verifique token e chat ID');
-              }),
+              label: _telegramTestBusy
+                  ? '⏳ TESTANDO TELEGRAM...'
+                  : '📨 Testar Telegram',
+              onTap: _telegramTestBusy ? null : _testTelegram),
           _InfoBox(
               'Obtenha o token em @BotFather e o Chat ID em @userinfobot no Telegram.'),
         ]),
@@ -1202,7 +1220,7 @@ class _InfoBox extends StatelessWidget {
 
 class _ActionBtn extends StatelessWidget {
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final Color color;
   const _ActionBtn(
       {required this.label,
