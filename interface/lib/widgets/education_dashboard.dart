@@ -7,6 +7,7 @@ import '../services/education_service.dart';
 import '../utils/theme.dart';
 
 typedef EducationDisciplinesLoader = Future<List<Discipline>> Function();
+typedef EducationLessonsLoader = Future<List<Lesson>> Function();
 
 class EducationSemesterSummary {
   final String code;
@@ -35,6 +36,18 @@ class EducationAgendaEntry {
     required this.weekday,
     required this.startTime,
     required this.endTime,
+    required this.classCode,
+    required this.discipline,
+  });
+}
+
+class EducationCommitment {
+  final DateTime startsAt;
+  final String classCode;
+  final String discipline;
+
+  const EducationCommitment({
+    required this.startsAt,
     required this.classCode,
     required this.discipline,
   });
@@ -113,6 +126,55 @@ List<EducationAgendaEntry> buildEducationAgenda(
 String currentEducationSemesterCode(DateTime now) =>
     '${now.year}.${now.month <= 6 ? 1 : 2}';
 
+List<EducationCommitment> buildUpcomingEducationCommitments(
+  Iterable<ClassGroup> classes,
+  DateTime now, {
+  int limit = 3,
+}) {
+  final result = <EducationCommitment>[];
+  for (final group in classes.where((item) => item.active)) {
+    for (final schedule in group.schedules) {
+      if (schedule.weekday < 0 || schedule.weekday > 6) continue;
+      final parts = schedule.startTime.split(':');
+      if (parts.length != 2) continue;
+      final hour = int.tryParse(parts[0]);
+      final minute = int.tryParse(parts[1]);
+      if (hour == null || minute == null || hour > 23 || minute > 59) {
+        continue;
+      }
+
+      final targetWeekday = schedule.weekday + 1;
+      var dayOffset = (targetWeekday - now.weekday + 7) % 7;
+      var startsAt = DateTime(
+        now.year,
+        now.month,
+        now.day + dayOffset,
+        hour,
+        minute,
+      );
+      if (!startsAt.isAfter(now)) {
+        dayOffset += 7;
+        startsAt = DateTime(
+          now.year,
+          now.month,
+          now.day + dayOffset,
+          hour,
+          minute,
+        );
+      }
+      result.add(
+        EducationCommitment(
+          startsAt: startsAt,
+          classCode: group.code.isEmpty ? group.label : group.code,
+          discipline: group.discipline,
+        ),
+      );
+    }
+  }
+  result.sort((a, b) => a.startsAt.compareTo(b.startsAt));
+  return result.take(limit).toList();
+}
+
 class _MutableSemester {
   bool active = false;
   int disciplineCount = 0;
@@ -127,7 +189,10 @@ class EducationDashboard extends StatefulWidget {
   final VoidCallback onOpenPoints;
   final VoidCallback onOpenHistory;
   final VoidCallback onOpenAttendance;
+  final VoidCallback onStartLesson;
+  final VoidCallback onOpenAssistant;
   final EducationDisciplinesLoader? loadDisciplines;
+  final EducationLessonsLoader? loadLessons;
 
   const EducationDashboard({
     super.key,
@@ -136,7 +201,10 @@ class EducationDashboard extends StatefulWidget {
     required this.onOpenPoints,
     required this.onOpenHistory,
     required this.onOpenAttendance,
+    required this.onStartLesson,
+    required this.onOpenAssistant,
     this.loadDisciplines,
+    this.loadLessons,
   });
 
   @override
@@ -145,6 +213,7 @@ class EducationDashboard extends StatefulWidget {
 
 class _EducationDashboardState extends State<EducationDashboard> {
   List<Discipline> _disciplines = const [];
+  List<Lesson> _lessons = const [];
   var _loading = true;
   var _error = '';
 
@@ -161,18 +230,38 @@ class _EducationDashboardState extends State<EducationDashboard> {
         _error = '';
       });
     }
-    try {
-      final loader = widget.loadDisciplines ??
-          () => education.listDisciplines(activeOnly: false);
-      final disciplines = await loader();
-      if (!mounted) return;
-      setState(() => _disciplines = disciplines);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = 'Nao foi possivel carregar o painel: $error');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    final errors = <Object>[];
+    var disciplines = _disciplines;
+    var lessons = _lessons;
+    await Future.wait([
+      () async {
+        try {
+          final loader = widget.loadDisciplines ??
+              () => education.listDisciplines(activeOnly: false);
+          disciplines = await loader();
+        } catch (error) {
+          errors.add(error);
+        }
+      }(),
+      () async {
+        try {
+          final loader =
+              widget.loadLessons ?? () => education.listLessons(limit: 8);
+          lessons = await loader();
+        } catch (error) {
+          errors.add(error);
+        }
+      }(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _disciplines = disciplines;
+      _lessons = lessons;
+      _error = errors.isEmpty
+          ? ''
+          : 'Parte do painel nao pode ser atualizada. Tente novamente.';
+      _loading = false;
+    });
   }
 
   @override
@@ -192,7 +281,40 @@ class _EducationDashboardState extends State<EducationDashboard> {
                 onRefresh: _load,
               ),
               const SizedBox(height: 12),
-              Expanded(child: _buildGrid(classes)),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 760;
+                    return ListView(
+                      key: const Key('education-dashboard-scroll'),
+                      children: [
+                        _OverviewMetrics(classes: classes, lessons: _lessons),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: compact ? 1076 : 500,
+                          child: _buildGrid(classes),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: compact ? 510 : 176,
+                          child: _EducationInsights(
+                            lessons: _lessons,
+                            commitments: buildUpcomingEducationCommitments(
+                              classes,
+                              DateTime.now(),
+                            ),
+                            compact: compact,
+                            onOpenHistory: widget.onOpenHistory,
+                            onOpenAttendance: widget.onOpenAttendance,
+                            onStartLesson: widget.onStartLesson,
+                            onOpenAssistant: widget.onOpenAssistant,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ],
           ),
         );
@@ -290,7 +412,7 @@ class _DashboardHeading extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  'Semestres  •  Turmas e alunos  •  Agenda  •  Relatorios',
+                  'IA a servico de quem ensina  •  Tudo em um so lugar',
                   style: TextStyle(
                     fontSize: 10,
                     color: AssistantTheme.textSecondary,
@@ -317,6 +439,570 @@ class _DashboardHeading extends StatelessWidget {
           ),
         ],
       );
+}
+
+class _OverviewMetrics extends StatelessWidget {
+  final List<ClassGroup> classes;
+  final List<Lesson> lessons;
+
+  const _OverviewMetrics({required this.classes, required this.lessons});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = classes.where((item) => item.active).toList();
+    final students = active.fold<int>(
+      0,
+      (total, item) => total + item.studentCount,
+    );
+    final weeklyMeetings = active.fold<int>(
+      0,
+      (total, item) => total + item.schedules.length,
+    );
+    final summaries = lessons.where(
+      (item) => item.summary?.trim().isNotEmpty ?? false,
+    );
+    final items = [
+      _MetricData(
+        icon: Icons.school_outlined,
+        value: '${active.length}',
+        label: 'turmas ativas',
+        color: AssistantTheme.c3,
+      ),
+      _MetricData(
+        icon: Icons.people_outline,
+        value: '$students',
+        label: 'alunos',
+        color: AssistantTheme.c1,
+      ),
+      _MetricData(
+        icon: Icons.event_available_outlined,
+        value: '$weeklyMeetings',
+        label: 'aulas por semana',
+        color: AssistantTheme.c2,
+      ),
+      _MetricData(
+        icon: Icons.auto_awesome_outlined,
+        value: '${summaries.length}',
+        label: 'resumos recentes',
+        color: AssistantTheme.c4,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth < 620 ? 2 : 4;
+        const gap = 8.0;
+        final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: width,
+                height: 62,
+                child: _OverviewMetricCard(data: item),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MetricData {
+  final IconData icon;
+  final String value;
+  final String label;
+  final Color color;
+
+  const _MetricData({
+    required this.icon,
+    required this.value,
+    required this.label,
+    required this.color,
+  });
+}
+
+class _OverviewMetricCard extends StatelessWidget {
+  final _MetricData data;
+
+  const _OverviewMetricCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: AssistantTheme.bg.withOpacity(.5),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: data.color.withOpacity(.35)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: data.color.withOpacity(.1),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Icon(data.icon, size: 18, color: data.color),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    data.value,
+                    style: const TextStyle(
+                      height: 1,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AssistantTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    data.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 9,
+                      color: AssistantTheme.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+class _EducationInsights extends StatelessWidget {
+  final List<Lesson> lessons;
+  final List<EducationCommitment> commitments;
+  final bool compact;
+  final VoidCallback onOpenHistory;
+  final VoidCallback onOpenAttendance;
+  final VoidCallback onStartLesson;
+  final VoidCallback onOpenAssistant;
+
+  const _EducationInsights({
+    required this.lessons,
+    required this.commitments,
+    required this.compact,
+    required this.onOpenHistory,
+    required this.onOpenAttendance,
+    required this.onStartLesson,
+    required this.onOpenAssistant,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final panels = <Widget>[
+      _RecentLessonsPanel(lessons: lessons, onOpen: onOpenHistory),
+      _CommitmentsPanel(
+        commitments: commitments,
+        onOpen: onOpenAttendance,
+      ),
+      _AssistantPanel(
+        onStartLesson: onStartLesson,
+        onOpenAssistant: onOpenAssistant,
+      ),
+    ];
+    if (compact) {
+      return Column(
+        children: [
+          for (var index = 0; index < panels.length; index++) ...[
+            Expanded(child: panels[index]),
+            if (index < panels.length - 1) const SizedBox(height: 10),
+          ],
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(flex: 5, child: panels[0]),
+        const SizedBox(width: 10),
+        Expanded(flex: 4, child: panels[1]),
+        const SizedBox(width: 10),
+        Expanded(flex: 4, child: panels[2]),
+      ],
+    );
+  }
+}
+
+class _RecentLessonsPanel extends StatelessWidget {
+  final List<Lesson> lessons;
+  final VoidCallback onOpen;
+
+  const _RecentLessonsPanel({required this.lessons, required this.onOpen});
+
+  @override
+  Widget build(BuildContext context) {
+    final ordered = List<Lesson>.of(lessons)
+      ..sort((a, b) =>
+          (b.startedAt ?? DateTime(0)).compareTo(a.startedAt ?? DateTime(0)));
+    return _InsightPanel(
+      title: 'AULAS RECENTES',
+      icon: Icons.history_toggle_off_outlined,
+      color: AssistantTheme.c2,
+      actionLabel: 'VER HISTORICO',
+      onAction: onOpen,
+      child: ordered.isEmpty
+          ? const _DashboardEmpty('Nenhuma aula registrada ainda.')
+          : Column(
+              children: [
+                for (final lesson in ordered.take(3))
+                  SizedBox(
+                    height: 36,
+                    child: InkWell(
+                      onTap: onOpen,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.article_outlined,
+                              size: 13, color: AssistantTheme.textMuted),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  lesson.title.isEmpty
+                                      ? lesson.discipline
+                                      : lesson.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600,
+                                    color: AssistantTheme.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  lesson.classGroup.isEmpty
+                                      ? lesson.discipline
+                                      : lesson.classGroup,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 8,
+                                    color: AssistantTheme.textMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _shortDate(lesson.startedAt),
+                            style: const TextStyle(
+                              fontSize: 8,
+                              color: AssistantTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _CommitmentsPanel extends StatelessWidget {
+  final List<EducationCommitment> commitments;
+  final VoidCallback onOpen;
+
+  const _CommitmentsPanel({required this.commitments, required this.onOpen});
+
+  @override
+  Widget build(BuildContext context) => _InsightPanel(
+        title: 'PROXIMOS COMPROMISSOS',
+        icon: Icons.upcoming_outlined,
+        color: AssistantTheme.c3,
+        actionLabel: 'VER AGENDA',
+        onAction: onOpen,
+        child: commitments.isEmpty
+            ? const _DashboardEmpty(
+                'Cadastre horarios para ver as proximas aulas.')
+            : Column(
+                children: [
+                  for (final item in commitments)
+                    SizedBox(
+                      height: 36,
+                      child: InkWell(
+                        onTap: onOpen,
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 34,
+                              child: Text(
+                                _dayAndMonth(item.startsAt),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  color: AssistantTheme.c3,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              width: 2,
+                              height: 22,
+                              color: AssistantTheme.c3.withOpacity(.55),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    item.discipline,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      color: AssistantTheme.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${_clock(item.startsAt)}  •  ${item.classCode}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 8,
+                                      color: AssistantTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+      );
+}
+
+class _AssistantPanel extends StatelessWidget {
+  final VoidCallback onStartLesson;
+  final VoidCallback onOpenAssistant;
+
+  const _AssistantPanel({
+    required this.onStartLesson,
+    required this.onOpenAssistant,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AssistantTheme.c2.withOpacity(.55)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              AssistantTheme.c2.withOpacity(.14),
+              AssistantTheme.c1.withOpacity(.07),
+            ],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.auto_awesome, size: 16, color: AssistantTheme.c2),
+                SizedBox(width: 7),
+                Text(
+                  'ASSISTENTE IA',
+                  style: TextStyle(
+                    fontFamily: 'Rajdhani',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                    color: AssistantTheme.c2,
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            const Text(
+              'Como posso ajudar na sua aula hoje?',
+              maxLines: 2,
+              style: TextStyle(
+                fontSize: 10,
+                color: AssistantTheme.textPrimary,
+              ),
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Expanded(
+                  child: _AssistantAction(
+                    icon: Icons.mic_none,
+                    label: 'INICIAR AULA',
+                    onTap: onStartLesson,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: _AssistantAction(
+                    icon: Icons.chat_bubble_outline,
+                    label: 'CONVERSAR',
+                    onTap: onOpenAssistant,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+}
+
+class _AssistantAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _AssistantAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(5),
+        child: Container(
+          height: 32,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: AssistantTheme.c2.withOpacity(.55)),
+            color: AssistantTheme.c2.withOpacity(.1),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 13, color: AssistantTheme.c2),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    color: AssistantTheme.c2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _InsightPanel extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final String actionLabel;
+  final VoidCallback onAction;
+  final Widget child;
+
+  const _InsightPanel({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.actionLabel,
+    required this.onAction,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
+        decoration: BoxDecoration(
+          color: AssistantTheme.bg.withOpacity(.38),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(.4)),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 15, color: color),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Rajdhani',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .7,
+                      color: color,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: onAction,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(actionLabel, style: const TextStyle(fontSize: 7)),
+                ),
+              ],
+            ),
+            Expanded(child: child),
+          ],
+        ),
+      );
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
+
+String _clock(DateTime value) =>
+    '${_twoDigits(value.hour)}:${_twoDigits(value.minute)}';
+
+String _shortDate(DateTime? value) {
+  if (value == null) return '—';
+  return '${_twoDigits(value.day)}/${_twoDigits(value.month)}';
+}
+
+String _dayAndMonth(DateTime value) {
+  const months = [
+    'JAN',
+    'FEV',
+    'MAR',
+    'ABR',
+    'MAI',
+    'JUN',
+    'JUL',
+    'AGO',
+    'SET',
+    'OUT',
+    'NOV',
+    'DEZ',
+  ];
+  return '${_twoDigits(value.day)}\n${months[value.month - 1]}';
 }
 
 class _SemestersPanel extends StatelessWidget {

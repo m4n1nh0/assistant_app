@@ -165,7 +165,9 @@ O acesso normal ao **Modo Aula** abre uma **Visão geral** inspirada em um paine
 acadêmico: semestres ativos ou encerrados, turmas com quantidade de alunos,
 grade semanal de horários e atalhos para presença, históricos, pontuações e
 PDFs. Os quadros usam os mesmos modelos e serviços das abas existentes; não há
-uma segunda cópia dos dados.
+uma segunda cópia dos dados. Indicadores acadêmicos, aulas recentes, próximos
+encontros e um bloco da assistente complementam o painel; os atalhos apenas
+navegam para as telas já existentes ou retornam ao chat principal.
 
 Em **1. Turmas**, **Criar exemplo para apresentação** prepara uma disciplina,
 uma turma do semestre corrente e três alunos fictícios sem duplicar registros.

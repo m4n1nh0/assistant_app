@@ -357,7 +357,10 @@ da interface. O guia operacional está em
 
 O acesso comum abre primeiro `VISAO GERAL`, um painel em quatro quadros com
 semestres, turmas e quantidade de alunos, agenda semanal e atalhos para os
-relatorios. As demais abas seguem a ordem de uso — `1. TURMAS`,
+relatorios. Indicadores mostram turmas ativas, alunos, aulas por semana e
+resumos recentes; a parte inferior reúne aulas recentes, os próximos encontros
+das turmas e atalhos para conversar com a IA ou iniciar a gravação. As demais
+abas seguem a ordem de uso — `1. TURMAS`,
 `2. GRAVAR AULA`, `3. PONTUACOES`, `4. HISTORICO`, `5. PRESENCA` — porque o
 cadastro precede a gravacao: e ele que ancora os nomes
 ouvidos no audio. Sem turma cadastrada o dialogo abre no cadastro; com turma,

@@ -153,6 +153,11 @@ class _EducationDialogState extends State<EducationDialog> {
                                 onOpenAttendance: () =>
                                     DefaultTabController.of(tabContext)
                                         .animateTo(_attendanceTab),
+                                onStartLesson: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_lessonTab),
+                                onOpenAssistant: () =>
+                                    Navigator.of(tabContext).pop(),
                               ),
                               _RosterTab(classes: _classes),
                               _LessonTab(classes: _classes),

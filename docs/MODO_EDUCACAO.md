@@ -6,6 +6,10 @@ abas operacionais:
 - **Visão geral**: painel com semestres, turmas e quantidade de alunos, agenda
   semanal e atalhos para relatórios. Cada quadro abre a área operacional
   correspondente e pode ser atualizado sem fechar o Modo Aula.
+- **Indicadores e IA**: cartões consolidam turmas ativas, alunos, encontros por
+  semana e resumos recentes. Aulas registradas e próximos encontros aparecem
+  logo abaixo, junto aos atalhos **Iniciar aula** e **Conversar**. O segundo
+  retorna ao chat principal sem criar outra conversa ou copiar dados.
 
 1. cadastro de disciplinas, turmas, horários e alunos;
 2. gravação e transcrição de aulas;
