@@ -30,6 +30,7 @@ from .launcher_service import (
 )
 from .llm_routing_service import detect_task, pick_auto_llm
 from .llm_status_service import get_llm_statuses
+from .education_action_service import build_education_open_action
 
 
 ActionKind = Literal[
@@ -42,6 +43,7 @@ ActionKind = Literal[
     "registration",
     "calendar",
     "calendar_query",
+    "education",
 ]
 GraphRoute = Literal["action", "calendar_query", "single", "multi", "chain"]
 
@@ -105,6 +107,13 @@ def _calendar_proposal_text(action: Any) -> str:
 async def _detect_action(state: ChatGraphState) -> dict[str, Any]:
     message = state["message"]
     system_prompt = state["system_prompt"]
+
+    education_action = build_education_open_action(message)
+    if education_action:
+        return {
+            "action": education_action.model_dump(mode="json"),
+            "action_kind": "education",
+        }
 
     calendar_action = invoke_calendar_action_tool(
         message,
@@ -200,6 +209,7 @@ _NON_CHAT_KINDS = {
     "registration",
     "calendar",
     "calendar_query",
+    "education",
 }
 
 
@@ -246,6 +256,7 @@ def _route_after_resolution(state: ChatGraphState) -> GraphRoute:
         "project",
         "registration",
         "calendar",
+        "education",
     }:
         return "action"
     return cast(GraphRoute, state["mode"].value)
@@ -277,6 +288,15 @@ async def _acknowledge_action(state: ChatGraphState) -> dict[str, Any]:
 
     if action_kind == "calendar":
         content = _calendar_proposal_text(action)
+    elif action_kind == "education":
+        destination = _value(action, "destination")
+        content = (
+            "Entendi que voce quer iniciar a chamada da turma. Posso abrir "
+            "o Modo Aula diretamente na aba de presenca."
+            if destination == "attendance"
+            else "Entendi que a aula vai comecar. Posso abrir o Modo Aula "
+            "diretamente na gravacao."
+        )
     elif action_kind == "computer":
         content = (
             f"Vou executar {_value(action, 'name')} no computador "

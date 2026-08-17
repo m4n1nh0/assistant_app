@@ -6,6 +6,27 @@ import 'package:http/testing.dart';
 import 'package:assistant_app/services/education_service.dart';
 
 void main() {
+  test('presentation demo is created by one authenticated request', () async {
+    final service = EducationService(ApiService(backendUrl: 'https://test'));
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/education/demo/presentation');
+      return http.Response(
+        '{"class_id":"class-demo","students_created":3,'
+        '"message":"Demonstracao pronta"}',
+        200,
+      );
+    });
+
+    final result = await http.runWithClient(
+      service.createPresentationDemo,
+      () => client,
+    );
+
+    expect(result['class_id'], 'class-demo');
+    expect(result['students_created'], 3);
+  });
+
   group('Lesson', () {
     test('reads the payload returned by the backend', () {
       final lesson = Lesson.fromJson({

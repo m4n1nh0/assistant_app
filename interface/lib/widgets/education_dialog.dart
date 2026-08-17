@@ -21,13 +21,16 @@ import 'attendance_tab.dart';
 /// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
 const _rosterTab = 0;
 const _lessonTab = 1;
+const _attendanceTab = 4;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
 typedef _Classes = ValueNotifier<List<ClassGroup>?>;
 
 class EducationDialog extends StatefulWidget {
-  const EducationDialog({super.key});
+  final String startAt;
+
+  const EducationDialog({super.key, this.startAt = 'auto'});
 
   @override
   State<EducationDialog> createState() => _EducationDialogState();
@@ -64,8 +67,13 @@ class _EducationDialogState extends State<EducationDialog> {
     if (!mounted) return;
     _classes.value = classes;
     setState(() {
-      _initialTab =
-          (classes != null && classes.isEmpty) ? _rosterTab : _lessonTab;
+      if (classes != null && classes.isEmpty) {
+        _initialTab = _rosterTab;
+      } else if (widget.startAt == 'attendance') {
+        _initialTab = _attendanceTab;
+      } else {
+        _initialTab = _lessonTab;
+      }
     });
   }
 
@@ -1350,6 +1358,7 @@ class _RosterTabState extends State<_RosterTab> {
   var _loading = true;
   var _importing = false;
   var _deletingStudents = false;
+  var _creatingDemo = false;
   var _status = '';
   var _statusIsError = false;
 
@@ -1454,6 +1463,20 @@ class _RosterTabState extends State<_RosterTab> {
       await _loadClasses(keepId: group.id);
     } catch (e) {
       _report('Falha ao criar turma: $e', error: true);
+    }
+  }
+
+  Future<void> _createPresentationDemo() async {
+    if (_creatingDemo) return;
+    setState(() => _creatingDemo = true);
+    try {
+      final result = await education.createPresentationDemo();
+      _report(result['message']?.toString() ?? 'Demonstracao criada.');
+      await _loadClasses(keepId: result['class_id']?.toString());
+    } catch (e) {
+      _report('Falha ao criar demonstracao: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _creatingDemo = false);
     }
   }
 
@@ -1878,6 +1901,25 @@ class _RosterTabState extends State<_RosterTab> {
             style: TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
           ),
           const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: _creatingDemo ? null : _createPresentationDemo,
+              icon: _creatingDemo
+                  ? const SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome_outlined, size: 15),
+              label: Text(
+                _creatingDemo
+                    ? 'PREPARANDO...'
+                    : 'CRIAR EXEMPLO PARA APRESENTACAO',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           if (_status.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),

@@ -26,6 +26,7 @@ import '../services/shortcut_matching.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../utils/chat_input_shortcuts.dart';
+import 'education_dialog.dart';
 
 class ChatPanel extends ConsumerStatefulWidget {
   const ChatPanel({super.key});
@@ -1503,6 +1504,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   }
 
   Future<void> _handleAssistantAction(ChatResult result) async {
+    if (result.educationOpenAction != null) {
+      await _suggestEducationMode(result.educationOpenAction!);
+      return;
+    }
     if (result.calendarCreateAction != null) {
       await _executeCalendarCreateAction(result.calendarCreateAction!);
       return;
@@ -1522,6 +1527,44 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     await _executeLaunchAction(result.action);
   }
 
+  Future<void> _suggestEducationMode(EducationOpenAction action) async {
+    if (!mounted) return;
+    final attendance = action.destination == 'attendance';
+    final open = action.requiresConfirmation
+        ? await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              backgroundColor: AssistantTheme.surface,
+              title: Text(attendance
+                  ? 'Abrir chamada da turma?'
+                  : 'Abrir o Modo Aula?'),
+              content: Text(
+                action.reason.trim().isEmpty
+                    ? 'Posso abrir a interface educacional agora.'
+                    : action.reason,
+                style: const TextStyle(color: AssistantTheme.textSecondary),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('AGORA NAO'),
+                ),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  icon: const Icon(Icons.school_outlined, size: 16),
+                  label: Text(attendance ? 'ABRIR PRESENCA' : 'ABRIR GRAVACAO'),
+                ),
+              ],
+            ),
+          )
+        : true;
+    if (open != true || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => EducationDialog(startAt: action.destination),
+    );
+  }
+
   Future<void> _handleGeneratedScripts(
     ChatResult result,
     String userRequest,
@@ -1529,6 +1572,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (result.computerAction != null ||
         result.codingAction != null ||
         result.calendarCreateAction != null ||
+        result.educationOpenAction != null ||
         result.registrationAction != null ||
         result.action != null ||
         _isLocalScriptResultRequest(userRequest)) {
@@ -1731,7 +1775,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (!_workspaceEditingAllowed || _editableWorkspaceRoot == null) return;
     if (result.codingAction != null ||
         result.computerAction != null ||
-        result.calendarCreateAction != null) {
+        result.calendarCreateAction != null ||
+        result.educationOpenAction != null) {
       return;
     }
 

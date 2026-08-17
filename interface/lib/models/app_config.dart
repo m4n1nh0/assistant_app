@@ -427,6 +427,7 @@ class ChatResult {
   final ComputerAction? computerAction;
   final CodingAction? codingAction;
   final CalendarCreateAction? calendarCreateAction;
+  final EducationOpenAction? educationOpenAction;
 
   const ChatResult({
     required this.responses,
@@ -435,11 +436,32 @@ class ChatResult {
     this.computerAction,
     this.codingAction,
     this.calendarCreateAction,
+    this.educationOpenAction,
   });
 
   LlmResponse get firstResponse => responses.isEmpty
       ? LlmResponse(llm: 'backend', content: 'Sem resposta', isError: true)
       : responses.first;
+}
+
+class EducationOpenAction {
+  final String destination;
+  final String reason;
+  final bool requiresConfirmation;
+
+  const EducationOpenAction({
+    required this.destination,
+    required this.reason,
+    this.requiresConfirmation = true,
+  });
+
+  factory EducationOpenAction.fromJson(Map<String, dynamic> json) =>
+      EducationOpenAction(
+        destination: json['destination']?.toString() ?? 'lesson',
+        reason: json['reason']?.toString() ?? '',
+        requiresConfirmation: json['requires_confirmation'] != false &&
+            json['requiresConfirmation'] != false,
+      );
 }
 
 class LaunchAction {

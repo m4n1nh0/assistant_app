@@ -79,6 +79,27 @@ def test_registration_tool_routes_structured_action_to_interface():
     assert "cadastrar o atalho" in result["responses"][0].content
 
 
+def test_lesson_start_routes_to_education_interface_without_calling_llm(monkeypatch):
+    async def fail_dispatch(*args, **kwargs):
+        raise AssertionError("LLM dispatch should not run for an interface action")
+
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service,
+        "dispatch_single",
+        fail_dispatch,
+    )
+
+    result = run_graph(
+        message="Dani, vamos iniciar a aula",
+        active_llms=["gpt"],
+    )
+
+    assert result["action_kind"] == "education"
+    assert result["action"]["type"] == "education_open"
+    assert result["action"]["destination"] == "lesson"
+    assert "Modo Aula" in result["responses"][0].content
+
+
 def test_calendar_action_short_circuits_llm_and_requests_confirmation(monkeypatch):
     async def fail_dispatch(*args, **kwargs):
         raise AssertionError("LLM dispatch should not run for a calendar action")

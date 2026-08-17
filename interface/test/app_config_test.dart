@@ -48,6 +48,18 @@ void main() {
     expect(event.endTime, isNotNull);
   });
 
+  test('EducationOpenAction identifies the requested education tab', () {
+    final action = EducationOpenAction.fromJson({
+      'type': 'education_open',
+      'destination': 'attendance',
+      'reason': 'Inicio de chamada.',
+      'requires_confirmation': true,
+    });
+
+    expect(action.destination, 'attendance');
+    expect(action.requiresConfirmation, isTrue);
+  });
+
   test('CalendarConfig keeps automatic creation disabled by default', () {
     expect(CalendarConfig().autoCreateEvents, isFalse);
 

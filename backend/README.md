@@ -407,6 +407,10 @@ O cadastro dos clientes OAuth, escopos, callbacks locais e Railway e a conexão
 das contas estão documentados em
 [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
 
+O fluxo acadêmico, o exemplo autenticado de apresentação e os comandos de voz
+que geram a ação `education_open` estão em
+[Modo Educação](../docs/MODO_EDUCACAO.md).
+
 ### Notificações
 
 | Método | Rota | Descrição |

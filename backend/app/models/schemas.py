@@ -50,7 +50,7 @@ class ChatResponse(BaseModel):
     mode: str
     responses: List[LLMResponse]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction", "CalendarCreateAction"]] = None
+    action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction", "CalendarCreateAction", "EducationOpenAction"]] = None
 
 
 class LoginRequest(BaseModel):
@@ -656,6 +656,13 @@ class CalendarCreateAction(BaseModel):
     provider: Literal["auto", "google", "microsoft"] = "auto"
     description: Optional[str] = None
     location: Optional[str] = None
+    requires_confirmation: bool = True
+
+
+class EducationOpenAction(BaseModel):
+    type: Literal["education_open"] = "education_open"
+    destination: Literal["lesson", "attendance"] = "lesson"
+    reason: str = ""
     requires_confirmation: bool = True
 
 

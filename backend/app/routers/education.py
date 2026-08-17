@@ -2,6 +2,8 @@
 
 from collections import defaultdict
 from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
+import uuid
 from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -81,6 +83,18 @@ router = APIRouter(
 
 
 _WEEKDAYS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
+_PRESENTATION_STUDENTS = (
+    ("DEMO001", "Ana Souza (Demo)"),
+    ("DEMO002", "Bruno Lima (Demo)"),
+    ("DEMO003", "Carla Mendes (Demo)"),
+)
+
+
+def _presentation_id(tutor_id: str, semester: str, kind: str) -> str:
+    return str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"assistant-app:presentation:{tutor_id}:{semester}:{kind}",
+    ))
 
 
 def _discipline_label(item: DisciplineModel) -> str:
@@ -116,6 +130,92 @@ def _schedule_label(schedules: Sequence[ClassScheduleModel]) -> str:
         day = _WEEKDAYS[item.weekday] if 0 <= item.weekday < 7 else "?"
         parts.append(f"{day} {item.start_time}".strip())
     return ", ".join(parts)
+
+
+@router.post("/demo/presentation")
+async def create_presentation_demo(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Creates an idempotent, clearly identified classroom demonstration."""
+    tutor_id = user["tutor_id"]
+    semester = current_semester_code()
+    local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+    discipline_id = _presentation_id(tutor_id, semester, "discipline")
+    discipline = await db.get(DisciplineModel, discipline_id)
+    discipline_created = discipline is None
+    if discipline is None:
+        discipline = DisciplineModel(
+            id=discipline_id,
+            tutor_id=tutor_id,
+            code="DEMO-IA",
+            name="Inteligencia Artificial Aplicada",
+            semester=semester,
+            active=True,
+        )
+        db.add(discipline)
+
+    class_id = _presentation_id(tutor_id, semester, "class")
+    group = await db.get(ClassGroupModel, class_id)
+    class_created = group is None
+    if group is None:
+        group = ClassGroupModel(
+            id=class_id,
+            tutor_id=tutor_id,
+            code=f"DEMO-{semester}",
+            name="Turma de apresentacao",
+            discipline_id=discipline_id,
+            discipline="DEMO-IA - Inteligencia Artificial Aplicada",
+            semester=semester,
+            active=True,
+        )
+        db.add(group)
+
+    schedule_id = _presentation_id(
+        tutor_id, semester, f"schedule-{local_now.weekday()}"
+    )
+    if await db.get(ClassScheduleModel, schedule_id) is None:
+        db.add(ClassScheduleModel(
+            id=schedule_id,
+            class_group_id=class_id,
+            weekday=local_now.weekday(),
+            start_time="19:00",
+            end_time="21:00",
+        ))
+
+    students_created = 0
+    for enrollment, name in _PRESENTATION_STUDENTS:
+        student_id = _presentation_id(tutor_id, semester, f"student-{enrollment}")
+        if await db.get(StudentModel, student_id) is not None:
+            continue
+        db.add(StudentModel(
+            id=student_id,
+            tutor_id=tutor_id,
+            name=name,
+            class_id=class_id,
+            class_group=f"DEMO-{semester} Turma de apresentacao",
+            discipline="DEMO-IA - Inteligencia Artificial Aplicada",
+            external_id=enrollment,
+            aliases=[],
+            notes="Dado ficticio criado para demonstracao.",
+            active=True,
+        ))
+        students_created += 1
+
+    await db.commit()
+    return {
+        "discipline_id": discipline_id,
+        "class_id": class_id,
+        "semester": semester,
+        "discipline_created": discipline_created,
+        "class_created": class_created,
+        "students_created": students_created,
+        "message": (
+            f"Demonstracao pronta: DEMO-IA, turma DEMO-{semester}, "
+            "com 3 alunos ficticios e horario no dia de hoje."
+        ),
+    }
 
 
 def _class_response(

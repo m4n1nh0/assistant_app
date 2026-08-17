@@ -161,6 +161,12 @@ temporizadores duplicados nas atualizações periódicas. A interface mostra o
 aviso visual; Telegram e WhatsApp são enviados somente pelo scheduler do
 backend para não duplicar mensagens quando o aplicativo está aberto.
 
+Em **1. Turmas**, **Criar exemplo para apresentação** prepara uma disciplina,
+uma turma do semestre corrente e três alunos fictícios sem duplicar registros.
+Comandos falados como `Dani, vamos iniciar a aula` e `Dani, faça a chamada dos
+alunos` passam pelo grafo do backend; após confirmação, a interface abre a aba
+de gravação ou presença. Veja o guia [Modo Educação](../docs/MODO_EDUCACAO.md).
+
 ## Ações Locais E Segurança
 
 O backend pode devolver propostas tipadas para diagnósticos, scripts, inspeção

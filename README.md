@@ -342,7 +342,8 @@ conectados, ferramentas disponiveis e o provedor de embeddings ativo.
 
 Grava a aula em blocos, transcreve cada bloco, indexa a transcricao no Qdrant e
 gera o resumo sob demanda. Acessivel pelo botao "Modo Aula" no painel esquerdo
-da interface.
+da interface. O guia operacional está em
+[Modo Educação](docs/MODO_EDUCACAO.md).
 
 As abas seguem a ordem de uso — `1. TURMAS`, `2. GRAVAR AULA`, `3. PONTUACOES`,
 `4. HISTORICO`, `5. PRESENCA` — porque o cadastro precede a gravacao: e ele que ancora os nomes
@@ -353,6 +354,16 @@ trecho seguinte traz o registro. O `4. HISTORICO` lista as aulas do periodo,
 mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema,
 turmas e cada trecho transcrito — inclusive de aula ja encerrada. De la tambem
 se pede o resumo de uma aula antiga e se exporta o resultado em PDF.
+
+Pedidos falados ou digitados como `Dani, vamos iniciar a aula` e `Dani, faça a
+chamada dos alunos` viram uma ação estruturada do grafo. A interface sugere
+abrir o Modo Aula diretamente em `2. GRAVAR AULA` ou `5. PRESENCA`; somente a
+aba é aberta após confirmação, sem iniciar gravação ou QR automaticamente.
+
+Para demonstrações, `1. TURMAS` oferece **Criar exemplo para apresentação**.
+O backend cria uma disciplina, uma turma do semestre atual, horário no dia da
+semana corrente e três alunos fictícios. A operação é vinculada ao professor e
+idempotente.
 
 #### Semestre, disciplina, turma e horario
 
@@ -675,6 +686,7 @@ Endpoints principais:
 | `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
 | `GET /education/disciplines` | Disciplinas por status/semestre, com total de turmas |
+| `POST /education/demo/presentation` | Cria disciplina, turma, horário e alunos fictícios sem duplicar |
 | `POST /education/disciplines` | Cria a disciplina (semestre, codigo e nome) |
 | `PATCH /education/disciplines/{id}` | Renomeia, move de semestre, encerra ou reabre |
 | `GET /education/semesters` | Periodos existentes e totais de disciplinas/turmas |

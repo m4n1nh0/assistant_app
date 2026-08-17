@@ -40,6 +40,16 @@ class EducationService {
 
   // --- Disciplinas ---------------------------------------------------------
 
+  Future<Map<String, dynamic>> createPresentationDemo() async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/demo/presentation'),
+      headers: _headers,
+    );
+    return Map<String, dynamic>.from(
+      _decode(response) as Map<dynamic, dynamic>,
+    );
+  }
+
   Future<List<Discipline>> listDisciplines({
     bool activeOnly = true,
     String? semester,
