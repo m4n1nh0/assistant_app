@@ -727,6 +727,64 @@ class StudentBulkDeleteResponse(BaseModel):
     deleted: int
 
 
+class AttendanceSessionCreate(BaseModel):
+    class_id: str
+    attendance_date: Optional[str] = None
+    duration_minutes: int = Field(default=15, ge=1, le=180)
+    title: str = Field(default="", max_length=255)
+    lesson_id: Optional[str] = None
+
+
+class AttendanceRecordCreate(BaseModel):
+    enrollment: str = Field(min_length=1, max_length=80)
+
+
+class AttendanceRecordResponse(BaseModel):
+    id: str
+    student_id: str
+    enrollment: str
+    student_name: str
+    source: str
+    checked_in_at: datetime
+
+
+class AttendanceStudentResponse(BaseModel):
+    student_id: str
+    enrollment: str
+    student_name: str
+
+
+class AttendanceSessionResponse(BaseModel):
+    id: str
+    class_id: str
+    class_label: str
+    discipline: str
+    semester: str = ""
+    attendance_date: str
+    title: str = ""
+    lesson_id: Optional[str] = None
+    opened_at: datetime
+    expires_at: datetime
+    closed_at: Optional[datetime] = None
+    open: bool
+    check_in_url: str = ""
+    check_in_path: str = ""
+    expected_count: int = 0
+    present_count: int = 0
+    records: List[AttendanceRecordResponse] = Field(default_factory=list)
+    absent_students: List[AttendanceStudentResponse] = Field(default_factory=list)
+
+
+class AttendanceReportResponse(BaseModel):
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    class_id: Optional[str] = None
+    session_count: int = 0
+    expected_total: int = 0
+    present_total: int = 0
+    sessions: List[AttendanceSessionResponse] = Field(default_factory=list)
+
+
 class LessonCreate(BaseModel):
     discipline: str
     semester: str = ""

@@ -15,6 +15,7 @@ import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
 import '../utils/theme.dart';
+import 'attendance_tab.dart';
 
 /// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
 /// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
@@ -88,7 +89,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 4,
+                  length: 5,
                   initialIndex: initialTab,
                   child: Column(
                     children: [
@@ -109,6 +110,9 @@ class _EducationDialogState extends State<EducationDialog> {
                           Tab(
                               icon: Icon(Icons.history, size: 17),
                               text: '4. HISTORICO'),
+                          Tab(
+                              icon: Icon(Icons.how_to_reg_outlined, size: 17),
+                              text: '5. PRESENCA'),
                         ],
                       ),
                       Expanded(
@@ -118,6 +122,7 @@ class _EducationDialogState extends State<EducationDialog> {
                             _LessonTab(classes: _classes),
                             _PointsTab(classes: _classes),
                             _HistoryTab(classes: _classes),
+                            AttendanceTab(classes: _classes),
                           ],
                         ),
                       ),

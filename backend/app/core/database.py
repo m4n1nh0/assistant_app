@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     Float,
+    UniqueConstraint,
     inspect,
     select,
     text,
@@ -331,6 +332,57 @@ class StudentModel(Base):
     notes       = Column(Text, nullable=True)
     active      = Column(Boolean, nullable=False, default=True)
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AttendanceSessionModel(Base):
+    """Janela temporaria de chamada aberta pelo professor para uma turma."""
+
+    __tablename__ = "attendance_sessions"
+    id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id        = Column(String(64), nullable=False, index=True)
+    class_group_id  = Column(String(64), nullable=False, index=True)
+    class_label     = Column(String(180), nullable=False, default="")
+    discipline      = Column(String(180), nullable=False, default="", index=True)
+    semester        = Column(String(16), nullable=False, default="", index=True)
+    lesson_id       = Column(String(64), nullable=True, index=True)
+    attendance_date = Column(String(10), nullable=False, index=True)
+    title           = Column(String(255), nullable=False, default="")
+    token_hash      = Column(String(64), nullable=False, unique=True, index=True)
+    expected_count  = Column(Integer, nullable=False, default=0)
+    opened_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    expires_at      = Column(DateTime, nullable=False, index=True)
+    closed_at       = Column(DateTime, nullable=True)
+
+
+class AttendanceRecordModel(Base):
+    """Presenca confirmada, com copia do nome/matricula para manter o historico."""
+
+    __tablename__ = "attendance_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "student_id",
+            name="uq_attendance_record_session_student",
+        ),
+    )
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id    = Column(String(64), nullable=False, index=True)
+    student_id    = Column(String(64), nullable=False, index=True)
+    enrollment    = Column(String(80), nullable=False)
+    student_name  = Column(String(180), nullable=False)
+    source        = Column(String(32), nullable=False, default="qr")
+    checked_in_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class AttendanceRosterModel(Base):
+    """Foto da lista no momento da chamada, inclusive para calcular faltas depois."""
+
+    __tablename__ = "attendance_rosters"
+    id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id   = Column(String(64), nullable=False, index=True)
+    student_id   = Column(String(64), nullable=False, index=True)
+    enrollment   = Column(String(80), nullable=False, default="")
+    student_name = Column(String(180), nullable=False)
 
 
 class LessonModel(Base):

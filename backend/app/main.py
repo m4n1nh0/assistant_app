@@ -27,6 +27,7 @@ from .routers.routes import (
 from .routers.system import router as system_router
 from .routers.tutor import router as tutor_router
 from .routers.education import router as education_router
+from .routers.attendance import router as attendance_router
 from .routers.launcher import router as launcher_router
 from .routers.desktop import router as desktop_router
 from .routers.computer import router as computer_router
@@ -34,6 +35,13 @@ from .services.qdrant_service import ensure_collections, ensure_lesson_collectio
 from .services.embedding_service import describe as embedding_describe
 
 settings = get_settings()
+
+
+def _safe_request_path(path: str) -> str:
+    attendance_prefix = "/education/attendance/check-in/"
+    if path.startswith(attendance_prefix):
+        return f"{attendance_prefix}[token]"
+    return path
 
 
 class _HealthAccessLogFilter(logging.Filter):
@@ -146,19 +154,20 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     started = time.perf_counter()
+    request_path = _safe_request_path(request.url.path)
     try:
         response = await call_next(request)
     except Exception:
         duration_ms = (time.perf_counter() - started) * 1000
         logger.exception(
-            f"{client_ip(request)} | {request.method} {request.url.path} "
+            f"{client_ip(request)} | {request.method} {request_path} "
             f"-> 500 ({duration_ms:.1f}ms)"
         )
         raise
     if request.url.path not in ("/health", "/health/live"):
         duration_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            f"{client_ip(request)} | {request.method} {request.url.path} "
+            f"{client_ip(request)} | {request.method} {request_path} "
             f"-> {response.status_code} ({duration_ms:.1f}ms)"
         )
     return response
@@ -169,6 +178,7 @@ app.include_router(chat_router)
 app.include_router(ws_router)
 app.include_router(tutor_router)
 app.include_router(education_router)
+app.include_router(attendance_router)
 app.include_router(launcher_router)
 app.include_router(memory_router)
 app.include_router(automations_router)

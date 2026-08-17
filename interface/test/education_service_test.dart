@@ -492,4 +492,80 @@ void main() {
       );
     });
   });
+
+  group('AttendanceSession', () {
+    test('parses present and absent students from a call', () {
+      final session = AttendanceSession.fromJson({
+        'id': 'a1',
+        'class_id': 'c1',
+        'class_label': '3001 Presencial',
+        'discipline': 'Banco de Dados',
+        'semester': '2026.2',
+        'attendance_date': '2026-08-16',
+        'open': true,
+        'check_in_url': 'https://backend.test/check-in/token',
+        'expected_count': 2,
+        'present_count': 1,
+        'records': [
+          {
+            'id': 'r1',
+            'student_id': 's1',
+            'enrollment': '2026001',
+            'student_name': 'Ana',
+            'source': 'qr',
+            'checked_in_at': '2026-08-16T18:30:00Z',
+          }
+        ],
+        'absent_students': [
+          {
+            'student_id': 's2',
+            'enrollment': '2026002',
+            'student_name': 'Bruno',
+          }
+        ],
+      });
+
+      expect(session.records.single.studentName, 'Ana');
+      expect(session.absentStudents.single.studentName, 'Bruno');
+      expect(session.absentCount, 1);
+      expect(session.presenceRate, .5);
+      expect(session.open, isTrue);
+    });
+
+    test('uses the configured public backend origin for the QR link', () async {
+      final service = EducationService(
+        ApiService(backendUrl: 'https://public-backend.test'),
+      );
+      final client = MockClient(
+        (_) async => http.Response(
+          '{'
+          '"id":"a1",'
+          '"class_id":"c1",'
+          '"class_label":"3001",'
+          '"discipline":"Banco de Dados",'
+          '"attendance_date":"2026-08-16",'
+          '"opened_at":"2026-08-16T18:00:00Z",'
+          '"expires_at":"2026-08-16T18:15:00Z",'
+          '"open":true,'
+          '"check_in_url":"http://internal:8000/education/attendance/check-in/t",'
+          '"check_in_path":"/education/attendance/check-in/t"'
+          '}',
+          200,
+        ),
+      );
+
+      final session = await http.runWithClient(
+        () => service.createAttendanceSession(
+          classId: 'c1',
+          attendanceDate: '2026-08-16',
+        ),
+        () => client,
+      );
+
+      expect(
+        session.checkInUrl,
+        'https://public-backend.test/education/attendance/check-in/t',
+      );
+    });
+  });
 }

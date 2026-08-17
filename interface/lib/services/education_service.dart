@@ -112,11 +112,15 @@ class EducationService {
 
   // --- Turmas --------------------------------------------------------------
 
-  Future<List<ClassGroup>> listClasses({String? discipline}) async {
+  Future<List<ClassGroup>> listClasses({
+    String? discipline,
+    bool activeOnly = true,
+  }) async {
     final uri = Uri.parse('$_baseUrl/education/classes').replace(
       queryParameters: {
         if (discipline != null && discipline.isNotEmpty)
           'discipline': discipline,
+        'active_only': '$activeOnly',
       },
     );
     final response = await http.get(uri, headers: _headers);
@@ -392,6 +396,7 @@ class EducationService {
     String? classId,
     String? classGroup,
     String? discipline,
+    bool activeOnly = true,
   }) async {
     final uri = Uri.parse('$_baseUrl/education/students').replace(
       queryParameters: {
@@ -400,6 +405,7 @@ class EducationService {
           'class_group': classGroup,
         if (discipline != null && discipline.isNotEmpty)
           'discipline': discipline,
+        'active_only': '$activeOnly',
       },
     );
     final response = await http.get(uri, headers: _headers);
@@ -506,6 +512,121 @@ class EducationService {
       return StudentBulkDeleteResult(requested: ids.length, deleted: deleted);
     }
     return StudentBulkDeleteResult.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
+  }
+
+  // --- Chamada e presenca --------------------------------------------------
+
+  Future<AttendanceSession> createAttendanceSession({
+    required String classId,
+    required String attendanceDate,
+    int durationMinutes = 15,
+    String title = '',
+    String? lessonId,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/attendance/sessions'),
+      headers: _headers,
+      body: jsonEncode({
+        'class_id': classId,
+        'attendance_date': attendanceDate,
+        'duration_minutes': durationMinutes,
+        'title': title,
+        if (lessonId != null) 'lesson_id': lessonId,
+      }),
+    );
+    final data = _decode(response) as Map<String, dynamic>;
+    final checkInPath = data['check_in_path']?.toString() ?? '';
+    if (checkInPath.startsWith('/')) {
+      data['check_in_url'] = '$_baseUrl$checkInPath';
+    }
+    return AttendanceSession.fromJson(data);
+  }
+
+  Future<List<AttendanceSession>> listAttendanceSessions({
+    String? classId,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/attendance/sessions').replace(
+      queryParameters: {
+        if (classId != null) 'class_id': classId,
+        if (dateFrom != null) 'date_from': dateFrom,
+        if (dateTo != null) 'date_to': dateTo,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    return (_decode(response) as List<dynamic>)
+        .map((item) => AttendanceSession.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<AttendanceSession> getAttendanceSession(String sessionId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/attendance/sessions/$sessionId'),
+      headers: _headers,
+    );
+    return AttendanceSession.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AttendanceSession> closeAttendanceSession(String sessionId) async {
+    final response = await http.post(
+      Uri.parse(
+        '$_baseUrl/education/attendance/sessions/$sessionId/close',
+      ),
+      headers: _headers,
+    );
+    return AttendanceSession.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AttendanceSession> addManualAttendance(
+    String sessionId,
+    String enrollment,
+  ) async {
+    final response = await http.post(
+      Uri.parse(
+        '$_baseUrl/education/attendance/sessions/$sessionId/records',
+      ),
+      headers: _headers,
+      body: jsonEncode({'enrollment': enrollment}),
+    );
+    return AttendanceSession.fromJson(
+      _decode(response) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> deleteAttendanceRecord(
+    String sessionId,
+    String recordId,
+  ) async {
+    final response = await http.delete(
+      Uri.parse(
+        '$_baseUrl/education/attendance/sessions/$sessionId/records/$recordId',
+      ),
+      headers: _headers,
+    );
+    _decode(response);
+  }
+
+  Future<AttendanceReport> attendanceReport({
+    String? classId,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/attendance/report').replace(
+      queryParameters: {
+        if (classId != null) 'class_id': classId,
+        if (dateFrom != null) 'date_from': dateFrom,
+        if (dateTo != null) 'date_to': dateTo,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    return AttendanceReport.fromJson(
       _decode(response) as Map<String, dynamic>,
     );
   }
@@ -1010,6 +1131,159 @@ class StudentBulkDeleteResult {
       StudentBulkDeleteResult(
         requested: _toInt(json['requested']),
         deleted: _toInt(json['deleted']),
+      );
+}
+
+class AttendanceStudent {
+  final String studentId;
+  final String enrollment;
+  final String studentName;
+
+  const AttendanceStudent({
+    required this.studentId,
+    required this.enrollment,
+    required this.studentName,
+  });
+
+  factory AttendanceStudent.fromJson(Map<String, dynamic> json) =>
+      AttendanceStudent(
+        studentId: json['student_id']?.toString() ?? '',
+        enrollment: json['enrollment']?.toString() ?? '',
+        studentName: json['student_name']?.toString() ?? '',
+      );
+}
+
+class AttendanceRecord extends AttendanceStudent {
+  final String id;
+  final String source;
+  final DateTime? checkedInAt;
+
+  const AttendanceRecord({
+    required this.id,
+    required super.studentId,
+    required super.enrollment,
+    required super.studentName,
+    required this.source,
+    this.checkedInAt,
+  });
+
+  factory AttendanceRecord.fromJson(Map<String, dynamic> json) =>
+      AttendanceRecord(
+        id: json['id']?.toString() ?? '',
+        studentId: json['student_id']?.toString() ?? '',
+        enrollment: json['enrollment']?.toString() ?? '',
+        studentName: json['student_name']?.toString() ?? '',
+        source: json['source']?.toString() ?? '',
+        checkedInAt: _toDate(json['checked_in_at']),
+      );
+}
+
+class AttendanceSession {
+  final String id;
+  final String classId;
+  final String classLabel;
+  final String discipline;
+  final String semester;
+  final String attendanceDate;
+  final String title;
+  final String? lessonId;
+  final DateTime? openedAt;
+  final DateTime? expiresAt;
+  final DateTime? closedAt;
+  final bool open;
+  final String checkInUrl;
+  final int expectedCount;
+  final int presentCount;
+  final List<AttendanceRecord> records;
+  final List<AttendanceStudent> absentStudents;
+
+  const AttendanceSession({
+    required this.id,
+    required this.classId,
+    required this.classLabel,
+    required this.discipline,
+    required this.attendanceDate,
+    required this.open,
+    this.semester = '',
+    this.title = '',
+    this.lessonId,
+    this.openedAt,
+    this.expiresAt,
+    this.closedAt,
+    this.checkInUrl = '',
+    this.expectedCount = 0,
+    this.presentCount = 0,
+    this.records = const [],
+    this.absentStudents = const [],
+  });
+
+  int get absentCount => (expectedCount - presentCount).clamp(0, expectedCount);
+
+  double get presenceRate =>
+      expectedCount == 0 ? 0 : presentCount / expectedCount;
+
+  factory AttendanceSession.fromJson(Map<String, dynamic> json) =>
+      AttendanceSession(
+        id: json['id']?.toString() ?? '',
+        classId: json['class_id']?.toString() ?? '',
+        classLabel: json['class_label']?.toString() ?? '',
+        discipline: json['discipline']?.toString() ?? '',
+        semester: json['semester']?.toString() ?? '',
+        attendanceDate: json['attendance_date']?.toString() ?? '',
+        title: json['title']?.toString() ?? '',
+        lessonId: json['lesson_id']?.toString(),
+        openedAt: _toDate(json['opened_at']),
+        expiresAt: _toDate(json['expires_at']),
+        closedAt: _toDate(json['closed_at']),
+        open: json['open'] == true,
+        checkInUrl: json['check_in_url']?.toString() ?? '',
+        expectedCount: _toInt(json['expected_count']),
+        presentCount: _toInt(json['present_count']),
+        records: ((json['records'] as List<dynamic>?) ?? [])
+            .map((item) =>
+                AttendanceRecord.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        absentStudents: ((json['absent_students'] as List<dynamic>?) ?? [])
+            .map((item) =>
+                AttendanceStudent.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class AttendanceReport {
+  final String? dateFrom;
+  final String? dateTo;
+  final String? classId;
+  final int sessionCount;
+  final int expectedTotal;
+  final int presentTotal;
+  final List<AttendanceSession> sessions;
+
+  const AttendanceReport({
+    this.dateFrom,
+    this.dateTo,
+    this.classId,
+    this.sessionCount = 0,
+    this.expectedTotal = 0,
+    this.presentTotal = 0,
+    this.sessions = const [],
+  });
+
+  double get presenceRate =>
+      expectedTotal == 0 ? 0 : presentTotal / expectedTotal;
+
+  factory AttendanceReport.fromJson(Map<String, dynamic> json) =>
+      AttendanceReport(
+        dateFrom: json['date_from']?.toString(),
+        dateTo: json['date_to']?.toString(),
+        classId: json['class_id']?.toString(),
+        sessionCount: _toInt(json['session_count']),
+        expectedTotal: _toInt(json['expected_total']),
+        presentTotal: _toInt(json['present_total']),
+        sessions: ((json['sessions'] as List<dynamic>?) ?? [])
+            .map((item) =>
+                AttendanceSession.fromJson(item as Map<String, dynamic>))
+            .toList(),
       );
 }
 

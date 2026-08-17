@@ -318,7 +318,7 @@ gera o resumo sob demanda. Acessivel pelo botao "Modo Aula" no painel esquerdo
 da interface.
 
 As abas seguem a ordem de uso — `1. TURMAS`, `2. GRAVAR AULA`, `3. PONTUACOES`,
-`4. HISTORICO` — porque o cadastro precede a gravacao: e ele que ancora os nomes
+`4. HISTORICO`, `5. PRESENCA` — porque o cadastro precede a gravacao: e ele que ancora os nomes
 ouvidos no audio. Sem turma cadastrada o dialogo abre no cadastro; com turma,
 abre direto na gravacao. A pontuacao nao tem botao: o professor cita o aluno em
 voz alta durante a aula ("meio ponto extra para a Ana pela participacao") e o
@@ -365,6 +365,11 @@ erDiagram
     lessons ||--o{ lesson_segments : "transcricao"
     lessons ||--o{ lesson_points : ""
     students ||--o{ lesson_points : "student_id"
+    class_groups ||--o{ attendance_sessions : "chamadas"
+    attendance_sessions ||--o{ attendance_rosters : "lista congelada"
+    attendance_sessions ||--o{ attendance_records : "presentes"
+    students ||--o{ attendance_rosters : "student_id"
+    students ||--o{ attendance_records : "student_id"
 
     disciplines {
         string id PK
@@ -392,6 +397,26 @@ erDiagram
         int sequence
         text text
         string embedding_model
+    }
+    attendance_sessions {
+        string id PK
+        string class_group_id
+        string attendance_date
+        string token_hash "QR temporario"
+        datetime expires_at
+        int expected_count
+    }
+    attendance_rosters {
+        string session_id
+        string student_id
+        string enrollment
+        string student_name
+    }
+    attendance_records {
+        string session_id
+        string student_id
+        string source "qr ou manual"
+        datetime checked_in_at
     }
 ```
 
@@ -431,6 +456,43 @@ flowchart LR
     Edit --> Reembed[Substitui vetor no Qdrant]
     Edit --> Invalidate[Invalida resumo anterior]
 ```
+
+#### Chamada por QR Code e relatorios
+
+Na aba `5. PRESENCA`, o professor escolhe a turma, define por quantos minutos a
+chamada ficara aberta e gera um QR Code. Cada abertura usa um token aleatorio de
+alta entropia; o banco guarda apenas seu hash. O QR aponta para uma pagina
+publica e responsiva do proprio backend, onde o aluno informa a matricula. O
+link nao contem nomes, matriculas, turma ou credenciais do professor.
+
+Ao abrir a chamada, `attendance_rosters` recebe uma copia da lista atual. Essa
+foto preserva o calculo de presentes e ausentes mesmo que um aluno seja movido
+ou excluido depois. Reenviar a mesma matricula e idempotente e uma restricao no
+banco impede duplicidade ate quando chegam duas confirmacoes simultaneas. O
+professor acompanha a lista atualizada a cada cinco segundos, pode marcar ou
+remover uma presenca manualmente e encerrar o QR antes do vencimento.
+
+```mermaid
+sequenceDiagram
+    participant P as Professor
+    participant A as Assistente
+    participant B as Backend
+    participant E as Estudante
+    P->>A: Escolhe turma e gera QR
+    A->>B: POST /education/attendance/sessions
+    B-->>A: URL temporaria + lista congelada
+    E->>B: Abre QR e informa matricula
+    B->>B: Valida token, prazo e turma
+    B-->>E: Presenca confirmada
+    A->>B: GET /sessions/{id} a cada 5s
+    B-->>A: Presentes e ausentes
+    P->>A: Visualiza relatorio em PDF
+```
+
+O relatorio educacional em PDF passa por uma tela de preview e consolida tres
+quadros: horarios de aula por dia e disciplina, presencas/ausencias no periodo e
+listagem de disciplinas, turmas e alunos. O documento usa os mesmos dados do
+cadastro e permite escolher o local de salvamento somente depois da conferencia.
 
 Pontos de atencao do fluxo:
 
@@ -549,6 +611,12 @@ Endpoints principais:
 | `GET /education/students` | Alunos, filtraveis por `class_id` |
 | `POST /education/students/import` | Importacao de alunos por matricula e nome |
 | `POST /education/students/bulk-delete` | Exclui varios alunos da turma em uma operacao |
+| `POST /education/attendance/sessions` | Abre chamada temporaria e devolve a URL do QR |
+| `GET /education/attendance/sessions` | Lista chamadas, presentes e ausentes por periodo/turma |
+| `POST /education/attendance/sessions/{id}/close` | Encerra a chamada antes do vencimento |
+| `POST /education/attendance/sessions/{id}/records` | Registra presenca manual pelo professor |
+| `GET/POST /education/attendance/check-in/{token}` | Pagina publica e confirmacao por matricula |
+| `GET /education/attendance/report` | Consolida totais e chamadas para o relatorio |
 | `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
 | `GET /education/index-status` | Quantos trechos ainda faltam no indice |
 | `POST /education/reindex` | Regrava no Qdrant os trechos lidos do MySQL |
