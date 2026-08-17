@@ -23,6 +23,7 @@ import '../services/neural_tts_service.dart';
 import '../services/neural_audio_player.dart';
 import '../services/speech_text_formatter.dart';
 import '../services/shortcut_matching.dart';
+import '../services/wake_word_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../utils/chat_input_shortcuts.dart';
@@ -33,13 +34,6 @@ class ChatPanel extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<ChatPanel> createState() => _ChatPanelState();
-}
-
-class _VoiceCommand {
-  final String text;
-  final bool usedWakeWord;
-
-  const _VoiceCommand(this.text, this.usedWakeWord);
 }
 
 class _DetectedScript {
@@ -633,7 +627,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
 
   String _voiceReadyMessage() {
     final assistantName = ref.read(configProvider).assistantName.trim();
-    final wakeName = assistantName.isEmpty ? 'Dani' : assistantName;
+    final wakeName = assistantName.isEmpty ? 'Assistente' : assistantName;
     final wakeHint = 'Diga "$wakeName," antes do comando.';
     return 'Microfone ativo para instrucoes por voz. $wakeHint Clique em PARAR para desligar.';
   }
@@ -724,19 +718,19 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       final transcript = await api.transcribeAudio(
         await audioFile.readAsBytes(),
         language: _whisperLanguage(config.language),
+        assistantName: config.assistantName,
       );
 
       if (transcript.trim().isEmpty) return;
 
-      final command =
-          _voiceCommandFromTranscript(transcript, config.assistantName);
+      final command = parseWakeWordCommand(transcript, config.assistantName);
       final now = DateTime.now();
       final isArmed = _wakeWordArmedUntil?.isAfter(now) ?? false;
       if (command.usedWakeWord || isArmed) {
         _showVoiceDraft(transcript);
       } else {
         _setVoiceStatus(
-          'Aguardando "Dani". Ouvi: ${_shortVoiceText(transcript)}',
+          'Aguardando "${config.assistantName}". Ouvi: ${_shortVoiceText(transcript)}',
           clearAfter: true,
         );
       }
@@ -781,8 +775,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
 
     _wakePromptAttempts++;
     _wakeWordArmedUntil = DateTime.now().add(const Duration(seconds: 8));
+    final assistantName = ref.read(configProvider).assistantName.trim();
+    final wakeName = assistantName.isEmpty ? 'Assistente' : assistantName;
     final prompt = _wakePromptAttempts == 1
-        ? 'Dani ouviu. Qual e a instrucao?'
+        ? '$wakeName ouviu. Qual e a instrucao?'
         : 'Qual e a instrucao?';
     _setVoiceStatus(
       '$prompt ($_wakePromptAttempts/$_maxWakePromptRetries)',
@@ -813,6 +809,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       final transcript = await api.transcribeAudio(
         await audioFile.readAsBytes(),
         language: _whisperLanguage(config.language),
+        assistantName: config.assistantName,
       );
 
       if (transcript.trim().isEmpty) {
@@ -853,7 +850,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     _showVoiceDraft(raw);
 
     final config = ref.read(configProvider);
-    final command = _voiceCommandFromTranscript(raw, config.assistantName);
+    final command = parseWakeWordCommand(raw, config.assistantName);
     if (requireWakeWord && !command.usedWakeWord) {
       return;
     }
@@ -877,197 +874,6 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     _inputCtrl.text = raw;
     _inputCtrl.selection = TextSelection.collapsed(offset: raw.length);
   }
-
-  _VoiceCommand _voiceCommandFromTranscript(
-      String transcript, String assistantName) {
-    final rawWords = _voiceWords(transcript);
-    if (rawWords.isEmpty) return _VoiceCommand(transcript, false);
-    for (final nameTokens in _wakeNameTokenSets(assistantName)) {
-      final maxStart = rawWords.length - nameTokens.length;
-      for (var start = 0; start <= maxStart && start <= 6; start++) {
-        final candidate = rawWords
-            .skip(start)
-            .take(nameTokens.length)
-            .map(_normalizeVoiceToken)
-            .toList();
-        if (!_sameTokens(candidate, nameTokens)) continue;
-
-        final prefix = rawWords.take(start).map(_normalizeVoiceToken).toList();
-        final prefixIsGreeting = prefix.isEmpty ||
-            prefix.every((word) => {
-                  'a',
-                  'o',
-                  'ok',
-                  'okay',
-                  'oi',
-                  'ola',
-                  'hey',
-                  'ei',
-                  'certo',
-                  'por',
-                  'favor',
-                }.contains(word));
-        if (!prefixIsGreeting) continue;
-
-        final command = rawWords.skip(start + nameTokens.length).join(' ');
-        return _VoiceCommand(_trimVoiceCommand(command), true);
-      }
-    }
-
-    return _VoiceCommand(transcript, false);
-  }
-
-  List<List<String>> _wakeNameTokenSets(String assistantName) {
-    final names = <String>[
-      assistantName,
-      'Dani',
-      'Dany',
-    ];
-    final seen = <String>{};
-    final sets = <List<String>>[];
-    for (final name in names) {
-      final tokens = _normalizedWords(name);
-      if (tokens.isEmpty) continue;
-      final key = tokens.join(' ');
-      if (seen.add(key)) sets.add(tokens);
-    }
-    return sets;
-  }
-
-  List<String> _voiceWords(String text) {
-    final words = <String>[];
-    final buffer = StringBuffer();
-
-    void flush() {
-      final word = buffer.toString().trim();
-      if (word.isNotEmpty) words.add(word);
-      buffer.clear();
-    }
-
-    for (final rune in text.runes) {
-      final char = String.fromCharCode(rune);
-      if (_normalizeVoiceToken(char).isEmpty) {
-        flush();
-      } else {
-        buffer.write(char);
-      }
-    }
-    flush();
-    return words;
-  }
-
-  List<String> _normalizedWords(String text) => _voiceWords(text)
-      .map(_normalizeVoiceToken)
-      .where((word) => word.isNotEmpty)
-      .toList();
-
-  bool _sameTokens(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (!_voiceTokenMatches(a[i], b[i])) return false;
-    }
-    return true;
-  }
-
-  bool _voiceTokenMatches(String heard, String expected) {
-    if (heard == expected) return true;
-    if (heard.length >= 4 && expected.length >= 4) {
-      if (heard.contains(expected) || expected.contains(heard)) return true;
-      return _editDistanceAtMostOne(heard, expected);
-    }
-    return false;
-  }
-
-  bool _editDistanceAtMostOne(String a, String b) {
-    if ((a.length - b.length).abs() > 1) return false;
-    var i = 0;
-    var j = 0;
-    var edits = 0;
-    while (i < a.length && j < b.length) {
-      if (a[i] == b[j]) {
-        i++;
-        j++;
-        continue;
-      }
-      edits++;
-      if (edits > 1) return false;
-      if (a.length > b.length) {
-        i++;
-      } else if (b.length > a.length) {
-        j++;
-      } else {
-        i++;
-        j++;
-      }
-    }
-    if (i < a.length || j < b.length) edits++;
-    return edits <= 1;
-  }
-
-  String _normalizeVoiceToken(String text) {
-    const accentRunes = {
-      0x00e1: 'a',
-      0x00e0: 'a',
-      0x00e2: 'a',
-      0x00e3: 'a',
-      0x00e4: 'a',
-      0x00e9: 'e',
-      0x00e8: 'e',
-      0x00ea: 'e',
-      0x00eb: 'e',
-      0x00ed: 'i',
-      0x00ec: 'i',
-      0x00ee: 'i',
-      0x00ef: 'i',
-      0x00f3: 'o',
-      0x00f2: 'o',
-      0x00f4: 'o',
-      0x00f5: 'o',
-      0x00f6: 'o',
-      0x00fa: 'u',
-      0x00f9: 'u',
-      0x00fb: 'u',
-      0x00fc: 'u',
-      0x00e7: 'c',
-    };
-    const accents = {
-      'á': 'a',
-      'à': 'a',
-      'â': 'a',
-      'ã': 'a',
-      'ä': 'a',
-      'é': 'e',
-      'è': 'e',
-      'ê': 'e',
-      'ë': 'e',
-      'í': 'i',
-      'ì': 'i',
-      'î': 'i',
-      'ï': 'i',
-      'ó': 'o',
-      'ò': 'o',
-      'ô': 'o',
-      'õ': 'o',
-      'ö': 'o',
-      'ú': 'u',
-      'ù': 'u',
-      'û': 'u',
-      'ü': 'u',
-      'ç': 'c',
-    };
-    final buffer = StringBuffer();
-    for (final rune in text.toLowerCase().runes) {
-      final char = String.fromCharCode(rune);
-      buffer.write(accentRunes[rune] ?? accents[char] ?? char);
-    }
-    return buffer
-        .toString()
-        .replaceAll('y', 'i')
-        .replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
-  String _trimVoiceCommand(String text) =>
-      text.trim().replaceFirst(RegExp(r'^[,.:;!?-]+\s*'), '').trim();
 
   Future<void> _sendMessage(
     String text, {

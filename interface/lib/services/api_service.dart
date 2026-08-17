@@ -320,13 +320,54 @@ class ApiService {
       headers: _headers,
       body: jsonEncode(profile),
     );
-    return jsonDecode(r.body) as Map<String, dynamic>;
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    _throwIfHttpError(
+      r,
+      data: data,
+      fallback: 'Falha ao salvar o perfil da assistente',
+    );
+    return data;
   }
 
   Future<Map<String, dynamic>> getTutorProfile(String tutorId) async {
     final r =
         await http.get(Uri.parse('$baseUrl/tutor/$tutorId'), headers: _headers);
-    return jsonDecode(r.body) as Map<String, dynamic>;
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    _throwIfHttpError(
+      r,
+      data: data,
+      fallback: 'Falha ao carregar o perfil da assistente',
+    );
+    return data;
+  }
+
+  Future<Map<String, dynamic>> saveAssistantProfile(
+    CurrentAccount account,
+    AppConfig config, {
+    Map<String, dynamic>? currentProfile,
+  }) async {
+    final profile = currentProfile ?? await getTutorProfile(account.tutorId);
+    final displayName = config.userName.trim().isNotEmpty
+        ? config.userName.trim()
+        : (profile['display_name']?.toString().trim().isNotEmpty == true
+            ? profile['display_name'].toString().trim()
+            : account.username);
+    return saveTutorProfile({
+      'display_name': displayName,
+      'email': profile['email'] ??
+          (account.email.trim().isEmpty ? null : account.email.trim()),
+      'timezone': profile['timezone']?.toString() ?? 'America/Sao_Paulo',
+      'locale': config.language,
+      'notes': profile['notes']?.toString() ?? '',
+      'assistant_name': config.assistantName.trim().isEmpty
+          ? 'Assistente'
+          : config.assistantName.trim(),
+      'gender': config.assistantGender,
+      'personality': config.personality,
+      'response_mode': config.responseMode,
+      'tts_enabled': config.ttsEnabled,
+      'config': profile['config'] is Map ? profile['config'] : const {},
+    });
   }
 
   Future<List<Map<String, dynamic>>> listMemoryReviews(String tutorId,
@@ -989,8 +1030,11 @@ class ApiService {
     return (jsonDecode(r.body) as Map<String, dynamic>)['ok'] == true;
   }
 
-  Future<String> transcribeAudio(List<int> audioBytes,
-      {String language = 'pt'}) async {
+  Future<String> transcribeAudio(
+    List<int> audioBytes, {
+    String language = 'pt',
+    String assistantName = '',
+  }) async {
     final request =
         http.MultipartRequest('POST', Uri.parse('$baseUrl/voice/transcribe'));
     request.headers
@@ -998,6 +1042,9 @@ class ApiService {
     request.files.add(http.MultipartFile.fromBytes('file', audioBytes,
         filename: 'audio.wav'));
     request.fields['language'] = language;
+    if (assistantName.trim().isNotEmpty) {
+      request.fields['assistant_name'] = assistantName.trim();
+    }
     final response = await request.send();
     final body = await response.stream.bytesToString();
     return (jsonDecode(body) as Map<String, dynamic>)['transcript']

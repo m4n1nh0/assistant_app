@@ -58,9 +58,10 @@ def test_sync_transcribe_uses_vad_and_beam_search(monkeypatch):
 
 
 def test_stt_prompt_anchors_technical_vocabulary():
-    pt = voice_service._stt_prompt("pt")
-    for termo in ("VS Code", "backend", "Railway", "Docker", "Dani"):
+    pt = voice_service._stt_prompt("pt", assistant_name="Hannah")
+    for termo in ("VS Code", "backend", "Railway", "Docker", "Hannah"):
         assert termo in pt
+    assert "Dani" not in pt
 
     en = voice_service._stt_prompt("en")
     assert "VS Code" in en
@@ -124,10 +125,16 @@ def test_sync_tts_prefers_openai_voice_when_configured(monkeypatch):
 def test_sync_transcribe_can_use_openai_when_enabled(monkeypatch):
     calls = {}
 
-    def fake_openai_transcribe(audio_bytes, language, context=""):
+    def fake_openai_transcribe(
+        audio_bytes,
+        language,
+        context="",
+        assistant_name="",
+    ):
         calls["audio_bytes"] = audio_bytes
         calls["language"] = language
         calls["context"] = context
+        calls["assistant_name"] = assistant_name
         return voice_service.STTResponse(
             transcript="abrir calendario",
             confidence=1.0,
@@ -143,11 +150,16 @@ def test_sync_transcribe_can_use_openai_when_enabled(monkeypatch):
         lambda: (_ for _ in ()).throw(AssertionError("local model not expected")),
     )
 
-    result = voice_service._sync_transcribe(b"audio", "pt-BR")
+    result = voice_service._sync_transcribe(
+        b"audio",
+        "pt-BR",
+        assistant_name="Hannah",
+    )
 
     assert result.transcript == "abrir calendario"
     assert calls == {
         "audio_bytes": b"audio",
         "language": "pt-BR",
         "context": "",
+        "assistant_name": "Hannah",
     }

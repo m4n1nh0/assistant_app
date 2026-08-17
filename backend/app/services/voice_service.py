@@ -66,6 +66,7 @@ async def transcribe_audio(
     audio_bytes: bytes,
     language: str = "pt",
     context: str = "",
+    assistant_name: str = "",
 ) -> STTResponse:
     import asyncio
     loop = asyncio.get_running_loop()
@@ -75,6 +76,7 @@ async def transcribe_audio(
         audio_bytes,
         language,
         context,
+        assistant_name,
     )
 
 
@@ -82,6 +84,7 @@ def _sync_transcribe(
     audio_bytes: bytes,
     language: str,
     context: str = "",
+    assistant_name: str = "",
 ) -> STTResponse:
     if not audio_bytes:
         return STTResponse(transcript="", confidence=0.0)
@@ -90,7 +93,12 @@ def _sync_transcribe(
     should_try_openai = provider in {"auto", "openai"} and bool(settings.openai_api_key)
     if should_try_openai:
         try:
-            return _sync_openai_transcribe(audio_bytes, language, context)
+            return _sync_openai_transcribe(
+                audio_bytes,
+                language,
+                context,
+                assistant_name,
+            )
         except Exception as e:
             logger.warning(f"OpenAI STT unavailable, falling back to local Whisper: {e}")
 
@@ -118,7 +126,11 @@ def _sync_transcribe(
             condition_on_previous_text=False,
             # Mesma dica de contexto usada no caminho da OpenAI: ancora nomes de
             # apps e palavras de ativacao que o modelo costuma transcrever errado.
-            initial_prompt=_stt_prompt(whisper_language or "pt", context),
+            initial_prompt=_stt_prompt(
+                whisper_language or "pt",
+                context,
+                assistant_name,
+            ),
             temperature=0.0,
             no_speech_threshold=0.55,
             compression_ratio_threshold=2.4,
@@ -193,6 +205,7 @@ def _sync_openai_transcribe(
     audio_bytes: bytes,
     language: str,
     context: str = "",
+    assistant_name: str = "",
 ) -> STTResponse:
     from openai import OpenAI
 
@@ -212,7 +225,11 @@ def _sync_openai_transcribe(
         }
         if whisper_language:
             kwargs["language"] = whisper_language
-            kwargs["prompt"] = _stt_prompt(whisper_language, context)
+            kwargs["prompt"] = _stt_prompt(
+                whisper_language,
+                context,
+                assistant_name,
+            )
 
         with kwargs["file"] as audio_file:
             kwargs["file"] = audio_file
@@ -302,7 +319,11 @@ def _openai_tts_instructions(language: str) -> str:
     )
 
 
-def _stt_prompt(language: str, context: str = "") -> str:
+def _stt_prompt(
+    language: str,
+    context: str = "",
+    assistant_name: str = "",
+) -> str:
     """Ancora o vocabulario que o usuario realmente fala com a assistente.
 
     Sem essa lista, os termos tecnicos em ingles sao os que mais erram no meio
@@ -311,6 +332,8 @@ def _stt_prompt(language: str, context: str = "") -> str:
     casos, e pesa mais do que aumentar o modelo.
     """
     clean_context = " ".join((context or "").split())[:500]
+    clean_assistant_name = " ".join((assistant_name or "").split())[:80]
+    wake_word = clean_assistant_name or "Assistente"
     if language == "pt" and clean_context:
         return (
             "Transcreva em portugues brasileiro uma aula. Preserve termos "
@@ -324,7 +347,7 @@ def _stt_prompt(language: str, context: str = "") -> str:
             "assistente de desenvolvimento. Vocabulario recorrente: VS Code, "
             "vscode, PyCharm, backend, frontend, deploy, commit, branch, "
             "Railway, Docker, Redis, endpoint, log, script, workspace, "
-            "assistant app. Palavras de ativacao: Dani, Dany. "
+            f"assistant app. Palavra de ativacao: {wake_word}. "
             "Use pontuacao simples e nao traduza nomes de programas."
         )
     if clean_context:
@@ -337,5 +360,5 @@ def _stt_prompt(language: str, context: str = "") -> str:
         "Transcribe spoken commands for a development assistant. Recurring "
         "vocabulary: VS Code, PyCharm, backend, frontend, deploy, commit, "
         "branch, Railway, Docker, Redis, endpoint, log, script, workspace. "
-        "Wake words: Dani, Dany. Keep program names untranslated."
+        f"Wake word: {wake_word}. Keep program names untranslated."
     )

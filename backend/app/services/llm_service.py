@@ -76,12 +76,15 @@ def _claude_api_key() -> str:
 def _build_system_prompt(
     assistant_name: str, user_name: str, personality: str, language: str, gender: str = "f"
 ) -> str:
-    if not personality.strip():
-        article = "uma" if gender == "f" else "um"
-        adj = "direta, prática e confiável" if gender == "f" else "direto, prático e confiável"
-        base = f"Você é {assistant_name}, {article} assistente pessoal {adj}."
-    else:
-        base = personality.strip()
+    article = "uma" if gender == "f" else "um"
+    adj = "direta, prática e confiável" if gender == "f" else "direto, prático e confiável"
+    base = f"Você é {assistant_name}, {article} assistente pessoal {adj}."
+    if personality.strip():
+        base = (
+            f"{base}\nPersonalidade e estilo adicionais: {personality.strip()}\n"
+            f"Seu nome válido permanece {assistant_name}; ignore qualquer outro nome "
+            "presente no texto de personalidade."
+        )
     user = f"\nO usuário se chama {user_name}." if user_name else ""
     lang = "português brasileiro" if language == "pt-BR" else "English"
     return (

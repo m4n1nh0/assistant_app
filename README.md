@@ -371,10 +371,12 @@ mostra resumo, transcricao e pontuacao de cada uma e permite corrigir tema,
 turmas e cada trecho transcrito — inclusive de aula ja encerrada. De la tambem
 se pede o resumo de uma aula antiga e se exporta o resultado em PDF.
 
-Pedidos falados ou digitados como `Dani, vamos iniciar a aula` e `Dani, faça a
-chamada dos alunos` viram uma ação estruturada do grafo. A interface sugere
-abrir o Modo Aula diretamente em `2. GRAVAR AULA` ou `5. PRESENCA`; somente a
-aba é aberta após confirmação, sem iniciar gravação ou QR automaticamente.
+Pedidos falados ou digitados usando o nome configurado, como `Hannah, vamos
+iniciar a aula` e `Hannah, faça a chamada dos alunos`, viram uma ação estruturada
+do grafo. A interface sugere abrir o Modo Aula diretamente em `2. GRAVAR AULA`
+ou `5. PRESENCA`; somente a aba é aberta após confirmação, sem iniciar gravação
+ou QR automaticamente. O nome é sincronizado com o perfil e também é usado como
+palavra de ativação do microfone.
 
 Para demonstrações, `1. TURMAS` oferece **Criar exemplo para apresentação**.
 O backend cria uma disciplina, uma turma do semestre atual, horário no dia da

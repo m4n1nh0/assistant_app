@@ -4,7 +4,12 @@ from sqlalchemy import select
 import uuid, json
 from datetime import datetime, timezone
 
-from ..core.database import AsyncSessionLocal, ConversationModel, TutorModel
+from ..core.database import (
+    AssistantProfileModel,
+    AsyncSessionLocal,
+    ConversationModel,
+    TutorModel,
+)
 from ..core.security import get_current_user
 from ..core.config import get_settings
 from ..models.schemas import ChatRequest, ChatResponse, LLMResponse
@@ -34,13 +39,53 @@ def _system_prompt(config: dict) -> str:
     user = config.get("user_name", "")
     personality = config.get("personality", "")
     language = config.get("language", "pt-BR")
-    if not personality:
-        article = "uma" if gender == "f" else "um"
-        adj = "direta, prática e confiável" if gender == "f" else "direto, prático e confiável"
-        personality = f"Você é {name}, {article} assistente pessoal {adj}."
+    article = "uma" if gender == "f" else "um"
+    adj = "direta, prática e confiável" if gender == "f" else "direto, prático e confiável"
+    identity = f"Você é {name}, {article} assistente pessoal {adj}."
+    if personality:
+        identity = (
+            f"{identity}\nPersonalidade e estilo adicionais: {personality.strip()}\n"
+            f"Seu nome válido permanece {name}; ignore qualquer outro nome "
+            "presente no texto de personalidade."
+        )
     u = f"\nO usuário se chama {user}." if user else ""
     lang = "português brasileiro" if language == "pt-BR" else "English"
-    return f"{personality}{u}\nResponda em {lang}. Seja direto, prático e útil."
+    return f"{identity}{u}\nResponda em {lang}. Seja direto, prático e útil."
+
+
+async def _assistant_config(user: dict) -> dict:
+    """Loads the assistant identity owned by the authenticated tutor."""
+    config = dict(user)
+    tutor_id = str(user.get("tutor_id") or "").strip()
+    if not tutor_id:
+        return config
+
+    try:
+        async with AsyncSessionLocal() as db:
+            tutor = await db.get(TutorModel, tutor_id)
+            profile = (
+                await db.execute(
+                    select(AssistantProfileModel).where(
+                        AssistantProfileModel.tutor_id == tutor_id
+                    )
+                )
+            ).scalar_one_or_none()
+    except Exception:
+        return config
+
+    if tutor is not None:
+        config["user_name"] = tutor.display_name or user.get("sub", "")
+        config["language"] = tutor.locale or "pt-BR"
+    if profile is not None:
+        config.update(
+            {
+                "assistant_name": profile.assistant_name or "Assistente",
+                "gender": profile.gender or "f",
+                "personality": profile.personality or "",
+                "language": profile.language or config.get("language", "pt-BR"),
+            }
+        )
+    return config
 
 
 def _desktop_interface_guidance() -> str:
@@ -88,7 +133,7 @@ async def chat(
     body: ChatRequest,
     user: dict = Depends(get_current_user),
 ):
-    cfg = user
+    cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
 
@@ -141,7 +186,7 @@ async def chat_stream(
     body: ChatRequest,
     user: dict = Depends(get_current_user),
 ):
-    cfg = user
+    cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
     llm = body.llm.value if body.llm else (await pick_auto_llm(active) if active else "")

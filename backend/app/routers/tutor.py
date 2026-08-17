@@ -28,6 +28,7 @@ def _profile_response(tutor: TutorModel, profile: AssistantProfileModel) -> Tuto
         locale=tutor.locale,
         notes=tutor.notes or "",
         assistant_name=profile.assistant_name,
+        gender=profile.gender,
         personality=profile.personality or "",
         response_mode=profile.response_mode,
         tts_enabled=bool(profile.tts_enabled),
@@ -70,6 +71,7 @@ async def upsert_tutor(
         db.add(profile)
 
     profile.assistant_name = body.assistant_name
+    profile.gender = body.gender.value
     profile.personality = body.personality
     profile.language = body.locale
     profile.response_mode = body.response_mode.value

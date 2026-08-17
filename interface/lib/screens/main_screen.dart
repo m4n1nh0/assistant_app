@@ -70,10 +70,51 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       account.id,
       migrateLegacy: account.isAdmin,
     );
+    final hadLocalConfig = HiveConfig.read() != null;
     ref.read(configProvider.notifier).loadForCurrentUser();
+    await _syncAssistantProfile(account, preferLocal: hadLocalConfig);
     ref.read(chatProvider.notifier).switchUser();
     ref.read(eventsProvider.notifier).switchUser();
     await _syncBackendStatus(attempts: 1);
+  }
+
+  Future<void> _syncAssistantProfile(
+    CurrentAccount account, {
+    required bool preferLocal,
+  }) async {
+    if (account.tutorId.isEmpty) return;
+    try {
+      final backend = await api.getTutorProfile(account.tutorId);
+      final local = ref.read(configProvider);
+      final backendName = backend['assistant_name']?.toString().trim() ?? '';
+      final backendCustomized =
+          backendName.isNotEmpty && backendName != 'Assistente';
+      final localName = local.assistantName.trim();
+      final localCustomized = localName.isNotEmpty && localName != 'Assistente';
+
+      if (preferLocal && (localCustomized || !backendCustomized)) {
+        await api.saveAssistantProfile(
+          account,
+          local,
+          currentProfile: backend,
+        );
+        return;
+      }
+
+      if (!backendCustomized) return;
+      final synced = AppConfig.fromJson({
+        ...local.toJson(),
+        'assistantName': backendName,
+        'assistantGender': backend['gender']?.toString() ?? 'f',
+        'personality': backend['personality']?.toString() ?? '',
+        'responseMode': backend['response_mode']?.toString() ?? 'single',
+        'ttsEnabled': backend['tts_enabled'] != false,
+        'language': backend['locale']?.toString() ?? local.language,
+      });
+      await ref.read(configProvider.notifier).save(synced);
+    } catch (e) {
+      debugPrint('[assistantProfile] sync failed: $e');
+    }
   }
 
   void _startBackendStatusSync() {

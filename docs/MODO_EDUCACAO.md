@@ -58,14 +58,14 @@ chat. Antes de consultar um LLM, o grafo reconhece intenções explícitas de
 início de aula ou chamada e devolve uma ação `education_open`. Isso mantém o
 comportamento disponível mesmo quando um provedor de IA está offline.
 
-Exemplos:
+Exemplos com o nome configurado como `Hannah`:
 
 ```text
-Dani, vamos iniciar a aula.
-Dani, abra o modo educação.
-Dani, vou começar minha aula agora.
-Dani, faça a chamada dos alunos.
-Dani, abra a presença da turma.
+Hannah, vamos iniciar a aula.
+Hannah, abra o modo educação.
+Hannah, vou começar minha aula agora.
+Hannah, faça a chamada dos alunos.
+Hannah, abra a presença da turma.
 ```
 
 Pedidos de estudo, como `O que vimos na aula passada?`, continuam sendo
@@ -80,7 +80,7 @@ sequenceDiagram
     participant UI as Interface
     participant E as Modo Aula
 
-    P->>V: "Dani, vamos iniciar a aula"
+    P->>V: "Hannah, vamos iniciar a aula"
     V->>G: Transcrição
     G-->>UI: education_open / lesson
     UI-->>P: Sugere abrir a gravação

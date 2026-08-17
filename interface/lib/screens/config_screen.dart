@@ -197,6 +197,16 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     _draft.calendar.msEnabled =
         _calendarAccounts['microsoft']?.any((item) => item.connected) == true;
 
+    try {
+      final account = _account ?? await api.currentAccount();
+      if (account != null && account.tutorId.isNotEmpty) {
+        await api.saveAssistantProfile(account, _draft);
+      }
+    } catch (e) {
+      _showSnack('Erro ao salvar o perfil da assistente no backend: $e');
+      return;
+    }
+
     await StorageService.saveConfig(_draft);
     ref.read(configProvider.notifier).replaceInMemory(_draft);
 

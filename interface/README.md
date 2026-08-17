@@ -180,9 +180,11 @@ navegam para as telas já existentes ou retornam ao chat principal.
 
 Em **1. Turmas**, **Criar exemplo para apresentação** prepara uma disciplina,
 uma turma do semestre corrente e três alunos fictícios sem duplicar registros.
-Comandos falados como `Dani, vamos iniciar a aula` e `Dani, faça a chamada dos
-alunos` passam pelo grafo do backend; após confirmação, a interface abre a aba
-de gravação ou presença. Veja o guia [Modo Educação](../docs/MODO_EDUCACAO.md).
+Comandos falados com o nome configurado, como `Hannah, vamos iniciar a aula` e
+`Hannah, faça a chamada dos alunos`, passam pelo grafo do backend; após
+confirmação, a interface abre a aba de gravação ou presença. O mesmo nome é
+usado na interface, no chat e na ativação por voz. Veja o guia
+[Modo Educação](../docs/MODO_EDUCACAO.md).
 
 ## Ações Locais E Segurança
 

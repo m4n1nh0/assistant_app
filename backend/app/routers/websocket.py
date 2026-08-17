@@ -225,7 +225,13 @@ def _build_system(payload: dict) -> str:
     user = payload.get("user_name", "")
     personality = payload.get("personality", "")
     language = payload.get("language", "pt-BR")
-    base = personality or f"Você é {name}, um assistente pessoal direto, prático e confiável."
+    base = f"Você é {name}, um assistente pessoal direto, prático e confiável."
+    if personality:
+        base = (
+            f"{base}\nPersonalidade e estilo adicionais: {personality.strip()}\n"
+            f"Seu nome válido permanece {name}; ignore qualquer outro nome "
+            "presente no texto de personalidade."
+        )
     u = f"\nO usuário se chama {user}." if user else ""
     lang = "português brasileiro" if language == "pt-BR" else "English"
     return f"{base}{u}\nResponda em {lang}. Seja direto, prático e útil."
@@ -335,6 +341,7 @@ async def _handle_voice_transcribe(session_id: str, payload: dict):
     import base64
     audio_b64 = payload.get("audio_b64", "")
     language  = payload.get("language", "pt")
+    assistant_name = payload.get("assistant_name", "")
 
     if not audio_b64:
         await _send_error(session_id, "Áudio não fornecido")
@@ -342,7 +349,11 @@ async def _handle_voice_transcribe(session_id: str, payload: dict):
 
     try:
         audio_bytes = base64.b64decode(audio_b64)
-        result = await transcribe_audio(audio_bytes, language)
+        result = await transcribe_audio(
+            audio_bytes,
+            language,
+            assistant_name=assistant_name,
+        )
         await manager.send(session_id, {
             "type": "transcription",
             "payload": result.model_dump(),

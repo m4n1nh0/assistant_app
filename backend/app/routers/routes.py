@@ -1774,9 +1774,14 @@ router_voice = APIRouter(
 async def transcribe(
     file: UploadFile = File(...),
     language: str = Form("pt"),
+    assistant_name: str = Form(""),
 ):
     audio_bytes = await file.read()
-    return await transcribe_audio(audio_bytes, language)
+    return await transcribe_audio(
+        audio_bytes,
+        language,
+        assistant_name=assistant_name,
+    )
 
 
 @router_voice.post("/tts")
