@@ -555,6 +555,11 @@ Cada chamada possui ainda um relatório exclusivo, agrupado por turma, com
 matrícula, aluno e situação. O botão de relatório permite copiar esse texto
 diretamente para transcrição no ambiente da faculdade.
 
+Os PDFs não dependem de um pacote único: **Gerar relatório** abre uma escolha
+entre presença, quadro de aulas, turmas e alunos, disciplinas ou o documento
+educacional completo. Cada opção gera somente seu conteúdo e usa um nome de
+arquivo próprio.
+
 ```mermaid
 sequenceDiagram
     participant P as Professor

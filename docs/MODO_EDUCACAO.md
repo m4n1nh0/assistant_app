@@ -99,6 +99,17 @@ Cada item em **Chamadas no período** oferece **Relatório exclusivo desta
 chamada**. Ele separa os alunos por turma, informa matrícula e situação
 presente/ausente e pode ser copiado em texto para o ambiente da faculdade.
 
+Para PDFs, **Gerar relatório** permite escolher independentemente:
+
+- relatório de presença do período;
+- quadro semanal de aulas;
+- turmas e alunos;
+- disciplinas;
+- relatório educacional completo.
+
+A escolha abre a pré-visualização correspondente e cada documento possui nome
+de arquivo próprio.
+
 ## Segurança da chamada
 
 Cada QR Code usa um token temporário aleatório e o banco armazena apenas seu

@@ -115,8 +115,19 @@ void main() {
         expect(find.text('GERAR QR'), findsOneWidget);
         expect(find.text('CHAMADA ATUAL'), findsOneWidget);
         expect(find.text('RELATORIOS E AULAS DO DIA'), findsOneWidget);
-        expect(find.text('VISUALIZAR PDF'), findsOneWidget);
+        expect(find.text('GERAR RELATORIO'), findsOneWidget);
         expect(find.text('2 de 2 selecionada(s)'), findsOneWidget);
+
+        await tester.tap(find.text('GERAR RELATORIO'));
+        await tester.pumpAndSettle();
+        expect(find.text('ESCOLHA O RELATORIO'), findsOneWidget);
+        expect(find.text('Relatório de presença'), findsOneWidget);
+        expect(find.text('Quadro de aulas'), findsOneWidget);
+        expect(find.text('Relatório de turmas e alunos'), findsOneWidget);
+        expect(find.text('Relatório de disciplinas'), findsOneWidget);
+        expect(find.text('Relatório educacional completo'), findsOneWidget);
+        await tester.tap(find.text('CANCELAR'));
+        await tester.pumpAndSettle();
 
         await tester.tap(find.text('GERAR QR'));
         await tester.pump(const Duration(milliseconds: 200));

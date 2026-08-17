@@ -51,29 +51,31 @@ void main() {
       presentTotal: 1,
       sessions: [session],
     );
+    const disciplines = [
+      Discipline(
+        id: 'd1',
+        code: 'ARA0040',
+        name: 'Banco de Dados',
+        label: 'ARA0040 - Banco de Dados',
+        semester: '2026.2',
+      ),
+    ];
+    final students = [
+      Student(
+        id: 's1',
+        name: 'Ana',
+        classId: 'c1',
+        externalId: '2026001',
+        classGroup: '3001 Presencial',
+        discipline: 'Banco de Dados',
+        aliases: const [],
+        active: true,
+      ),
+    ];
     final bytes = await buildAcademicReportPdf(
       classes: const [group],
-      disciplines: const [
-        Discipline(
-          id: 'd1',
-          code: 'ARA0040',
-          name: 'Banco de Dados',
-          label: 'ARA0040 - Banco de Dados',
-          semester: '2026.2',
-        ),
-      ],
-      students: [
-        Student(
-          id: 's1',
-          name: 'Ana',
-          classId: 'c1',
-          externalId: '2026001',
-          classGroup: '3001 Presencial',
-          discipline: 'Banco de Dados',
-          aliases: [],
-          active: true,
-        ),
-      ],
+      disciplines: disciplines,
+      students: students,
       attendance: report,
       generatedAt: DateTime(2026, 8, 16, 20),
     );
@@ -84,5 +86,23 @@ void main() {
       academicReportFilename(DateTime(2026, 8, 16)),
       'relatorio-educacional-2026-08-16.pdf',
     );
+
+    final filenames = <String>{};
+    for (final kind in AcademicReportKind.values) {
+      final separated = await buildAcademicReportPdf(
+        classes: const [group],
+        disciplines: disciplines,
+        students: students,
+        attendance: report,
+        generatedAt: DateTime(2026, 8, 16, 20),
+        kind: kind,
+      );
+      expect(separated.length, greaterThan(1000));
+      expect(String.fromCharCodes(separated.take(4)), '%PDF');
+      filenames.add(
+        academicReportFilename(DateTime(2026, 8, 16), kind: kind),
+      );
+    }
+    expect(filenames, hasLength(AcademicReportKind.values.length));
   });
 }

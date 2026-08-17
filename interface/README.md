@@ -165,6 +165,11 @@ temporizadores duplicados nas atualizações periódicas. A interface mostra o
 aviso visual; Telegram e WhatsApp são enviados somente pelo scheduler do
 backend para não duplicar mensagens quando o aplicativo está aberto.
 
+O botão **Gerar relatório** não cria obrigatoriamente um PDF consolidado. Antes
+da pré-visualização, o usuário escolhe presença, quadro de aulas, turmas e
+alunos, disciplinas ou o relatório completo; os arquivos são independentes e
+recebem nomes específicos.
+
 O acesso normal ao **Modo Aula** abre uma **Visão geral** inspirada em um painel
 acadêmico: semestres ativos ou encerrados, turmas com quantidade de alunos,
 grade semanal de horários e atalhos para presença, históricos, pontuações e

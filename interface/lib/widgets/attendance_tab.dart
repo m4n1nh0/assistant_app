@@ -403,24 +403,38 @@ class _AttendanceTabState extends State<AttendanceTab> {
   }
 
   Future<void> _exportReport() async {
+    final kind = await showDialog<AcademicReportKind>(
+      context: context,
+      builder: (_) => const _ReportKindDialog(),
+    );
+    if (kind == null || !mounted) return;
     setState(() => _exporting = true);
     try {
-      final report = await education.attendanceReport(
-        dateFrom: _date(_from),
-        dateTo: _date(_to),
-      );
+      final needsAttendance = kind == AcademicReportKind.attendance ||
+          kind == AcademicReportKind.consolidated;
+      final report = needsAttendance
+          ? await education.attendanceReport(
+              dateFrom: _date(_from),
+              dateTo: _date(_to),
+            )
+          : const AttendanceReport();
       final bytes = await buildAcademicReportPdf(
         classes: _reportClasses,
         disciplines: _disciplines,
         students: _students,
         attendance: report,
         generatedAt: DateTime.now(),
+        kind: kind,
       );
       if (!mounted) return;
-      final fileName = academicReportFilename(DateTime.now());
+      final fileName = academicReportFilename(DateTime.now(), kind: kind);
       final save = await showDialog<bool>(
         context: context,
-        builder: (_) => _AcademicPdfPreview(bytes: bytes, fileName: fileName),
+        builder: (_) => _AcademicPdfPreview(
+          bytes: bytes,
+          fileName: fileName,
+          reportTitle: kind.title,
+        ),
       );
       if (save != true) return;
       final path = await FilePicker.saveFile(
@@ -436,7 +450,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
       if (!await file.exists() || await file.length() != bytes.length) {
         await file.writeAsBytes(bytes);
       }
-      _report('Relatorio salvo em ${file.path}');
+      _report('${kind.title} salvo em ${file.path}');
     } catch (e) {
       _report('Falha ao gerar relatorio: $e', error: true);
     } finally {
@@ -1107,7 +1121,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
               onPressed: _exporting ? null : _exportReport,
               icon: const Icon(Icons.picture_as_pdf_outlined, size: 14),
               label: Text(
-                _exporting ? 'GERANDO...' : 'VISUALIZAR PDF',
+                _exporting ? 'GERANDO...' : 'GERAR RELATORIO',
                 style: const TextStyle(fontSize: 10),
               ),
               style: FilledButton.styleFrom(
@@ -1596,11 +1610,174 @@ class _SessionMetric extends StatelessWidget {
       );
 }
 
+class _ReportKindDialog extends StatelessWidget {
+  const _ReportKindDialog();
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+        backgroundColor: AssistantTheme.surface,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620, maxHeight: 660),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.description_outlined, color: AssistantTheme.c1),
+                    SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ESCOLHA O RELATORIO',
+                            style: TextStyle(
+                              color: AssistantTheme.textPrimary,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                          Text(
+                            'Cada documento pode ser gerado de forma independente.',
+                            style: TextStyle(
+                              color: AssistantTheme.textMuted,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: AcademicReportKind.values.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (_, index) {
+                      final kind = AcademicReportKind.values[index];
+                      final consolidated =
+                          kind == AcademicReportKind.consolidated;
+                      return InkWell(
+                        onTap: () => Navigator.pop(context, kind),
+                        borderRadius: BorderRadius.circular(7),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: consolidated
+                                ? AssistantTheme.c2.withOpacity(.08)
+                                : AssistantTheme.bg2,
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(
+                              color: consolidated
+                                  ? AssistantTheme.c2.withOpacity(.55)
+                                  : AssistantTheme.border2,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: _reportKindColor(kind).withOpacity(.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Icon(
+                                  _reportKindIcon(kind),
+                                  size: 20,
+                                  color: _reportKindColor(kind),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      kind.title,
+                                      style: const TextStyle(
+                                        color: AssistantTheme.textPrimary,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      kind.description,
+                                      style: const TextStyle(
+                                        color: AssistantTheme.textMuted,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (consolidated)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: Text(
+                                    'COMPLETO',
+                                    style: TextStyle(
+                                      color: AssistantTheme.c2,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              const Icon(Icons.chevron_right, size: 18),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('CANCELAR'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+}
+
+IconData _reportKindIcon(AcademicReportKind kind) => switch (kind) {
+      AcademicReportKind.attendance => Icons.fact_check_outlined,
+      AcademicReportKind.schedule => Icons.calendar_view_week_outlined,
+      AcademicReportKind.roster => Icons.groups_outlined,
+      AcademicReportKind.disciplines => Icons.school_outlined,
+      AcademicReportKind.consolidated => Icons.dashboard_customize_outlined,
+    };
+
+Color _reportKindColor(AcademicReportKind kind) => switch (kind) {
+      AcademicReportKind.attendance => AssistantTheme.c3,
+      AcademicReportKind.schedule => AssistantTheme.c1,
+      AcademicReportKind.roster => AssistantTheme.c2,
+      AcademicReportKind.disciplines => AssistantTheme.c4,
+      AcademicReportKind.consolidated => AssistantTheme.c2,
+    };
+
 class _AcademicPdfPreview extends StatelessWidget {
   final Uint8List bytes;
   final String fileName;
+  final String reportTitle;
 
-  const _AcademicPdfPreview({required this.bytes, required this.fileName});
+  const _AcademicPdfPreview({
+    required this.bytes,
+    required this.fileName,
+    required this.reportTitle,
+  });
 
   @override
   Widget build(BuildContext context) => Dialog(
@@ -1620,10 +1797,10 @@ class _AcademicPdfPreview extends StatelessWidget {
                       color: AssistantTheme.c3,
                     ),
                     const SizedBox(width: 8),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'PRE-VISUALIZACAO DO RELATORIO EDUCACIONAL',
-                        style: TextStyle(
+                        'PRE-VISUALIZACAO - ${reportTitle.toUpperCase()}',
+                        style: const TextStyle(
                           color: AssistantTheme.textPrimary,
                           fontWeight: FontWeight.w700,
                           fontSize: 11,
