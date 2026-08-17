@@ -316,6 +316,25 @@ Quando ela está ativa:
 Desative a opção quando quiser revisar título, horário, descrição e conta de
 destino antes de cada criação.
 
+## Criar a agenda semanal das turmas
+
+No **Modo Aula > 5. Presença**, use o botão com o ícone de calendário no quadro
+**Relatórios e aulas do dia**. O Assistente reúne automaticamente as turmas
+ativas do semestre corrente que possuem dia e horário cadastrados. Escolha uma
+das contas conectadas, confira o início e o fim do semestre e confirme uma única
+vez.
+
+Cada horário de turma é criado como uma série semanal recorrente no Google
+Calendar ou Outlook. Repetir a sincronização, com a mesma conta e o mesmo fim
+de semestre, não duplica as séries mesmo em outro dia. Turmas sem horário inicial são informadas como
+falha e não geram eventos com hora inventada.
+
+Depois da criação, os próximos encontros entram no painel lateral na
+sincronização automática, que ocorre a cada cinco minutos. As opções de
+notificação já configuradas continuam valendo: lembrete 15 minutos antes, no
+horário, Telegram e/ou WhatsApp. A aplicação mantém somente um temporizador por
+evento para não repetir o aviso a cada atualização do calendário.
+
 ## Teste da integração
 
 1. Confirme que a conta aparece em **Configurações > Agendas**.

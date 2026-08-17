@@ -149,6 +149,13 @@ OAuth, cadastrar callbacks locais ou do Railway, consultar a agenda pela
 conversa e testar a criação de eventos está em
 [Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
 
+No **Modo Aula > 5. Presença**, a chamada oferece somente as turmas previstas
+para o dia e as ordena pelo horário. O botão de agenda do quadro de relatórios
+sincroniza em lote as turmas do semestre corrente com uma conta conectada: uma
+confirmação cria as séries semanais até o fim escolhido. Esses eventos entram
+no painel lateral e usam os lembretes de 15 minutos antes/no horário sem criar
+temporizadores duplicados nas atualizações periódicas.
+
 ## Ações Locais E Segurança
 
 O backend pode devolver propostas tipadas para diagnósticos, scripts, inspeção

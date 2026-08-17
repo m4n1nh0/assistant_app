@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:assistant_app/models/app_config.dart';
 import 'package:assistant_app/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,5 +76,38 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('agenda de turmas envia uma unica requisicao confirmada em lote',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/calendar/class-agenda');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['provider'], 'google');
+      expect(body['class_ids'], ['c1', 'c2']);
+      expect(body['date_from'], '2026-08-16');
+      expect(body['date_to'], '2026-12-31');
+      expect(body['confirmed'], isTrue);
+      return http.Response(
+        '{"class_count":2,"created_series":3,'
+        '"skipped_series":0,"failed_series":0,"errors":[]}',
+        201,
+      );
+    });
+
+    final result = await http.runWithClient(
+      () => svc.createClassAgenda(
+        provider: 'google',
+        accountId: 'google-1',
+        classIds: const ['c1', 'c2'],
+        dateFrom: DateTime(2026, 8, 16),
+        dateTo: DateTime(2026, 12, 31),
+      ),
+      () => client,
+    );
+
+    expect(result['created_series'], 3);
   });
 }

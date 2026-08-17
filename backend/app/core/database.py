@@ -308,6 +308,31 @@ class ClassScheduleModel(Base):
     end_time       = Column(String(5), nullable=False, default="")
 
 
+class ClassCalendarSeriesModel(Base):
+    """Serie semanal criada no calendario externo a partir de um horario."""
+
+    __tablename__ = "class_calendar_series"
+    __table_args__ = (
+        UniqueConstraint(
+            "fingerprint",
+            name="uq_class_calendar_series_fingerprint",
+        ),
+    )
+    id                = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fingerprint       = Column(String(64), nullable=False, index=True)
+    user_id           = Column(String(64), nullable=False, index=True)
+    tutor_id          = Column(String(64), nullable=False, index=True)
+    class_group_id    = Column(String(64), nullable=False, index=True)
+    class_schedule_id = Column(String(64), nullable=False, index=True)
+    provider          = Column(String(32), nullable=False)
+    account_id        = Column(String(120), nullable=False)
+    provider_event_id = Column(String(512), nullable=False)
+    date_from         = Column(String(10), nullable=False)
+    date_to           = Column(String(10), nullable=False)
+    timezone_name     = Column(String(80), nullable=False, default="America/Sao_Paulo")
+    created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class LessonClassGroupModel(Base):
     """Turmas atendidas por uma aula. Aula reunida tem mais de uma linha."""
 

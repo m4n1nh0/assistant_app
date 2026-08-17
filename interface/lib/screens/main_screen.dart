@@ -26,6 +26,8 @@ class MainScreen extends ConsumerStatefulWidget {
 class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   Timer? _calendarTimer;
   Timer? _backendStatusTimer;
+  final Map<String, Timer> _eventNotificationTimers = {};
+  final Set<String> _deliveredEventNotifications = {};
   bool _backendStatusSyncing = false;
 
   @override
@@ -64,6 +66,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   }
 
   Future<void> _activateAccount(CurrentAccount account) async {
+    _clearEventNotificationTimers(clearDelivered: true);
     await HiveScope.setCurrent(
       account.id,
       migrateLegacy: account.isAdmin,
@@ -208,6 +211,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   void _scheduleNotifications(List<CalendarEvent> events) {
     final config = ref.read(configProvider);
     final notifSvc = NotificationService(config.notif, config.assistantName);
+    final activeKeys = <String>{};
 
     for (final event in events) {
       if (!event.isUpcoming) continue;
@@ -218,7 +222,9 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       final ms0 = event.startTime.difference(DateTime.now()).inMilliseconds;
 
       if (config.notif.notify15min && ms15 > 0 && !event.notified15) {
-        Timer(Duration(milliseconds: ms15), () async {
+        final key = '${event.id}:15';
+        activeKeys.add(key);
+        _scheduleEventNotification(key, Duration(milliseconds: ms15), () async {
           ref.read(eventsProvider.notifier).markNotified(event.id, true);
           final msg = notifSvc.buildEventMessage(event, is15min: true);
           await notifSvc.send(msg, event: event);
@@ -231,7 +237,9 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       }
 
       if (config.notif.notifyOnTime && ms0 > 0 && !event.notifiedOnTime) {
-        Timer(Duration(milliseconds: ms0), () async {
+        final key = '${event.id}:0';
+        activeKeys.add(key);
+        _scheduleEventNotification(key, Duration(milliseconds: ms0), () async {
           ref.read(eventsProvider.notifier).markNotified(event.id, false);
           final msg = notifSvc.buildEventMessage(event, is15min: false);
           await notifSvc.send(msg, event: event);
@@ -243,12 +251,44 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         });
       }
     }
+
+    final obsolete = _eventNotificationTimers.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in obsolete) {
+      _eventNotificationTimers.remove(key)?.cancel();
+    }
+  }
+
+  void _scheduleEventNotification(
+    String key,
+    Duration delay,
+    Future<void> Function() callback,
+  ) {
+    if (_deliveredEventNotifications.contains(key) ||
+        _eventNotificationTimers.containsKey(key)) {
+      return;
+    }
+    _eventNotificationTimers[key] = Timer(delay, () async {
+      _eventNotificationTimers.remove(key);
+      if (!_deliveredEventNotifications.add(key)) return;
+      await callback();
+    });
+  }
+
+  void _clearEventNotificationTimers({bool clearDelivered = false}) {
+    for (final timer in _eventNotificationTimers.values) {
+      timer.cancel();
+    }
+    _eventNotificationTimers.clear();
+    if (clearDelivered) _deliveredEventNotifications.clear();
   }
 
   @override
   void dispose() {
     _calendarTimer?.cancel();
     _backendStatusTimer?.cancel();
+    _clearEventNotificationTimers();
     windowManager.removeListener(this);
     super.dispose();
   }

@@ -335,7 +335,8 @@ async def change_password(
 
 import json as _json
 import uuid as _uuid
-from datetime import datetime as _datetime, timezone as _timezone
+import hashlib as _hashlib
+from datetime import date as _date, datetime as _datetime, timezone as _timezone
 from fastapi import APIRouter, Query, Depends, Body, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -346,6 +347,8 @@ from ..models.schemas import (
     CalendarConfig,
     CalendarEvent,
     CalendarEventCreateRequest,
+    ClassAgendaCreateRequest,
+    ClassAgendaCreateResponse,
     EventsResponse,
 )
 from ..services.calendar_service import (
@@ -355,7 +358,14 @@ from ..services.calendar_service import (
     get_google_auth_url, get_microsoft_auth_url,
     exchange_google_code, exchange_microsoft_code,
 )
-from ..core.database import get_db, ConfigModel, scoped_config_key
+from ..core.database import (
+    get_db,
+    ClassCalendarSeriesModel,
+    ClassGroupModel,
+    ClassScheduleModel,
+    ConfigModel,
+    scoped_config_key,
+)
 
 router_calendar = APIRouter(
     prefix="/calendar", tags=["Calendar"], dependencies=[Depends(get_current_user)]
@@ -867,6 +877,240 @@ async def create_event(
         if "insufficient" in detail.lower() or "permission" in detail.lower():
             detail += " Reconecte a conta para conceder a permissao de escrita."
         raise HTTPException(502, detail) from exc
+
+
+def _first_class_occurrence(
+    *,
+    date_from: _date,
+    date_to: _date,
+    weekday: int,
+    start_value: str,
+    end_value: str,
+    event_timezone,
+) -> tuple[_datetime, _datetime] | None:
+    """Resolve a primeira aula futura da serie no intervalo informado."""
+    try:
+        start_clock = _datetime.strptime(start_value, "%H:%M").time()
+        end_clock = (
+            _datetime.strptime(end_value, "%H:%M").time()
+            if end_value
+            else None
+        )
+    except ValueError as exc:
+        raise ValueError("horario deve usar HH:MM") from exc
+
+    occurrence_date = date_from + timedelta(
+        days=(weekday - date_from.weekday()) % 7
+    )
+    while occurrence_date <= date_to:
+        start_time = event_timezone.localize(
+            _datetime.combine(occurrence_date, start_clock)
+        )
+        if start_time > _datetime.now(_timezone.utc):
+            if end_clock is None:
+                end_time = start_time + timedelta(minutes=90)
+            else:
+                end_time = event_timezone.localize(
+                    _datetime.combine(occurrence_date, end_clock)
+                )
+                if end_time <= start_time:
+                    end_time += timedelta(days=1)
+            return start_time, end_time
+        occurrence_date += timedelta(days=7)
+    return None
+
+
+@router_calendar.post(
+    "/class-agenda",
+    response_model=ClassAgendaCreateResponse,
+    status_code=201,
+)
+async def create_class_agenda(
+    body: ClassAgendaCreateRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cria series semanais das turmas em uma unica operacao confirmada."""
+    if not body.confirmed:
+        raise HTTPException(400, "Confirme a agenda das turmas antes de cria-la.")
+    if body.date_to < body.date_from:
+        raise HTTPException(422, "A data final deve ser igual ou posterior a inicial.")
+    if (body.date_to - body.date_from).days > 370:
+        raise HTTPException(422, "A agenda pode cobrir no maximo 371 dias.")
+    try:
+        event_timezone = pytz.timezone(body.timezone)
+    except pytz.UnknownTimeZoneError as exc:
+        raise HTTPException(422, "Fuso horario IANA invalido.") from exc
+
+    tutor_id = user.get("tutor_id")
+    if not tutor_id:
+        account_user = await db.get(UserModel, user["uid"])
+        tutor_id = account_user.tutor_id if account_user else None
+    if not tutor_id:
+        raise HTTPException(403, "Usuario sem perfil de professor.")
+
+    class_ids = list(dict.fromkeys(body.class_ids))
+    groups = (
+        (
+            await db.execute(
+                select(ClassGroupModel).where(
+                    ClassGroupModel.tutor_id == tutor_id,
+                    ClassGroupModel.id.in_(class_ids),
+                    ClassGroupModel.active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(groups) != len(class_ids):
+        raise HTTPException(404, "Uma ou mais turmas ativas nao foram encontradas.")
+
+    if body.provider == "google":
+        accounts = await _load_google_accounts(db, user["uid"])
+    else:
+        accounts = await _load_microsoft_accounts(db, user["uid"])
+    account = next(
+        (
+            item
+            for item in accounts
+            if item.get("id") == body.account_id and item.get("refresh_token")
+        ),
+        None,
+    )
+    if account is None:
+        raise HTTPException(404, "Conta de calendario conectada nao encontrada.")
+
+    schedules = (
+        (
+            await db.execute(
+                select(ClassScheduleModel).where(
+                    ClassScheduleModel.class_group_id.in_(class_ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    group_by_id = {group.id: group for group in groups}
+    entries: list[tuple[ClassScheduleModel, str]] = []
+    for schedule in schedules:
+        fingerprint_source = "|".join(
+            [
+                user["uid"], body.provider, body.account_id,
+                schedule.class_group_id, str(schedule.weekday),
+                schedule.start_time, schedule.end_time,
+                body.date_to.isoformat(), body.timezone,
+            ]
+        )
+        fingerprint = _hashlib.sha256(fingerprint_source.encode()).hexdigest()
+        entries.append((schedule, fingerprint))
+
+    fingerprints = [fingerprint for _, fingerprint in entries]
+    existing = set()
+    if fingerprints:
+        existing = set(
+            (
+                await db.execute(
+                    select(ClassCalendarSeriesModel.fingerprint).where(
+                        ClassCalendarSeriesModel.fingerprint.in_(fingerprints)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    response = ClassAgendaCreateResponse(class_count=len(groups))
+    for schedule, fingerprint in entries:
+        group = group_by_id[schedule.class_group_id]
+        if fingerprint in existing:
+            response.skipped_series += 1
+            continue
+        if not schedule.start_time:
+            response.failed_series += 1
+            response.errors.append(
+                f"{group.code or group.name}: horario inicial nao informado."
+            )
+            continue
+        try:
+            occurrence = _first_class_occurrence(
+                date_from=body.date_from,
+                date_to=body.date_to,
+                weekday=schedule.weekday,
+                start_value=schedule.start_time,
+                end_value=schedule.end_time,
+                event_timezone=event_timezone,
+            )
+        except ValueError as exc:
+            response.failed_series += 1
+            response.errors.append(f"{group.code or group.name}: {exc}.")
+            continue
+        if occurrence is None:
+            response.skipped_series += 1
+            continue
+
+        start_time, end_time = occurrence
+        class_label = " ".join(
+            part for part in [group.code.strip(), group.name.strip()] if part
+        ) or "Turma"
+        title = f"Aula - {group.discipline or class_label} - {class_label}"[:300]
+        description = (
+            f"Agenda da turma {class_label}."
+            + (f" Semestre {group.semester}." if group.semester else "")
+            + " Criada pelo Assistente App."
+        )
+        try:
+            if body.provider == "google":
+                event = await create_google_account_event(
+                    account,
+                    title=title,
+                    start_time=start_time,
+                    end_time=end_time,
+                    timezone_name=body.timezone,
+                    description=description,
+                    recurrence_until=body.date_to,
+                )
+            else:
+                event = await create_microsoft_account_event(
+                    account,
+                    title=title,
+                    start_time=start_time,
+                    end_time=end_time,
+                    timezone_name=body.timezone,
+                    description=description,
+                    recurrence_until=body.date_to,
+                )
+            db.add(
+                ClassCalendarSeriesModel(
+                    fingerprint=fingerprint,
+                    user_id=user["uid"],
+                    tutor_id=tutor_id,
+                    class_group_id=group.id,
+                    class_schedule_id=schedule.id,
+                    provider=body.provider,
+                    account_id=body.account_id,
+                    provider_event_id=event.id,
+                    date_from=body.date_from.isoformat(),
+                    date_to=body.date_to.isoformat(),
+                    timezone_name=body.timezone,
+                )
+            )
+            response.created_series += 1
+            existing.add(fingerprint)
+        except Exception as exc:
+            response.failed_series += 1
+            response.errors.append(f"{class_label}: {exc}")
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            409,
+            "A agenda foi sincronizada simultaneamente. Atualize e tente novamente.",
+        ) from exc
+    return response
 
 
 # ── Status ────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import asyncio
 from urllib.parse import urlencode
 
 import httpx
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import List, Optional
 from loguru import logger
 
@@ -294,6 +294,7 @@ async def create_google_account_event(
     timezone_name: str,
     description: str | None = None,
     location: str | None = None,
+    recurrence_until: date | None = None,
 ) -> CalendarEvent:
     """Creates an event in the connected account's primary Google calendar."""
     token = await _get_google_access_token(
@@ -316,6 +317,13 @@ async def create_google_account_event(
         payload["description"] = description
     if location:
         payload["location"] = location
+    if recurrence_until:
+        until = datetime.combine(
+            recurrence_until,
+            datetime.max.time(),
+            tzinfo=timezone.utc,
+        ).strftime("%Y%m%dT%H%M%SZ")
+        payload["recurrence"] = [f"RRULE:FREQ=WEEKLY;UNTIL={until}"]
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -353,6 +361,8 @@ async def create_microsoft_account_event(
     end_time: datetime,
     description: str | None = None,
     location: str | None = None,
+    recurrence_until: date | None = None,
+    timezone_name: str = "UTC",
 ) -> CalendarEvent:
     """Creates an event in the connected account's default Outlook calendar."""
     token = await _get_ms_access_token(
@@ -363,21 +373,51 @@ async def create_microsoft_account_event(
     )
     start_utc = start_time.astimezone(timezone.utc)
     end_utc = end_time.astimezone(timezone.utc)
+    microsoft_timezone = {
+        "America/Sao_Paulo": "E. South America Standard Time",
+        "UTC": "UTC",
+    }.get(timezone_name, timezone_name)
+    if recurrence_until:
+        start_value = start_time.replace(tzinfo=None).isoformat(timespec="seconds")
+        end_value = end_time.replace(tzinfo=None).isoformat(timespec="seconds")
+        value_timezone = microsoft_timezone
+    else:
+        start_value = start_utc.replace(tzinfo=None).isoformat(timespec="seconds")
+        end_value = end_utc.replace(tzinfo=None).isoformat(timespec="seconds")
+        value_timezone = "UTC"
     payload = {
         "subject": title,
         "start": {
-            "dateTime": start_utc.replace(tzinfo=None).isoformat(timespec="seconds"),
-            "timeZone": "UTC",
+            "dateTime": start_value,
+            "timeZone": value_timezone,
         },
         "end": {
-            "dateTime": end_utc.replace(tzinfo=None).isoformat(timespec="seconds"),
-            "timeZone": "UTC",
+            "dateTime": end_value,
+            "timeZone": value_timezone,
         },
     }
     if description:
         payload["body"] = {"contentType": "text", "content": description}
     if location:
         payload["location"] = {"displayName": location}
+    if recurrence_until:
+        days = [
+            "monday", "tuesday", "wednesday", "thursday",
+            "friday", "saturday", "sunday",
+        ]
+        payload["recurrence"] = {
+            "pattern": {
+                "type": "weekly",
+                "interval": 1,
+                "daysOfWeek": [days[start_time.weekday()]],
+            },
+            "range": {
+                "type": "endDate",
+                "startDate": start_time.date().isoformat(),
+                "endDate": recurrence_until.isoformat(),
+                "recurrenceTimeZone": microsoft_timezone,
+            },
+        }
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(

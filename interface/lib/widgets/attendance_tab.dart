@@ -8,9 +8,45 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/api_service.dart';
 import '../services/academic_report_pdf_service.dart';
 import '../services/education_service.dart';
 import '../utils/theme.dart';
+
+/// Turmas validas para abrir a chamada, na ordem em que acontecem no dia.
+List<ClassGroup> attendanceClassesForDay(
+  Iterable<ClassGroup> classes,
+  int dartWeekday,
+) {
+  final backendWeekday = dartWeekday - 1;
+  final result = classes
+      .where((group) => group.active && group.meetsOn(dartWeekday))
+      .toList();
+  String startOf(ClassGroup group) => group.schedules
+      .where((schedule) => schedule.weekday == backendWeekday)
+      .map((schedule) => schedule.startTime)
+      .where((value) => value.isNotEmpty)
+      .fold('99:99',
+          (first, value) => value.compareTo(first) < 0 ? value : first);
+  result.sort((a, b) {
+    final byTime = startOf(a).compareTo(startOf(b));
+    return byTime != 0 ? byTime : a.display.compareTo(b.display);
+  });
+  return result;
+}
+
+String currentSemesterCode(DateTime now) =>
+    '${now.year}.${now.month <= 6 ? 1 : 2}';
+
+DateTime semesterEnd(String semester, DateTime fallback) {
+  final parts = semester.split('.');
+  final year = parts.isNotEmpty ? int.tryParse(parts.first) : null;
+  final half = parts.length > 1 ? int.tryParse(parts[1]) : null;
+  if (year != null && half == 1) return DateTime(year, 6, 30);
+  if (year != null && half == 2) return DateTime(year, 12, 31);
+  return DateTime(fallback.year, fallback.month <= 6 ? 6 : 12,
+      fallback.month <= 6 ? 30 : 31);
+}
 
 class AttendanceTab extends StatefulWidget {
   final ValueNotifier<List<ClassGroup>?> classes;
@@ -36,6 +72,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
   bool _loading = true;
   bool _creating = false;
   bool _exporting = false;
+  bool _syncingAgenda = false;
   String _status = '';
   bool _statusError = false;
   Timer? _refreshTimer;
@@ -62,12 +99,16 @@ class _AttendanceTabState extends State<AttendanceTab> {
 
   void _classesChanged() {
     final classes = widget.classes.value ?? const <ClassGroup>[];
+    final todayClasses = attendanceClassesForDay(
+      classes,
+      DateTime.now().weekday,
+    );
     if (!mounted) return;
     setState(() {
-      _selectedClass = classes
+      _selectedClass = todayClasses
               .where((group) => group.id == _selectedClass?.id)
               .firstOrNull ??
-          (classes.isEmpty ? null : classes.first);
+          (todayClasses.isEmpty ? null : todayClasses.first);
     });
   }
 
@@ -278,18 +319,215 @@ class _AttendanceTabState extends State<AttendanceTab> {
     }
   }
 
+  Future<void> _createAgenda() async {
+    final now = DateTime.now();
+    final allClasses = widget.classes.value ?? const <ClassGroup>[];
+    final currentSemester = currentSemesterCode(now);
+    var agendaClasses = allClasses
+        .where((group) =>
+            group.active &&
+            group.schedules.isNotEmpty &&
+            group.semester == currentSemester)
+        .toList();
+    if (agendaClasses.isEmpty) {
+      agendaClasses = allClasses
+          .where((group) => group.active && group.schedules.isNotEmpty)
+          .toList();
+    }
+    if (agendaClasses.isEmpty) {
+      _report(
+        'Cadastre os dias e horarios das turmas antes de criar a agenda.',
+        error: true,
+      );
+      return;
+    }
+
+    setState(() => _syncingAgenda = true);
+    try {
+      final accountGroups = await api.listCalendarAccounts();
+      final accounts = [
+        ...accountGroups['google'] ?? const <CalendarAccount>[],
+        ...accountGroups['microsoft'] ?? const <CalendarAccount>[],
+      ].where((account) => account.connected).toList();
+      if (!mounted) return;
+      if (accounts.isEmpty) {
+        _report(
+          'Conecte uma conta Google ou Microsoft em Configuracoes > Calendarios.',
+          error: true,
+        );
+        return;
+      }
+
+      final semester = agendaClasses.first.semester.isEmpty
+          ? currentSemester
+          : agendaClasses.first.semester;
+      final selection = await showDialog<_AgendaSelection>(
+        context: context,
+        builder: (dialogContext) {
+          var account = accounts.first;
+          var from = DateTime(now.year, now.month, now.day);
+          var to = semesterEnd(semester, now);
+          if (to.isBefore(from)) {
+            to = from.add(const Duration(days: 120));
+          }
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              backgroundColor: AssistantTheme.surface,
+              title: const Text('CRIAR AGENDA DAS TURMAS'),
+              content: SizedBox(
+                width: 470,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${agendaClasses.length} turma(s) de $semester serao '
+                      'sincronizadas em uma unica operacao. Cada horario vira '
+                      'uma serie semanal.',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<CalendarAccount>(
+                      initialValue: account,
+                      decoration: _decoration('CALENDARIO'),
+                      items: accounts
+                          .map((item) => DropdownMenuItem(
+                                value: item,
+                                child: Text(
+                                  '${item.provider == 'google' ? 'Google' : 'Microsoft'} - ${item.label}',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: (value) => setDialogState(
+                        () => account = value ?? account,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _AttendanceDateButton(
+                            label: 'INICIO',
+                            value: from,
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: dialogContext,
+                                initialDate: from,
+                                firstDate: DateTime(now.year - 1),
+                                lastDate: DateTime(now.year + 2),
+                              );
+                              if (picked != null) {
+                                setDialogState(() => from = picked);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _AttendanceDateButton(
+                            label: 'FIM',
+                            value: to,
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: dialogContext,
+                                initialDate: to,
+                                firstDate: from,
+                                lastDate: DateTime(now.year + 2),
+                              );
+                              if (picked != null) {
+                                setDialogState(() => to = picked);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Os eventos aparecerao no painel de proximos eventos e '
+                      'usarao os lembretes configurados para 15 minutos antes '
+                      'e/ou no horario da aula.',
+                      style: TextStyle(
+                        color: AssistantTheme.textSecondary,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('CANCELAR'),
+                ),
+                FilledButton.icon(
+                  onPressed: to.isBefore(from)
+                      ? null
+                      : () => Navigator.pop(
+                            dialogContext,
+                            _AgendaSelection(
+                              account: account,
+                              from: from,
+                              to: to,
+                            ),
+                          ),
+                  icon: const Icon(Icons.event_repeat, size: 16),
+                  label: const Text('CONFIRMAR'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      if (selection == null) return;
+
+      final result = await api.createClassAgenda(
+        provider: selection.account.provider,
+        accountId: selection.account.id,
+        classIds: agendaClasses.map((group) => group.id).toList(),
+        dateFrom: selection.from,
+        dateTo: selection.to,
+      );
+      final created = (result['created_series'] as num?)?.toInt() ?? 0;
+      final skipped = (result['skipped_series'] as num?)?.toInt() ?? 0;
+      final failed = (result['failed_series'] as num?)?.toInt() ?? 0;
+      final errors = (result['errors'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList();
+      if (failed > 0 && created == 0) {
+        _report(
+          'Nenhuma serie foi criada. ${errors.firstOrNull ?? 'Verifique os horarios e a conta.'}',
+          error: true,
+        );
+      } else {
+        _report(
+          'Agenda pronta: $created serie(s) criada(s), $skipped ja existente(s)'
+          '${failed > 0 ? ' e $failed falha(s)' : ''}. Os lembretes serao '
+          'carregados na proxima sincronizacao.',
+          error: failed > 0,
+        );
+      }
+    } catch (e) {
+      _report('Falha ao criar agenda das turmas: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _syncingAgenda = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final classes = widget.classes.value ?? const <ClassGroup>[];
-    final todayClasses = classes
-        .where((group) => group.meetsOn(DateTime.now().weekday))
-        .toList();
+    final todayClasses = attendanceClassesForDay(
+      classes,
+      DateTime.now().weekday,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildToolbar(classes),
+          _buildToolbar(todayClasses),
           if (_status.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
@@ -321,7 +559,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
     );
   }
 
-  Widget _buildToolbar(List<ClassGroup> classes) => Row(
+  Widget _buildToolbar(List<ClassGroup> todayClasses) => Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
@@ -329,8 +567,15 @@ class _AttendanceTabState extends State<AttendanceTab> {
             child: DropdownButtonFormField<ClassGroup>(
               initialValue: _selectedClass,
               isExpanded: true,
-              decoration: _decoration('TURMA'),
-              items: classes
+              decoration: _decoration('TURMA DE HOJE'),
+              hint: Text(
+                todayClasses.isEmpty
+                    ? 'Nenhuma turma prevista hoje'
+                    : 'Selecione a turma',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11),
+              ),
+              items: todayClasses
                   .map((group) => DropdownMenuItem(
                         value: group,
                         child: Text(
@@ -378,7 +623,9 @@ class _AttendanceTabState extends State<AttendanceTab> {
           ),
           const SizedBox(width: 8),
           FilledButton.icon(
-            onPressed: _creating || _activeSession?.open == true
+            onPressed: _creating ||
+                    _activeSession?.open == true ||
+                    _selectedClass == null
                 ? null
                 : _createSession,
             icon: _creating
@@ -410,9 +657,11 @@ class _AttendanceTabState extends State<AttendanceTab> {
             )
           : null,
       child: session == null
-          ? const _AttendanceEmpty(
+          ? _AttendanceEmpty(
               icon: Icons.qr_code_2,
-              text: 'Escolha a turma e gere um QR Code para iniciar a chamada.',
+              text: _selectedClass == null
+                  ? 'Nenhuma turma esta prevista para hoje. Confira os dias de aula no cadastro da turma.'
+                  : 'A turma de hoje ja foi selecionada. Gere o QR Code para iniciar a chamada.',
             )
           : Column(
               children: [
@@ -600,17 +849,32 @@ class _AttendanceTabState extends State<AttendanceTab> {
 
   Widget _buildReportsPanel(List<ClassGroup> todayClasses) => _AttendancePanel(
         title: 'RELATORIOS E AULAS DO DIA',
-        trailing: FilledButton.icon(
-          onPressed: _exporting ? null : _exportReport,
-          icon: const Icon(Icons.picture_as_pdf_outlined, size: 14),
-          label: Text(
-            _exporting ? 'GERANDO...' : 'VISUALIZAR PDF',
-            style: const TextStyle(fontSize: 10),
-          ),
-          style: FilledButton.styleFrom(
-            backgroundColor: AssistantTheme.c3,
-            foregroundColor: AssistantTheme.bg,
-          ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Criar agenda das turmas no calendario',
+              onPressed: _syncingAgenda ? null : _createAgenda,
+              icon: _syncingAgenda
+                  ? const SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.event_repeat, size: 17),
+            ),
+            FilledButton.icon(
+              onPressed: _exporting ? null : _exportReport,
+              icon: const Icon(Icons.picture_as_pdf_outlined, size: 14),
+              label: Text(
+                _exporting ? 'GERANDO...' : 'VISUALIZAR PDF',
+                style: const TextStyle(fontSize: 10),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: AssistantTheme.c3,
+                foregroundColor: AssistantTheme.bg,
+              ),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -816,6 +1080,18 @@ class _AttendancePanel extends StatelessWidget {
           ],
         ),
       );
+}
+
+class _AgendaSelection {
+  final CalendarAccount account;
+  final DateTime from;
+  final DateTime to;
+
+  const _AgendaSelection({
+    required this.account,
+    required this.from,
+    required this.to,
+  });
 }
 
 class _AttendanceEmpty extends StatelessWidget {

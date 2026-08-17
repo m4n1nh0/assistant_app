@@ -8,7 +8,7 @@ import 'package:assistant_app/widgets/attendance_tab.dart';
 
 void main() {
   testWidgets('renders QR call controls and the reports panel', (tester) async {
-    final classes = ValueNotifier<List<ClassGroup>?>(const [
+    final classes = ValueNotifier<List<ClassGroup>?>([
       ClassGroup(
         id: 'c1',
         code: '3001',
@@ -16,6 +16,13 @@ void main() {
         discipline: 'Banco de Dados',
         semester: '2026.2',
         label: '3001 Presencial',
+        schedules: [
+          ClassSchedule(
+            weekday: DateTime.now().weekday - 1,
+            startTime: '18:00',
+            endTime: '20:00',
+          ),
+        ],
       ),
     ]);
     final client = MockClient((request) async {
@@ -87,5 +94,52 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     classes.dispose();
+  });
+
+  test('attendance uses only today classes ordered by start time', () {
+    const classes = [
+      ClassGroup(
+        id: 'late',
+        code: '3002',
+        name: 'Noite',
+        discipline: 'Redes',
+        label: '3002 Noite',
+        schedules: [
+          ClassSchedule(weekday: 0, startTime: '20:00'),
+        ],
+      ),
+      ClassGroup(
+        id: 'other-day',
+        code: '3003',
+        name: 'Terca',
+        discipline: 'IA',
+        label: '3003 Terca',
+        schedules: [
+          ClassSchedule(weekday: 1, startTime: '08:00'),
+        ],
+      ),
+      ClassGroup(
+        id: 'early',
+        code: '3001',
+        name: 'Manha',
+        discipline: 'Banco de Dados',
+        label: '3001 Manha',
+        schedules: [
+          ClassSchedule(weekday: 0, startTime: '08:00'),
+        ],
+      ),
+    ];
+
+    final result = attendanceClassesForDay(classes, DateTime.monday);
+
+    expect(result.map((group) => group.id), ['early', 'late']);
+  });
+
+  test('semester end follows the academic half', () {
+    expect(semesterEnd('2026.1', DateTime(2026, 2, 1)), DateTime(2026, 6, 30));
+    expect(
+      semesterEnd('2026.2', DateTime(2026, 8, 1)),
+      DateTime(2026, 12, 31),
+    );
   });
 }

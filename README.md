@@ -353,7 +353,10 @@ no mesmo dia continuam distintas.
 opcional). Uma disciplina que cai na segunda e na quinta tem uma linha por dia,
 e cada dia pode ter mais de uma turma. Na aba de gravacao, as turmas que tem
 aula hoje aparecem primeiro, sob o titulo do dia, e ja vem marcadas — e dai que
-sai a aula reunida sem ninguem precisar lembrar quais turmas sao.
+sai a aula reunida sem ninguem precisar lembrar quais turmas sao. Na chamada,
+o seletor fica restrito a essas mesmas turmas do dia, ordenadas pelo horario, e
+a primeira ja vem selecionada. Isso impede abrir o QR para uma turma de outro
+dia por engano.
 
 ```mermaid
 erDiagram
@@ -366,6 +369,7 @@ erDiagram
     lessons ||--o{ lesson_points : ""
     students ||--o{ lesson_points : "student_id"
     class_groups ||--o{ attendance_sessions : "chamadas"
+    class_groups ||--o{ class_calendar_series : "agenda semanal"
     attendance_sessions ||--o{ attendance_rosters : "lista congelada"
     attendance_sessions ||--o{ attendance_records : "presentes"
     students ||--o{ attendance_rosters : "student_id"
@@ -418,6 +422,14 @@ erDiagram
         string source "qr ou manual"
         datetime checked_in_at
     }
+    class_calendar_series {
+        string class_group_id
+        string class_schedule_id
+        string provider "google ou microsoft"
+        string provider_event_id
+        string date_from
+        string date_to
+    }
 ```
 
 Os campos de texto `class_group` e `discipline` continuam gravados no aluno e na
@@ -459,8 +471,9 @@ flowchart LR
 
 #### Chamada por QR Code e relatorios
 
-Na aba `5. PRESENCA`, o professor escolhe a turma, define por quantos minutos a
-chamada ficara aberta e gera um QR Code. Cada abertura usa um token aleatorio de
+Na aba `5. PRESENCA`, o sistema mostra somente as turmas previstas para o dia,
+na ordem do horario, e seleciona automaticamente a primeira. O professor define
+por quantos minutos a chamada ficara aberta e gera um QR Code. Cada abertura usa um token aleatorio de
 alta entropia; o banco guarda apenas seu hash. O QR aponta para uma pagina
 publica e responsiva do proprio backend, onde o aluno informa a matricula. O
 link nao contem nomes, matriculas, turma ou credenciais do professor.
@@ -482,7 +495,8 @@ sequenceDiagram
     participant A as Assistente
     participant B as Backend
     participant E as Estudante
-    P->>A: Escolhe turma e gera QR
+    A->>A: Filtra turmas de hoje e seleciona a primeira
+    P->>A: Confere a turma e gera QR
     A->>B: POST /education/attendance/sessions
     B-->>A: URL temporaria + lista congelada
     E->>B: Abre QR e informa matricula
@@ -492,6 +506,30 @@ sequenceDiagram
     B-->>A: Presentes e ausentes
     P->>A: Visualiza relatorio em PDF
 ```
+
+O botao de agenda na mesma aba sincroniza de uma vez todas as turmas ativas do
+semestre corrente que possuem dia e horario. O professor escolhe uma conta
+Google ou Microsoft conectada e confirma o intervalo uma unica vez; o backend
+cria uma serie recorrente semanal por horario, em vez de enviar um evento por
+dia de aula. `class_calendar_series` guarda a associacao e um fingerprint para
+que repetir a sincronizacao para a mesma conta e fim de semestre nao duplique
+as series, mesmo que ela seja refeita em outro dia.
+
+```mermaid
+flowchart LR
+    Schedule[(class_schedules)] --> Today[Turmas do dia]
+    Today --> Call[Chamada e QR]
+    Schedule --> Batch[Sincronizar agenda em lote]
+    Batch --> Series[Series semanais Google ou Microsoft]
+    Series --> Calendar[Proximos eventos]
+    Calendar --> Reminder15[Lembrete 15 min antes]
+    Calendar --> Reminder0[Lembrete no horario]
+```
+
+Os eventos entram no painel `PROXIMOS EVENTOS` na sincronizacao de calendario,
+feita a cada cinco minutos, e usam as opcoes de notificacao ja configuradas. O
+aplicativo mantem um unico temporizador por evento e tipo de lembrete, portanto
+as sincronizacoes periodicas nao multiplicam avisos para a mesma aula.
 
 O relatorio educacional em PDF passa por uma tela de preview e consolida tres
 quadros: horarios de aula por dia e disciplina, presencas/ausencias no periodo e
@@ -621,6 +659,7 @@ Endpoints principais:
 | `POST /education/attendance/sessions/{id}/records` | Registra presenca manual pelo professor |
 | `GET/POST /education/attendance/check-in/{token}` | Pagina publica e confirmacao por matricula |
 | `GET /education/attendance/report` | Consolida totais e chamadas para o relatorio |
+| `POST /calendar/class-agenda` | Cria em lote as series semanais das turmas no calendario escolhido |
 | `GET /education/embedding-status` | Provedor e dimensao dos embeddings |
 | `GET /education/index-status` | Quantos trechos ainda faltam no indice |
 | `POST /education/reindex` | Regrava no Qdrant os trechos lidos do MySQL |

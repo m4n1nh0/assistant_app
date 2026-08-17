@@ -758,6 +758,37 @@ class ApiService {
     return data;
   }
 
+  Future<Map<String, dynamic>> createClassAgenda({
+    required String provider,
+    required String accountId,
+    required List<String> classIds,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String timezone = 'America/Sao_Paulo',
+  }) async {
+    String date(DateTime value) => value.toIso8601String().substring(0, 10);
+    final r = await http.post(
+      Uri.parse('$baseUrl/calendar/class-agenda'),
+      headers: _headers,
+      body: jsonEncode({
+        'provider': provider,
+        'account_id': accountId,
+        'class_ids': classIds,
+        'date_from': date(dateFrom),
+        'date_to': date(dateTo),
+        'timezone': timezone,
+        'confirmed': true,
+      }),
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    _throwIfHttpError(
+      r,
+      data: data,
+      fallback: 'Falha ao criar agenda das turmas',
+    );
+    return data;
+  }
+
   Future<String> getGoogleAuthUrl() async {
     final r = await http.get(Uri.parse('$baseUrl/calendar/google/auth-url'),
         headers: _headers);

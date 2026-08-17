@@ -373,6 +373,7 @@ Nas rotas abreviadas abaixo, `{provider}` representa os endpoints concretos
 |--------|------|-----------|
 | GET | `/calendar/events` | Listar eventos das contas conectadas |
 | POST | `/calendar/events` | Criar evento confirmado em uma conta conectada |
+| POST | `/calendar/class-agenda` | Criar em lote séries semanais dos horários das turmas |
 | GET | `/calendar/status` | Consultar credenciais e contas configuradas, sem expor segredos |
 | GET | `/calendar/accounts` | Listar contas Google e Microsoft, inclusive conexões pendentes |
 | PUT | `/calendar/{provider}/oauth-app` | Salvar as credenciais do aplicativo OAuth |
@@ -389,6 +390,9 @@ interpretadas como um plano estruturado `calendar_query`. O backend valida o
 período, consulta somente as contas do usuário autenticado e devolve os eventos
 como uma resposta comum do chat. A criação usa `calendar_create` e continua
 dependendo da confirmação da interface antes do `POST /calendar/events`.
+O endpoint `class-agenda` também exige confirmação, valida que todas as turmas
+ativas pertencem ao professor autenticado e grava um fingerprint por horário,
+conta e fim de período para tornar a repetição idempotente.
 
 O cadastro dos clientes OAuth, escopos, callbacks locais e Railway e a conexão
 das contas estão documentados em

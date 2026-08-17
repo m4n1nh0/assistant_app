@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal, Union
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -213,6 +213,24 @@ class CalendarEventCreateRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=4000)
     location: Optional[str] = Field(default=None, max_length=500)
     confirmed: bool = False
+
+
+class ClassAgendaCreateRequest(BaseModel):
+    provider: Literal["google", "microsoft"]
+    account_id: str = Field(min_length=1, max_length=120)
+    class_ids: List[str] = Field(min_length=1, max_length=100)
+    date_from: date
+    date_to: date
+    timezone: str = Field(default="America/Sao_Paulo", min_length=1, max_length=80)
+    confirmed: bool = False
+
+
+class ClassAgendaCreateResponse(BaseModel):
+    class_count: int = 0
+    created_series: int = 0
+    skipped_series: int = 0
+    failed_series: int = 0
+    errors: List[str] = Field(default_factory=list)
 
 
 class EventsResponse(BaseModel):
