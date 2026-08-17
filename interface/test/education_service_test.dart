@@ -1,4 +1,7 @@
+import 'package:assistant_app/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:assistant_app/services/education_service.dart';
 
@@ -453,6 +456,40 @@ void main() {
 
       expect(result.requested, 4);
       expect(result.deleted, 3);
+    });
+
+    test('falls back to individual deletes when the old backend returns 405',
+        () async {
+      final requests = <http.Request>[];
+      final client = MockClient((request) async {
+        requests.add(request);
+        if (request.method == 'POST') {
+          return http.Response('Method Not Allowed', 405);
+        }
+        return http.Response('{"ok":true}', 200);
+      });
+      final service = EducationService(
+        ApiService(backendUrl: 'https://backend.test'),
+      );
+
+      final result = await http.runWithClient(
+        () => service.deleteStudents(
+          classId: 'class-1',
+          studentIds: ['student-1', 'student-2', 'student-1'],
+        ),
+        () => client,
+      );
+
+      expect(result.requested, 2);
+      expect(result.deleted, 2);
+      expect(
+        requests.map((request) => '${request.method} ${request.url.path}'),
+        [
+          'POST /education/students/bulk-delete',
+          'DELETE /education/students/student-1',
+          'DELETE /education/students/student-2',
+        ],
+      );
     });
   });
 }

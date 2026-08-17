@@ -503,6 +503,8 @@ Pontos de atencao do fluxo:
 - **Alunos podem ser excluidos em lote.** Na lista da turma, marque alunos
   individualmente ou use `Selecionar todos` e confirme uma unica exclusao. A
   operacao so atinge alunos daquela turma e preserva as pontuacoes ja gravadas.
+  Enquanto o backend novo ainda nao foi publicado, a interface aceita o `405`
+  da versao anterior e conclui a acao pelas exclusoes individuais existentes.
 - **Aulas longas usam mapa-reducao.** A transcricao e resumida em janelas e
   depois consolidada, em quantas rodadas forem necessarias, ate caber em uma
   chamada. Com modelo local a janela sai de `LOCAL_LLM_CONTEXT_TOKENS`

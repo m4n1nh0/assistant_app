@@ -484,14 +484,27 @@ class EducationService {
     required String classId,
     required Iterable<String> studentIds,
   }) async {
+    final ids = studentIds
+        .map((studentId) => studentId.trim())
+        .where((studentId) => studentId.isNotEmpty)
+        .toSet()
+        .toList();
     final response = await http.post(
       Uri.parse('$_baseUrl/education/students/bulk-delete'),
       headers: _headers,
       body: jsonEncode({
         'class_id': classId,
-        'student_ids': studentIds.toList(),
+        'student_ids': ids,
       }),
     );
+    if (response.statusCode == 404 || response.statusCode == 405) {
+      var deleted = 0;
+      for (final studentId in ids) {
+        await deleteStudent(studentId);
+        deleted++;
+      }
+      return StudentBulkDeleteResult(requested: ids.length, deleted: deleted);
+    }
     return StudentBulkDeleteResult.fromJson(
       _decode(response) as Map<String, dynamic>,
     );
