@@ -6,6 +6,7 @@ import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../services/calendar_service.dart';
 import '../services/connected_ai_service.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
@@ -291,6 +292,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   void _scheduleNotifications(List<CalendarEvent> events) {
     final config = ref.read(configProvider);
+    final notifSvc = NotificationService(config.notif, config.assistantName);
     final activeKeys = <String>{};
 
     for (final event in events) {
@@ -307,11 +309,15 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         activeKeys.add(key);
         _scheduleEventNotification(key, Duration(milliseconds: ms15), () async {
           ref.read(eventsProvider.notifier).markNotified(event.id, true);
+          final result = await notifSvc.send(
+            notifSvc.buildEventMessage(event, is15min: true),
+            event: event,
+          );
           ref.read(chatProvider.notifier).addMessage(ChatMessage(
                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                 role: 'system',
                 content: '⏰ **Lembrete:** ${event.title} em '
-                    '$reminderMinutes minutos',
+                    '$reminderMinutes minutos\n${result.summary}',
               ));
         });
       }
@@ -321,10 +327,15 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         activeKeys.add(key);
         _scheduleEventNotification(key, Duration(milliseconds: ms0), () async {
           ref.read(eventsProvider.notifier).markNotified(event.id, false);
+          final result = await notifSvc.send(
+            notifSvc.buildEventMessage(event, is15min: false),
+            event: event,
+          );
           ref.read(chatProvider.notifier).addMessage(ChatMessage(
                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                 role: 'system',
-                content: '🔔 **Agora:** ${event.title} está começando!',
+                content: '🔔 **Agora:** ${event.title} está começando!'
+                    '\n${result.summary}',
               ));
         });
       }

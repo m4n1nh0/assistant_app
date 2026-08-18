@@ -5,9 +5,16 @@ import '../models/app_config.dart';
 
 class SendResult {
   final bool ok;
-  SendResult(this.ok);
-  String get summary =>
-      ok ? '✅ Notificação enviada!' : '❌ Falhou — verifique as configurações';
+
+  /// Motivo da falha (ou canal usado no sucesso). Sem isso a notificação
+  /// falhava em silêncio e não dava para saber o que corrigir.
+  final String detail;
+
+  const SendResult(this.ok, [this.detail = '']);
+
+  String get summary => ok
+      ? '✅ Notificação enviada${detail.isEmpty ? '' : ' via $detail'}!'
+      : '❌ Não enviada — ${detail.isEmpty ? 'verifique as configurações' : detail}';
 }
 
 class NotificationService {
@@ -27,43 +34,91 @@ class NotificationService {
   }
 
   Future<SendResult> send(String message, {CalendarEvent? event}) async {
-    bool ok = false;
-    if (config.tgEnabled && config.tgToken.isNotEmpty) {
-      ok = await _sendTelegram(message) || ok;
+    final problems = <String>[];
+
+    if (config.tgEnabled) {
+      if (config.tgToken.trim().isEmpty || config.tgChatId.trim().isEmpty) {
+        problems.add('Telegram sem token ou Chat ID em Configuracoes');
+      } else {
+        final error = await _sendTelegram(message);
+        if (error == null) return const SendResult(true, 'Telegram');
+        problems.add('Telegram: $error');
+      }
     }
-    if (!ok &&
-        config.fallbackEnabled &&
-        config.waEnabled &&
-        config.waNumber.isNotEmpty) {
-      ok = await _sendWhatsApp(message) || ok;
+
+    final canUseWhatsApp =
+        config.waEnabled && config.waNumber.trim().isNotEmpty;
+    if (canUseWhatsApp && (problems.isEmpty || config.fallbackEnabled)) {
+      if (await _sendWhatsApp(message)) {
+        return const SendResult(true, 'WhatsApp');
+      }
+      problems.add('WhatsApp recusou o envio');
     }
-    return SendResult(ok);
+
+    if (problems.isEmpty) {
+      return const SendResult(
+        false,
+        'nenhum canal ativo (ative Telegram ou WhatsApp em Configuracoes)',
+      );
+    }
+    return SendResult(false, problems.join(' | '));
   }
 
   Future<bool> testTelegram() async {
     try {
-      if (config.tgToken.isEmpty || config.tgChatId.isEmpty) return false;
-      return await _sendTelegram('Assistente conectado! Notificacoes ativas.')
-          .timeout(const Duration(seconds: 15));
+      if (config.tgToken.trim().isEmpty || config.tgChatId.trim().isEmpty) {
+        return false;
+      }
+      final error =
+          await _sendTelegram('Assistente conectado! Notificacoes ativas.')
+              .timeout(const Duration(seconds: 15));
+      return error == null;
     } catch (_) {
       return false;
     }
   }
 
-  Future<bool> _sendTelegram(String message) async {
+  /// Retorna null no sucesso ou uma mensagem explicando a recusa.
+  Future<String?> _sendTelegram(String message) async {
     try {
       final url = Uri.parse(
-        'https://api.telegram.org/bot${config.tgToken}/sendMessage',
+        'https://api.telegram.org/bot${config.tgToken.trim()}/sendMessage',
       );
       final r = await http.post(url, body: {
-        'chat_id': config.tgChatId,
-        'text': message
+        'chat_id': config.tgChatId.trim(),
+        'text': message,
       }).timeout(const Duration(seconds: 10));
       final data = jsonDecode(r.body) as Map<String, dynamic>;
-      return data['ok'] == true;
-    } catch (_) {
-      return false;
+      if (data['ok'] == true) return null;
+      return _telegramError(
+        r.statusCode,
+        data['description']?.toString() ?? '',
+      );
+    } on TimeoutException {
+      return 'o Telegram demorou para responder';
+    } catch (e) {
+      return 'falha de conexao ($e)';
     }
+  }
+
+  /// Mesmas traducoes usadas pelo backend, sem expor token nem URL.
+  static String _telegramError(int statusCode, String description) {
+    final lowered = description.toLowerCase();
+    if (statusCode == 401 || lowered.contains('unauthorized')) {
+      return 'token do bot invalido (gere outro no BotFather)';
+    }
+    if (lowered.contains('chat not found')) {
+      return 'Chat ID nao encontrado (envie /start para o bot e confira o ID)';
+    }
+    if (statusCode == 403 || lowered.contains('bot was blocked')) {
+      return 'o bot foi bloqueado ou nao pode enviar nesse chat';
+    }
+    if (statusCode == 429 || lowered.contains('too many requests')) {
+      return 'o Telegram limitou os envios; tente em instantes';
+    }
+    return description.isEmpty
+        ? 'recusado pelo Telegram (HTTP $statusCode)'
+        : 'recusado pelo Telegram ($description)';
   }
 
   String buildReminderMessage(CalendarEvent event, int minutesBefore) {
