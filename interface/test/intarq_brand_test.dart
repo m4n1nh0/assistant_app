@@ -34,6 +34,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('shows the AI ASSISTANT descriptor only when requested',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              IntarqLockup(width: 142, height: 38),
+              IntarqLockup(width: 390, height: 160, showDescriptor: true),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('intarq-descriptor')), findsOneWidget);
+    final descriptor = tester.widget<Text>(
+      find.byKey(const Key('intarq-descriptor')),
+    );
+    expect(descriptor.data, IntarqBrand.descriptor);
+    expect(find.byKey(const Key('intarq-wordmark')), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   test('loads the isolated mark used beside INTARQ in PDFs', () async {
     final image = await IntarqBrand.loadPdfMark();
     expect(image, isNotNull);

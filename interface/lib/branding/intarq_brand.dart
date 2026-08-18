@@ -5,6 +5,11 @@ import 'package:pdf/widgets.dart' as pw;
 
 class IntarqBrand {
   static const name = 'INTARQ';
+  // Descritor do produto: acompanha a assinatura apenas no splash, na tela de
+  // acesso, no título da janela e nos metadados do executável. Barra superior
+  // e relatórios seguem somente com o nome INTARQ.
+  static const descriptor = 'AI ASSISTANT';
+  static const windowTitle = 'INTARQ — AI Assistant';
 
   static const iconAsset = 'assets/branding/intarq-icon-transparent.png';
   static const appIconAsset = 'assets/branding/intarq-app-icon.png';
@@ -101,54 +106,87 @@ class IntarqBrand {
 class IntarqLockup extends StatelessWidget {
   final double width;
   final double height;
+  final bool showDescriptor;
 
   const IntarqLockup({
     super.key,
     this.width = 180,
     this.height = 70,
+    this.showDescriptor = false,
   });
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: width,
-        height: height,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IntarqMark(
-              size: (height * .78).clamp(18, width * .34).toDouble(),
+  Widget build(BuildContext context) {
+    if (!showDescriptor) {
+      return SizedBox(width: width, height: height, child: _signature(height));
+    }
+    final signatureHeight = height * .72;
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            height: signatureHeight,
+            child: _signature(signatureHeight),
+          ),
+          SizedBox(height: (height * .05).clamp(3, 12).toDouble()),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              IntarqBrand.descriptor,
+              key: const Key('intarq-descriptor'),
+              maxLines: 1,
+              style: TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: (height * .1).clamp(8, 15).toDouble(),
+                letterSpacing: (height * .055).clamp(3, 10).toDouble(),
+                color: IntarqBrand.technologySilver.withOpacity(.78),
+              ),
             ),
-            SizedBox(
-              width: (height * .14).clamp(5, 22).toDouble(),
-            ),
-            Expanded(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text.rich(
-                  const TextSpan(
-                    children: [
-                      TextSpan(text: 'INTAR'),
-                      TextSpan(
-                        text: 'Q',
-                        style: TextStyle(color: IntarqBrand.electricBlue),
-                      ),
-                    ],
-                  ),
-                  key: const Key('intarq-wordmark'),
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontFamily: 'Rajdhani',
-                    fontSize: height * .42,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: (height * .08).clamp(2, 10).toDouble(),
-                    color: IntarqBrand.technologySilver,
-                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _signature(double height) => Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IntarqMark(
+            size: (height * .78).clamp(18, width * .34).toDouble(),
+          ),
+          SizedBox(
+            width: (height * .14).clamp(5, 22).toDouble(),
+          ),
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text.rich(
+                const TextSpan(
+                  children: [
+                    TextSpan(text: 'INTAR'),
+                    TextSpan(
+                      text: 'Q',
+                      style: TextStyle(color: IntarqBrand.electricBlue),
+                    ),
+                  ],
+                ),
+                key: const Key('intarq-wordmark'),
+                maxLines: 1,
+                style: TextStyle(
+                  fontFamily: 'Rajdhani',
+                  fontSize: height * .42,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: (height * .08).clamp(2, 10).toDouble(),
+                  color: IntarqBrand.technologySilver,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       );
 }
 

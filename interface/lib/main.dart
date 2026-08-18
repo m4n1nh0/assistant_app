@@ -4,6 +4,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
 
+import 'branding/intarq_brand.dart';
 import 'screens/splash_screen.dart';
 import 'screens/config_screen.dart';
 import 'screens/main_screen.dart';
@@ -22,7 +23,7 @@ void main() async {
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
-    title: 'INTARQ',
+    title: IntarqBrand.windowTitle,
   );
   await windowManager.waitUntilReadyToShow(windowOptions);
   await windowManager.show();
@@ -48,7 +49,7 @@ class AssistantApp extends ConsumerWidget {
     return _StartupWindowMaximizer(
       child: MaterialApp(
         navigatorKey: appNavigatorKey,
-        title: 'INTARQ',
+        title: IntarqBrand.windowTitle,
         debugShowCheckedModeBanner: false,
         theme: AssistantTheme.darkTheme,
         initialRoute: '/',

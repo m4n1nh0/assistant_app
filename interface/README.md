@@ -11,9 +11,11 @@ A marca do produto é INTARQ; o nome escolhido para a assistente permanece uma
 persona configurável por usuário, com `Assistant` como padrão. Um campo
 opcional de pronúncia permite, por exemplo, exibir `Hannah` e reconhecer/falar
 `Raná`. A paleta oficial e os caminhos dos ativos são definidos
-em `lib/branding/intarq_brand.dart`. Splash, acesso, barra superior e relatórios
-mostram somente o símbolo com o nome `INTARQ`, sem lema ou textos institucionais
-pequenos. Na interface escura, `INTAR` aparece em prata e o `Q` em azul; nos
+em `lib/branding/intarq_brand.dart`. O produto se apresenta como
+`INTARQ — AI Assistant`: o descritor `AI ASSISTANT` aparece sob o lockup no
+splash e na tela de acesso, no título da janela e nos metadados do executável.
+Barra superior e relatórios mostram somente o símbolo com o nome `INTARQ`, sem
+lema ou textos institucionais pequenos. Na interface escura, `INTAR` aparece em prata e o `Q` em azul; nos
 relatórios, a assinatura usa fundo branco, `INTAR` em azul-noite e `Q` azul.
 O símbolo também identifica o Modo Educação e o ícone
 multirresolução permanece no runner Windows. Os documentos mantêm o corpo claro

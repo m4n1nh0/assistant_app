@@ -238,7 +238,11 @@ class _AuthDialogState extends State<AuthDialog> {
                   padding: const EdgeInsets.all(28),
                   child: Column(
                     children: [
-                      const IntarqLockup(width: 245, height: 92),
+                      const IntarqLockup(
+                        width: 245,
+                        height: 92,
+                        showDescriptor: true,
+                      ),
                       const SizedBox(height: 14),
                       Text(
                         '${widget.assistantName} — ACESSO',

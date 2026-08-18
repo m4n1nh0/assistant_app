@@ -59,7 +59,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const IntarqLockup(width: 390, height: 160),
+            const IntarqLockup(width: 390, height: 160, showDescriptor: true),
             const SizedBox(height: 24),
             SizedBox(
               width: 220,
