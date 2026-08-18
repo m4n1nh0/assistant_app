@@ -16,8 +16,8 @@ usuário e não é uma configuração global da INTARQ.
   como fonte de referência;
 - `interface/assets/branding/intarq-icon-transparent.png`: símbolo isolado para
   cabeçalhos e componentes;
-- `interface/assets/branding/intarq-lockup-horizontal.png`: logomarca usada na
-  interface e nos relatórios;
+- `interface/assets/branding/intarq-lockup-horizontal.png`: lockup completo
+  preservado apenas como referência da identidade;
 - `interface/assets/branding/intarq-app-icon.png`: versão quadrada para canais
   digitais;
 - `interface/windows/runner/resources/app_icon.ico`: ícone multirresolução do
@@ -43,10 +43,12 @@ como erro e sucesso, para não prejudicar a compreensão da interface.
 
 ## Aplicação
 
-- O lockup aparece no splash, acesso e barra superior.
+- Splash, acesso, barra superior e relatórios usam somente o símbolo isolado e
+  o nome `INTARQ`, compostos em código para permanecerem legíveis em qualquer
+  tamanho. Lema e textos institucionais não acompanham a assinatura do produto.
 - O símbolo identifica o Modo Educação.
-- Relatórios mantêm corpo claro para impressão e exibem a marca em uma placa
-  azul-noite compacta; o documento inteiro não recebe fundo escuro.
+- Relatórios mantêm corpo claro para impressão e exibem símbolo + `INTARQ` em
+  uma placa azul-noite compacta; o documento inteiro não recebe fundo escuro.
 - A personalidade configurável continua aparecendo ao lado da marca.
 - Não distorcer, recolorir, redesenhar ou usar a prancha completa como logo.
 

@@ -5,12 +5,9 @@ import 'package:pdf/widgets.dart' as pw;
 
 class IntarqBrand {
   static const name = 'INTARQ';
-  static const tagline =
-      'Inteligência e arquitetura para soluções tecnológicas humanas de confiança.';
 
   static const iconAsset = 'assets/branding/intarq-icon-transparent.png';
   static const appIconAsset = 'assets/branding/intarq-app-icon.png';
-  static const lockupAsset = 'assets/branding/intarq-lockup-horizontal.png';
 
   static const navy = Color(0xFF0A1324);
   static const electricBlue = Color(0xFF00D6FF);
@@ -23,24 +20,26 @@ class IntarqBrand {
   static const pdfGold = PdfColor.fromInt(0xFFD4AF37);
   static const pdfSilver = PdfColor.fromInt(0xFFB8C2CC);
 
-  static pw.MemoryImage? _pdfLockup;
+  static pw.MemoryImage? _pdfMark;
 
-  static Future<pw.MemoryImage?> loadPdfLockup() async {
-    if (_pdfLockup != null) return _pdfLockup;
+  static Future<pw.MemoryImage?> loadPdfMark() async {
+    if (_pdfMark != null) return _pdfMark;
     try {
-      final data = await rootBundle.load(lockupAsset);
-      _pdfLockup = pw.MemoryImage(data.buffer.asUint8List());
-      return _pdfLockup;
+      final data = await rootBundle.load(iconAsset);
+      _pdfMark = pw.MemoryImage(data.buffer.asUint8List());
+      return _pdfMark;
     } catch (_) {
       return null;
     }
   }
 
-  static pw.Widget pdfPlaque(
-    pw.MemoryImage? lockup, {
+  static pw.Widget pdfSignature(
+    pw.MemoryImage? mark, {
     double width = 142,
     double height = 54,
   }) {
+    final markSize = height > 16 ? height - 12 : height;
+    final nameSize = height * .27;
     return pw.Container(
       width: width,
       height: height,
@@ -50,19 +49,29 @@ class IntarqBrand {
         border: pw.Border.all(color: pdfGold, width: .6),
         borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
       ),
-      child: lockup == null
-          ? pw.Center(
-              child: pw.Text(
-                name,
-                style: pw.TextStyle(
-                  color: PdfColors.white,
-                  fontSize: 14,
-                  letterSpacing: 3,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            )
-          : pw.Image(lockup, fit: pw.BoxFit.contain),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.center,
+        children: [
+          if (mark != null) ...[
+            pw.Image(
+              mark,
+              width: markSize,
+              height: markSize,
+              fit: pw.BoxFit.contain,
+            ),
+            pw.SizedBox(width: 5),
+          ],
+          pw.Text(
+            name,
+            style: pw.TextStyle(
+              color: PdfColors.white,
+              fontSize: nameSize,
+              letterSpacing: 1.4,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -81,20 +90,33 @@ class IntarqLockup extends StatelessWidget {
   Widget build(BuildContext context) => SizedBox(
         width: width,
         height: height,
-        child: Image.asset(
-          IntarqBrand.lockupAsset,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-          errorBuilder: (_, __, ___) => const Center(
-            child: Text(
-              IntarqBrand.name,
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 5,
-                color: IntarqBrand.electricBlue,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IntarqMark(
+              size: (height * .78).clamp(18, width * .34).toDouble(),
+            ),
+            SizedBox(
+              width: (height * .14).clamp(5, 22).toDouble(),
+            ),
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  IntarqBrand.name,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontFamily: 'Rajdhani',
+                    fontSize: height * .42,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: (height * .08).clamp(2, 10).toDouble(),
+                    color: IntarqBrand.technologySilver,
+                  ),
+                ),
               ),
             ),
-          ),
+          ],
         ),
       );
 }

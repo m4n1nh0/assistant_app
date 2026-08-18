@@ -165,7 +165,7 @@ Future<Uint8List> buildLessonSummaryPdf({
     author: 'INTARQ',
   );
   final blocks = parseSummary(summary);
-  final brandLockup = await IntarqBrand.loadPdfLockup();
+  final brandMark = await IntarqBrand.loadPdfMark();
   final turmas = lesson.classLabels.isEmpty
       ? lesson.classGroup
       : lesson.classLabels.join(' + ');
@@ -178,8 +178,8 @@ Future<Uint8List> buildLessonSummaryPdf({
         theme: await _pdfTheme(),
       ),
       header: (context) => context.pageNumber == 1
-          ? _buildBanner(lesson, turmas, brandLockup)
-          : _buildRunningHeader(lesson, brandLockup),
+          ? _buildBanner(lesson, turmas, brandMark)
+          : _buildRunningHeader(lesson, brandMark),
       footer: (context) => _buildFooter(context),
       build: (context) => [
         pw.SizedBox(height: 18),
@@ -195,7 +195,7 @@ Future<Uint8List> buildLessonSummaryPdf({
 pw.Widget _buildBanner(
   Lesson lesson,
   String turmas,
-  pw.MemoryImage? brandLockup,
+  pw.MemoryImage? brandMark,
 ) {
   return pw.Container(
     width: double.infinity,
@@ -259,7 +259,7 @@ pw.Widget _buildBanner(
         pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
-            IntarqBrand.pdfPlaque(brandLockup, width: 132, height: 51),
+            IntarqBrand.pdfSignature(brandMark, width: 132, height: 51),
             if (lesson.semester.isNotEmpty) ...[
               pw.SizedBox(height: 7),
               pw.Container(
@@ -290,7 +290,7 @@ pw.Widget _buildBanner(
 
 pw.Widget _buildRunningHeader(
   Lesson lesson,
-  pw.MemoryImage? brandLockup,
+  pw.MemoryImage? brandMark,
 ) {
   return pw.Container(
     margin: const pw.EdgeInsets.only(bottom: 12),
@@ -308,7 +308,7 @@ pw.Widget _buildRunningHeader(
             style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
           ),
         ),
-        IntarqBrand.pdfPlaque(brandLockup, width: 82, height: 30),
+        IntarqBrand.pdfSignature(brandMark, width: 82, height: 30),
       ],
     ),
   );
@@ -324,7 +324,7 @@ pw.Widget _buildFooter(pw.Context context) {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
         pw.Text(
-          'INTARQ  |  Gerado a partir da transcricao da aula',
+          'INTARQ',
           style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
         ),
         pw.Text(

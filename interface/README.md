@@ -11,10 +11,11 @@ A marca do produto é INTARQ; o nome escolhido para a assistente permanece uma
 persona configurável por usuário, com `Assistant` como padrão. Um campo
 opcional de pronúncia permite, por exemplo, exibir `Hannah` e reconhecer/falar
 `Raná`. A paleta oficial e os caminhos dos ativos são definidos
-em `lib/branding/intarq_brand.dart`. A interface usa o lockup no splash, acesso
-e barra superior, o símbolo no Modo Educação e o ícone multirresolução no
-runner Windows. Os geradores de PDF carregam a mesma logomarca empacotada pelo
-Flutter, mantendo o corpo dos documentos claro para impressão.
+em `lib/branding/intarq_brand.dart`. Splash, acesso, barra superior e relatórios
+mostram somente o símbolo com o nome `INTARQ`, sem lema ou textos institucionais
+pequenos. O símbolo também identifica o Modo Educação e o ícone
+multirresolução permanece no runner Windows. Os documentos mantêm o corpo claro
+para impressão.
 
 Consulte [Identidade INTARQ](../docs/IDENTIDADE_INTARQ.md) para regras de uso e
 [Roadmap comercial](../docs/ROADMAP_COMERCIAL_30_DIAS.md) para o plano de beta

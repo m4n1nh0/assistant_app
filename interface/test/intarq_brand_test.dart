@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('renders the official INTARQ mark and horizontal lockup',
+  testWidgets('renders the mark and the legible INTARQ-only signature',
       (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
@@ -11,7 +11,9 @@ void main() {
           body: Column(
             children: [
               IntarqMark(),
-              IntarqLockup(),
+              IntarqLockup(width: 142, height: 38),
+              IntarqLockup(width: 245, height: 92),
+              IntarqLockup(width: 390, height: 160),
             ],
           ),
         ),
@@ -19,12 +21,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(Image), findsNWidgets(2));
+    expect(find.byType(Image), findsNWidgets(4));
+    expect(find.text('INTARQ'), findsNWidgets(3));
     expect(tester.takeException(), isNull);
   });
 
-  test('loads the PDF lockup from the packaged brand assets', () async {
-    final image = await IntarqBrand.loadPdfLockup();
+  test('loads the isolated mark used beside INTARQ in PDFs', () async {
+    final image = await IntarqBrand.loadPdfMark();
     expect(image, isNotNull);
   });
 

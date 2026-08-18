@@ -108,7 +108,7 @@ Future<Uint8List> buildAcademicReportPdf({
     title: kind.title,
     author: 'INTARQ',
   );
-  final brandLockup = await IntarqBrand.loadPdfLockup();
+  final brandMark = await IntarqBrand.loadPdfMark();
   final orderedClasses = [...classes]..sort((a, b) =>
       '${a.semester}${a.discipline}${a.label}'
           .compareTo('${b.semester}${b.discipline}${b.label}'));
@@ -153,7 +153,7 @@ Future<Uint8List> buildAcademicReportPdf({
         child: pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            IntarqBrand.pdfPlaque(brandLockup, width: 122, height: 45),
+            IntarqBrand.pdfSignature(brandMark, width: 122, height: 45),
             pw.Text(
               _formatDate(generatedAt),
               style: const pw.TextStyle(color: _muted, fontSize: 9),
@@ -165,7 +165,7 @@ Future<Uint8List> buildAcademicReportPdf({
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: [
           pw.Text(
-            'INTARQ  |  Tecnologia com propósito',
+            'INTARQ',
             style: const pw.TextStyle(color: _muted, fontSize: 8),
           ),
           pw.Text(
