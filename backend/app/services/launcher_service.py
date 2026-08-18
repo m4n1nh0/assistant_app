@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.config import get_settings
+from .user_llm_config_service import runtime_settings
 from ..core.database import ShortcutLaunchLogModel, ShortcutModel
 from ..models.schemas import LaunchAction, ShortcutRegistrationAction, ShortcutType
 
@@ -717,7 +717,7 @@ async def _llm_suggest_command(name: str) -> str | None:
     from .llm_service import dispatch_single
     from .llm_status_service import get_available_llms
 
-    settings = get_settings()
+    settings = runtime_settings
     available = set(await get_available_llms())
     active = [llm for llm in settings.active_llms if llm in available]
     if not active:

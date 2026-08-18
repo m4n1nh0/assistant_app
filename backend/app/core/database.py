@@ -181,7 +181,7 @@ class CredentialModel(Base):
     id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id   = Column(String(64), nullable=False, index=True)
     provider   = Column(String(120), nullable=False)
-    secret_ref = Column(String(255), nullable=False)
+    secret_ref = Column(Text, nullable=False)
     metadata_  = Column("metadata", JSON, default=dict)
     enabled    = Column(Boolean, default=True)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -512,6 +512,7 @@ async def init_db():
         await conn.run_sync(_rename_subject_to_discipline)
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_compatibility_columns)
+        await conn.run_sync(_widen_credential_secret_ref)
     await _backfill_account_ownership()
     await _backfill_class_groups()
     await _backfill_disciplines()
@@ -648,6 +649,42 @@ def _add_compatibility_columns(sync_conn) -> None:
                 )
             )
 
+
+def _widen_credential_secret_ref(sync_conn) -> None:
+    """Encrypted provider tokens can exceed the old VARCHAR(255) envelope."""
+    if sync_conn.dialect.name not in {"mysql", "mariadb"}:
+        return
+    inspector = inspect(sync_conn)
+    if "credential_refs" not in inspector.get_table_names():
+        return
+    column = next(
+        (
+            item
+            for item in inspector.get_columns("credential_refs")
+            if item["name"] == "secret_ref"
+        ),
+        None,
+    )
+    length = getattr(column.get("type"), "length", None) if column else None
+    if length is not None:
+        try:
+            sync_conn.execute(
+                text(
+                    "ALTER TABLE credential_refs "
+                    "MODIFY COLUMN secret_ref TEXT NOT NULL"
+                )
+            )
+        except SQLAlchemyError:
+            current = next(
+                (
+                    item
+                    for item in inspect(sync_conn).get_columns("credential_refs")
+                    if item["name"] == "secret_ref"
+                ),
+                None,
+            )
+            if getattr(current.get("type"), "length", None) is not None:
+                raise
 
 def scoped_config_key(user_id: str, key: str) -> str:
     return f"user:{user_id}:{key}"

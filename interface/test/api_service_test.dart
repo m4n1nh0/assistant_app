@@ -27,6 +27,55 @@ void main() {
     expect(svc.baseUrl, AppConfig.defaultBackendUrl);
   });
 
+  test('agentes externos sao salvos por usuario e locais nao sao enviados',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    svc.setToken('user-token');
+    final client = MockClient((request) async {
+      expect(request.method, 'PUT');
+      expect(request.url.path, '/llm/config');
+      expect(request.headers['authorization'], 'Bearer user-token');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final providers = body['providers'] as List<dynamic>;
+      expect(providers, hasLength(1));
+      expect(providers.first['id'], 'gpt');
+      expect(providers.first['api_key'], 'user-openai-key');
+      expect(providers.any((item) => item['id'] == 'llama'), isFalse);
+      return http.Response(
+        '{"providers":[{"id":"gpt","label":"OpenAI","kind":"external",'
+        '"enabled":true,"configured":true,"model":"gpt-4o"}],'
+        '"active_llms":["gpt","llama"],"llm_labels":{},"llm_status":{}}',
+        200,
+      );
+    });
+
+    final response = await http.runWithClient(
+      () => svc.saveLlmConfig(const [
+        LlmProviderConfig(
+          id: 'gpt',
+          label: 'OpenAI',
+          kind: 'external',
+          enabled: true,
+          configured: false,
+          model: 'gpt-4o',
+          apiKey: 'user-openai-key',
+        ),
+        LlmProviderConfig(
+          id: 'llama',
+          label: 'Ollama',
+          kind: 'local',
+          enabled: true,
+          configured: true,
+          model: 'llama3',
+        ),
+      ]),
+      () => client,
+    );
+
+    expect(response.providers.single.configured, isTrue);
+    expect(response.providers.single.apiKey, isEmpty);
+  });
+
   test('recuperação solicita token sem enviar senha', () async {
     final svc = ApiService(backendUrl: 'https://backend.test');
     final client = MockClient((request) async {

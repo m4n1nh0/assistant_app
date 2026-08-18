@@ -69,6 +69,7 @@ from ..services import (
     qdrant_service,
 )
 from ..services.voice_service import transcribe_audio, trim_transcript_overlap
+from ..services.user_llm_config_service import user_llm_context
 
 settings = get_settings()
 
@@ -1457,6 +1458,7 @@ async def ingest_lesson_audio(
     extract_points: bool = Form(True),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
 ):
     """Recebe um bloco de audio da aula, transcreve, indexa e extrai pontos."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
@@ -1492,6 +1494,7 @@ async def ingest_lesson_text(
     body: LessonSegmentIngestRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
 ):
     """Ingestao de texto ja transcrito no cliente (STT nativo do sistema)."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
@@ -1585,6 +1588,7 @@ async def summarize_lesson(
     body: LessonSummaryRequest = LessonSummaryRequest(),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
 ):
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
 

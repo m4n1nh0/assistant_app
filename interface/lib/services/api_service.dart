@@ -58,6 +58,40 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
+  Future<LlmConfigResponse> getLlmConfig() async {
+    final r = await http
+        .get(Uri.parse('$baseUrl/llm/config'), headers: _headers)
+        .timeout(const Duration(seconds: 20));
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) {
+      throw Exception(
+          data['detail']?.toString() ?? 'Falha ao carregar agentes');
+    }
+    return LlmConfigResponse.fromJson(data);
+  }
+
+  Future<LlmConfigResponse> saveLlmConfig(
+    List<LlmProviderConfig> providers,
+  ) async {
+    final r = await http
+        .put(
+          Uri.parse('$baseUrl/llm/config'),
+          headers: _headers,
+          body: jsonEncode({
+            'providers': providers
+                .where((item) => item.kind == 'external')
+                .map((item) => item.toUpdateJson())
+                .toList(),
+          }),
+        )
+        .timeout(const Duration(seconds: 90));
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) {
+      throw Exception(data['detail']?.toString() ?? 'Falha ao salvar agentes');
+    }
+    return LlmConfigResponse.fromJson(data);
+  }
+
   /// Returns first-run registration requirements from the backend.
   Future<AuthSetupStatus> authStatus() async {
     final r = await http
@@ -1278,6 +1312,79 @@ class AuthSetupStatus {
         registrationDeliveryConfigured:
             json['registration_delivery_configured'] == true,
         adminEmailHint: json['admin_email_hint']?.toString() ?? '',
+      );
+}
+
+class LlmProviderConfig {
+  final String id;
+  final String label;
+  final String kind;
+  final bool enabled;
+  final bool configured;
+  final String model;
+  final String apiKey;
+  final bool clearApiKey;
+
+  const LlmProviderConfig({
+    required this.id,
+    required this.label,
+    required this.kind,
+    required this.enabled,
+    required this.configured,
+    required this.model,
+    this.apiKey = '',
+    this.clearApiKey = false,
+  });
+
+  factory LlmProviderConfig.fromJson(Map<String, dynamic> json) =>
+      LlmProviderConfig(
+        id: json['id']?.toString() ?? '',
+        label: json['label']?.toString() ?? '',
+        kind: json['kind']?.toString() ?? 'external',
+        enabled: json['enabled'] == true,
+        configured: json['configured'] == true,
+        model: json['model']?.toString() ?? '',
+      );
+
+  LlmProviderConfig copyWith({
+    bool? enabled,
+    String? model,
+    String? apiKey,
+    bool? clearApiKey,
+  }) =>
+      LlmProviderConfig(
+        id: id,
+        label: label,
+        kind: kind,
+        enabled: enabled ?? this.enabled,
+        configured: configured,
+        model: model ?? this.model,
+        apiKey: apiKey ?? this.apiKey,
+        clearApiKey: clearApiKey ?? this.clearApiKey,
+      );
+
+  Map<String, dynamic> toUpdateJson() => {
+        'id': id,
+        'enabled': enabled,
+        'model': model,
+        'api_key': apiKey,
+        'clear_api_key': clearApiKey,
+      };
+}
+
+class LlmConfigResponse {
+  final List<LlmProviderConfig> providers;
+  final Map<String, dynamic> raw;
+
+  const LlmConfigResponse({required this.providers, required this.raw});
+
+  factory LlmConfigResponse.fromJson(Map<String, dynamic> json) =>
+      LlmConfigResponse(
+        providers: (json['providers'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(LlmProviderConfig.fromJson)
+            .toList(),
+        raw: json,
       );
 }
 

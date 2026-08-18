@@ -15,6 +15,7 @@ from ..models.schemas import (
 )
 from ..core.security import get_current_user
 from ..services.launcher_service import record_launch, suggest_launch_command
+from ..services.user_llm_config_service import user_llm_context
 
 router = APIRouter(prefix="/launcher", tags=["Launcher"], dependencies=[Depends(get_current_user)])
 
@@ -53,7 +54,10 @@ def _launch_response(item: ShortcutLaunchLogModel) -> ShortcutLaunchResponse:
 
 
 @router.get("/suggest-command")
-async def suggest_command_endpoint(name: str):
+async def suggest_command_endpoint(
+    name: str,
+    _llm_context: None = Depends(user_llm_context),
+):
     """Find the Windows executable for an app using 'where' + LLM fallback."""
     target = await suggest_launch_command(name.strip())
     return {"target": target or ""}

@@ -63,6 +63,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   CurrentAccount? _account;
   List<AdminUser> _users = const [];
   bool _inviteBusy = false;
+  List<LlmProviderConfig> _llmProviders = const [];
+  final Map<String, TextEditingController> _llmModelCtrls = {};
+  final Map<String, TextEditingController> _llmKeyCtrls = {};
+  final Set<String> _llmKeysToClear = {};
+  bool _llmBusy = false;
 
   @override
   void initState() {
@@ -73,6 +78,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _loadNotificationConfig();
       _loadCalendarAccounts();
       _loadAccountManagement();
+      _loadLlmConfig();
       _loadMicrophones();
     });
   }
@@ -145,6 +151,62 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _showSnack(e.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _inviteBusy = false);
+    }
+  }
+
+  Future<void> _loadLlmConfig() async {
+    if (api.token == null) return;
+    setState(() => _llmBusy = true);
+    try {
+      final response = await api.getLlmConfig();
+      if (!mounted) return;
+      _setLlmProviders(response.providers);
+    } catch (e) {
+      if (mounted) _showSnack('Erro ao carregar agentes: $e');
+    } finally {
+      if (mounted) setState(() => _llmBusy = false);
+    }
+  }
+
+  void _setLlmProviders(List<LlmProviderConfig> providers) {
+    for (final controller in _llmModelCtrls.values) {
+      controller.dispose();
+    }
+    for (final controller in _llmKeyCtrls.values) {
+      controller.dispose();
+    }
+    _llmModelCtrls.clear();
+    _llmKeyCtrls.clear();
+    _llmKeysToClear.clear();
+    for (final item in providers.where((item) => item.kind == 'external')) {
+      _llmModelCtrls[item.id] = TextEditingController(text: item.model);
+      _llmKeyCtrls[item.id] = TextEditingController();
+    }
+    setState(() => _llmProviders = providers);
+  }
+
+  Future<bool> _saveLlmConfig({bool showMessage = true}) async {
+    if (_llmProviders.isEmpty || _llmBusy) return true;
+    setState(() => _llmBusy = true);
+    try {
+      final updates = _llmProviders.map((item) {
+        if (item.kind != 'external') return item;
+        return item.copyWith(
+          model: _llmModelCtrls[item.id]?.text.trim() ?? item.model,
+          apiKey: _llmKeyCtrls[item.id]?.text.trim() ?? '',
+          clearApiKey: _llmKeysToClear.contains(item.id),
+        );
+      }).toList();
+      final response = await api.saveLlmConfig(updates);
+      if (!mounted) return true;
+      _setLlmProviders(response.providers);
+      if (showMessage) _showSnack('Agentes do usuário atualizados.');
+      return true;
+    } catch (e) {
+      if (mounted) _showSnack('Erro ao salvar agentes: $e');
+      return false;
+    } finally {
+      if (mounted) setState(() => _llmBusy = false);
     }
   }
 
@@ -224,6 +286,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _showSnack('Erro ao salvar o perfil da assistente no backend: $e');
       return;
     }
+
+    if (!await _saveLlmConfig(showMessage: false)) return;
 
     await StorageService.saveConfig(_draft);
     ref.read(configProvider.notifier).replaceInMemory(_draft);
@@ -540,6 +604,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     final tabs = [
       'IDENTIDADE',
       'AUTENTICAÇÃO',
+      'AGENTES',
       'NOTIFICAÇÕES',
       'AGENDAS',
       'SISTEMA'
@@ -587,6 +652,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                     child: [
                       _buildIdentity(),
                       _buildAuth(),
+                      _buildAgents(),
                       _buildNotif(),
                       _buildCalendar2(),
                       _buildSystem(),
@@ -767,6 +833,88 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     if (mounted) {
       Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
     }
+  }
+
+  Widget _buildAgents() {
+    final local = _llmProviders.where((item) => item.kind == 'local').toList();
+    final external =
+        _llmProviders.where((item) => item.kind == 'external').toList();
+    return _TabContent(title: 'AGENTES', children: [
+      const _InfoBox(
+        'LocalAI e Ollama são gerenciados pela instalação e ficam disponíveis '
+        'para todos. Provedores externos, gratuitos ou pagos, pertencem '
+        'somente ao usuário conectado.',
+      ),
+      _SectionCard(title: 'AGENTES LOCAIS DA APLICAÇÃO', children: [
+        if (_llmBusy && local.isEmpty)
+          const LinearProgressIndicator()
+        else
+          ...local.map((item) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  item.enabled ? Icons.memory : Icons.cloud_off_outlined,
+                  color: item.enabled
+                      ? AssistantTheme.c3
+                      : AssistantTheme.textMuted,
+                ),
+                title: Text(item.label,
+                    style: const TextStyle(
+                        color: AssistantTheme.textPrimary,
+                        fontFamily: 'JetBrains Mono')),
+                subtitle: Text(
+                  '${item.model} · ${item.enabled ? 'gerenciado pela aplicação' : 'não configurado no servidor'}',
+                  style: const TextStyle(
+                      color: AssistantTheme.textMuted, fontSize: 10),
+                ),
+              )),
+      ]),
+      ...external.map(_buildExternalAgent),
+      _ActionBtn(
+        label: _llmBusy ? 'VERIFICANDO...' : 'SALVAR E VERIFICAR AGENTES',
+        color: AssistantTheme.c1,
+        onTap: _llmBusy ? null : () => _saveLlmConfig(),
+      ),
+      const _InfoBox(
+        'As chaves são cifradas e permanecem somente no backend. O aplicativo '
+        'não salva nem volta a exibir uma chave já cadastrada.',
+      ),
+    ]);
+  }
+
+  Widget _buildExternalAgent(LlmProviderConfig item) {
+    final index = _llmProviders.indexWhere((entry) => entry.id == item.id);
+    final removing = _llmKeysToClear.contains(item.id);
+    return _SectionCard(title: item.label.toUpperCase(), children: [
+      _Toggle(
+        'Ativar para este usuário',
+        item.enabled && !removing,
+        (value) => setState(() {
+          _llmProviders[index] = item.copyWith(enabled: value);
+          if (value) _llmKeysToClear.remove(item.id);
+        }),
+      ),
+      _Field('MODELO', _llmModelCtrls[item.id]!, hint: 'Modelo do provedor'),
+      _Field(
+        'API KEY',
+        _llmKeyCtrls[item.id]!,
+        hint: item.configured && !removing
+            ? 'Configurada — deixe vazio para manter'
+            : 'Cole a chave desta conta',
+        obscure: true,
+      ),
+      if (item.configured)
+        _ActionBtn(
+          label: removing ? 'MANTER CREDENCIAL' : 'REMOVER CREDENCIAL',
+          color: removing ? AssistantTheme.c3 : AssistantTheme.danger,
+          onTap: () => setState(() {
+            if (removing) {
+              _llmKeysToClear.remove(item.id);
+            } else {
+              _llmKeysToClear.add(item.id);
+            }
+          }),
+        ),
+    ]);
   }
 
   Widget _buildNotif() => _TabContent(title: 'NOTIFICAÇÕES', children: [
@@ -1031,6 +1179,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _gcalSecretCtrl,
       _backendUrlCtrl,
     ]) {
+      c.dispose();
+    }
+    for (final c in [..._llmModelCtrls.values, ..._llmKeyCtrls.values]) {
       c.dispose();
     }
     _voicePreviewPlayer.dispose();

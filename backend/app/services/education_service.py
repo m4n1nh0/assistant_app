@@ -16,11 +16,11 @@ from typing import Any, Dict, List, Optional, Sequence, TypedDict
 from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
-from ..core.config import get_settings
+from .user_llm_config_service import runtime_settings
 from .llm_routing_service import FREE_LOCAL_LLMS, pick_auto_llm, rank_auto_llms
 from .llm_service import dispatch_single
 
-settings = get_settings()
+settings = runtime_settings
 
 # Abaixo disso o nome ouvido e diferente demais do cadastro para ser a mesma
 # pessoa; o registro fica sem student_id e aparece como pendente de revisao.

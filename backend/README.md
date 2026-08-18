@@ -96,6 +96,14 @@ resposta ao usuário.
 
 O backend suporta dois provedores locais independentes:
 
+Eles são configuração fixa da instalação e ficam disponíveis a todas as
+contas. Claude, OpenAI, Together, OpenRouter, DeepSeek, Gemini, Grok/Groq e
+Hugging Face são configurados por usuário na aba **Agentes**. Suas chaves são
+cifradas em `credential_refs`; respostas da API expõem somente se a chave está
+configurada. Variáveis de ambiente desses provedores externos são importadas
+uma única vez para a primeira conta administrativa, apenas para compatibilidade
+com instalações anteriores.
+
 | ID no chat | Provedor | API de status | API de chat |
 |------------|----------|---------------|-------------|
 | `llama` | Ollama | `GET /api/tags` | `POST /api/chat` |
@@ -156,7 +164,7 @@ falhar, a última resposta válida é preservada em vez de ser substituída pelo
 erro.
 
 Os status de disponibilidade e saldo são cacheados no Redis (chave versionada
-`assistant:llm_status:v2`, mesmo TTL do cache em memória: 300s quando há
+`assistant:llm_status:v3:<tutor>`, mesmo TTL do cache em memória: 300s quando há
 algum provedor disponível, 30s quando todos falharam). Assim um processo que
 sobe do zero aproveita a varredura feita por outro em vez de refazer as dez
 verificações — duas delas batem em API de saldo. Sem Redis, cada processo
@@ -365,9 +373,17 @@ entrada e saída, fica disponível em `/docs` e `/openapi.json`.
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/` | Público: info do servidor |
-| GET | `/health` | Público: status completo, incluindo disponibilidade dos LLMs |
+| GET | `/health` | Público: status da infraestrutura e dos LLMs locais, sem credenciais de usuários |
 | GET | `/health/live` | Liveness público, sem consultar dependências |
 | GET | `/system/storage/status` | Status do MySQL e Qdrant |
+
+### Agentes Do Usuário
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/llm/config` | Lista agentes locais e externos do usuário, sem devolver chaves |
+| PUT | `/llm/config` | Salva ativação, modelo e chave cifrada dos agentes externos |
+| POST | `/llm/status/refresh` | Revalida disponibilidade no contexto do usuário |
 
 ### Auth
 

@@ -89,7 +89,7 @@ flowchart LR
     Services --> DB[(MySQL: dados e transcricoes)]
     Services --> Vector[(Qdrant: memorias e indice das aulas)]
     Services --> Scheduler[APScheduler]
-    Services --> LLMs[LLMs em nuvem]
+    Services --> UserLLMs[LLMs em nuvem configurados pelo usuário]
     Services --> Ollama[Ollama / LocalAI]
     Services --> Calendar[Google / Microsoft Calendar]
     Services --> Notify[Telegram / WhatsApp]
@@ -118,8 +118,9 @@ flowchart LR
   modo educacao.
 - **Memoria vetorial**: Qdrant para memorias revisadas e para o indice derivado
   das transcricoes de aula; o texto original permanece no MySQL.
-- **LLMs**: provedores em nuvem configurados por `.env` e modelos locais via
-  Ollama ou LocalAI.
+- **LLMs**: cada usuário configura seus próprios provedores em nuvem na aba
+  **Agentes**; modelos locais via Ollama ou LocalAI pertencem à instalação.
+  As chaves externas ficam cifradas no backend e nunca são devolvidas à UI.
 - **Scheduler**: APScheduler para sincronizacao periodica de calendario e envio
   de lembretes.
 - **Agenda conversacional**: interpreta com IA consultas como compromissos de
@@ -176,10 +177,12 @@ flowchart TD
     BackendConfig --> ConfigTable[(Tabela config)]
     BackendConfig --> TutorTables[(Tutors / Profiles / Settings)]
     BackendConfig --> CalendarAccounts[(Contas de calendario)]
+    BackendConfig --> UserCredentials[(Credenciais LLM cifradas por tutor)]
 
     Env[backend/.env local] --> Runtime[Settings de infraestrutura]
     SecretManager[Secret manager do deploy] --> Runtime
     Runtime --> MicrosoftApp[App Registration Microsoft multitenant]
+    Runtime --> LocalLLMs[Ollama / LocalAI da instalação]
     Runtime --> Backend[Backend FastAPI]
     ConfigTable --> Backend
     CalendarAccounts --> Backend
@@ -318,6 +321,14 @@ são priorizados nas tarefas compatíveis. Se uma geração real revelar saldo
 insuficiente, modelo sem acesso ou credencial inválida, esse sinal atualiza o
 cache compartilhado e o modo `single` tenta o próximo provedor. No modo
 `chain`, um refinador com erro não substitui a última resposta válida.
+
+O contexto de provedores é isolado por tutor em REST, SSE e WebSocket. A aba
+**Configurações > Agentes** permite ativar um provedor externo, escolher o
+modelo e cadastrar/remover sua chave. A chave é cifrada em `credential_refs`,
+não é salva localmente e a API informa apenas `configured=true/false`. As
+variáveis antigas de provedores externos no `.env` servem somente para uma
+migração única da primeira conta administrativa; novas contas nunca herdam
+essas credenciais.
 
 | Especialista | Atende | Ferramentas |
 | --- | --- | --- |

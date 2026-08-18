@@ -1,0 +1,291 @@
+"""Per-user configuration and request context for external LLM providers.
+
+LocalAI and Ollama are infrastructure owned by the application. API keys for
+cloud providers belong to a tutor and are decrypted only for the duration of
+that tutor's request.
+"""
+
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from typing import Any, AsyncIterator
+
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..core.config import get_settings
+from ..core.database import ConfigModel, CredentialModel, AsyncSessionLocal, UserModel
+from ..core.security import get_current_user
+from .credential_storage_service import decrypt_credential, encrypt_credential
+
+
+LOCAL_PROVIDERS = ("localai", "llama")
+PROVIDER_ORDER = (
+    "claude", "gpt", "together", "openrouter", "deepseek", "gemini",
+    "grok", "hf",
+)
+
+PROVIDER_SPECS: dict[str, dict[str, str]] = {
+    "claude": {"label": "Claude", "key_attr": "claude_api_key", "model": "claude-sonnet-4-6"},
+    "gpt": {"label": "OpenAI", "key_attr": "openai_api_key", "model": "gpt-4o"},
+    "together": {"label": "Together", "key_attr": "together_api_key", "model_attr": "together_model"},
+    "openrouter": {"label": "OpenRouter", "key_attr": "openrouter_api_key", "model_attr": "openrouter_model"},
+    "deepseek": {"label": "DeepSeek", "key_attr": "deepseek_api_key", "model_attr": "deepseek_model"},
+    "gemini": {"label": "Gemini", "key_attr": "gemini_api_key", "model": "gemini-1.5-flash"},
+    "grok": {"label": "Grok / Groq", "key_attr": "grok_api_key", "model_attr": "grok_model"},
+    "hf": {"label": "Hugging Face", "key_attr": "huggingface_api_key", "model_attr": "huggingface_model"},
+}
+
+
+def _default_model(provider: str) -> str:
+    spec = PROVIDER_SPECS[provider]
+    if spec.get("model"):
+        return spec["model"]
+    return str(getattr(get_settings(), spec["model_attr"], ""))
+
+
+@dataclass(frozen=True)
+class UserLLMRuntime:
+    scope: str
+    providers: dict[str, dict[str, Any]]
+
+
+_runtime: ContextVar[UserLLMRuntime | None] = ContextVar(
+    "user_llm_runtime", default=None
+)
+
+
+def runtime_scope() -> str:
+    current = _runtime.get()
+    return current.scope if current else "local"
+
+
+def activate_user_llms(runtime: UserLLMRuntime) -> Token:
+    return _runtime.set(runtime)
+
+
+def reset_user_llms(token: Token) -> None:
+    _runtime.reset(token)
+
+
+class RuntimeSettingsProxy:
+    """Settings facade that masks global cloud keys outside a user context."""
+
+    def __getattr__(self, name: str) -> Any:
+        base = get_settings()
+        current = _runtime.get()
+        for provider, spec in PROVIDER_SPECS.items():
+            if name == spec["key_attr"]:
+                return str((current.providers.get(provider, {}) if current else {}).get("api_key", ""))
+
+        model_attrs = {
+            "claude_model": "claude",
+            "openai_model": "gpt",
+            "gemini_model": "gemini",
+            "together_model": "together",
+            "openrouter_model": "openrouter",
+            "deepseek_model": "deepseek",
+            "grok_model": "grok",
+            "groq_model": "grok",
+            "huggingface_model": "hf",
+        }
+        if name in model_attrs:
+            provider = model_attrs[name]
+            configured = current.providers.get(provider, {}) if current else {}
+            return str(configured.get("model") or _default_model(provider))
+        return getattr(base, name)
+
+    @property
+    def active_llms(self) -> list[str]:
+        base = get_settings()
+        current = _runtime.get()
+        cloud = [] if current is None else [
+            provider for provider in PROVIDER_ORDER
+            if current.providers.get(provider, {}).get("enabled")
+            and current.providers.get(provider, {}).get("api_key")
+        ]
+        if base.localai_base_url:
+            cloud.append("localai")
+        cloud.append("llama")
+        return cloud
+
+    @property
+    def uses_groq_cloud(self) -> bool:
+        return self.grok_api_key.strip().startswith("gsk_")
+
+    @property
+    def grok_chat_base_url(self) -> str:
+        return "https://api.groq.com/openai/v1" if self.uses_groq_cloud else "https://api.x.ai/v1"
+
+    @property
+    def active_grok_model(self) -> str:
+        return self.grok_model
+
+    @property
+    def llm_labels(self) -> dict[str, str]:
+        labels = {
+            provider: f"{spec['label']} ({getattr(self, _model_property(provider))})"
+            for provider, spec in PROVIDER_SPECS.items()
+        }
+        base = get_settings()
+        labels["localai"] = base.llm_labels["localai"]
+        labels["llama"] = base.llm_labels["llama"]
+        return labels
+
+
+def _model_property(provider: str) -> str:
+    return {
+        "claude": "claude_model", "gpt": "openai_model",
+        "gemini": "gemini_model", "hf": "huggingface_model",
+    }.get(provider, f"{provider}_model")
+
+
+runtime_settings = RuntimeSettingsProxy()
+
+
+async def load_user_llm_runtime(tutor_id: str) -> UserLLMRuntime:
+    providers: dict[str, dict[str, Any]] = {}
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(CredentialModel).where(
+                    CredentialModel.tutor_id == tutor_id,
+                    CredentialModel.provider.in_(PROVIDER_ORDER),
+                )
+            )
+        ).scalars().all()
+    for row in rows:
+        if row.provider in providers:
+            continue
+        metadata = row.metadata_ if isinstance(row.metadata_, dict) else {}
+        providers[row.provider] = {
+            "api_key": decrypt_credential(row.secret_ref),
+            "model": str(metadata.get("model") or _default_model(row.provider)),
+            "enabled": bool(row.enabled),
+        }
+    return UserLLMRuntime(scope=f"tutor:{tutor_id}", providers=providers)
+
+
+async def user_llm_context(
+    user: dict = Depends(get_current_user),
+) -> AsyncIterator[None]:
+    await migrate_legacy_environment_for_user(user)
+    token = activate_user_llms(await load_user_llm_runtime(user["tutor_id"]))
+    try:
+        yield
+    finally:
+        reset_user_llms(token)
+
+
+async def list_provider_config(tutor_id: str) -> list[dict[str, Any]]:
+    runtime = await load_user_llm_runtime(tutor_id)
+    result = []
+    for provider in PROVIDER_ORDER:
+        item = runtime.providers.get(provider, {})
+        result.append({
+            "id": provider,
+            "label": PROVIDER_SPECS[provider]["label"],
+            "kind": "external",
+            "enabled": bool(item.get("enabled")),
+            "configured": bool(item.get("api_key")),
+            "model": str(item.get("model") or _default_model(provider)),
+        })
+    base = get_settings()
+    result.extend([
+        {"id": "localai", "label": "LocalAI", "kind": "local", "enabled": bool(base.localai_base_url), "configured": bool(base.localai_base_url), "model": base.localai_model or "automático"},
+        {"id": "llama", "label": "Ollama", "kind": "local", "enabled": True, "configured": True, "model": base.ollama_model},
+    ])
+    return result
+
+
+async def save_provider_config(
+    tutor_id: str, providers: list[dict[str, Any]], db: AsyncSession
+) -> None:
+    for update in providers:
+        provider = str(update.get("id") or "").strip().lower()
+        if provider not in PROVIDER_SPECS:
+            raise ValueError(f"Provedor externo inválido: {provider}")
+        rows = (
+            await db.execute(
+                select(CredentialModel).where(
+                    CredentialModel.tutor_id == tutor_id,
+                    CredentialModel.provider == provider,
+                )
+            )
+        ).scalars().all()
+        row = rows[0] if rows else None
+        for duplicate in rows[1:]:
+            await db.delete(duplicate)
+        if update.get("clear_api_key") is True:
+            if row is not None:
+                await db.delete(row)
+            continue
+        api_key = str(update.get("api_key") or "").strip()
+        if row is None:
+            if not api_key:
+                continue
+            row = CredentialModel(
+                tutor_id=tutor_id,
+                provider=provider,
+                secret_ref=encrypt_credential(api_key),
+            )
+            db.add(row)
+        elif api_key:
+            row.secret_ref = encrypt_credential(api_key)
+        metadata = row.metadata_ if isinstance(row.metadata_, dict) else {}
+        model = str(update.get("model") or metadata.get("model") or _default_model(provider)).strip()
+        if (
+            provider == "grok"
+            and api_key.startswith("gsk_")
+            and model in {"", get_settings().grok_model}
+        ):
+            model = get_settings().groq_model
+        row.metadata_ = {**metadata, "model": model}
+        row.enabled = bool(update.get("enabled", True))
+    await db.commit()
+
+
+async def migrate_legacy_environment_for_user(user: dict) -> None:
+    """One-time compatibility import, restricted to the first/admin account."""
+    if user.get("role") != "admin":
+        return
+    marker_key = f"user:{user['uid']}:llm_credentials_migrated_v1"
+    async with AsyncSessionLocal() as db:
+        if await db.get(ConfigModel, marker_key):
+            return
+        first_admin_id = await db.scalar(
+            select(UserModel.id)
+            .where(UserModel.role == "admin")
+            .order_by(UserModel.created_at, UserModel.id)
+            .limit(1)
+        )
+        if first_admin_id != user["uid"]:
+            db.add(ConfigModel(key=marker_key, value="true"))
+            await db.commit()
+            return
+        base = get_settings()
+        existing = set(
+            (
+                await db.execute(
+                    select(CredentialModel.provider).where(
+                        CredentialModel.tutor_id == user["tutor_id"],
+                        CredentialModel.provider.in_(PROVIDER_ORDER),
+                    )
+                )
+            ).scalars().all()
+        )
+        updates = []
+        for provider, spec in PROVIDER_SPECS.items():
+            if provider in existing:
+                continue
+            key = str(getattr(base, spec["key_attr"], "")).strip()
+            if key:
+                model = (
+                    base.groq_model if provider == "grok" and key.startswith("gsk_")
+                    else _default_model(provider)
+                )
+                updates.append({"id": provider, "api_key": key, "model": model, "enabled": True})
+        if updates:
+            await save_provider_config(user["tutor_id"], updates, db)
+        db.add(ConfigModel(key=marker_key, value="true"))
+        await db.commit()

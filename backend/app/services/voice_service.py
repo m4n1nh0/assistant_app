@@ -4,10 +4,10 @@ import os
 import re
 import tempfile
 from loguru import logger
-from ..core.config import get_settings
 from ..models.schemas import STTResponse
+from .user_llm_config_service import runtime_settings
 
-settings = get_settings()
+settings = runtime_settings
 
 _whisper_model = None
 

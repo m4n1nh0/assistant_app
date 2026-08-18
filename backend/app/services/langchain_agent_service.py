@@ -20,12 +20,12 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import BaseModel
 
-from ..core.config import get_settings
+from .user_llm_config_service import runtime_settings
 from ..models.schemas import LLMResponse, Message
 from . import llm_service
 
 
-settings = get_settings()
+settings = runtime_settings
 
 
 class StructuredModelResponse(BaseModel):

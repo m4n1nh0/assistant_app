@@ -17,9 +17,16 @@ from ..services.llm_routing_service import pick_auto_llm
 from ..services.runtime_config_service import load_notif_config
 from ..services.microsoft_identity_service import hydrate_microsoft_account
 from ..services.voice_service import transcribe_audio, text_to_speech
+from ..services.user_llm_config_service import (
+    activate_user_llms,
+    load_user_llm_runtime,
+    migrate_legacy_environment_for_user,
+    reset_user_llms,
+    runtime_settings,
+)
 
 router = APIRouter(tags=["WebSocket"])
-settings = get_settings()
+settings = runtime_settings
 
 
 def _json_value(row: ConfigModel | None, fallback):
@@ -160,6 +167,10 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
         return
 
     connection_id = f"{user['uid']}:{session_id}"
+    await migrate_legacy_environment_for_user(user)
+    runtime_token = activate_user_llms(
+        await load_user_llm_runtime(user["tutor_id"])
+    )
     await manager.connect(ws, connection_id, user["uid"])
 
     await manager.send(connection_id, {
@@ -218,6 +229,8 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
     except Exception as e:
         logger.error(f"WS error ({session_id}): {e}")
         manager.disconnect(connection_id)
+    finally:
+        reset_user_llms(runtime_token)
 
 
 def _build_system(payload: dict) -> str:

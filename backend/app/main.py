@@ -31,8 +31,10 @@ from .routers.attendance import router as attendance_router
 from .routers.launcher import router as launcher_router
 from .routers.desktop import router as desktop_router
 from .routers.computer import router as computer_router
+from .routers.llm_config import router as llm_config_router
 from .services.qdrant_service import ensure_collections, ensure_lesson_collection
 from .services.embedding_service import describe as embedding_describe
+from .services.user_llm_config_service import runtime_settings
 
 settings = get_settings()
 
@@ -122,7 +124,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Rate limiter unavailable (Redis): {e}")
     start_scheduler()
     logger.info("Scheduler started")
-    logger.info(f"Active services: {settings.active_llms}")
+    logger.info(f"Local AI services: {runtime_settings.active_llms}")
     logger.info(f"Listening on {settings.host}:{settings.port}")
     yield
     stop_scheduler()
@@ -185,6 +187,7 @@ app.include_router(automations_router)
 app.include_router(system_router)
 app.include_router(desktop_router)
 app.include_router(computer_router)
+app.include_router(llm_config_router)
 app.include_router(router_auth)
 app.include_router(router_calendar_public)
 app.include_router(router_calendar)

@@ -149,7 +149,9 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
           if (attempt > 0) {
             await Future.delayed(const Duration(seconds: 3));
           }
-          final health = await api.health();
+          final health = api.token == null
+              ? await api.health()
+              : (await api.getLlmConfig()).raw;
           final active = (health['active_llms'] as List<dynamic>? ?? const [])
               .map((e) => e.toString())
               .toList();

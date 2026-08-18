@@ -311,6 +311,18 @@ class LLMStatus(BaseModel):
     checked_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class UserLLMProviderUpdate(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    enabled: bool = True
+    model: str = Field(default="", max_length=240)
+    api_key: str = Field(default="", max_length=4096)
+    clear_api_key: bool = False
+
+
+class UserLLMConfigUpdate(BaseModel):
+    providers: List[UserLLMProviderUpdate] = Field(default_factory=list, max_length=8)
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"

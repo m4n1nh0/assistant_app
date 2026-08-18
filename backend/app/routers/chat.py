@@ -11,15 +11,15 @@ from ..core.database import (
     TutorModel,
 )
 from ..core.security import get_current_user
-from ..core.config import get_settings
 from ..models.schemas import ChatRequest, ChatResponse, LLMResponse
 from ..services import llm_service
 from ..services.chat_graph_service import run_chat_graph
 from ..services.llm_status_service import get_llm_statuses, get_ready_llms
 from ..services.llm_routing_service import pick_auto_llm
+from ..services.user_llm_config_service import runtime_settings, user_llm_context
 
 router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
-settings = get_settings()
+settings = runtime_settings
 
 
 async def _profile_timezone(tutor_id: str) -> str:
@@ -137,6 +137,7 @@ async def _llm_unavailable_response(llm: str | None = None) -> LLMResponse:
 async def chat(
     body: ChatRequest,
     user: dict = Depends(get_current_user),
+    _llm_context: None = Depends(user_llm_context),
 ):
     cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
@@ -190,6 +191,7 @@ async def chat(
 async def chat_stream(
     body: ChatRequest,
     user: dict = Depends(get_current_user),
+    _llm_context: None = Depends(user_llm_context),
 ):
     cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()

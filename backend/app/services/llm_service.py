@@ -6,11 +6,11 @@ from typing import AsyncIterator, List, Optional
 from loguru import logger
 import httpx
 
-from ..core.config import get_settings
 from ..models.schemas import LLMResponse, Message
 from .llm_status_service import mark_llm_failure
+from .user_llm_config_service import runtime_settings
 
-settings = get_settings()
+settings = runtime_settings
 _ERROR_LOG_TTL_SECONDS = 300
 _HTTP_LLM_TIMEOUT_SECONDS = 90
 _last_error_logs: dict[str, tuple[str, float]] = {}
@@ -115,7 +115,7 @@ async def call_claude(
         messages = _format_history(history) + [{"role": "user", "content": message}]
 
         response = await client.messages.create(
-            model="claude-sonnet-4-6",
+            model=settings.claude_model,
             max_tokens=2000,
             system=system_prompt,
             messages=messages,
@@ -138,7 +138,7 @@ async def stream_claude(
     client = anthropic.AsyncAnthropic(api_key=_claude_api_key())
     messages = _format_history(history) + [{"role": "user", "content": message}]
     async with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=settings.claude_model,
         max_tokens=2000,
         system=system_prompt,
         messages=messages,
@@ -160,7 +160,7 @@ async def call_gpt(
                    _format_history(history) + \
                    [{"role": "user", "content": message}]
         resp = await client.chat.completions.create(
-            model="gpt-4o", max_tokens=2000, messages=messages
+            model=settings.openai_model, max_tokens=2000, messages=messages
         )
         return LLMResponse(
             llm="gpt",
@@ -274,7 +274,7 @@ async def stream_gpt(
     messages = [{"role": "system", "content": system_prompt}] + \
                _format_history(history) + [{"role": "user", "content": message}]
     async with await client.chat.completions.create(
-        model="gpt-4o", max_tokens=2000, messages=messages, stream=True
+        model=settings.openai_model, max_tokens=2000, messages=messages, stream=True
     ) as stream:
         async for chunk in stream:
             delta = chunk.choices[0].delta.content
@@ -291,7 +291,7 @@ async def call_gemini(
         start = time.monotonic()
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-1.5-flash:generateContent?key={settings.gemini_api_key}"
+            f"{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
         )
         contents = []
         for m in history:

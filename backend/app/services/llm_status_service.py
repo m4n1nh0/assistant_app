@@ -8,21 +8,25 @@ from urllib.parse import quote
 import httpx
 from loguru import logger
 
-from ..core.config import get_settings
 from ..core.redis_client import get_client as get_redis_client
 from ..models.schemas import LLMStatus
+from .user_llm_config_service import runtime_scope, runtime_settings
 
-settings = get_settings()
+settings = runtime_settings
 
 _CACHE_TTL_SECONDS = 300
 _FAILED_CACHE_TTL_SECONDS = 30
+_caches: dict[str, tuple[dict[str, LLMStatus], float]] = {}
+_refresh_tasks: dict[str, asyncio.Task] = {}
+# Backward-compatible local-scope cache names; a few operational tests and
+# extensions inspect these directly.
 _cache: dict[str, LLMStatus] | None = None
 _cache_at = 0.0
 _refresh_task: asyncio.Task | None = None
 
 # Sufixo versionado impede que um deploy novo reutilize por cinco minutos um
 # snapshot criado antes da validacao de modelo/capacidade de chat.
-_REDIS_KEY = "assistant:llm_status:v2"
+_REDIS_KEY = "assistant:llm_status:v3"
 
 _PROVIDER_ORDER = [
     "claude",
@@ -40,17 +44,19 @@ _PROVIDER_ORDER = [
 
 async def get_llm_statuses(force: bool = False) -> dict[str, LLMStatus]:
     global _cache, _cache_at
-
+    scope = runtime_scope()
     now = time.monotonic()
-    if not force and _cache is not None and _is_cache_fresh(_cache, now):
-        return _cache
+    cached = (_cache, _cache_at) if scope == "local" and _cache is not None else _caches.get(scope)
+    if not force and cached is not None and _is_cache_fresh(cached[0], cached[1], now):
+        return cached[0]
 
     if not force:
         shared = await _read_shared_cache()
         if shared is not None:
-            _cache = shared
-            _cache_at = now
-            return _cache
+            _caches[scope] = (shared, now)
+            if scope == "local":
+                _cache, _cache_at = shared, now
+            return shared
 
     timeout = httpx.Timeout(8.0, connect=4.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -67,10 +73,12 @@ async def get_llm_statuses(force: bool = False) -> dict[str, LLMStatus]:
             _check_llama(client),
         )
 
-    _cache = {status.id: status for status in results}
-    _cache_at = time.monotonic()
-    await _write_shared_cache(_cache)
-    return _cache
+    cache = {status.id: status for status in results}
+    _caches[scope] = (cache, time.monotonic())
+    if scope == "local":
+        _cache, _cache_at = _caches[scope]
+    await _write_shared_cache(cache)
+    return cache
 
 
 async def _read_shared_cache() -> dict[str, LLMStatus] | None:
@@ -78,7 +86,7 @@ async def _read_shared_cache() -> dict[str, LLMStatus] | None:
     if client is None:
         return None
     try:
-        raw = await client.get(_REDIS_KEY)
+        raw = await client.get(f"{_REDIS_KEY}:{runtime_scope()}")
         if not raw:
             return None
         return {
@@ -103,7 +111,7 @@ async def _write_shared_cache(cache: dict[str, LLMStatus]) -> None:
         payload = json.dumps(
             {provider: status.model_dump(mode="json") for provider, status in cache.items()}
         )
-        await client.set(_REDIS_KEY, payload, ex=ttl)
+        await client.set(f"{_REDIS_KEY}:{runtime_scope()}", payload, ex=ttl)
     except Exception as e:
         logger.debug(f"LLM status Redis write skipped: {e}")
 
@@ -199,24 +207,27 @@ async def mark_llm_failure(provider: str, error: str) -> None:
     """
 
     global _cache, _cache_at
-
     if provider not in _PROVIDER_ORDER:
         return
-    updated = dict(_cache or {})
+    scope = runtime_scope()
+    current = (_cache, _cache_at) if scope == "local" and _cache is not None else _caches.get(scope)
+    updated = dict((current or ({}, 0.0))[0])
     updated[provider] = _runtime_failure_status(provider, error)
-    _cache = updated
-    _cache_at = time.monotonic()
+    _caches[scope] = (updated, time.monotonic())
+    if scope == "local":
+        _cache, _cache_at = _caches[scope]
     await _write_shared_cache(updated)
 
 
 async def get_statuses_fast() -> dict[str, LLMStatus]:
     """Return cached statuses instantly; if cache is cold, return key-based statuses and
     kick off a background refresh so the next call will have real data."""
-    global _cache, _cache_at, _refresh_task
-
+    global _refresh_task
+    scope = runtime_scope()
     now = time.monotonic()
-    if _cache is not None and _is_cache_fresh(_cache, now):
-        return _cache
+    cached = (_cache, _cache_at) if scope == "local" and _cache is not None else _caches.get(scope)
+    if cached is not None and _is_cache_fresh(cached[0], cached[1], now):
+        return cached[0]
 
     # Cache is cold — build a quick "key configured" status for each active LLM
     fast: dict[str, LLMStatus] = {}
@@ -225,23 +236,33 @@ async def get_statuses_fast() -> dict[str, LLMStatus]:
         fast[provider] = _checking(provider) if key_present else _missing(provider)
 
     # Trigger a real check in the background so the 5-min cache warms up
-    if _refresh_task is None or _refresh_task.done():
+    refresh_task = _refresh_task if scope == "local" else _refresh_tasks.get(scope)
+    if refresh_task is None or refresh_task.done():
         try:
             loop = asyncio.get_running_loop()
-            _refresh_task = loop.create_task(get_llm_statuses())
+            task = loop.create_task(get_llm_statuses())
+            _refresh_tasks[scope] = task
+            if scope == "local":
+                _refresh_task = task
         except RuntimeError:
             pass
 
     return fast
 
 
-def _is_cache_fresh(cache: dict[str, LLMStatus], now: float) -> bool:
+def _is_cache_fresh(
+    cache: dict[str, LLMStatus],
+    cached_at_or_now: float,
+    now: float | None = None,
+) -> bool:
+    cached_at = _cache_at if now is None else cached_at_or_now
+    now = cached_at_or_now if now is None else now
     ttl = (
         _CACHE_TTL_SECONDS
         if any(status.available for status in cache.values())
         else _FAILED_CACHE_TTL_SECONDS
     )
-    return now - _cache_at < ttl
+    return now - cached_at < ttl
 
 
 def _provider_key(provider: str) -> str:

@@ -44,6 +44,7 @@ from ..services.password_recovery_service import (
     consume_password_reset_token,
     issue_password_reset_token,
 )
+from ..services.user_llm_config_service import runtime_settings, user_llm_context
 
 router_auth = APIRouter(prefix="/auth", tags=["Auth"])
 settings = get_settings()
@@ -1831,6 +1832,7 @@ async def transcribe(
     file: UploadFile = File(...),
     language: str = Form("pt"),
     assistant_name: str = Form(""),
+    _llm_context: None = Depends(user_llm_context),
 ):
     audio_bytes = await file.read()
     return await transcribe_audio(
@@ -1841,7 +1843,10 @@ async def transcribe(
 
 
 @router_voice.post("/tts")
-async def tts(body: TTSRequest):
+async def tts(
+    body: TTSRequest,
+    _llm_context: None = Depends(user_llm_context),
+):
     audio = await text_to_speech(body.text, body.language, body.speed)
     return Response(content=audio, media_type="audio/mpeg")
 
@@ -1849,9 +1854,9 @@ async def tts(body: TTSRequest):
 import time
 from fastapi import APIRouter
 from ..models.schemas import HealthResponse
-from ..core.config import get_settings as _gs3
 from ..services.qdrant_service import status as qdrant_status
 from ..services.llm_status_service import get_llm_statuses
+_gs3 = lambda: runtime_settings
 
 router_health = APIRouter(tags=["Health"])
 _start = time.time()
