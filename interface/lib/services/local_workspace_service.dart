@@ -41,8 +41,12 @@ class WorkspaceSnapshot {
     final editInstruction = allowEdits
         ? 'O usuario autorizou a interface a editar arquivos somente dentro do caminho informado. '
             'Quando quiser que a interface aplique edicoes, responda com um unico bloco fenced chamado workspace_edits contendo JSON neste formato: '
-            '{"summary":"resumo curto","edits":[{"path":"caminho/relativo.ext","content":"conteudo completo do arquivo"}]}. '
-            'Use apenas caminhos relativos dentro do workspace e inclua o conteudo completo de cada arquivo editado.'
+            '{"summary":"resumo curto","edits":[...]}. Cada item de edits usa uma destas formas: '
+            '{"path":"caminho/relativo.ext","content":"conteudo completo do arquivo"} para criar ou reescrever um arquivo inteiro, ou '
+            '{"path":"caminho/relativo.ext","find":"trecho exato atual","replace":"trecho novo"} para alterar apenas um trecho. '
+            'Prefira find/replace para mudancas pequenas em arquivos grandes. '
+            'No find, copie o trecho exatamente como esta no arquivo (indentacao inclusive) e inclua linhas suficientes para ele ser unico no arquivo. '
+            'Use apenas caminhos relativos dentro do workspace.'
         : 'O usuario ainda nao autorizou edicao. Quando sugerir edicoes, cite caminhos de arquivo e alteracoes objetivas.';
     final buffer = StringBuffer()
       ..writeln('Contexto local do workspace capturado pela interface.')
@@ -104,21 +108,35 @@ class WorkspaceFileSnippet {
 
 class WorkspaceFileEdit {
   final String relativePath;
-  final String content;
+
+  /// Conteúdo completo do arquivo (cria ou reescreve o arquivo inteiro).
+  final String? content;
+
+  /// Trecho exato a localizar no arquivo para edição parcial.
+  final String? find;
+
+  /// Novo trecho no lugar de [find]; vazio remove o trecho.
+  final String? replace;
 
   const WorkspaceFileEdit({
     required this.relativePath,
-    required this.content,
+    this.content,
+    this.find,
+    this.replace,
   });
+
+  bool get isPartial => find != null && find!.isNotEmpty;
 }
 
 class WorkspaceEditResult {
   final String relativePath;
   final int bytesWritten;
+  final bool partial;
 
   const WorkspaceEditResult({
     required this.relativePath,
     required this.bytesWritten,
+    this.partial = false,
   });
 }
 
@@ -241,23 +259,82 @@ class LocalWorkspaceService {
     final results = <WorkspaceEditResult>[];
     for (final edit in edits) {
       final target = _resolveEditableFile(root, edit.relativePath);
-      final parent = target.parent;
-      if (!await parent.exists()) {
-        await parent.create(recursive: true);
+      final content = edit.isPartial
+          ? await _applyPartialEdit(target, edit)
+          : edit.content;
+      if (content == null || content.isEmpty) {
+        throw WorkspaceInspectionException(
+          'Edicao sem conteudo para ${edit.relativePath}.',
+        );
       }
-      final content = edit.content;
       if (content.length > 220000) {
         throw WorkspaceInspectionException(
           'Edicao muito grande para ${edit.relativePath}.',
         );
       }
+      final parent = target.parent;
+      if (!await parent.exists()) {
+        await parent.create(recursive: true);
+      }
       await target.writeAsString(content, encoding: utf8);
       results.add(WorkspaceEditResult(
         relativePath: edit.relativePath.replaceAll('\\', '/'),
         bytesWritten: utf8.encode(content).length,
+        partial: edit.isPartial,
       ));
     }
     return results;
+  }
+
+  /// Substitui um trecho exato e único do arquivo. Falha com mensagem clara
+  /// quando o trecho não existe ou aparece mais de uma vez, para a IA
+  /// reenviar com mais contexto em vez de gravar no lugar errado.
+  static Future<String> _applyPartialEdit(
+    File target,
+    WorkspaceFileEdit edit,
+  ) async {
+    if (!await target.exists()) {
+      throw WorkspaceInspectionException(
+        'Arquivo nao encontrado para edicao parcial: ${edit.relativePath}. '
+        'Para criar um arquivo novo, use o formato com "content".',
+      );
+    }
+    final original = await target.readAsString();
+    var find = edit.find!;
+    var replace = edit.replace ?? '';
+    var occurrences = _countOccurrences(original, find);
+    if (occurrences == 0 &&
+        original.contains('\r\n') &&
+        !find.contains('\r')) {
+      // A IA costuma responder com \n mesmo quando o arquivo usa \r\n.
+      find = find.replaceAll('\n', '\r\n');
+      replace = replace.replaceAll('\n', '\r\n');
+      occurrences = _countOccurrences(original, find);
+    }
+    if (occurrences == 0) {
+      throw WorkspaceInspectionException(
+        'Trecho nao encontrado em ${edit.relativePath}. '
+        'Reenvie o campo find exatamente como esta no arquivo.',
+      );
+    }
+    if (occurrences > 1) {
+      throw WorkspaceInspectionException(
+        'Trecho ambiguo em ${edit.relativePath} ($occurrences ocorrencias). '
+        'Inclua mais linhas de contexto no campo find.',
+      );
+    }
+    return original.replaceFirst(find, replace);
+  }
+
+  static int _countOccurrences(String text, String pattern) {
+    if (pattern.isEmpty) return 0;
+    var count = 0;
+    var index = text.indexOf(pattern);
+    while (index != -1) {
+      count++;
+      index = text.indexOf(pattern, index + pattern.length);
+    }
+    return count;
   }
 
   static Future<String> _resolveRoot({

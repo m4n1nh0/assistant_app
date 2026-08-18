@@ -124,6 +124,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   String? _lastWorkspacePath;
   String? _editableWorkspaceRoot;
   bool _workspaceEditingAllowed = false;
+  bool _connectedEditPromptDeclined = false;
   bool _windowPickerBusy = false;
   DateTime? _wakeWordArmedUntil;
   int _wakePromptAttempts = 0;
@@ -950,6 +951,9 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     }
 
     final config = ref.read(configProvider);
+    if (config.selectedIsConnectedAgent) {
+      await _ensureConnectedWorkspacePermission(rawApiText);
+    }
     final history = ref.read(chatProvider.notifier).toApiHistory(10);
 
     if (showUserMessage) {
@@ -968,6 +972,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       final llmSvc = LlmService(
         config: config,
         workingDirectory: _lastWorkspacePath ?? '',
+        allowWorkspaceEdits:
+            _workspaceEditingAllowed && _editableWorkspaceRoot != null,
       );
 
       switch (config.responseMode) {
@@ -1640,7 +1646,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (proposal == null || proposal.edits.isEmpty) return;
     if (!mounted) return;
 
-    final files = proposal.edits.map((edit) => edit.relativePath).join('\n');
+    final files = proposal.edits
+        .map((edit) => edit.isPartial
+            ? '${edit.relativePath} (trecho)'
+            : '${edit.relativePath} (arquivo inteiro)')
+        .join('\n');
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1688,12 +1698,107 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         edits: proposal.edits,
       );
       final summary = applied
-          .map((item) => '${item.relativePath} (${item.bytesWritten} bytes)')
+          .map((item) => '${item.relativePath} '
+              '(${item.partial ? 'trecho, ' : ''}${item.bytesWritten} bytes)')
           .join(', ');
       _addSystemMsg('Edicoes aplicadas: $summary.');
     } catch (e) {
       _addSystemMsg('Nao consegui aplicar edicoes no workspace: $e');
     }
+  }
+
+  /// Com agente conectado selecionado, a mensagem não passa pelo backend e a
+  /// detecção de ação de código não roda. Este atalho local abre o mesmo
+  /// diálogo de permissão do workspace quando o pedido parece edição de
+  /// código, para o agente conectado poder propor edições.
+  Future<void> _ensureConnectedWorkspacePermission(String text) async {
+    if (_workspaceEditingAllowed && _editableWorkspaceRoot != null) return;
+    if (_connectedEditPromptDeclined) return;
+    if (!_looksLikeWorkspaceEditRequest(text)) return;
+    if (!mounted) return;
+
+    final permission = await showDialog<_CodingWorkspacePermission>(
+      context: context,
+      builder: (_) => _CodingWorkspacePermissionDialog(
+        title: 'Trabalhar no workspace local',
+        description:
+            'O agente conectado pode analisar o projeto com as ferramentas '
+            'dele e propor edições. Escolha a pasta e autorize a edição para '
+            'que as propostas possam ser aplicadas após sua confirmação.',
+        initialPath: _lastWorkspacePath ?? '',
+      ),
+    );
+    if (permission == null) {
+      _connectedEditPromptDeclined = true;
+      _addSystemMsg('Sem autorização de edição: o agente conectado segue '
+          'somente leitura nesta sessão.');
+      return;
+    }
+
+    final root = permission.rootPath.trim();
+    if (root.isEmpty || !await Directory(root).exists()) {
+      _connectedEditPromptDeclined = true;
+      _addSystemMsg('Pasta do workspace inválida; seguindo somente leitura.');
+      return;
+    }
+
+    _lastWorkspacePath = root;
+    _workspaceEditingAllowed = permission.allowEdits;
+    _editableWorkspaceRoot = permission.allowEdits ? root : null;
+    _addSystemMsg(permission.allowEdits
+        ? 'Edição autorizada em $root. As propostas do agente serão '
+            'aplicadas somente após sua confirmação.'
+        : 'Workspace definido em modo somente leitura: $root.');
+  }
+
+  bool _looksLikeWorkspaceEditRequest(String text) {
+    final normalized = _normalizeLoose(text);
+    if (normalized.isEmpty) return false;
+    const editVerbs = [
+      'edite',
+      'editar',
+      'altere',
+      'alterar',
+      'corrija',
+      'corrigir',
+      'conserte',
+      'consertar',
+      'implemente',
+      'implementar',
+      'refatore',
+      'refatorar',
+      'ajuste',
+      'ajustar',
+      'crie',
+      'criar',
+      'adicione',
+      'adicionar',
+      'remova',
+      'remover',
+      'renomeie',
+      'renomear',
+      'escreva',
+      'escrever',
+    ];
+    const codeTargets = [
+      'arquivo',
+      'codigo',
+      'classe',
+      'funcao',
+      'metodo',
+      'projeto',
+      'workspace',
+      'repositorio',
+      'modulo',
+      'componente',
+      'endpoint',
+      'teste',
+      'bug',
+      'script',
+    ];
+    final hasVerb = editVerbs.any(normalized.contains);
+    final hasTarget = codeTargets.any(normalized.contains);
+    return hasVerb && hasTarget;
   }
 
   _WorkspaceEditProposal? _extractWorkspaceEditProposal(
@@ -1721,17 +1826,22 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             final path = (item['path'] ?? item['relative_path'] ?? item['file'])
                 ?.toString()
                 .trim();
+            if (path == null || path.isEmpty) continue;
+            final find = item['find']?.toString();
+            final replace = item['replace']?.toString();
             final content = item['content']?.toString();
-            if (path == null ||
-                path.isEmpty ||
-                content == null ||
-                content.isEmpty) {
-              continue;
+            if (find != null && find.trim().isNotEmpty) {
+              edits.add(WorkspaceFileEdit(
+                relativePath: path,
+                find: find,
+                replace: replace ?? '',
+              ));
+            } else if (content != null && content.isNotEmpty) {
+              edits.add(WorkspaceFileEdit(
+                relativePath: path,
+                content: content,
+              ));
             }
-            edits.add(WorkspaceFileEdit(
-              relativePath: path,
-              content: content,
-            ));
           }
           if (edits.isEmpty) continue;
           return _WorkspaceEditProposal(

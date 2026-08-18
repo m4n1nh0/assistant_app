@@ -80,6 +80,134 @@ void main() {
     );
   });
 
+  test('applyEdits replaces an exact unique snippet in place', () async {
+    final temp = await Directory.systemTemp
+        .createTemp('assistant_workspace_partial_test_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final file = File('${temp.path}${Platform.pathSeparator}app.py');
+    await file.writeAsString('def soma(a, b):\n    return a - b\n\nprint(1)\n');
+
+    final results = await LocalWorkspaceService.applyEdits(
+      rootPath: temp.path,
+      edits: const [
+        WorkspaceFileEdit(
+          relativePath: 'app.py',
+          find: '    return a - b',
+          replace: '    return a + b',
+        ),
+      ],
+    );
+
+    expect(results.single.partial, isTrue);
+    expect(
+      await file.readAsString(),
+      'def soma(a, b):\n    return a + b\n\nprint(1)\n',
+    );
+  });
+
+  test('applyEdits keeps CRLF files intact when the AI sends LF snippets',
+      () async {
+    final temp =
+        await Directory.systemTemp.createTemp('assistant_workspace_crlf_test_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final file = File('${temp.path}${Platform.pathSeparator}main.cs');
+    await file.writeAsString('int A()\r\n{\r\n    return 1;\r\n}\r\n');
+
+    await LocalWorkspaceService.applyEdits(
+      rootPath: temp.path,
+      edits: const [
+        WorkspaceFileEdit(
+          relativePath: 'main.cs',
+          find: '{\n    return 1;\n}',
+          replace: '{\n    return 2;\n}',
+        ),
+      ],
+    );
+
+    expect(
+      await file.readAsString(),
+      'int A()\r\n{\r\n    return 2;\r\n}\r\n',
+    );
+  });
+
+  test('applyEdits rejects missing or ambiguous snippets', () async {
+    final temp = await Directory.systemTemp
+        .createTemp('assistant_workspace_reject_test_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final file = File('${temp.path}${Platform.pathSeparator}dup.txt');
+    await file.writeAsString('linha\nlinha\n');
+
+    await expectLater(
+      LocalWorkspaceService.applyEdits(
+        rootPath: temp.path,
+        edits: const [
+          WorkspaceFileEdit(
+            relativePath: 'dup.txt',
+            find: 'nao existe',
+            replace: 'x',
+          ),
+        ],
+      ),
+      throwsA(isA<WorkspaceInspectionException>()),
+    );
+    await expectLater(
+      LocalWorkspaceService.applyEdits(
+        rootPath: temp.path,
+        edits: const [
+          WorkspaceFileEdit(
+            relativePath: 'dup.txt',
+            find: 'linha',
+            replace: 'coluna',
+          ),
+        ],
+      ),
+      throwsA(isA<WorkspaceInspectionException>()),
+    );
+    await expectLater(
+      LocalWorkspaceService.applyEdits(
+        rootPath: temp.path,
+        edits: const [
+          WorkspaceFileEdit(
+            relativePath: 'novo.txt',
+            find: 'qualquer',
+            replace: 'coisa',
+          ),
+        ],
+      ),
+      throwsA(isA<WorkspaceInspectionException>()),
+    );
+    // O arquivo original permanece intacto após as tentativas rejeitadas.
+    expect(await file.readAsString(), 'linha\nlinha\n');
+  });
+
+  test('edit instructions document both full and partial formats', () async {
+    final temp = await Directory.systemTemp
+        .createTemp('assistant_workspace_prompt_test_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    await File('${temp.path}${Platform.pathSeparator}README.md')
+        .writeAsString('# Demo\n');
+
+    final snapshot = await LocalWorkspaceService.inspectWorkspace(
+      rootPath: temp.path,
+      query: 'analise',
+    );
+    final prompt =
+        snapshot.toPromptText(userRequest: 'analise', allowEdits: true);
+
+    expect(prompt, contains('workspace_edits'));
+    expect(prompt, contains('"find"'));
+    expect(prompt, contains('"replace"'));
+    expect(prompt, contains('"content"'));
+  });
+
   test('inspectWorkspace includes files relevant to the user request',
       () async {
     final temp = await Directory.systemTemp

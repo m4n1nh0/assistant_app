@@ -154,6 +154,7 @@ class ConnectedAiService {
     String personality = '',
     String language = 'pt-BR',
     String workingDirectory = '',
+    bool allowWorkspaceEdits = false,
   }) async {
     final status = await check(agentId);
     if (!status.installed || !status.authenticated) {
@@ -172,6 +173,8 @@ class ConnectedAiService {
       assistantName: assistantName,
       personality: personality,
       language: language,
+      allowWorkspaceEdits: allowWorkspaceEdits,
+      workspaceRoot: workingDirectory,
     );
     try {
       final content = agentId == 'codex_cli'
@@ -207,14 +210,38 @@ class ConnectedAiService {
     required String assistantName,
     required String personality,
     required String language,
+    bool allowWorkspaceEdits = false,
+    String workspaceRoot = '',
   }) {
     final buffer = StringBuffer()
       ..writeln('Você está atendendo dentro do assistente INTARQ.')
       ..writeln('Na interface, seu nome é $assistantName.')
       ..writeln(
-          'Responda em ${language == 'pt-BR' ? 'português brasileiro' : language}.')
-      ..writeln(
+          'Responda em ${language == 'pt-BR' ? 'português brasileiro' : language}.');
+    if (allowWorkspaceEdits) {
+      buffer
+        ..writeln(
+            'Você roda com ferramentas somente leitura; quem grava arquivos é '
+            'a interface INTARQ, sempre depois de o usuário confirmar. O '
+            'usuário autorizou edições no workspace'
+            '${workspaceRoot.trim().isEmpty ? '' : ' em ${workspaceRoot.trim()}'}.')
+        ..writeln(
+            'Quando o pedido envolver alterar código, proponha as edições '
+            'respondendo com um único bloco fenced chamado workspace_edits '
+            'contendo JSON: {"summary":"resumo curto","edits":[...]}. Cada '
+            'item de edits usa uma destas formas: '
+            '{"path":"caminho/relativo.ext","content":"conteúdo completo"} '
+            'para criar ou reescrever um arquivo inteiro, ou '
+            '{"path":"caminho/relativo.ext","find":"trecho exato atual",'
+            '"replace":"trecho novo"} para alterar apenas um trecho. '
+            'Prefira find/replace em mudanças pequenas; no find, copie o '
+            'trecho exatamente como está no arquivo e inclua linhas '
+            'suficientes para ele ser único. Use apenas caminhos relativos '
+            'dentro do workspace. Fora do bloco, responda em texto.');
+    } else {
+      buffer.writeln(
           'Não altere arquivos nem execute ações destrutivas; responda ao usuário em texto.');
+    }
     if (personality.trim().isNotEmpty) {
       buffer.writeln('Estilo solicitado: ${personality.trim()}');
     }

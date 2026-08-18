@@ -12,7 +12,16 @@ class LlmService {
   final AppConfig? config;
   final String workingDirectory;
 
-  LlmService({this.config, this.workingDirectory = ''});
+  /// Autorização de edição do workspace concedida pelo usuário na interface.
+  /// Vale apenas para agentes conectados: os provedores do backend recebem a
+  /// instrução de edição pelo contexto do workspace enviado na mensagem.
+  final bool allowWorkspaceEdits;
+
+  LlmService({
+    this.config,
+    this.workingDirectory = '',
+    this.allowWorkspaceEdits = false,
+  });
 
   /// Agente conectado escolhido na conversa, ou null para usar o backend.
   String? get _selectedConnectedAgent {
@@ -47,6 +56,7 @@ class LlmService {
       personality: current.personality,
       language: current.language,
       workingDirectory: workingDirectory,
+      allowWorkspaceEdits: allowWorkspaceEdits,
     );
     if (!response.isError) {
       // Mantém histórico e memória do backend completos mesmo quando a
