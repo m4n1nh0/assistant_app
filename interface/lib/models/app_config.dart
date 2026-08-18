@@ -1,4 +1,5 @@
 class AppConfig {
+  static const defaultAssistantName = 'Assistant';
   static const serviceLabels = {
     'backend': 'Backend',
     'claude': 'Claude Sonnet 4',
@@ -26,6 +27,7 @@ class AppConfig {
       responseModeLabels[id] ?? id.toUpperCase();
 
   String assistantName;
+  String assistantPronunciation;
   String userName;
   String personality;
   String responseMode;
@@ -62,7 +64,8 @@ class AppConfig {
       defaultValue: 'http://localhost:8000');
 
   AppConfig({
-    this.assistantName = 'Assistente',
+    this.assistantName = defaultAssistantName,
+    this.assistantPronunciation = '',
     this.userName = '',
     this.personality = '',
     this.responseMode = 'single',
@@ -106,6 +109,7 @@ class AppConfig {
 
   Map<String, dynamic> toJson() => {
         'assistantName': assistantName,
+        'assistantPronunciation': assistantPronunciation,
         'userName': userName,
         'personality': personality,
         'responseMode': responseMode,
@@ -141,7 +145,9 @@ class AppConfig {
     }
 
     return AppConfig(
-      assistantName: j['assistantName'] ?? 'Assistente',
+      assistantName: _assistantName(j['assistantName']),
+      assistantPronunciation:
+          j['assistantPronunciation']?.toString().trim() ?? '',
       userName: j['userName'] ?? '',
       personality: j['personality'] ?? '',
       responseMode: j['responseMode'] ?? 'single',
@@ -200,6 +206,14 @@ class AppConfig {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static String _assistantName(Object? value) {
+    final name = value?.toString().trim() ?? '';
+    // Migra o antigo valor padrao em portugues. Nomes realmente
+    // personalizados continuam intactos e pertencem ao usuario.
+    if (name.isEmpty || name == 'Assistente') return defaultAssistantName;
+    return name;
   }
 }
 

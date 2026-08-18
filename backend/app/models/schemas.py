@@ -175,7 +175,7 @@ class GenderEnum(str, Enum):
 
 
 class AssistantConfig(BaseModel):
-    assistant_name: str = "Assistente"
+    assistant_name: str = "Assistant"
     gender: GenderEnum = GenderEnum.f
     user_name: str = ""
     personality: str = ""
@@ -424,7 +424,7 @@ class TutorProfileRequest(BaseModel):
     timezone: str = "America/Sao_Paulo"
     locale: str = "pt-BR"
     notes: str = ""
-    assistant_name: str = "Assistente"
+    assistant_name: str = "Assistant"
     gender: GenderEnum = GenderEnum.f
     personality: str = ""
     response_mode: ResponseModeEnum = ResponseModeEnum.single

@@ -647,10 +647,23 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   }
 
   String _voiceReadyMessage() {
-    final assistantName = ref.read(configProvider).assistantName.trim();
-    final wakeName = assistantName.isEmpty ? 'Assistente' : assistantName;
-    final wakeHint = 'Diga "$wakeName," antes do comando.';
+    final config = ref.read(configProvider);
+    final assistantName = config.assistantName.trim().isEmpty
+        ? AppConfig.defaultAssistantName
+        : config.assistantName.trim();
+    final pronunciation = config.assistantPronunciation.trim();
+    final wakeHint = pronunciation.isEmpty
+        ? 'Diga "$assistantName," antes do comando.'
+        : 'Diga "$pronunciation," para chamar $assistantName.';
     return 'Microfone ativo para instrucoes por voz. $wakeHint Clique em PARAR para desligar.';
+  }
+
+  String _assistantSttHint(AppConfig config) {
+    final name = config.assistantName.trim().isEmpty
+        ? AppConfig.defaultAssistantName
+        : config.assistantName.trim();
+    final pronunciation = config.assistantPronunciation.trim();
+    return pronunciation.isEmpty ? name : '$name (pronuncia-se $pronunciation)';
   }
 
   Future<void> _runBackendVoiceLoop() async {
@@ -736,12 +749,16 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       final transcript = await api.transcribeAudio(
         await audioFile.readAsBytes(),
         language: _whisperLanguage(config.language),
-        assistantName: config.assistantName,
+        assistantName: _assistantSttHint(config),
       );
 
       if (transcript.trim().isEmpty) return;
 
-      final command = parseWakeWordCommand(transcript, config.assistantName);
+      final command = parseWakeWordCommand(
+        transcript,
+        config.assistantName,
+        config.assistantPronunciation,
+      );
       final now = DateTime.now();
       final isArmed = _wakeWordArmedUntil?.isAfter(now) ?? false;
       if (command.usedWakeWord || isArmed) {
@@ -793,8 +810,13 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
 
     _wakePromptAttempts++;
     _wakeWordArmedUntil = DateTime.now().add(const Duration(seconds: 8));
-    final assistantName = ref.read(configProvider).assistantName.trim();
-    final wakeName = assistantName.isEmpty ? 'Assistente' : assistantName;
+    final config = ref.read(configProvider);
+    final assistantName = config.assistantName.trim();
+    final wakeName = config.assistantPronunciation.trim().isNotEmpty
+        ? config.assistantPronunciation.trim()
+        : (assistantName.isEmpty
+            ? AppConfig.defaultAssistantName
+            : assistantName);
     final prompt = _wakePromptAttempts == 1
         ? '$wakeName ouviu. Qual e a instrucao?'
         : 'Qual e a instrucao?';
@@ -827,7 +849,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       final transcript = await api.transcribeAudio(
         await audioFile.readAsBytes(),
         language: _whisperLanguage(config.language),
-        assistantName: config.assistantName,
+        assistantName: _assistantSttHint(config),
       );
 
       if (transcript.trim().isEmpty) {
@@ -868,7 +890,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     _showVoiceDraft(raw);
 
     final config = ref.read(configProvider);
-    final command = parseWakeWordCommand(raw, config.assistantName);
+    final command = parseWakeWordCommand(
+      raw,
+      config.assistantName,
+      config.assistantPronunciation,
+    );
     if (requireWakeWord && !command.usedWakeWord) {
       return;
     }
@@ -1017,10 +1043,13 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   /// neurais) para nao trafegar o audio de volta do backend, que em producao
   /// fica remoto. Sem rede, cai no TTS do proprio sistema.
   Future<void> _speakText(String text) async {
-    final speech = text.trim();
-    if (speech.isEmpty) return;
-
     final config = ref.read(configProvider);
+    final speech = applyAssistantPronunciation(
+      text.trim(),
+      config.assistantName,
+      config.assistantPronunciation,
+    );
+    if (speech.isEmpty) return;
     try {
       final audioBytes = await NeuralTtsService.synthesize(
         speech,

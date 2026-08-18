@@ -347,6 +347,9 @@ class ApiService {
     Map<String, dynamic>? currentProfile,
   }) async {
     final profile = currentProfile ?? await getTutorProfile(account.tutorId);
+    final profileConfig = profile['config'] is Map
+        ? Map<String, dynamic>.from(profile['config'] as Map)
+        : <String, dynamic>{};
     final displayName = config.userName.trim().isNotEmpty
         ? config.userName.trim()
         : (profile['display_name']?.toString().trim().isNotEmpty == true
@@ -360,13 +363,16 @@ class ApiService {
       'locale': config.language,
       'notes': profile['notes']?.toString() ?? '',
       'assistant_name': config.assistantName.trim().isEmpty
-          ? 'Assistente'
+          ? AppConfig.defaultAssistantName
           : config.assistantName.trim(),
       'gender': config.assistantGender,
       'personality': config.personality,
       'response_mode': config.responseMode,
       'tts_enabled': config.ttsEnabled,
-      'config': profile['config'] is Map ? profile['config'] : const {},
+      'config': {
+        ...profileConfig,
+        'assistant_pronunciation': config.assistantPronunciation.trim(),
+      },
     });
   }
 

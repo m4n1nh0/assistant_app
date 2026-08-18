@@ -48,7 +48,7 @@ async def _deliver_telegram(
     message: str,
     config: NotifConfig,
     event: Optional[CalendarEvent] = None,
-    assistant_name: str = "Assistente",
+    assistant_name: str = "Assistant",
 ) -> tuple[bool, str]:
     if not config.telegram_token or not config.telegram_chat_id:
         return False, "Preencha o token do bot e o Chat ID."
@@ -86,7 +86,7 @@ async def send_telegram(
     message: str,
     config: NotifConfig,
     event: Optional[CalendarEvent] = None,
-    assistant_name: str = "Assistente",
+    assistant_name: str = "Assistant",
 ) -> bool:
     ok, message_or_error = await _deliver_telegram(
         message,
@@ -170,7 +170,7 @@ async def send_notification(
     config: NotifConfig,
     channels: List[str] = ("telegram", "whatsapp"),
     event: Optional[CalendarEvent] = None,
-    assistant_name: str = "Assistente",
+    assistant_name: str = "Assistant",
 ) -> NotifResult:
     result = NotifResult()
 

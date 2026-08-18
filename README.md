@@ -15,7 +15,9 @@ o App Registration Microsoft multitenant, permanecem no ambiente do backend.
 ## Identidade INTARQ
 
 A ferramenta adota a INTARQ como marca do produto, preservando o nome
-configurável da assistente como persona. Splash, acesso, barra superior, Modo
+configurável da assistente como persona individual de cada usuário. Sem nome,
+a persona usa `Assistant`; a pronúncia opcional pode fazer `Hannah` ser
+reconhecida e falada como `Raná` sem alterar sua grafia. Splash, acesso, barra superior, Modo
 Educação, ícone do Windows e relatórios seguem a paleta azul-noite, azul
 elétrico, ouro premium, prata tecnológica e grafite. Os PDFs continuam claros
 para impressão e recebem uma placa compacta com a logomarca.

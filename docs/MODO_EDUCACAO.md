@@ -80,6 +80,11 @@ Hannah, faça a chamada dos alunos.
 Hannah, abra a presença da turma.
 ```
 
+Em **Configurações > Identidade**, a pronúncia pode ser cadastrada separadamente
+do nome. Com nome visual `Hannah` e pronúncia `Raná`, tanto `Hannah, abra o modo
+educação` quanto `Raná, abra o modo educação` ativam a mesma persona do usuário.
+Sem nome personalizado, a palavra de ativação padrão é `Assistant`.
+
 Pedidos de estudo, como `O que vimos na aula passada?`, continuam sendo
 perguntas e não abrem a interface. Da mesma forma, `Faça uma chamada para o
 João` não é interpretado como presença escolar.

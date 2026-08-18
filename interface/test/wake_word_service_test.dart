@@ -41,4 +41,23 @@ void main() {
     expect(command.usedWakeWord, isTrue);
     expect(command.text, 'quais são meus compromissos');
   });
+
+  test('uses the per-user pronunciation as an additional wake word', () {
+    final command = parseWakeWordCommand(
+      'Raná, abra o modo educação',
+      'Hannah',
+      'Raná',
+    );
+
+    expect(command.usedWakeWord, isTrue);
+    expect(command.text, 'abra o modo educação');
+  });
+
+  test('pronunciation changes only synthesized speech, not displayed text', () {
+    const displayed = 'Hannah está pronta. Fale com Hannah.';
+    final spoken = applyAssistantPronunciation(displayed, 'Hannah', 'Raná');
+
+    expect(spoken, 'Raná está pronta. Fale com Raná.');
+    expect(displayed, contains('Hannah'));
+  });
 }

@@ -138,7 +138,7 @@ class AssistantProfileModel(Base):
     __tablename__ = "assistant_profiles"
     id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id       = Column(String(64), nullable=False, index=True)
-    assistant_name = Column(String(180), nullable=False, default="Assistente")
+    assistant_name = Column(String(180), nullable=False, default="Assistant")
     gender         = Column(String(1), nullable=False, default="f")
     personality    = Column(Text, nullable=True)
     language       = Column(String(16), nullable=False, default="pt-BR")

@@ -100,4 +100,27 @@ void main() {
     expect(restored.audioInputDeviceLabel, 'JBL Hands-Free AG Audio');
     expect(restored.toJson()['audioInputDeviceId'], 'jbl-hands-free');
   });
+
+  test('unnamed and legacy personas use Assistant as the default', () {
+    expect(AppConfig().assistantName, 'Assistant');
+    expect(AppConfig.fromJson({}).assistantName, 'Assistant');
+    expect(
+      AppConfig.fromJson({'assistantName': 'Assistente'}).assistantName,
+      'Assistant',
+    );
+    expect(
+      AppConfig.fromJson({'assistantName': 'Hannah'}).assistantName,
+      'Hannah',
+    );
+  });
+
+  test('assistant pronunciation survives persistence payload', () {
+    final restored = AppConfig.fromJson({
+      'assistantName': 'Hannah',
+      'assistantPronunciation': 'Raná',
+    });
+
+    expect(restored.assistantPronunciation, 'Raná');
+    expect(restored.toJson()['assistantPronunciation'], 'Raná');
+  });
 }

@@ -78,6 +78,41 @@ void main() {
     );
   });
 
+  test('pronuncia da assistente e salva no perfil isolado do usuario',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'PUT');
+      expect(request.url.path, '/tutor/');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['assistant_name'], 'Hannah');
+      expect(body['config']['assistant_pronunciation'], 'Raná');
+      expect(body['config']['existing_setting'], isTrue);
+      return http.Response(request.body, 200);
+    });
+
+    await http.runWithClient(
+      () => svc.saveAssistantProfile(
+        const CurrentAccount(
+          id: 'user-1',
+          username: 'mariano',
+          email: 'mariano@example.com',
+          role: 'admin',
+          tutorId: 'tutor-1',
+        ),
+        AppConfig(
+          assistantName: 'Hannah',
+          assistantPronunciation: 'Raná',
+        ),
+        currentProfile: {
+          'display_name': 'Mariano',
+          'config': {'existing_setting': true},
+        },
+      ),
+      () => client,
+    );
+  });
+
   test('agenda de turmas envia uma unica requisicao confirmada em lote',
       () async {
     final svc = ApiService(backendUrl: 'https://backend.test');

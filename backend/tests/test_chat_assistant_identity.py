@@ -69,3 +69,39 @@ def test_assistant_config_loads_authenticated_tutor_profile(monkeypatch):
     assert config["assistant_name"] == "Hannah"
     assert config["user_name"] == "Mariano"
     assert config["personality"].startswith("Você é Hannah")
+
+
+def test_legacy_unnamed_profile_uses_assistant_default(monkeypatch):
+    tutor = SimpleNamespace(display_name="Novo usuário", locale="pt-BR")
+    profile = SimpleNamespace(
+        assistant_name="Assistente",
+        gender="f",
+        personality="",
+        language="pt-BR",
+    )
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return profile
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _model, _key):
+            return tutor
+
+        async def execute(self, _statement):
+            return FakeResult()
+
+    monkeypatch.setattr(chat_router, "AsyncSessionLocal", FakeSession)
+    config = asyncio.run(
+        chat_router._assistant_config(
+            {"uid": "user-2", "sub": "novo", "tutor_id": "tutor-2"}
+        )
+    )
+
+    assert config["assistant_name"] == "Assistant"

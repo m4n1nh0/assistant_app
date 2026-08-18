@@ -5,14 +5,32 @@ class WakeWordCommand {
   const WakeWordCommand(this.text, this.usedWakeWord);
 }
 
+/// Troca o nome apenas no texto enviado ao sintetizador. A interface e o
+/// historico continuam exibindo a grafia escolhida pelo usuario.
+String applyAssistantPronunciation(
+  String text,
+  String assistantName,
+  String assistantPronunciation,
+) {
+  final name = assistantName.trim();
+  final pronunciation = assistantPronunciation.trim();
+  if (name.isEmpty || pronunciation.isEmpty) return text;
+  return text.replaceAll(
+    RegExp(RegExp.escape(name), caseSensitive: false),
+    pronunciation,
+  );
+}
+
 WakeWordCommand parseWakeWordCommand(
   String transcript,
-  String assistantName,
-) {
+  String assistantName, [
+  String assistantPronunciation = '',
+]) {
   final rawWords = _voiceWords(transcript);
   if (rawWords.isEmpty) return WakeWordCommand(transcript, false);
 
-  for (final nameTokens in _wakeNameTokenSets(assistantName)) {
+  for (final nameTokens
+      in _wakeNameTokenSets(assistantName, assistantPronunciation)) {
     final maxStart = rawWords.length - nameTokens.length;
     for (var start = 0; start <= maxStart && start <= 6; start++) {
       final candidate = rawWords
@@ -47,10 +65,20 @@ WakeWordCommand parseWakeWordCommand(
   return WakeWordCommand(transcript, false);
 }
 
-List<List<String>> _wakeNameTokenSets(String assistantName) {
-  final name = assistantName.trim().isEmpty ? 'Assistente' : assistantName;
-  final tokens = _normalizedWords(name);
-  return tokens.isEmpty ? const [] : [tokens];
+List<List<String>> _wakeNameTokenSets(
+  String assistantName,
+  String assistantPronunciation,
+) {
+  final name = assistantName.trim().isEmpty ? 'Assistant' : assistantName;
+  final candidates = [assistantPronunciation.trim(), name];
+  final result = <List<String>>[];
+  final seen = <String>{};
+  for (final candidate in candidates) {
+    final tokens = _normalizedWords(candidate);
+    final key = tokens.join(' ');
+    if (tokens.isNotEmpty && seen.add(key)) result.add(tokens);
+  }
+  return result;
 }
 
 List<String> _voiceWords(String text) {

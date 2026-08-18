@@ -221,7 +221,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
 
 
 def _build_system(payload: dict) -> str:
-    name = payload.get("assistant_name", "Assistente")
+    name = payload.get("assistant_name", "Assistant")
     user = payload.get("user_name", "")
     personality = payload.get("personality", "")
     language = payload.get("language", "pt-BR")

@@ -30,6 +30,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   late AppConfig _draft;
 
   final _nameCtrl = TextEditingController();
+  final _pronunciationCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
   final _personCtrl = TextEditingController();
   final _curPassCtrl = TextEditingController();
@@ -78,6 +79,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 
   void _populate() {
     _nameCtrl.text = _draft.assistantName;
+    _pronunciationCtrl.text = _draft.assistantPronunciation;
     _userCtrl.text = _draft.userName;
     _personCtrl.text = _draft.personality;
     _populateNotifFields();
@@ -147,8 +149,10 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   }
 
   Future<void> _save() async {
-    _draft.assistantName =
-        _nameCtrl.text.trim().isEmpty ? 'Assistente' : _nameCtrl.text.trim();
+    _draft.assistantName = _nameCtrl.text.trim().isEmpty
+        ? AppConfig.defaultAssistantName
+        : _nameCtrl.text.trim();
+    _draft.assistantPronunciation = _pronunciationCtrl.text.trim();
     _draft.userName = _userCtrl.text.trim();
     _draft.personality = _personCtrl.text.trim();
 
@@ -284,7 +288,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     setState(() => _voiceTestBusy = true);
     try {
       final bytes = await NeuralTtsService.synthesize(
-        'Oi! Sou a ${_nameCtrl.text.trim().isEmpty ? 'assistente' : _nameCtrl.text.trim()}. '
+        'Oi! Sou a ${_pronunciationCtrl.text.trim().isNotEmpty ? _pronunciationCtrl.text.trim() : (_nameCtrl.text.trim().isEmpty ? AppConfig.defaultAssistantName : _nameCtrl.text.trim())}. '
         'E assim que eu vou falar com voce.',
         voice: NeuralTtsService.resolveVoice(
             _draft.ttsVoice, _draft.assistantGender),
@@ -598,7 +602,15 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   }
 
   Widget _buildIdentity() => _TabContent(title: 'IDENTIDADE', children: [
-        _Field('NOME DO APP', _nameCtrl, hint: 'Ex: MAX, VERA, NEXUS, KAMI...'),
+        _Field('NOME DA ASSISTENTE', _nameCtrl,
+            hint: 'Ex: Hannah, Vera, Nexus...'),
+        _Field('PRONÚNCIA DO NOME', _pronunciationCtrl,
+            hint: 'Opcional. Ex: Raná para Hannah'),
+        const _InfoBox(
+          'A marca do produto continua INTARQ. O nome e a pronúncia da '
+          'assistente pertencem somente ao seu usuário. Sem nome, será usado '
+          'Assistant.',
+        ),
         _Field('SEU NOME', _userCtrl, hint: 'Como você prefere ser chamado'),
         _Field('PERFIL DE ATENDIMENTO', _personCtrl,
             hint: 'Descreva o tom, foco e preferências de resposta...',
@@ -1003,6 +1015,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   void dispose() {
     for (final c in [
       _nameCtrl,
+      _pronunciationCtrl,
       _userCtrl,
       _personCtrl,
       _curPassCtrl,

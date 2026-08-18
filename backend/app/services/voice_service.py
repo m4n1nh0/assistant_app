@@ -406,7 +406,7 @@ def _stt_prompt(
     """
     clean_context = " ".join((context or "").split())[:500]
     clean_assistant_name = " ".join((assistant_name or "").split())[:80]
-    wake_word = clean_assistant_name or "Assistente"
+    wake_word = clean_assistant_name or "Assistant"
     if language == "pt" and clean_context:
         return (
             "Transcreva em portugues brasileiro uma aula. Preserve termos "

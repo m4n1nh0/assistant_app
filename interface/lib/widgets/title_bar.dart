@@ -34,7 +34,7 @@ class AssistantTitleBar extends ConsumerWidget {
             ),
             Text(
               config.assistantName.trim().isEmpty
-                  ? 'ASSISTENTE'
+                  ? 'ASSISTANT'
                   : config.assistantName.trim().toUpperCase(),
               style: const TextStyle(
                 fontFamily: 'Rajdhani',

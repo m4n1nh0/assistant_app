@@ -34,7 +34,7 @@ async def _profile_timezone(tutor_id: str) -> str:
 
 
 def _system_prompt(config: dict) -> str:
-    name = config.get("assistant_name", "Assistente")
+    name = config.get("assistant_name", "Assistant")
     gender = config.get("gender", "f")
     user = config.get("user_name", "")
     personality = config.get("personality", "")
@@ -79,7 +79,12 @@ async def _assistant_config(user: dict) -> dict:
     if profile is not None:
         config.update(
             {
-                "assistant_name": profile.assistant_name or "Assistente",
+                "assistant_name": (
+                    "Assistant"
+                    if not profile.assistant_name
+                    or profile.assistant_name == "Assistente"
+                    else profile.assistant_name
+                ),
                 "gender": profile.gender or "f",
                 "personality": profile.personality or "",
                 "language": profile.language or config.get("language", "pt-BR"),

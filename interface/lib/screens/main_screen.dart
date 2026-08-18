@@ -87,12 +87,19 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       final backend = await api.getTutorProfile(account.tutorId);
       final local = ref.read(configProvider);
       final backendName = backend['assistant_name']?.toString().trim() ?? '';
-      final backendCustomized =
-          backendName.isNotEmpty && backendName != 'Assistente';
+      final backendCustomized = !_isDefaultAssistantName(backendName);
+      final profileConfig = backend['config'] is Map
+          ? Map<String, dynamic>.from(backend['config'] as Map)
+          : <String, dynamic>{};
+      final backendPronunciation =
+          profileConfig['assistant_pronunciation']?.toString().trim() ?? '';
       final localName = local.assistantName.trim();
-      final localCustomized = localName.isNotEmpty && localName != 'Assistente';
+      final localCustomized = !_isDefaultAssistantName(localName);
 
-      if (preferLocal && (localCustomized || !backendCustomized)) {
+      if (preferLocal &&
+          (localCustomized ||
+              local.assistantPronunciation.trim().isNotEmpty ||
+              !backendCustomized)) {
         await api.saveAssistantProfile(
           account,
           local,
@@ -101,10 +108,12 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         return;
       }
 
-      if (!backendCustomized) return;
+      if (!backendCustomized && backendPronunciation.isEmpty) return;
       final synced = AppConfig.fromJson({
         ...local.toJson(),
-        'assistantName': backendName,
+        'assistantName':
+            backendCustomized ? backendName : AppConfig.defaultAssistantName,
+        'assistantPronunciation': backendPronunciation,
         'assistantGender': backend['gender']?.toString() ?? 'f',
         'personality': backend['personality']?.toString() ?? '',
         'responseMode': backend['response_mode']?.toString() ?? 'single',
@@ -115,6 +124,13 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
     } catch (e) {
       debugPrint('[assistantProfile] sync failed: $e');
     }
+  }
+
+  bool _isDefaultAssistantName(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized.isEmpty ||
+        normalized == 'assistant' ||
+        normalized == 'assistente';
   }
 
   void _startBackendStatusSync() {

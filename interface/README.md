@@ -8,7 +8,9 @@ runner Windows.
 ## Marca INTARQ
 
 A marca do produto é INTARQ; o nome escolhido para a assistente permanece uma
-persona configurável. A paleta oficial e os caminhos dos ativos são definidos
+persona configurável por usuário, com `Assistant` como padrão. Um campo
+opcional de pronúncia permite, por exemplo, exibir `Hannah` e reconhecer/falar
+`Raná`. A paleta oficial e os caminhos dos ativos são definidos
 em `lib/branding/intarq_brand.dart`. A interface usa o lockup no splash, acesso
 e barra superior, o símbolo no Modo Educação e o ícone multirresolução no
 runner Windows. Os geradores de PDF carregam a mesma logomarca empacotada pelo

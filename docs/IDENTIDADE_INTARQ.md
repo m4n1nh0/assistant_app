@@ -4,6 +4,12 @@ A INTARQ é a marca principal do produto. O nome configurável da assistente é
 uma persona dentro da plataforma e não substitui a marca. Na interface, a
 hierarquia recomendada é `INTARQ | Nome da assistente`.
 
+Cada usuário possui sua própria persona. Sem personalização, o nome é
+`Assistant`. Nome e pronúncia são campos distintos: a grafia `Hannah` pode usar
+`Raná` como pronúncia para ativação e síntese de voz, sem alterar textos,
+histórico ou identificação visual. A pronúncia fica no `config` do perfil do
+usuário e não é uma configuração global da INTARQ.
+
 ## Ativos oficiais
 
 - `docs/assets/branding/intarq-brand-board.png`: prancha recebida e preservada

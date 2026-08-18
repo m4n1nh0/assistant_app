@@ -27,7 +27,11 @@ def _profile_response(tutor: TutorModel, profile: AssistantProfileModel) -> Tuto
         timezone=tutor.timezone,
         locale=tutor.locale,
         notes=tutor.notes or "",
-        assistant_name=profile.assistant_name,
+        assistant_name=(
+            "Assistant"
+            if not profile.assistant_name or profile.assistant_name == "Assistente"
+            else profile.assistant_name
+        ),
         gender=profile.gender,
         personality=profile.personality or "",
         response_mode=profile.response_mode,
