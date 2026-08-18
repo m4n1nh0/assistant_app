@@ -37,6 +37,16 @@ class ChatRequest(BaseModel):
     stream: bool = False
 
 
+class ChatLogRequest(BaseModel):
+    """Troca respondida fora do backend (agente conectado local) que precisa
+    entrar no histórico para manter memória e contexto completos."""
+
+    message: str
+    response: str
+    llm: str = Field(min_length=1, max_length=40)
+    session_id: str = "default"
+
+
 class LLMResponse(BaseModel):
     llm: str
     content: str

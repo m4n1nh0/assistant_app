@@ -219,10 +219,23 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     setState(() => _connectedAiBusy = true);
     try {
       final statuses = await ConnectedAiService.checkAll();
-      if (mounted) setState(() => _connectedAiStatuses = statuses);
+      if (mounted) {
+        setState(() => _connectedAiStatuses = statuses);
+        _pushConnectedAgents(statuses);
+      }
     } finally {
       if (mounted) setState(() => _connectedAiBusy = false);
     }
+  }
+
+  /// Publica o estado dos agentes conectados para os marcadores da conversa
+  /// refletirem a conexão sem depender do botão salvar.
+  void _pushConnectedAgents(List<ConnectedAiStatus> statuses) {
+    final agents = {
+      for (final status in statuses) status.id: status.authenticated,
+    };
+    _draft.connectedAgents = agents;
+    ref.read(configProvider.notifier).setConnectedAgents(agents);
   }
 
   Future<void> _connectConnectedAi(String id) async {
@@ -244,11 +257,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         }
         setState(() => _connectedAiStatuses = updated);
         if (status.authenticated) {
-          setState(() {
-            _draft.connectedAgentId = id;
-            _draft.connectedAgentMode = true;
-          });
-          _showSnack('${status.label} conectado. Salve para ativar o modo.');
+          _pushConnectedAgents(updated);
+          _showSnack('${status.label} conectado. Ele já aparece como opção '
+              'nos marcadores da conversa.');
           return;
         }
       }
@@ -290,8 +301,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     setState(() => _connectedAiBusy = true);
     try {
       await ConnectedAiService.logout(status.id);
-      if (_draft.connectedAgentId == status.id) {
-        _draft.connectedAgentMode = false;
+      if (_draft.selectedAgent == status.id) {
+        _draft.selectedAgent = AppConfig.autoAgent;
       }
       await _loadConnectedAiStatusesAfterAction();
       _showSnack('${status.label} desconectado.');
@@ -304,7 +315,10 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 
   Future<void> _loadConnectedAiStatusesAfterAction() async {
     final statuses = await ConnectedAiService.checkAll();
-    if (mounted) setState(() => _connectedAiStatuses = statuses);
+    if (mounted) {
+      setState(() => _connectedAiStatuses = statuses);
+      _pushConnectedAgents(statuses);
+    }
   }
 
   Future<void> _save() async {
@@ -948,33 +962,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           'não lê, copia nem envia os tokens para o backend. Esse modo executa '
           'o agente localmente e com permissões restritas.',
         ),
-        _Toggle(
-          'Usar agente conectado nas conversas',
-          _draft.connectedAgentMode,
-          (value) {
-            final selected = _connectedAiStatuses.where(
-              (item) => item.id == _draft.connectedAgentId,
-            );
-            if (value && (selected.isEmpty || !selected.first.authenticated)) {
-              _showSnack('Conecte o agente escolhido antes de ativar o modo.');
-              return;
-            }
-            setState(() => _draft.connectedAgentMode = value);
-          },
-        ),
-        _Label('AGENTE PREFERIDO'),
-        _Dropdown(
-          value: _draft.connectedAgentId,
-          items: ConnectedAiService.supportedAgents,
-          onChanged: (value) => setState(() {
-            _draft.connectedAgentId = value ?? 'codex_cli';
-            final status = _connectedAiStatuses.where(
-              (item) => item.id == _draft.connectedAgentId,
-            );
-            if (status.isEmpty || !status.first.authenticated) {
-              _draft.connectedAgentMode = false;
-            }
-          }),
+        const _InfoBox(
+          'Agentes conectados entram na lista de agentes disponíveis junto '
+          'com os provedores do backend. Na conversa, toque nos marcadores '
+          'do cabeçalho para escolher AUTO (orquestração) ou um agente '
+          'específico.',
         ),
         const SizedBox(height: 10),
         if (_connectedAiBusy && _connectedAiStatuses.isEmpty)

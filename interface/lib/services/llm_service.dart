@@ -14,29 +14,68 @@ class LlmService {
 
   LlmService({this.config, this.workingDirectory = ''});
 
+  /// Agente conectado escolhido na conversa, ou null para usar o backend.
+  String? get _selectedConnectedAgent {
+    final current = config;
+    if (current == null || !current.selectedIsConnectedAgent) return null;
+    return current.effectiveAgent;
+  }
+
+  /// Provedor do backend fixado na conversa, ou null para orquestração auto.
+  String? get _selectedBackendLlm {
+    final current = config;
+    if (current == null) return null;
+    final selected = current.effectiveAgent;
+    if (selected == AppConfig.autoAgent ||
+        AppConfig.connectedAgentIds.contains(selected)) {
+      return null;
+    }
+    return selected;
+  }
+
+  Future<ChatResult> _runConnectedAgent(
+    String agentId,
+    List<Map<String, String>> history,
+    String text,
+  ) async {
+    final current = config!;
+    final response = await ConnectedAiService.run(
+      agentId: agentId,
+      prompt: text,
+      history: history,
+      assistantName: current.assistantName,
+      personality: current.personality,
+      language: current.language,
+      workingDirectory: workingDirectory,
+    );
+    if (!response.isError) {
+      // Mantém histórico e memória do backend completos mesmo quando a
+      // resposta foi gerada localmente pelo cliente oficial.
+      unawaited(
+        api
+            .logExternalChat(
+              message: text,
+              response: response.content,
+              llm: response.agentId,
+            )
+            .catchError((_) => <String, dynamic>{}),
+      );
+    }
+    return ChatResult(responses: [
+      LlmResponse(
+        llm: response.agentId,
+        content: response.content,
+        isError: response.isError,
+      ),
+    ]);
+  }
+
   Future<ChatResult> call(
     List<Map<String, String>> history,
     String text,
   ) async {
-    final current = config;
-    if (current?.connectedAgentMode == true) {
-      final response = await ConnectedAiService.run(
-        agentId: current!.connectedAgentId,
-        prompt: text,
-        history: history,
-        assistantName: current.assistantName,
-        personality: current.personality,
-        language: current.language,
-        workingDirectory: workingDirectory,
-      );
-      return ChatResult(responses: [
-        LlmResponse(
-          llm: response.agentId,
-          content: response.content,
-          isError: response.isError,
-        ),
-      ]);
-    }
+    final connected = _selectedConnectedAgent;
+    if (connected != null) return _runConnectedAgent(connected, history, text);
     try {
       const timeout = Duration(seconds: 120);
       final data = await api
@@ -44,6 +83,7 @@ class LlmService {
             message: text,
             history: history,
             mode: 'single',
+            llm: _selectedBackendLlm,
           )
           .timeout(timeout);
       return _parseResult(data, fallbackLlm: 'backend');
@@ -70,7 +110,8 @@ class LlmService {
     List<Map<String, String>> history,
     String text,
   ) async {
-    if (config?.connectedAgentMode == true) return call(history, text);
+    final connected = _selectedConnectedAgent;
+    if (connected != null) return _runConnectedAgent(connected, history, text);
     try {
       const timeout = Duration(seconds: 150);
       final data = await api
@@ -78,6 +119,7 @@ class LlmService {
             message: text,
             history: history,
             mode: 'multi',
+            llm: _selectedBackendLlm,
           )
           .timeout(timeout);
       return _parseResult(data, fallbackLlm: 'backend');
@@ -101,7 +143,8 @@ class LlmService {
     List<Map<String, String>> history,
     String text,
   ) async {
-    if (config?.connectedAgentMode == true) return call(history, text);
+    final connected = _selectedConnectedAgent;
+    if (connected != null) return _runConnectedAgent(connected, history, text);
     try {
       const timeout = Duration(seconds: 180);
       final data = await api
@@ -109,6 +152,7 @@ class LlmService {
             message: text,
             history: history,
             mode: 'chain',
+            llm: _selectedBackendLlm,
           )
           .timeout(timeout);
       return _parseResult(data, fallbackLlm: 'chain');

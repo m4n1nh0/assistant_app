@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/app_config.dart';
 import '../providers/app_provider.dart';
 import '../utils/theme.dart';
 import 'education_dialog.dart';
@@ -19,14 +20,15 @@ class _LeftPanelState extends ConsumerState<LeftPanel> {
     final config = ref.watch(configProvider);
     final isRec = ref.watch(isRecordingProvider);
     final isSpeaking = ref.watch(isSpeakingProvider);
-    final backendServices = config.connectedAgentMode
-        ? [config.connectedAgentId]
-        : config.activeList.isEmpty
-            ? ['backend']
-            : config.activeList;
-    final activeSummary = backendServices.length == 1
-        ? config.serviceName(backendServices.first)
-        : '${backendServices.length} agentes ativos';
+    final available = config.availableAgents;
+    final selected = config.effectiveAgent;
+    final activeSummary = selected != AppConfig.autoAgent
+        ? config.serviceName(selected)
+        : available.isEmpty
+            ? config.serviceName('backend')
+            : available.length == 1
+                ? config.serviceName(available.first)
+                : '${available.length} agentes ativos';
 
     return Container(
       width: 240,

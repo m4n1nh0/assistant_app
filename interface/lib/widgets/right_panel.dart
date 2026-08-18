@@ -14,14 +14,15 @@ class RightPanel extends ConsumerWidget {
     final config = ref.watch(configProvider);
     final events = ref.watch(eventsProvider);
     final isAuth = ref.watch(isAuthenticatedProvider);
-    final servicesLabel = config.connectedAgentMode
-        ? config.serviceName(config.connectedAgentId)
-        : config.activeList.isEmpty
-            ? 'BACKEND'
-            : '${config.activeList.length} backend';
-    final aiStatuses = config.connectedAgentMode
-        ? <LlmStatus>[]
-        : config.llmStatuses.values.toList();
+    final available = config.availableAgents;
+    final selected = config.effectiveAgent;
+    final servicesLabel = available.isEmpty
+        ? 'BACKEND'
+        : '${available.length} disponíveis';
+    final agentLabel = selected == AppConfig.autoAgent
+        ? 'AUTO'
+        : config.serviceName(selected);
+    final aiStatuses = config.llmStatuses.values.toList();
 
     return Container(
       width: 260,
@@ -39,11 +40,10 @@ class RightPanel extends ConsumerWidget {
                     config.userName.isEmpty ? '—' : config.userName,
                     AssistantTheme.c3),
                 _InfoRow('IA', servicesLabel, AssistantTheme.c2),
+                _InfoRow('Agente', agentLabel, AssistantTheme.c2),
                 _InfoRow(
                     'Modo',
-                    config.connectedAgentMode
-                        ? 'AGENTE LOCAL'
-                        : AppConfig.responseModeLabel(config.responseMode),
+                    AppConfig.responseModeLabel(config.responseMode),
                     AssistantTheme.c4),
                 _InfoRow('Auth', isAuth ? 'VERIFICADO' : 'PENDENTE',
                     isAuth ? AssistantTheme.c3 : AssistantTheme.danger),

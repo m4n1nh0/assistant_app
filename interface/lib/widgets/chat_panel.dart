@@ -3335,12 +3335,15 @@ class _DesktopWindowTile extends StatelessWidget {
   }
 }
 
-/// Marcadores dos servicos de IA ativos, um por servico.
+/// Marcadores dos agentes disponiveis, um por servico, mais o AUTO.
 ///
 /// Publico porque e o que o teste do cabecalho renderiza: com dez servicos
 /// ligados a fila nao cabe na largura do painel, e essa e a parte que precisa
 /// continuar visivel em vez de estourar a linha.
-class ChatServiceChips extends StatelessWidget {
+///
+/// Tocar em um marcador fixa aquele agente para as proximas respostas; AUTO
+/// devolve a escolha para a orquestracao do backend.
+class ChatServiceChips extends ConsumerWidget {
   final AppConfig config;
   const ChatServiceChips({super.key, required this.config});
 
@@ -3358,15 +3361,16 @@ class ChatServiceChips extends StatelessWidget {
     'hf': AssistantTheme.cHF,
     'codex_cli': AssistantTheme.c1,
     'claude_cli': AssistantTheme.c4,
+    AppConfig.autoAgent: AssistantTheme.c3,
   };
 
   @override
-  Widget build(BuildContext context) {
-    final services = config.connectedAgentMode
-        ? [config.connectedAgentId]
-        : config.activeList.isEmpty
-            ? ['backend']
-            : config.activeList;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final available = config.availableAgents;
+    final services = available.isEmpty
+        ? ['backend']
+        : [AppConfig.autoAgent, ...available];
+    final selected = config.effectiveAgent;
 
     // Quebra para a linha de baixo em vez de estourar: esconder um servico
     // atras da borda seria pior do que ocupar mais 20px de altura.
@@ -3374,26 +3378,40 @@ class ChatServiceChips extends StatelessWidget {
       spacing: 6,
       runSpacing: 6,
       crossAxisAlignment: WrapCrossAlignment.center,
-      children: services
-          .map((llm) => Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                      color:
-                          (_colors[llm] ?? AssistantTheme.c1).withOpacity(0.5)),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  config.serviceName(llm).toUpperCase(),
-                  style: TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 8,
-                    letterSpacing: 1,
-                    color: _colors[llm] ?? AssistantTheme.c1,
-                  ),
-                ),
-              ))
-          .toList(),
+      children: services.map((llm) {
+        final color = _colors[llm] ?? AssistantTheme.c1;
+        final isSelected = available.isNotEmpty && llm == selected;
+        final label =
+            llm == AppConfig.autoAgent ? 'AUTO' : config.serviceName(llm);
+        return InkWell(
+          key: Key('chat-agent-chip-$llm'),
+          borderRadius: BorderRadius.circular(10),
+          onTap: available.isEmpty
+              ? null
+              : () => ref.read(configProvider.notifier).setSelectedAgent(llm),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: isSelected ? color.withOpacity(0.18) : null,
+              border: Border.all(
+                color: color.withOpacity(isSelected ? 0.9 : 0.5),
+                width: isSelected ? 1.2 : 1,
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              label.toUpperCase(),
+              style: TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 8,
+                letterSpacing: 1,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                color: color,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }

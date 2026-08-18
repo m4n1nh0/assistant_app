@@ -11,7 +11,7 @@ from ..core.database import (
     TutorModel,
 )
 from ..core.security import get_current_user
-from ..models.schemas import ChatRequest, ChatResponse, LLMResponse
+from ..models.schemas import ChatLogRequest, ChatRequest, ChatResponse, LLMResponse
 from ..services import llm_service
 from ..services.chat_graph_service import run_chat_graph
 from ..services.llm_status_service import get_llm_statuses, get_ready_llms
@@ -185,6 +185,34 @@ async def chat(
         responses=responses,
         action=action,
     )
+
+
+@router.post("/log")
+async def log_external_chat(
+    body: ChatLogRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Grava uma troca respondida por um agente conectado local (Codex/Claude
+    Code). A resposta nasce na máquina do usuário e nunca passa pelo /chat/,
+    então este registro é o que mantém histórico e memória completos."""
+    try:
+        async with AsyncSessionLocal() as s:
+            now = datetime.now(timezone.utc)
+            s.add(ConversationModel(
+                id=str(uuid.uuid4()), role="user",
+                content=body.message, session=body.session_id,
+                user_id=user["uid"], timestamp=now,
+            ))
+            s.add(ConversationModel(
+                id=str(uuid.uuid4()), role="assistant",
+                content=body.response, llm=body.llm,
+                session=body.session_id, user_id=user["uid"],
+                timestamp=now,
+            ))
+            await s.commit()
+    except Exception:
+        return {"ok": False}
+    return {"ok": True}
 
 
 @router.post("/stream")

@@ -78,6 +78,25 @@ class ConfigNotifier extends StateNotifier<AppConfig> {
     state = AppConfig.fromJson({...state.toJson(), 'responseMode': mode});
     HiveConfig.write(state.toSafeJson());
   }
+
+  void setSelectedAgent(String id) {
+    state = AppConfig.fromJson({...state.toJson(), 'selectedAgent': id});
+    HiveConfig.write(state.toSafeJson());
+  }
+
+  /// Atualiza os agentes conectados detectados neste computador. Se o agente
+  /// selecionado perdeu o login, a seleção volta para a orquestração.
+  void setConnectedAgents(Map<String, bool> agents) {
+    final selected = state.selectedAgent;
+    final resetSelection = AppConfig.connectedAgentIds.contains(selected) &&
+        agents[selected] != true;
+    state = AppConfig.fromJson({
+      ...state.toJson(),
+      'connectedAgents': agents,
+      if (resetSelection) 'selectedAgent': AppConfig.autoAgent,
+    });
+    HiveConfig.write(state.toSafeJson());
+  }
 }
 
 final chatProvider =

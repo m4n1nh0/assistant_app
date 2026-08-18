@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:assistant_app/models/app_config.dart';
@@ -26,16 +27,18 @@ AppConfig _config(List<String> ativos) => AppConfig(
 /// Reproduz o cabecalho da conversa: titulo fixo e os marcadores no resto.
 Future<void> _pump(WidgetTester tester, AppConfig config, double width) {
   return tester.pumpWidget(
-    MaterialApp(
-      home: Scaffold(
-        body: SizedBox(
-          width: width,
-          child: Row(
-            children: [
-              const Text('CONVERSA'),
-              const SizedBox(width: 12),
-              Expanded(child: ChatServiceChips(config: config)),
-            ],
+    ProviderScope(
+      child: MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: width,
+            child: Row(
+              children: [
+                const Text('CONVERSA'),
+                const SizedBox(width: 12),
+                Expanded(child: ChatServiceChips(config: config)),
+              ],
+            ),
           ),
         ),
       ),
@@ -44,9 +47,10 @@ Future<void> _pump(WidgetTester tester, AppConfig config, double width) {
 }
 
 void main() {
-  testWidgets('mostra um marcador por servico ativo', (tester) async {
+  testWidgets('mostra o AUTO e um marcador por servico ativo', (tester) async {
     await _pump(tester, _config(['claude', 'gpt', 'llama']), 800);
 
+    expect(find.text('AUTO'), findsOneWidget);
     expect(find.text('CLAUDE SONNET 4'), findsOneWidget);
     expect(find.text('GPT-4O'), findsOneWidget);
     expect(find.text('OLLAMA'), findsOneWidget);
@@ -81,18 +85,36 @@ void main() {
     await _pump(tester, _config(const []), 800);
 
     expect(find.text('BACKEND'), findsOneWidget);
+    expect(find.text('AUTO'), findsNothing);
   });
 
-  testWidgets('modo conectado mostra somente o agente desktop escolhido',
+  testWidgets('agente conectado autenticado aparece junto com os demais',
       (tester) async {
     final config = _config(['claude', 'gpt'])
-      ..connectedAgentMode = true
-      ..connectedAgentId = 'codex_cli';
+      ..connectedAgents = {'codex_cli': true, 'claude_cli': false};
 
     await _pump(tester, config, 800);
 
+    expect(find.text('AUTO'), findsOneWidget);
     expect(find.text('CODEX CONECTADO'), findsOneWidget);
-    expect(find.text('CLAUDE SONNET 4'), findsNothing);
-    expect(find.text('GPT-4O'), findsNothing);
+    expect(find.text('CLAUDE CONECTADO'), findsNothing);
+    expect(find.text('CLAUDE SONNET 4'), findsOneWidget);
+    expect(find.text('GPT-4O'), findsOneWidget);
+  });
+
+  testWidgets('agente selecionado fica destacado', (tester) async {
+    final config = _config(['claude', 'gpt'])
+      ..connectedAgents = {'claude_cli': true}
+      ..selectedAgent = 'claude_cli';
+
+    await _pump(tester, config, 800);
+
+    final chip = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const Key('chat-agent-chip-claude_cli')),
+        matching: find.byType(Text),
+      ),
+    );
+    expect(chip.style!.fontWeight, FontWeight.w700);
   });
 }

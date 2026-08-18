@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../services/calendar_service.dart';
+import '../services/connected_ai_service.dart';
 import '../services/storage_service.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
@@ -42,6 +43,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   Future<void> _initScreen() async {
     await _syncBackendStatus();
     _startBackendStatusSync();
+    unawaited(_syncConnectedAgents());
 
     if (!ref.read(isAuthenticatedProvider)) {
       final storedToken = await StorageService.loadAuthToken();
@@ -133,6 +135,20 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         normalized == 'assistente';
   }
 
+  /// Detecta os clientes oficiais (Codex/Claude Code) instalados e logados
+  /// neste computador para que entrem na lista de agentes selecionáveis.
+  Future<void> _syncConnectedAgents() async {
+    try {
+      final statuses = await ConnectedAiService.checkAll();
+      if (!mounted) return;
+      ref.read(configProvider.notifier).setConnectedAgents({
+        for (final status in statuses) status.id: status.authenticated,
+      });
+    } catch (e) {
+      debugPrint('[syncConnectedAgents] failed: $e');
+    }
+  }
+
   void _startBackendStatusSync() {
     _backendStatusTimer?.cancel();
     _backendStatusTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -221,14 +237,14 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   void _startWelcome() {
     final config = ref.read(configProvider);
-    final activeServices = config.connectedAgentMode
-        ? [config.connectedAgentId]
-        : config.activeList;
-    final services = activeServices.isEmpty
+    final available = config.availableAgents;
+    final services = available.isEmpty
         ? config.serviceName('backend')
-        : activeServices
-            .map((id) => _welcomeServiceName(config, id))
-            .join(', ');
+        : available.map((id) => _welcomeServiceName(config, id)).join(', ');
+    final selected = config.effectiveAgent;
+    final agentLabel = selected == AppConfig.autoAgent
+        ? 'Auto (orquestração entre todos)'
+        : _welcomeServiceName(config, selected);
     final user = config.userName.isNotEmpty ? ', ${config.userName}' : '';
 
     ref.read(chatProvider.notifier).addMessage(ChatMessage(
@@ -237,8 +253,10 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
           content: '${config.assistantName} pronto.\n\n'
               'Olá$user. Pode falar ou escrever para começar.\n\n'
               '• Serviços: $services\n'
+              '• Agente: $agentLabel — toque nos marcadores da conversa '
+              'para trocar\n'
               '• Modo: ${AppConfig.responseModeLabel(config.responseMode)}',
-          llm: activeServices.isNotEmpty ? activeServices.first : null,
+          llm: available.isNotEmpty ? available.first : null,
         ));
   }
 

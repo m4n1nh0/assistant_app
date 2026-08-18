@@ -19,6 +19,12 @@ class AppConfig {
   static String serviceLabel(String id) =>
       serviceLabels[id] ?? id.toUpperCase();
 
+  /// Agentes que rodam pelo cliente oficial instalado no computador.
+  static const connectedAgentIds = {'codex_cli', 'claude_cli'};
+
+  /// Valor de [selectedAgent] que deixa o backend orquestrar entre todos.
+  static const autoAgent = 'auto';
+
   static const responseModeLabels = {
     'single': 'Padrão',
     'multi': 'Paralelo',
@@ -40,9 +46,13 @@ class AppConfig {
   Map<String, String> llmLabels;
   Map<String, LlmStatus> llmStatuses;
 
-  /// Agente autenticado pelo cliente oficial instalado no computador.
-  bool connectedAgentMode;
-  String connectedAgentId;
+  /// Agentes conectados detectados neste computador (id -> autenticado).
+  Map<String, bool> connectedAgents;
+
+  /// Agente escolhido para responder: [autoAgent] deixa a orquestração do
+  /// backend decidir; um id específico (provedor ou agente conectado) fixa
+  /// todas as respostas naquele agente.
+  String selectedAgent;
 
   NotifConfig notif;
 
@@ -80,8 +90,8 @@ class AppConfig {
     Map<String, bool>? activeLlms,
     Map<String, String>? llmLabels,
     Map<String, LlmStatus>? llmStatuses,
-    this.connectedAgentMode = false,
-    this.connectedAgentId = 'codex_cli',
+    Map<String, bool>? connectedAgents,
+    this.selectedAgent = autoAgent,
     NotifConfig? notif,
     CalendarConfig? calendar,
     this.ttsEnabled = true,
@@ -104,11 +114,29 @@ class AppConfig {
             activeLlms ?? {for (final id in serviceLabels.keys) id: false},
         llmLabels = {...serviceLabels, ...?llmLabels},
         llmStatuses = llmStatuses ?? {},
+        connectedAgents = connectedAgents ?? {},
         notif = notif ?? NotifConfig(),
         calendar = calendar ?? CalendarConfig();
 
   List<String> get activeList =>
       activeLlms.entries.where((e) => e.value).map((e) => e.key).toList();
+
+  /// Agentes conectados autenticados neste computador.
+  List<String> get connectedAgentList =>
+      connectedAgents.entries.where((e) => e.value).map((e) => e.key).toList();
+
+  /// Tudo que pode responder agora: provedores do backend + agentes locais.
+  List<String> get availableAgents => [...activeList, ...connectedAgentList];
+
+  /// Seleção efetiva: volta para [autoAgent] se o agente escolhido sumiu
+  /// (perdeu login, chave removida ou provedor ficou offline).
+  String get effectiveAgent =>
+      selectedAgent != autoAgent && availableAgents.contains(selectedAgent)
+          ? selectedAgent
+          : autoAgent;
+
+  bool get selectedIsConnectedAgent =>
+      connectedAgentIds.contains(effectiveAgent);
 
   String serviceName(String id) => llmLabels[id] ?? serviceLabel(id);
   LlmStatus? serviceStatus(String id) => llmStatuses[id];
@@ -127,8 +155,8 @@ class AppConfig {
         'llmLabels': llmLabels,
         'llmStatus':
             llmStatuses.map((key, value) => MapEntry(key, value.toJson())),
-        'connectedAgentMode': connectedAgentMode,
-        'connectedAgentId': connectedAgentId,
+        'connectedAgents': connectedAgents,
+        'selectedAgent': selectedAgent,
         'notif': notif.toJson(),
         'calendar': calendar.toJson(),
         'ttsEnabled': ttsEnabled,
@@ -166,8 +194,11 @@ class AppConfig {
       activeLlms: activeLlms,
       llmLabels: _stringMap(j['llmLabels']),
       llmStatuses: _llmStatusMap(j['llmStatus'] ?? j['llm_status']),
-      connectedAgentMode: j['connectedAgentMode'] == true,
-      connectedAgentId: j['connectedAgentId']?.toString() ?? 'codex_cli',
+      connectedAgents: {
+        for (final entry in _map(j['connectedAgents']).entries)
+          entry.key: entry.value == true,
+      },
+      selectedAgent: _selectedAgent(j),
       notif: NotifConfig.fromJson(_map(j['notif'])),
       calendar: CalendarConfig.fromJson(_map(j['calendar'])),
       ttsEnabled: j['ttsEnabled'] ?? true,
@@ -184,6 +215,18 @@ class AppConfig {
       ttsRatePercent: _intValue(j['ttsRatePercent'], fallback: 0),
       ttsPitchHz: _intValue(j['ttsPitchHz'], fallback: 0),
     );
+  }
+
+  /// Migra o antigo modo exclusivo: quem tinha "usar agente conectado"
+  /// ligado passa a ter aquele agente selecionado, sem exclusividade.
+  static String _selectedAgent(Map<String, dynamic> j) {
+    final stored = j['selectedAgent']?.toString().trim() ?? '';
+    if (stored.isNotEmpty) return stored;
+    if (j['connectedAgentMode'] == true) {
+      final legacy = j['connectedAgentId']?.toString().trim() ?? '';
+      if (legacy.isNotEmpty) return legacy;
+    }
+    return autoAgent;
   }
 
   static Map<String, dynamic> _map(Object? value) {

@@ -310,6 +310,31 @@ class ApiService {
     );
   }
 
+  /// Registra no backend uma troca respondida fora dele (agente conectado
+  /// local), mantendo histórico e memória completos.
+  Future<Map<String, dynamic>> logExternalChat({
+    required String message,
+    required String response,
+    required String llm,
+    String sessionId = 'default',
+  }) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/chat/log'),
+      headers: _headers,
+      body: jsonEncode({
+        'message': message,
+        'response': response,
+        'llm': llm,
+        'session_id': sessionId,
+      }),
+    );
+    return _decodeObjectResponse(
+      r,
+      httpError: 'Falha ao registrar a conversa do agente conectado',
+      invalidResponse: 'Resposta invalida ao registrar a conversa',
+    );
+  }
+
   Stream<String> chatStream({
     required String message,
     List<Map<String, String>> history = const [],

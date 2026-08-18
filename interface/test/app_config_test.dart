@@ -124,15 +124,39 @@ void main() {
     expect(restored.toJson()['assistantPronunciation'], 'Raná');
   });
 
-  test('connected desktop agent mode is isolated in user configuration', () {
+  test('legacy exclusive connected mode migrates to agent selection', () {
     final restored = AppConfig.fromJson({
       'connectedAgentMode': true,
       'connectedAgentId': 'claude_cli',
     });
 
-    expect(restored.connectedAgentMode, isTrue);
-    expect(restored.connectedAgentId, 'claude_cli');
+    expect(restored.selectedAgent, 'claude_cli');
     expect(restored.serviceName('claude_cli'), 'Claude conectado');
-    expect(restored.toSafeJson()['connectedAgentId'], 'claude_cli');
+    expect(restored.toSafeJson()['selectedAgent'], 'claude_cli');
+  });
+
+  test('agent selection and connected agents survive persistence', () {
+    final restored = AppConfig.fromJson({
+      'selectedAgent': 'deepseek',
+      'connectedAgents': {'claude_cli': true, 'codex_cli': false},
+      'activeLlms': {'deepseek': true, 'gpt': true},
+    });
+
+    expect(restored.selectedAgent, 'deepseek');
+    expect(restored.connectedAgentList, ['claude_cli']);
+    expect(restored.availableAgents, ['deepseek', 'gpt', 'claude_cli']);
+    expect(restored.effectiveAgent, 'deepseek');
+    expect(restored.toSafeJson()['selectedAgent'], 'deepseek');
+  });
+
+  test('selection falls back to auto when the agent is unavailable', () {
+    final config = AppConfig.fromJson({
+      'selectedAgent': 'claude_cli',
+      'connectedAgents': {'claude_cli': false},
+      'activeLlms': {'gpt': true},
+    });
+
+    expect(config.effectiveAgent, AppConfig.autoAgent);
+    expect(config.selectedIsConnectedAgent, isFalse);
   });
 }
