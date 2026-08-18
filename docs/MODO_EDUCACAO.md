@@ -17,6 +17,18 @@ abas operacionais:
 4. histórico, correção de transcrição, resumo e PDF;
 5. chamada por QR Code, presença, relatórios e agenda das turmas.
 
+Antes da aula, **Configurações > Sistema > Microfone de entrada** permite
+selecionar e ouvir um teste de cinco segundos do microfone real que será usado.
+A captura é mono a 16 kHz, com ganho automático, supressão de ruído e
+cancelamento de eco quando suportados pelo sistema. Headsets Bluetooth aparecem
+como entrada `Hands-Free`/`Headset`; é necessário atualizar a lista depois de
+conectá-los.
+
+Na transcrição, o backend reduz repetições mecânicas do reconhecedor sem
+reescrever o conteúdo da aula: remove frases exatas duplicadas, sequências de
+três ou mais palavras iguais e sobreposição exata na fronteira dos blocos. O
+texto continua editável no histórico para correções de conteúdo.
+
 Os registros são separados por professor. Disciplinas e turmas pertencem a um
 semestre no formato `AAAA.1` ou `AAAA.2`; encerrar o semestre remove essas
 entidades dos fluxos atuais sem apagar o histórico.

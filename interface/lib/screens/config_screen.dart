@@ -1,12 +1,19 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 import '../providers/app_provider.dart';
 import '../services/storage_service.dart';
 import '../services/api_service.dart';
 import '../services/external_launcher_service.dart';
 import '../services/neural_tts_service.dart';
 import '../services/neural_audio_player.dart';
+import '../services/audio_input_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
@@ -41,6 +48,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   bool _telegramTestBusy = false;
   final _voicePreviewPlayer = NeuralAudioPlayer();
   bool _voiceTestBusy = false;
+  final _microphoneRecorder = AudioRecorder();
+  final _microphonePlayer = AudioPlayer();
+  List<InputDevice> _inputDevices = const [];
+  bool _microphonesBusy = false;
+  bool _microphoneTestBusy = false;
+  double? _microphonePeakDb;
   Map<String, List<CalendarAccount>> _calendarAccounts = const {
     'google': [],
     'microsoft': [],
@@ -59,6 +72,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _loadNotificationConfig();
       _loadCalendarAccounts();
       _loadAccountManagement();
+      _loadMicrophones();
     });
   }
 
@@ -287,6 +301,131 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _showSnack('Falha ao gerar a voz (precisa de internet): $e');
     } finally {
       if (mounted) setState(() => _voiceTestBusy = false);
+    }
+  }
+
+  Map<String, String> get _microphoneItems {
+    final items = <String, String>{'': 'Padrao do sistema'};
+    for (final device in _inputDevices) {
+      items[device.id] = device.label.trim().isEmpty
+          ? 'Microfone ${items.length}'
+          : device.label.trim();
+    }
+    final savedId = _draft.audioInputDeviceId;
+    if (savedId.isNotEmpty && !items.containsKey(savedId)) {
+      final label = _draft.audioInputDeviceLabel.trim().isEmpty
+          ? 'Microfone selecionado'
+          : _draft.audioInputDeviceLabel.trim();
+      items[savedId] = '$label (indisponivel)';
+    }
+    return items;
+  }
+
+  Future<void> _loadMicrophones() async {
+    if (_microphonesBusy) return;
+    if (mounted) setState(() => _microphonesBusy = true);
+    try {
+      if (!await _microphoneRecorder.hasPermission()) {
+        _showSnack('Autorize o acesso ao microfone no Windows.');
+        return;
+      }
+      final devices = await _microphoneRecorder.listInputDevices();
+      if (mounted) setState(() => _inputDevices = devices);
+    } catch (e) {
+      _showSnack('Nao foi possivel listar os microfones: $e');
+    } finally {
+      if (mounted) setState(() => _microphonesBusy = false);
+    }
+  }
+
+  void _selectMicrophone(String? id) {
+    final selectedId = id ?? '';
+    InputDevice? selected;
+    for (final device in _inputDevices) {
+      if (device.id == selectedId) {
+        selected = device;
+        break;
+      }
+    }
+    setState(() {
+      _draft.audioInputDeviceId = selectedId;
+      _draft.audioInputDeviceLabel = selected?.label ?? '';
+      _microphonePeakDb = null;
+    });
+  }
+
+  Future<void> _testMicrophone() async {
+    if (_microphoneTestBusy) return;
+    setState(() {
+      _microphoneTestBusy = true;
+      _microphonePeakDb = null;
+    });
+    StreamSubscription<Amplitude>? amplitudeSubscription;
+    String? path;
+    try {
+      if (!await _microphoneRecorder.hasPermission()) {
+        throw Exception('microfone nao autorizado pelo Windows');
+      }
+      final devices = await _microphoneRecorder.listInputDevices();
+      if (mounted) setState(() => _inputDevices = devices);
+      final selected = resolveAudioInputDevice(
+        devices,
+        deviceId: _draft.audioInputDeviceId,
+        deviceLabel: _draft.audioInputDeviceLabel,
+      );
+      if (_draft.audioInputDeviceId.isNotEmpty && selected == null) {
+        throw Exception(
+          'o microfone selecionado nao esta disponivel; conecte-o e clique em ATUALIZAR',
+        );
+      }
+
+      final dir = await getTemporaryDirectory();
+      path = '${dir.path}${Platform.pathSeparator}'
+          'microphone_test_${DateTime.now().millisecondsSinceEpoch}.wav';
+      await _microphonePlayer.stop();
+      await _microphoneRecorder.start(
+        speechRecordConfig(encoder: AudioEncoder.wav, device: selected),
+        path: path,
+      );
+      amplitudeSubscription = _microphoneRecorder
+          .onAmplitudeChanged(const Duration(milliseconds: 200))
+          .listen((amplitude) {
+        if (!mounted) return;
+        final current = amplitude.current;
+        if (current.isFinite) {
+          setState(() {
+            _microphonePeakDb = _microphonePeakDb == null
+                ? current
+                : (_microphonePeakDb! > current ? _microphonePeakDb : current);
+          });
+        }
+      });
+      await Future<void>.delayed(const Duration(seconds: 5));
+      path = await _microphoneRecorder.stop() ?? path;
+      final recordedFile = File(path);
+      if (!await recordedFile.exists() || await recordedFile.length() < 256) {
+        throw Exception('a gravacao ficou vazia');
+      }
+      final label = selected?.label ?? 'padrao do sistema';
+      _showSnack('Teste concluido com $label. Reproduzindo agora.');
+      unawaited(_microphonePlayer.onPlayerComplete.first.then((_) async {
+        if (await recordedFile.exists()) await recordedFile.delete();
+      }));
+      await _microphonePlayer.play(DeviceFileSource(path));
+    } catch (e) {
+      try {
+        if (await _microphoneRecorder.isRecording()) {
+          await _microphoneRecorder.stop();
+        }
+      } catch (_) {}
+      if (path != null) {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      }
+      _showSnack('Falha no teste do microfone: $e');
+    } finally {
+      await amplitudeSubscription?.cancel();
+      if (mounted) setState(() => _microphoneTestBusy = false);
     }
   }
 
@@ -762,6 +901,36 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
             'pelo backend. Sem internet, a assistente usa a voz do Windows.',
           ),
         ]),
+        _SectionCard(title: '🎙 MICROFONE DE ENTRADA', children: [
+          const _Label('DISPOSITIVO PARA AULAS E COMANDOS DE VOZ'),
+          _Dropdown(
+            value: _draft.audioInputDeviceId,
+            items: _microphoneItems,
+            onChanged: _selectMicrophone,
+          ),
+          const SizedBox(height: 10),
+          _ActionBtn(
+            label:
+                _microphonesBusy ? 'ATUALIZANDO...' : '↻ ATUALIZAR MICROFONES',
+            onTap: _microphonesBusy ? () {} : _loadMicrophones,
+          ),
+          _ActionBtn(
+            label: _microphoneTestBusy
+                ? 'GRAVANDO 5 SEGUNDOS...'
+                : '● GRAVAR TESTE DE 5s E OUVIR',
+            onTap: _microphoneTestBusy ? () {} : _testMicrophone,
+          ),
+          if (_microphonePeakDb != null)
+            _InfoBox(
+              'Pico captado: ${_microphonePeakDb!.toStringAsFixed(1)} dB. '
+              'Se a reproducao estiver baixa ou cortada, confira o volume de entrada no Windows.',
+            ),
+          const _InfoBox(
+            'O dispositivo escolhido sera usado na gravacao de aulas e nos '
+            'comandos de voz. Depois de conectar um fone Bluetooth, clique em '
+            'ATUALIZAR e escolha a entrada Hands-Free/Headset do fone.',
+          ),
+        ]),
         _SectionCard(title: '🖥 PREFERÊNCIAS', children: [
           _Toggle('Iniciar minimizado', _draft.startMinimized,
               (v) => setState(() => _draft.startMinimized = v)),
@@ -852,6 +1021,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       c.dispose();
     }
     _voicePreviewPlayer.dispose();
+    _microphoneRecorder.dispose();
+    _microphonePlayer.dispose();
     super.dispose();
   }
 }

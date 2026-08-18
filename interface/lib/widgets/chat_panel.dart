@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import '../services/audio_input_service.dart';
 import '../services/external_launcher_service.dart';
 import '../services/installed_apps_service.dart';
 import '../services/local_computer_action_service.dart';
@@ -105,6 +106,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   final _tts = FlutterTts();
   final _backendTtsPlayer = NeuralAudioPlayer();
   final _recorder = AudioRecorder();
+  InputDevice? _activeAudioInputDevice;
 
   bool _sttAvailable = false;
   bool _backendRecording = false;
@@ -495,6 +497,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         _setVoiceStatus('Microfone nao autorizado pelo sistema.');
         return;
       }
+      await _resolveAudioInputDevice();
 
       final supportsWav = await _recorder.isEncoderSupported(AudioEncoder.wav);
       final encoder = supportsWav ? AudioEncoder.wav : AudioEncoder.aacLc;
@@ -509,12 +512,9 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       if (mounted) setState(() {});
       _setVoiceStatus('Gravando voz. Fale a instrucao; vou enviar em 5s.');
       await _recorder.start(
-        RecordConfig(
+        speechRecordConfig(
           encoder: encoder,
-          sampleRate: 16000,
-          numChannels: 1,
-          noiseSuppress: true,
-          echoCancel: true,
+          device: _activeAudioInputDevice,
         ),
         path: _directRecordPath!,
       );
@@ -577,6 +577,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         _setVoiceStatus('Microfone nao autorizado pelo sistema.');
         return;
       }
+      await _resolveAudioInputDevice();
 
       _continuousVoiceMode = true;
       ref.read(isRecordingProvider.notifier).state = true;
@@ -588,6 +589,26 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       ref.read(isRecordingProvider.notifier).state = false;
       _setVoiceStatus('Erro ao gravar voz: $e');
     }
+  }
+
+  Future<void> _resolveAudioInputDevice() async {
+    final config = ref.read(configProvider);
+    final devices = await _recorder.listInputDevices();
+    final selected = resolveAudioInputDevice(
+      devices,
+      deviceId: config.audioInputDeviceId,
+      deviceLabel: config.audioInputDeviceLabel,
+    );
+    if (config.audioInputDeviceId.isNotEmpty && selected == null) {
+      final name = config.audioInputDeviceLabel.trim().isEmpty
+          ? 'selecionado'
+          : config.audioInputDeviceLabel.trim();
+      throw Exception(
+        'o microfone $name nao esta disponivel. Conecte-o ou escolha outro '
+        'em Configuracoes > Sistema',
+      );
+    }
+    _activeAudioInputDevice = selected;
   }
 
   Future<void> _stopBackendRecordingAndSend() async {
@@ -677,12 +698,9 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           '${dir.path}${Platform.pathSeparator}assistant_voice_${DateTime.now().millisecondsSinceEpoch}.$extension';
 
       await _recorder.start(
-        RecordConfig(
+        speechRecordConfig(
           encoder: encoder,
-          sampleRate: 16000,
-          numChannels: 1,
-          noiseSuppress: true,
-          echoCancel: true,
+          device: _activeAudioInputDevice,
         ),
         path: path,
       );

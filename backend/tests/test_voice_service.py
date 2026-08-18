@@ -38,6 +38,8 @@ def test_sync_transcribe_uses_vad_and_beam_search(monkeypatch):
     monkeypatch.setattr(voice_service.settings, "whisper_best_of", 4)
     monkeypatch.setattr(voice_service.settings, "whisper_vad_filter", True)
     monkeypatch.setattr(voice_service.settings, "whisper_vad_min_silence_ms", 450)
+    monkeypatch.setattr(voice_service.settings, "whisper_repetition_penalty", 1.15)
+    monkeypatch.setattr(voice_service.settings, "whisper_no_repeat_ngram_size", 3)
 
     audio = b"\x00\x00\x00\x18ftypM4A " + (b"\x00" * 32)
     result = voice_service._sync_transcribe(audio, "pt-BR")
@@ -52,6 +54,8 @@ def test_sync_transcribe_uses_vad_and_beam_search(monkeypatch):
     assert seen["kwargs"]["vad_filter"] is True
     assert seen["kwargs"]["vad_parameters"] == {"min_silence_duration_ms": 450}
     assert seen["kwargs"]["condition_on_previous_text"] is False
+    assert seen["kwargs"]["repetition_penalty"] == 1.15
+    assert seen["kwargs"]["no_repeat_ngram_size"] == 3
     # O prompt de vocabulario tambem vale para o Whisper local, nao so para a
     # OpenAI: sem ele, termos como "vscode" saem transcritos errado.
     assert "vscode" in seen["kwargs"]["initial_prompt"].lower()
@@ -65,6 +69,29 @@ def test_stt_prompt_anchors_technical_vocabulary():
 
     en = voice_service._stt_prompt("en")
     assert "VS Code" in en
+
+
+def test_transcript_cleanup_removes_only_clear_repetition_patterns():
+    assert voice_service.clean_transcript_repetitions(
+        "a normalizacao melhora a tabela a normalizacao melhora a tabela"
+    ) == "a normalizacao melhora a tabela"
+    assert voice_service.clean_transcript_repetitions("entao entao entao seguimos") == (
+        "entao seguimos"
+    )
+    assert voice_service.clean_transcript_repetitions("nao, nao foi isso") == (
+        "nao, nao foi isso"
+    )
+
+
+def test_transcript_overlap_is_removed_between_consecutive_chunks():
+    current = voice_service.trim_transcript_overlap(
+        "agora vamos criar a tabela de alunos",
+        "a tabela de alunos usando uma chave primaria",
+    )
+    assert current == "usando uma chave primaria"
+    assert voice_service.trim_transcript_overlap(
+        "fim do primeiro bloco", "outro assunto comeca aqui"
+    ) == "outro assunto comeca aqui"
 
 
 def test_stt_prompt_uses_lesson_context_for_classroom_audio():

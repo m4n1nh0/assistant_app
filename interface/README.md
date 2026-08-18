@@ -142,6 +142,18 @@ Como a geração pode demorar, sua conclusão dispara um aviso global acima da
 tela atual. Ele identifica a disciplina, o provedor utilizado e quantos trechos
 foram processados, mesmo quando o diálogo que iniciou o resumo já foi fechado.
 
+### Microfone E Qualidade Da Transcrição
+
+Em **Configurações > Sistema > Microfone de entrada**, o usuário pode manter o
+dispositivo padrão do Windows ou escolher uma entrada específica. A mesma
+escolha é aplicada às aulas e aos comandos de voz. O botão de teste grava cinco
+segundos, mostra o pico em dB e reproduz o áudio antes de uma aula real.
+
+Depois de sincronizar um fone Bluetooth, use **Atualizar microfones** e escolha
+a entrada `Hands-Free`/`Headset`; a saída estéreo do fone não é um microfone. Se
+uma entrada salva estiver desconectada, a interface informa o problema e não
+troca silenciosamente para outro dispositivo.
+
 ### Calendários
 
 Em **Configurações > Agendas**, cada usuário pode conectar contas Google

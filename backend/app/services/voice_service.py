@@ -1,6 +1,7 @@
 import io
 import math
 import os
+import re
 import tempfile
 from loguru import logger
 from ..core.config import get_settings
@@ -124,6 +125,8 @@ def _sync_transcribe(
             vad_filter=settings.whisper_vad_filter,
             vad_parameters=vad_parameters if settings.whisper_vad_filter else None,
             condition_on_previous_text=False,
+            repetition_penalty=max(1.0, settings.whisper_repetition_penalty),
+            no_repeat_ngram_size=max(0, settings.whisper_no_repeat_ngram_size),
             # Mesma dica de contexto usada no caminho da OpenAI: ancora nomes de
             # apps e palavras de ativacao que o modelo costuma transcrever errado.
             initial_prompt=_stt_prompt(
@@ -137,7 +140,9 @@ def _sync_transcribe(
             log_prob_threshold=-1.0,
         )
         segments = list(segments_iter)
-        transcript = " ".join(seg.text.strip() for seg in segments).strip()
+        transcript = clean_transcript_repetitions(
+            " ".join(seg.text.strip() for seg in segments).strip()
+        )
         return STTResponse(
             transcript=transcript,
             confidence=_transcription_confidence(segments, transcript),
@@ -236,7 +241,7 @@ def _sync_openai_transcribe(
             result = client.audio.transcriptions.create(**kwargs)
 
         transcript = result if isinstance(result, str) else getattr(result, "text", "")
-        transcript = (transcript or "").strip()
+        transcript = clean_transcript_repetitions((transcript or "").strip())
         return STTResponse(
             transcript=transcript,
             confidence=1.0 if transcript else 0.0,
@@ -266,6 +271,74 @@ def _detect_audio_suffix(audio_bytes: bytes) -> str:
 def _whisper_language(language: str) -> str | None:
     lang = (language or "").replace("_", "-").split("-")[0].strip().lower()
     return lang or None
+
+
+def _normalized_word(token: str) -> str:
+    return re.sub(r"[^\w]", "", token, flags=re.UNICODE).casefold()
+
+
+def clean_transcript_repetitions(text: str) -> str:
+    """Remove apenas repeticoes exatas tipicas de alucinacao do STT.
+
+    Duas palavras iguais sao preservadas ("nao, nao" pode ser fala real).
+    Tres ou mais ocorrencias seguidas sao reduzidas a uma. Frases exatas de
+    duas a doze palavras repetidas lado a lado tambem ficam uma vez.
+    """
+    tokens = (text or "").split()
+    normalized = [_normalized_word(token) for token in tokens]
+
+    index = 0
+    while index < len(tokens):
+        end = index + 1
+        while (
+            end < len(tokens)
+            and normalized[index]
+            and normalized[end] == normalized[index]
+        ):
+            end += 1
+        if end - index >= 3:
+            del tokens[index + 1:end]
+            del normalized[index + 1:end]
+        index += 1
+
+    index = 0
+    while index < len(tokens):
+        max_size = min(12, (len(tokens) - index) // 2)
+        repeated = False
+        for size in range(max_size, 1, -1):
+            first = normalized[index:index + size]
+            second = normalized[index + size:index + (2 * size)]
+            if all(first) and first == second:
+                del tokens[index + size:index + (2 * size)]
+                del normalized[index + size:index + (2 * size)]
+                repeated = True
+                break
+        if not repeated:
+            index += 1
+
+    return " ".join(tokens).strip()
+
+
+def trim_transcript_overlap(
+    previous_text: str,
+    current_text: str,
+    *,
+    min_words: int = 3,
+    max_words: int = 20,
+) -> str:
+    """Retira a sobreposicao exata entre o fim e o inicio de dois blocos."""
+    previous = (previous_text or "").split()
+    current = (current_text or "").split()
+    previous_norm = [_normalized_word(token) for token in previous]
+    current_norm = [_normalized_word(token) for token in current]
+    limit = min(max_words, len(previous), len(current))
+    for size in range(limit, max(1, min_words) - 1, -1):
+        if (
+            all(previous_norm[-size:])
+            and previous_norm[-size:] == current_norm[:size]
+        ):
+            return " ".join(current[size:]).strip()
+    return " ".join(current).strip()
 
 
 def _transcription_confidence(segments: list, transcript: str) -> float:

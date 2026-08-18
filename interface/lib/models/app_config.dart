@@ -48,6 +48,8 @@ class AppConfig {
   bool autoLaunch;
   String hotkey;
   String backendUrl;
+  String audioInputDeviceId;
+  String audioInputDeviceLabel;
 
   /// Voz neural usada pela interface. Vazio deixa a escolha pelo genero.
   String ttsVoice;
@@ -78,6 +80,8 @@ class AppConfig {
     this.startMinimized = false,
     this.autoLaunch = false,
     this.hotkey = 'ctrl+shift+space',
+    this.audioInputDeviceId = '',
+    this.audioInputDeviceLabel = '',
     this.ttsVoice = '',
     this.ttsRatePercent = 0,
     this.ttsPitchHz = 0,
@@ -121,6 +125,8 @@ class AppConfig {
         'autoLaunch': autoLaunch,
         'hotkey': hotkey,
         'backendUrl': backendUrl,
+        'audioInputDeviceId': audioInputDeviceId,
+        'audioInputDeviceLabel': audioInputDeviceLabel,
         'ttsVoice': ttsVoice,
         'ttsRatePercent': ttsRatePercent,
         'ttsPitchHz': ttsPitchHz,
@@ -154,6 +160,8 @@ class AppConfig {
       autoLaunch: j['autoLaunch'] ?? false,
       hotkey: j['hotkey'] ?? 'ctrl+shift+space',
       backendUrl: j['backendUrl']?.toString(),
+      audioInputDeviceId: j['audioInputDeviceId']?.toString() ?? '',
+      audioInputDeviceLabel: j['audioInputDeviceLabel']?.toString() ?? '',
       ttsVoice: j['ttsVoice']?.toString() ?? '',
       ttsRatePercent: _intValue(j['ttsRatePercent'], fallback: 0),
       ttsPitchHz: _intValue(j['ttsPitchHz'], fallback: 0),

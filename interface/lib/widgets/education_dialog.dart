@@ -5,15 +5,18 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:record/record.dart';
 
 import '../services/api_service.dart';
+import '../services/audio_input_service.dart';
 import '../services/education_service.dart';
 import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
+import '../providers/app_provider.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'education_dashboard.dart';
@@ -222,16 +225,16 @@ class _EducationDialogState extends State<EducationDialog> {
 
 // --- Aula ------------------------------------------------------------------
 
-class _LessonTab extends StatefulWidget {
+class _LessonTab extends ConsumerStatefulWidget {
   final _Classes classes;
 
   const _LessonTab({required this.classes});
 
   @override
-  State<_LessonTab> createState() => _LessonTabState();
+  ConsumerState<_LessonTab> createState() => _LessonTabState();
 }
 
-class _LessonTabState extends State<_LessonTab> {
+class _LessonTabState extends ConsumerState<_LessonTab> {
   /// Duracao de cada bloco de audio enviado ao backend. Blocos curtos dao
   /// retorno rapido na tela; blocos longos gastam menos chamadas de STT.
   static const _chunkDuration = Duration(seconds: 60);
@@ -248,6 +251,8 @@ class _LessonTabState extends State<_LessonTab> {
   Timer? _sessionTimer;
   String? _currentPath;
   DateTime? _startedAt;
+  InputDevice? _activeInputDevice;
+  String _activeInputLabel = 'padrao do sistema';
 
   final _segments = <LessonSegment>[];
   final _points = <LessonPoint>[];
@@ -352,6 +357,7 @@ class _LessonTabState extends State<_LessonTab> {
 
     setState(() => _starting = true);
     try {
+      await _resolveInputDevice();
       // Aula de duas horas nao pode esbarrar no fim do token no meio.
       await api.refreshSession();
       final lesson = await education.createLesson(
@@ -370,7 +376,8 @@ class _LessonTabState extends State<_LessonTab> {
         _elapsed = Duration.zero;
       });
       await _startRecordingLoop();
-      _setStatus('Gravando. Cada bloco de 60s e transcrito e indexado.');
+      _setStatus('Gravando com $_activeInputLabel. Cada bloco de 60s e '
+          'transcrito e indexado.');
     } catch (e) {
       _setStatus('Nao foi possivel iniciar a aula: $e');
     } finally {
@@ -395,6 +402,27 @@ class _LessonTabState extends State<_LessonTab> {
     if (mounted) setState(() => _recording = true);
   }
 
+  Future<void> _resolveInputDevice() async {
+    final config = ref.read(configProvider);
+    final devices = await _recorder.listInputDevices();
+    final selected = resolveAudioInputDevice(
+      devices,
+      deviceId: config.audioInputDeviceId,
+      deviceLabel: config.audioInputDeviceLabel,
+    );
+    if (config.audioInputDeviceId.isNotEmpty && selected == null) {
+      final name = config.audioInputDeviceLabel.trim().isEmpty
+          ? 'selecionado'
+          : config.audioInputDeviceLabel.trim();
+      throw Exception(
+        'o microfone $name nao esta disponivel. Conecte-o ou escolha outro '
+        'em Configuracoes > Sistema',
+      );
+    }
+    _activeInputDevice = selected;
+    _activeInputLabel = selected?.label ?? 'padrao do sistema';
+  }
+
   Future<void> _startChunk() async {
     final supportsWav = await _recorder.isEncoderSupported(AudioEncoder.wav);
     final encoder = supportsWav ? AudioEncoder.wav : AudioEncoder.aacLc;
@@ -404,13 +432,7 @@ class _LessonTabState extends State<_LessonTab> {
         'lesson_${DateTime.now().millisecondsSinceEpoch}.$extension';
 
     await _recorder.start(
-      RecordConfig(
-        encoder: encoder,
-        sampleRate: 16000,
-        numChannels: 1,
-        noiseSuppress: true,
-        echoCancel: true,
-      ),
+      speechRecordConfig(encoder: encoder, device: _activeInputDevice),
       path: _currentPath!,
     );
   }
@@ -545,8 +567,13 @@ class _LessonTabState extends State<_LessonTab> {
 
   Future<void> _resumeRecording() async {
     if (_lesson == null || _lesson!.isClosed) return;
-    await _startRecordingLoop();
-    _setStatus('Gravacao retomada.');
+    try {
+      await _resolveInputDevice();
+      await _startRecordingLoop();
+      _setStatus('Gravacao retomada com $_activeInputLabel.');
+    } catch (e) {
+      _setStatus('Nao foi possivel retomar a gravacao: $e');
+    }
   }
 
   Future<void> _generateSummary({bool close = false}) async {

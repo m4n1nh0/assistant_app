@@ -185,6 +185,8 @@ class Settings(BaseSettings):
     whisper_best_of: int = 5
     whisper_vad_filter: bool = True
     whisper_vad_min_silence_ms: int = 500
+    whisper_repetition_penalty: float = 1.1
+    whisper_no_repeat_ngram_size: int = 3
 
     stt_provider: str = "local"
     openai_stt_model: str = "gpt-4o-mini-transcribe"

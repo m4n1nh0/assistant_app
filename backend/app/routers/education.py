@@ -68,7 +68,7 @@ from ..services import (
     lesson_index_service,
     qdrant_service,
 )
-from ..services.voice_service import transcribe_audio
+from ..services.voice_service import transcribe_audio, trim_transcript_overlap
 
 settings = get_settings()
 
@@ -567,6 +567,14 @@ async def _ingest_segment(
     db: AsyncSession,
 ) -> LessonSegmentIngestResponse:
     clean = " ".join((text or "").split())
+    previous = await db.scalar(
+        select(LessonSegmentModel)
+        .where(LessonSegmentModel.lesson_id == lesson.id)
+        .order_by(LessonSegmentModel.sequence.desc())
+        .limit(1)
+    )
+    if previous is not None:
+        clean = trim_transcript_overlap(previous.text, clean)
     if len(clean) < settings.education_min_segment_chars:
         # Bloco de silencio ou ruido: nao vale gastar embedding nem LLM.
         return LessonSegmentIngestResponse(

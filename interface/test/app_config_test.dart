@@ -89,4 +89,15 @@ void main() {
     final clamped = NotifConfig.fromJson({'reminderMinutes': 9999});
     expect(clamped.reminderMinutes, 1440);
   });
+
+  test('selected audio input survives persistence payload', () {
+    final restored = AppConfig.fromJson({
+      'audioInputDeviceId': 'jbl-hands-free',
+      'audioInputDeviceLabel': 'JBL Hands-Free AG Audio',
+    });
+
+    expect(restored.audioInputDeviceId, 'jbl-hands-free');
+    expect(restored.audioInputDeviceLabel, 'JBL Hands-Free AG Audio');
+    expect(restored.toJson()['audioInputDeviceId'], 'jbl-hands-free');
+  });
 }

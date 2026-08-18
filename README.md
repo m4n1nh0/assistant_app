@@ -628,6 +628,17 @@ Pontos de atencao do fluxo:
   contexto; depois, o LLM recebe a lista de alunos e o backend ainda faz
   casamento por apelido, primeiro nome unico e similaridade. Sem correspondencia,
   a pontuacao e gravada com o nome ouvido e marcada para revisao na interface.
+- **O microfone pode ser escolhido e testado.** Em `Configuracoes > Sistema`,
+  a entrada pode ficar no padrao do Windows ou ser fixada em um dispositivo.
+  O teste grava cinco segundos, mostra o pico captado e reproduz o resultado.
+  A escolha vale para aulas e comandos de voz. Headsets Bluetooth devem aparecer
+  como entrada `Hands-Free`/`Headset`; se o dispositivo salvo estiver desligado,
+  a gravacao avisa em vez de trocar silenciosamente para outro microfone.
+- **Repeticoes evidentes do STT sao filtradas.** O Whisper usa penalidade de
+  repeticao e bloqueio de n-gramas; depois, apenas palavras repetidas tres ou
+  mais vezes, frases exatas duplicadas e a sobreposicao exata entre dois blocos
+  consecutivos sao removidas. Repeticoes curtas possivelmente intencionais,
+  como `nao, nao`, permanecem na transcricao.
 - **A transcricao pode ser corrigida.** Cada bloco tem edicao tanto durante a
   gravacao quanto no historico. O `PATCH` normaliza e salva o novo texto,
   recalcula o total de caracteres e substitui o vetor correspondente no
