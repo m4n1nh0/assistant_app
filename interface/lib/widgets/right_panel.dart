@@ -5,6 +5,7 @@ import '../services/external_launcher_service.dart';
 import '../services/notification_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
+import 'calendar_month_dialog.dart';
 
 class RightPanel extends ConsumerWidget {
   const RightPanel({super.key});
@@ -82,6 +83,18 @@ class RightPanel extends ConsumerWidget {
             child: _RpSection(
               label: 'PRÓXIMOS EVENTOS',
               expand: true,
+              trailing: IconButton(
+                tooltip: 'Abrir calendário',
+                constraints:
+                    const BoxConstraints.tightFor(width: 26, height: 26),
+                padding: EdgeInsets.zero,
+                icon: const Icon(Icons.calendar_month, size: 15),
+                color: AssistantTheme.c1,
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => const CalendarMonthDialog(),
+                ),
+              ),
               child: events.isEmpty
                   ? const Center(
                       child: Text(
@@ -550,20 +563,32 @@ class _RpSection extends StatelessWidget {
   final String label;
   final Widget child;
   final bool expand;
-  const _RpSection(
-      {required this.label, required this.child, this.expand = false});
+  final Widget? trailing;
+  const _RpSection({
+    required this.label,
+    required this.child,
+    this.expand = false,
+    this.trailing,
+  });
 
   @override
   Widget build(BuildContext context) {
     final inner = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(
-                fontFamily: 'JetBrains Mono',
-                fontSize: 9,
-                letterSpacing: 3,
-                color: AssistantTheme.textMuted)),
+        Row(
+          children: [
+            Expanded(
+              child: Text(label,
+                  style: const TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 9,
+                      letterSpacing: 3,
+                      color: AssistantTheme.textMuted)),
+            ),
+            if (trailing != null) trailing!,
+          ],
+        ),
         const SizedBox(height: 10),
         if (expand) Expanded(child: child) else child,
       ],

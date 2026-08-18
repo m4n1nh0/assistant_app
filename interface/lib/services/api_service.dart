@@ -860,9 +860,19 @@ class ApiService {
     return decoded.map((key, value) => MapEntry(key.toString(), value));
   }
 
-  Future<List<Map<String, dynamic>>> getEvents() async {
-    final r = await http.get(Uri.parse('$baseUrl/calendar/events'),
-        headers: _headers);
+  Future<List<Map<String, dynamic>>> getEvents({
+    DateTime? start,
+    DateTime? end,
+    int? maxResults,
+  }) async {
+    final query = <String, String>{
+      if (start != null) 'start': start.toUtc().toIso8601String(),
+      if (end != null) 'end': end.toUtc().toIso8601String(),
+      if (maxResults != null) 'max_results': '$maxResults',
+    };
+    final uri = Uri.parse('$baseUrl/calendar/events')
+        .replace(queryParameters: query.isEmpty ? null : query);
+    final r = await http.get(uri, headers: _headers);
     final data = jsonDecode(r.body) as Map<String, dynamic>;
     return (data['events'] as List).cast<Map<String, dynamic>>();
   }

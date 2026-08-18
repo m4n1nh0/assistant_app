@@ -835,12 +835,28 @@ def _oauth_result_page(title: str, message: str, ok: bool = True) -> HTMLRespons
 
 @router_calendar.get("/events", response_model=EventsResponse)
 async def get_events(
+    start: datetime | None = None,
+    end: datetime | None = None,
+    max_results: int = 25,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Sem parametros mantem a janela padrao (proximos 7 dias). A visao de
+    calendario da interface envia start/end do mes visivel."""
+    if start is not None and end is not None:
+        if end <= start:
+            raise HTTPException(422, "O fim do periodo deve ser apos o inicio.")
+        if (end - start).days > 92:
+            raise HTTPException(422, "Periodo maximo de 92 dias por consulta.")
     google_accounts = await _load_google_accounts(db, user["uid"])
     microsoft_accounts = await _load_microsoft_accounts(db, user["uid"])
-    events = await fetch_all_account_events(google_accounts, microsoft_accounts)
+    events = await fetch_all_account_events(
+        google_accounts,
+        microsoft_accounts,
+        start_time=start,
+        end_time=end,
+        max_results=max(1, min(max_results, 100)),
+    )
     return EventsResponse(events=events, total=len(events))
 
 

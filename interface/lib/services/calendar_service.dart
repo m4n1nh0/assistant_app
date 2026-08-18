@@ -15,6 +15,18 @@ class CalendarService {
     }
   }
 
+  /// Eventos do período informado (visão de calendário). Lança exceção em
+  /// falha para a interface mostrar o erro em vez de um mês vazio.
+  static Future<List<CalendarEvent>> fetchEventsRange({
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final items = await api
+        .getEvents(start: start, end: end, maxResults: 100)
+        .timeout(const Duration(seconds: 30));
+    return items.map(CalendarEvent.fromJson).toList();
+  }
+
   String getGoogleAuthUrl() {
     final params = {
       'client_id': config.gcalClientId,
