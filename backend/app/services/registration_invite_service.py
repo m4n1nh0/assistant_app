@@ -71,30 +71,20 @@ def registration_delivery_configured(recipient_email: str | None = None) -> bool
     )
 
 
-async def _send_registration_email(
-    token: str,
-    expires_at: datetime,
-    recipient_email: str | None = None,
+async def send_transactional_email(
+    recipient: str,
+    *,
+    subject: str,
+    text_content: str,
 ) -> None:
-    recipient = (
-        recipient_email
-        if recipient_email is not None
-        else settings.registration_admin_email
-    ).strip()
+    """Delivers security emails without exposing provider details to callers."""
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
-
     payload = {
         "sender": {"email": sender},
-        "to": [{"email": recipient}],
-        "subject": "Convite para cadastro no Assistente",
-        "textContent": (
-            "Voce recebeu um convite para criar uma conta no Assistente.\n\n"
-            f"Token de uso unico:\n{token}\n\n"
-            f"Valido ate {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}.\n\n"
-            "Se voce nao solicitou este token, ignore este email."
-        ),
+        "to": [{"email": recipient.strip().lower()}],
+        "subject": subject,
+        "textContent": text_content,
     }
-
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             BREVO_SEND_URL,
@@ -106,6 +96,28 @@ async def _send_registration_email(
             json=payload,
         )
     response.raise_for_status()
+
+
+async def _send_registration_email(
+    token: str,
+    expires_at: datetime,
+    recipient_email: str | None = None,
+) -> None:
+    recipient = (
+        recipient_email
+        if recipient_email is not None
+        else settings.registration_admin_email
+    ).strip()
+    await send_transactional_email(
+        recipient,
+        subject="Convite para cadastro no Assistente",
+        text_content=(
+            "Voce recebeu um convite para criar uma conta no Assistente.\n\n"
+            f"Token de uso unico:\n{token}\n\n"
+            f"Valido ate {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}.\n\n"
+            "Se voce nao solicitou este token, ignore este email."
+        ),
+    )
 
 
 async def brevo_api_diagnostic() -> dict:

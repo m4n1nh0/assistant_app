@@ -113,6 +113,40 @@ class ApiService {
     return _handleAuthResponse(r);
   }
 
+  Future<String> requestPasswordRecovery(String identifier) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/auth/password-recovery/request'),
+      headers: _headers,
+      body: jsonEncode({'identifier': identifier}),
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) {
+      throw Exception(
+        data['detail']?.toString() ?? 'Falha ao solicitar recuperação',
+      );
+    }
+    return data['message']?.toString() ??
+        'Se a conta existir, enviaremos um token por email.';
+  }
+
+  Future<String> confirmPasswordRecovery({
+    required String token,
+    required String newPassword,
+  }) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/auth/password-recovery/confirm'),
+      headers: _headers,
+      body: jsonEncode({'token': token, 'new_password': newPassword}),
+    );
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) {
+      throw Exception(
+        data['detail']?.toString() ?? 'Falha ao redefinir senha',
+      );
+    }
+    return data['message']?.toString() ?? 'Senha redefinida com sucesso.';
+  }
+
   AuthResult _handleAuthResponse(http.Response r) {
     final data = jsonDecode(r.body) as Map<String, dynamic>;
     if (data['success'] == true) {

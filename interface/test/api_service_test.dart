@@ -27,6 +27,53 @@ void main() {
     expect(svc.baseUrl, AppConfig.defaultBackendUrl);
   });
 
+  test('recuperação solicita token sem enviar senha', () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/auth/password-recovery/request');
+      expect(jsonDecode(request.body), {'identifier': 'mariano@example.com'});
+      expect(request.body, isNot(contains('password')));
+      return http.Response(
+        '{"success":true,"message":"Se houver uma conta, enviaremos."}',
+        200,
+      );
+    });
+
+    final message = await http.runWithClient(
+      () => svc.requestPasswordRecovery('mariano@example.com'),
+      () => client,
+    );
+
+    expect(message, contains('Se houver uma conta'));
+  });
+
+  test('recuperação confirma token e nova senha', () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/auth/password-recovery/confirm');
+      expect(jsonDecode(request.body), {
+        'token': 'one-time-token',
+        'new_password': 'secret1',
+      });
+      return http.Response(
+        '{"success":true,"message":"Senha redefinida com sucesso."}',
+        200,
+      );
+    });
+
+    final message = await http.runWithClient(
+      () => svc.confirmPasswordRecovery(
+        token: 'one-time-token',
+        newPassword: 'secret1',
+      ),
+      () => client,
+    );
+
+    expect(message, 'Senha redefinida com sucesso.');
+  });
+
   test('chat transforma erro HTTP sem JSON em mensagem legivel', () async {
     final svc = ApiService(backendUrl: 'https://backend.test');
     final client = MockClient((request) async {

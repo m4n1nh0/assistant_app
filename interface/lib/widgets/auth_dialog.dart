@@ -11,6 +11,7 @@ class AuthDialog extends StatefulWidget {
   final bool registrationDeliveryConfigured;
   final String adminEmailHint;
   final String initialUsername;
+  final ApiService? apiService;
 
   const AuthDialog({
     super.key,
@@ -21,6 +22,7 @@ class AuthDialog extends StatefulWidget {
     this.registrationDeliveryConfigured = false,
     this.adminEmailHint = '',
     this.initialUsername = '',
+    this.apiService,
   });
 
   @override
@@ -32,11 +34,16 @@ class _AuthDialogState extends State<AuthDialog> {
   final _passCtrl = TextEditingController();
   final _passCCtrl = TextEditingController();
   final _registrationTokenCtrl = TextEditingController();
+  final _recoveryTokenCtrl = TextEditingController();
   String _status = '';
   bool _statusIsError = true;
   bool _processing = false;
   bool _requestingToken = false;
+  bool _recoverMode = false;
+  bool _recoveryTokenSent = false;
   late bool _registerMode;
+
+  ApiService get _api => widget.apiService ?? api;
 
   bool get _isRegister => widget.needsSetup || _registerMode;
   bool get _needsToken =>
@@ -56,6 +63,7 @@ class _AuthDialogState extends State<AuthDialog> {
     _passCtrl.dispose();
     _passCCtrl.dispose();
     _registrationTokenCtrl.dispose();
+    _recoveryTokenCtrl.dispose();
     super.dispose();
   }
 
@@ -86,12 +94,12 @@ class _AuthDialogState extends State<AuthDialog> {
     _setStatus('');
     try {
       final result = _isRegister
-          ? await api.register(
+          ? await _api.register(
               username,
               password,
               registrationToken: _registrationTokenCtrl.text.trim(),
             )
-          : await api.login(username, password);
+          : await _api.login(username, password);
       if (!mounted) return;
       if (result.success) {
         Navigator.of(context).pop(username);
@@ -112,7 +120,7 @@ class _AuthDialogState extends State<AuthDialog> {
     setState(() => _requestingToken = true);
     _setStatus('');
     try {
-      final message = await api.requestRegistrationToken();
+      final message = await _api.requestRegistrationToken();
       if (!mounted) return;
       _setStatus(message, isError: false);
     } catch (e) {
@@ -124,6 +132,80 @@ class _AuthDialogState extends State<AuthDialog> {
       }
     }
   }
+
+  Future<void> _requestPasswordRecovery() async {
+    if (_processing) return;
+    final identifier = _userCtrl.text.trim();
+    if (identifier.isEmpty) {
+      _setStatus('Informe seu usuário ou email.');
+      return;
+    }
+    setState(() => _processing = true);
+    _setStatus('');
+    try {
+      final message = await _api.requestPasswordRecovery(identifier);
+      if (!mounted) return;
+      setState(() {
+        _processing = false;
+        _recoveryTokenSent = true;
+      });
+      _setStatus(message, isError: false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _processing = false);
+      _setStatus(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _confirmPasswordRecovery() async {
+    if (_processing) return;
+    final token = _recoveryTokenCtrl.text.trim();
+    final password = _passCtrl.text;
+    if (token.isEmpty || password.isEmpty || _passCCtrl.text.isEmpty) {
+      _setStatus('Informe o token e a nova senha.');
+      return;
+    }
+    if (password != _passCCtrl.text) {
+      _setStatus('As senhas não coincidem.');
+      return;
+    }
+    if (password.length < 6) {
+      _setStatus('A nova senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    setState(() => _processing = true);
+    _setStatus('');
+    try {
+      final message = await _api.confirmPasswordRecovery(
+        token: token,
+        newPassword: password,
+      );
+      if (!mounted) return;
+      setState(() {
+        _processing = false;
+        _recoverMode = false;
+        _recoveryTokenSent = false;
+        _recoveryTokenCtrl.clear();
+        _passCtrl.clear();
+        _passCCtrl.clear();
+      });
+      _setStatus('$message Entre com a nova senha.', isError: false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _processing = false);
+      _setStatus(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  void _showLogin() => setState(() {
+        _recoverMode = false;
+        _recoveryTokenSent = false;
+        _registerMode = false;
+        _status = '';
+        _passCtrl.clear();
+        _passCCtrl.clear();
+        _recoveryTokenCtrl.clear();
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -150,162 +232,281 @@ class _AuthDialogState extends State<AuthDialog> {
                 ]),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                children: [
-                  const IntarqLockup(width: 245, height: 92),
-                  const SizedBox(height: 14),
-                  Text(
-                    '${widget.assistantName} — ACESSO',
-                    style: const TextStyle(
-                      fontFamily: 'Rajdhani',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 5,
-                      color: AssistantTheme.c1,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _isRegister
-                        ? 'Crie a conta de acesso ao assistente'
-                        : 'Entre com usuário e senha para continuar',
-                    style: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 11,
-                        color: AssistantTheme.textMuted),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  TextField(
-                    controller: _userCtrl,
-                    autofocus: true,
-                    style: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 13,
-                        color: AssistantTheme.textPrimary),
-                    decoration: const InputDecoration(hintText: 'Usuário'),
-                    onSubmitted: (_) => _submit(),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _passCtrl,
-                    obscureText: true,
-                    style: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 13,
-                        color: AssistantTheme.textPrimary),
-                    decoration: const InputDecoration(hintText: 'Senha'),
-                    onSubmitted: (_) => _isRegister ? null : _submit(),
-                  ),
-                  if (_isRegister) ...[
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _passCCtrl,
-                      obscureText: true,
-                      style: const TextStyle(
-                          fontFamily: 'JetBrains Mono',
-                          fontSize: 13,
-                          color: AssistantTheme.textPrimary),
-                      decoration:
-                          const InputDecoration(hintText: 'Confirmar senha'),
-                      onSubmitted: (_) => _submit(),
-                    ),
-                  ],
-                  if (_needsToken) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      widget.needsSetup
-                          ? (widget.registrationDeliveryConfigured
-                              ? 'Solicite o token enviado para '
-                                  '${widget.adminEmailHint}.'
-                              : 'O envio do token administrativo ainda não foi '
-                                  'configurado no backend.')
-                          : 'Use o token recebido no email de convite.',
-                      style: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 10,
-                        color: AssistantTheme.textSecondary,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    if (widget.needsSetup) ...[
-                      _AuthBtn(
-                        icon: '✉',
-                        label: _requestingToken
-                            ? 'ENVIANDO...'
-                            : 'ENVIAR TOKEN AO ADMIN',
-                        color: AssistantTheme.c1,
-                        onTap: _requestingToken ||
-                                !widget.registrationDeliveryConfigured
-                            ? null
-                            : _requestRegistrationToken,
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    TextField(
-                      controller: _registrationTokenCtrl,
-                      style: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 13,
-                        color: AssistantTheme.textPrimary,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText: 'Token de convite',
-                      ),
-                      onSubmitted: (_) => _submit(),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  _AuthBtn(
-                    icon: '›',
-                    label: _processing
-                        ? 'AGUARDE...'
-                        : _isRegister
-                            ? 'CRIAR CONTA'
-                            : 'ENTRAR',
-                    color: AssistantTheme.c3,
-                    onTap: _processing ? null : _submit,
-                  ),
-                  if (!widget.needsSetup &&
-                      widget.inviteRegistrationEnabled) ...[
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _processing
-                          ? null
-                          : () => setState(() {
-                                _registerMode = !_registerMode;
-                                _status = '';
-                              }),
-                      child: Text(
-                        _registerMode
-                            ? 'JÁ TENHO CONTA'
-                            : 'CRIAR CONTA COM CONVITE',
+            Flexible(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    children: [
+                      const IntarqLockup(width: 245, height: 92),
+                      const SizedBox(height: 14),
+                      Text(
+                        '${widget.assistantName} — ACESSO',
                         style: const TextStyle(
-                          fontFamily: 'JetBrains Mono',
-                          fontSize: 10,
+                          fontFamily: 'Rajdhani',
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 5,
                           color: AssistantTheme.c1,
                         ),
                       ),
-                    ),
-                  ],
-                  if (_status.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _status,
-                      style: TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 11,
-                        color: _statusIsError
-                            ? AssistantTheme.danger
-                            : AssistantTheme.c3,
+                      const SizedBox(height: 6),
+                      Text(
+                        _recoverMode
+                            ? 'Recupere o acesso usando o email vinculado à conta'
+                            : _isRegister
+                                ? 'Crie a conta de acesso ao assistente'
+                                : 'Entre com usuário e senha para continuar',
+                        style: const TextStyle(
+                            fontFamily: 'JetBrains Mono',
+                            fontSize: 11,
+                            color: AssistantTheme.textMuted),
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ],
+                      const SizedBox(height: 24),
+                      TextField(
+                        key: const Key('auth-identifier'),
+                        controller: _userCtrl,
+                        autofocus: true,
+                        style: const TextStyle(
+                          fontFamily: 'JetBrains Mono',
+                          fontSize: 13,
+                          color: AssistantTheme.textPrimary,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText: 'Usuário ou email',
+                        ),
+                        onSubmitted: (_) => _recoverMode
+                            ? (_recoveryTokenSent
+                                ? _confirmPasswordRecovery()
+                                : _requestPasswordRecovery())
+                            : _submit(),
+                      ),
+                      if (_recoverMode) ...[
+                        const SizedBox(height: 10),
+                        if (_recoveryTokenSent) ...[
+                          TextField(
+                            key: const Key('recovery-token'),
+                            controller: _recoveryTokenCtrl,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 13,
+                              color: AssistantTheme.textPrimary,
+                            ),
+                            decoration: const InputDecoration(
+                              hintText: 'Token recebido por email',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            key: const Key('recovery-password'),
+                            controller: _passCtrl,
+                            obscureText: true,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 13,
+                              color: AssistantTheme.textPrimary,
+                            ),
+                            decoration:
+                                const InputDecoration(hintText: 'Nova senha'),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _passCCtrl,
+                            obscureText: true,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 13,
+                              color: AssistantTheme.textPrimary,
+                            ),
+                            decoration: const InputDecoration(
+                              hintText: 'Confirmar nova senha',
+                            ),
+                            onSubmitted: (_) => _confirmPasswordRecovery(),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        _AuthBtn(
+                          icon: _recoveryTokenSent ? '✓' : '✉',
+                          label: _processing
+                              ? 'AGUARDE...'
+                              : _recoveryTokenSent
+                                  ? 'REDEFINIR SENHA'
+                                  : 'ENVIAR TOKEN',
+                          color: AssistantTheme.c3,
+                          onTap: _processing
+                              ? null
+                              : _recoveryTokenSent
+                                  ? _confirmPasswordRecovery
+                                  : _requestPasswordRecovery,
+                        ),
+                        if (_recoveryTokenSent)
+                          TextButton(
+                            onPressed:
+                                _processing ? null : _requestPasswordRecovery,
+                            child: const Text(
+                              'REENVIAR TOKEN',
+                              style: TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 10,
+                                color: AssistantTheme.c1,
+                              ),
+                            ),
+                          ),
+                        TextButton(
+                          onPressed: _processing ? null : _showLogin,
+                          child: const Text(
+                            'VOLTAR AO ACESSO',
+                            style: TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 10,
+                              color: AssistantTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _passCtrl,
+                          obscureText: true,
+                          style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 13,
+                              color: AssistantTheme.textPrimary),
+                          decoration: const InputDecoration(hintText: 'Senha'),
+                          onSubmitted: (_) => _isRegister ? null : _submit(),
+                        ),
+                        if (_isRegister) ...[
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _passCCtrl,
+                            obscureText: true,
+                            style: const TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 13,
+                                color: AssistantTheme.textPrimary),
+                            decoration: const InputDecoration(
+                                hintText: 'Confirmar senha'),
+                            onSubmitted: (_) => _submit(),
+                          ),
+                        ],
+                        if (_needsToken) ...[
+                          const SizedBox(height: 14),
+                          Text(
+                            widget.needsSetup
+                                ? (widget.registrationDeliveryConfigured
+                                    ? 'Solicite o token enviado para '
+                                        '${widget.adminEmailHint}.'
+                                    : 'O envio do token administrativo ainda não foi '
+                                        'configurado no backend.')
+                                : 'Use o token recebido no email de convite.',
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 10,
+                              color: AssistantTheme.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          if (widget.needsSetup) ...[
+                            _AuthBtn(
+                              icon: '✉',
+                              label: _requestingToken
+                                  ? 'ENVIANDO...'
+                                  : 'ENVIAR TOKEN AO ADMIN',
+                              color: AssistantTheme.c1,
+                              onTap: _requestingToken ||
+                                      !widget.registrationDeliveryConfigured
+                                  ? null
+                                  : _requestRegistrationToken,
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                          TextField(
+                            controller: _registrationTokenCtrl,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 13,
+                              color: AssistantTheme.textPrimary,
+                            ),
+                            decoration: const InputDecoration(
+                              hintText: 'Token de convite',
+                            ),
+                            onSubmitted: (_) => _submit(),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        _AuthBtn(
+                          icon: '›',
+                          label: _processing
+                              ? 'AGUARDE...'
+                              : _isRegister
+                                  ? 'CRIAR CONTA'
+                                  : 'ENTRAR',
+                          color: AssistantTheme.c3,
+                          onTap: _processing ? null : _submit,
+                        ),
+                        if (!widget.needsSetup && !_isRegister) ...[
+                          const SizedBox(height: 4),
+                          TextButton(
+                            key: const Key('recover-account-button'),
+                            onPressed: _processing
+                                ? null
+                                : () => setState(() {
+                                      _recoverMode = true;
+                                      _status = '';
+                                      _passCtrl.clear();
+                                    }),
+                            child: const Text(
+                              'RECUPERAR CONTA',
+                              style: TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 10,
+                                color: AssistantTheme.c3,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (!widget.needsSetup &&
+                            widget.inviteRegistrationEnabled) ...[
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: _processing
+                                ? null
+                                : () => setState(() {
+                                      _registerMode = !_registerMode;
+                                      _status = '';
+                                    }),
+                            child: Text(
+                              _registerMode
+                                  ? 'JÁ TENHO CONTA'
+                                  : 'CRIAR CONTA COM CONVITE',
+                              style: const TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 10,
+                                color: AssistantTheme.c1,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                      if (_status.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _status,
+                          style: TextStyle(
+                            fontFamily: 'JetBrains Mono',
+                            fontSize: 11,
+                            color: _statusIsError
+                                ? AssistantTheme.danger
+                                : AssistantTheme.c3,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ],

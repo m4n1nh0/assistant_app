@@ -69,6 +69,12 @@ async def resolve_token_user(token: str, db: AsyncSession) -> dict:
             detail="Conta inexistente ou desativada",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if int(payload.get("ver") or 0) != int(account.auth_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessao invalidada. Entre novamente.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if not account.tutor_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -121,5 +127,6 @@ def account_token(account: UserModel) -> str:
             "uid": account.id,
             "role": account.role or "user",
             "tutor_id": account.tutor_id,
+            "ver": int(account.auth_version or 0),
         }
     )

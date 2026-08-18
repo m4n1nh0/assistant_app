@@ -261,6 +261,8 @@ REGISTRATION_INVITE_REQUIRED=true
 REGISTRATION_ADMIN_EMAIL=admin@example.com
 REGISTRATION_TOKEN_EXPIRE_MINUTES=30
 REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS=60
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30
+PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS=60
 
 SMTP_FROM=assistente@example.com
 BREVO_API_KEY=chave-da-api-brevo
@@ -285,6 +287,15 @@ anterior (mesmo que ainda válido) e emite outro; só é bloqueado dentro da
 janela de `REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS` (padrão 60s), como
 proteção contra spam. O e-mail administrativo aparece na interface apenas de
 forma mascarada.
+
+Na tela de acesso, **Recuperar conta** aceita o usuário ou o e-mail já
+vinculado. A resposta é sempre a mesma, exista ou não a conta, para não expor
+cadastros. Quando a conta está ativa e possui e-mail, o backend envia um token
+de uso único, grava somente seu HMAC e permite definir uma nova senha durante
+30 minutos. A redefinição incrementa a versão de autenticação da conta e
+invalida todos os JWTs emitidos antes dela. O mesmo ocorre na troca de senha
+autenticada. O e-mail também relembra o nome de usuário, e o login aceita tanto
+esse nome quanto o endereço de e-mail.
 
 Cada usuário é vinculado a um perfil `tutor` próprio. Identificadores enviados
 pelo cliente não definem propriedade: o backend usa `uid` e `tutor_id`
@@ -323,7 +334,8 @@ O `--reset` remove apenas registros identificados pelo seed de demonstração.
 ### Rate Limiting E Logs De Requisição
 
 As rotas públicas de autenticação (`/auth/login`, `/auth/register`,
-`/auth/registration-token`) têm dois limites de requisição por IP empilhados,
+`/auth/registration-token` e `/auth/password-recovery/*`) têm dois limites de
+requisição por IP empilhados,
 via `fastapi-limiter` + Redis:
 
 - geral: 20 requisições/minuto;
@@ -365,6 +377,8 @@ entrada e saída, fica disponível em `/docs` e `/openapi.json`.
 | POST | `/auth/registration-token` | Público: enviar token único ao e-mail administrativo |
 | POST | `/auth/register` | Público: criar o primeiro admin ou uma conta convidada |
 | POST | `/auth/login` | Público: autenticar e obter JWT |
+| POST | `/auth/password-recovery/request` | Público: solicitar token sem revelar se a conta existe |
+| POST | `/auth/password-recovery/confirm` | Público: redefinir a senha com token único |
 | GET | `/auth/me` | Consultar a sessão autenticada |
 | PUT | `/auth/password` | Alterar a senha da conta |
 | POST | `/auth/invitations` | Admin: enviar convite individual por e-mail |

@@ -138,6 +138,13 @@ convite** na tela de acesso e informa o token recebido. Configuração, históri
 de conversa e eventos armazenados localmente usam um escopo por conta; os dados
 legados são migrados somente para o primeiro admin.
 
+Na tela de acesso, **Recuperar conta** solicita o usuário ou e-mail e envia um
+token para o endereço já vinculado ao cadastro. A confirmação pede o token,
+nova senha e repetição da senha. A interface não recebe informação sobre a
+existência da conta e nunca armazena o token de recuperação; após o sucesso, o
+usuário volta ao login, que aceita usuário ou e-mail, e as sessões anteriores
+deixam de ser válidas.
+
 As credenciais e URLs dos provedores de LLM são configurações de
 infraestrutura do backend e devem ser fornecidas por variáveis de ambiente.
 

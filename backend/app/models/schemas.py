@@ -69,6 +69,20 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class PasswordRecoveryRequest(BaseModel):
+    identifier: str = Field(max_length=255)
+
+
+class PasswordRecoveryConfirmRequest(BaseModel):
+    token: str = Field(max_length=512)
+    new_password: str = Field(max_length=1024)
+
+
+class PublicMessageResponse(BaseModel):
+    success: bool = True
+    message: str
+
+
 class AuthResponse(BaseModel):
     success: bool
     token: Optional[str] = None

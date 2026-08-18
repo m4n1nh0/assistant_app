@@ -98,7 +98,7 @@ def test_legacy_users_table_receives_multi_user_columns():
         }
         indexes = inspect(connection).get_indexes("users")
 
-    assert {"email", "role", "tutor_id", "is_active"} <= columns
+    assert {"email", "role", "tutor_id", "is_active", "auth_version"} <= columns
     assert any(
         index.get("unique") and index.get("column_names") == ["email"]
         for index in indexes

@@ -864,6 +864,8 @@ REGISTRATION_INVITE_REQUIRED=true
 REGISTRATION_ADMIN_EMAIL=admin@example.com
 REGISTRATION_TOKEN_EXPIRE_MINUTES=30
 REGISTRATION_TOKEN_REQUEST_COOLDOWN_SECONDS=60
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30
+PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS=60
 
 SMTP_FROM=assistente@example.com
 BREVO_API_KEY=chave-da-api-brevo
@@ -880,6 +882,12 @@ Na primeira abertura, o admin solicita o token enviado para
 o e-mail de cada novo usuário; o backend envia um convite individual de uso
 único. O banco armazena apenas o hash HMAC dos tokens, com expiração e registro
 de uso.
+
+A tela de login também oferece **Recuperar conta**. O usuário informa seu nome
+de acesso ou e-mail, recebe um token de uso único no endereço já cadastrado e
+define uma nova senha. A API responde de forma indistinguível para contas
+existentes e inexistentes, aplica rate limiting e cooldown, não persiste o
+token em texto puro e invalida as sessões anteriores depois da redefinição.
 
 Cada conta possui um `tutor_id` próprio. O backend deriva esse proprietário do
 JWT e separa conversas, perfil, memórias, automações, atalhos, scripts, agendas,

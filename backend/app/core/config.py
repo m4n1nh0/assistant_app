@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     registration_admin_email: str = ""
     registration_token_expire_minutes: int = 30
     registration_token_request_cooldown_seconds: int = 60
+    password_reset_token_expire_minutes: int = 30
+    password_reset_request_cooldown_seconds: int = 60
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytz
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as _AuthAsyncSession
 from ..core.security import (
@@ -28,6 +28,8 @@ from ..models.schemas import (
     LoginRequest, RegisterRequest, ChangePasswordRequest,
     AdminInviteRequest, AdminInviteResponse, AdminUserResponse,
     AuthResponse, AuthStatusResponse, RegistrationTokenResponse,
+    PasswordRecoveryRequest, PasswordRecoveryConfirmRequest,
+    PublicMessageResponse,
 )
 from ..services.registration_invite_service import (
     RegistrationDeliveryError,
@@ -37,6 +39,10 @@ from ..services.registration_invite_service import (
     mask_email,
     registration_delivery_configured,
     brevo_api_diagnostic,
+)
+from ..services.password_recovery_service import (
+    consume_password_reset_token,
+    issue_password_reset_token,
 )
 
 router_auth = APIRouter(prefix="/auth", tags=["Auth"])
@@ -200,7 +206,15 @@ async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_a
     dependencies=_public_auth_rate_limit,
 )
 async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
-    result = await db.execute(select(UserModel).where(UserModel.username == body.username.strip()))
+    identifier = body.username.strip()
+    result = await db.execute(
+        select(UserModel).where(
+            or_(
+                UserModel.username == identifier,
+                func.lower(UserModel.email) == identifier.lower(),
+            )
+        )
+    )
     user = result.scalar_one_or_none()
     if (
         not user
@@ -211,6 +225,47 @@ async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db
 
     token = account_token(user)
     return AuthResponse(success=True, token=token, message="Autenticado com sucesso")
+
+
+@router_auth.post(
+    "/password-recovery/request",
+    response_model=PublicMessageResponse,
+    dependencies=_public_auth_rate_limit,
+)
+async def request_password_recovery(
+    body: PasswordRecoveryRequest,
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    # The public response deliberately does not reveal whether the account,
+    # email delivery or cooldown exists.
+    await issue_password_reset_token(db, body.identifier[:255])
+    return PublicMessageResponse(
+        message=(
+            "Se houver uma conta ativa com email vinculado, enviaremos um "
+            "token de recuperacao."
+        )
+    )
+
+
+@router_auth.post(
+    "/password-recovery/confirm",
+    response_model=PublicMessageResponse,
+    dependencies=_public_auth_rate_limit,
+)
+async def confirm_password_recovery(
+    body: PasswordRecoveryConfirmRequest,
+    db: _AuthAsyncSession = Depends(_get_auth_db),
+):
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "Nova senha precisa ter pelo menos 6 caracteres.")
+    consumed = await consume_password_reset_token(
+        db,
+        body.token,
+        hash_secret(body.new_password),
+    )
+    if not consumed:
+        raise HTTPException(400, "Token invalido, expirado ou ja utilizado.")
+    return PublicMessageResponse(message="Senha redefinida com sucesso.")
 
 
 @router_auth.post("/refresh", response_model=AuthResponse)
@@ -329,6 +384,7 @@ async def change_password(
         raise HTTPException(400, "Nova senha precisa ter pelo menos 6 caracteres.")
 
     account.password_hash = hash_secret(body.new_password)
+    account.auth_version = int(account.auth_version or 0) + 1
     await db.commit()
     return {"ok": True, "message": "Senha alterada com sucesso"}
 

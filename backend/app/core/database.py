@@ -100,6 +100,7 @@ class UserModel(Base):
     role          = Column(String(32), nullable=False, default="user")
     tutor_id      = Column(String(64), nullable=True, index=True)
     is_active     = Column(Boolean, nullable=False, default=True)
+    auth_version  = Column(Integer, nullable=False, default=0)
     password_hash = Column(String(255), nullable=False)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -115,6 +116,22 @@ class RegistrationInviteModel(Base):
     used_at         = Column(DateTime, nullable=True)
     revoked_at      = Column(DateTime, nullable=True)
     created_at      = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+
+class PasswordResetTokenModel(Base):
+    __tablename__ = "password_reset_tokens"
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id    = Column(String(64), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at    = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
@@ -551,6 +568,7 @@ def _add_compatibility_columns(sync_conn) -> None:
             "role": "VARCHAR(32) NOT NULL DEFAULT 'user'",
             "tutor_id": "VARCHAR(64) NULL",
             "is_active": "BOOLEAN NOT NULL DEFAULT TRUE",
+            "auth_version": "INTEGER NOT NULL DEFAULT 0",
         },
         "registration_invites": {
             "role": "VARCHAR(32) NOT NULL DEFAULT 'user'",
