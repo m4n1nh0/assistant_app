@@ -126,6 +126,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   bool _workspaceEditingAllowed = false;
   bool _connectedEditPromptDeclined = false;
   bool _windowPickerBusy = false;
+  String? _agentActivity;
   DateTime? _wakeWordArmedUntil;
   int _wakePromptAttempts = 0;
 
@@ -931,8 +932,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (rawApiText.isEmpty && shownText.isEmpty) return;
     _inputCtrl.clear();
 
+    // Com workspace selecionado, ele é o contexto de código; não faz sentido
+    // oferecer captura de janela para o mesmo pedido.
     if (allowDesktopContext &&
         _desktopContext == null &&
+        _lastWorkspacePath == null &&
         _shouldAskInterfaceForDesktopContext(rawApiText)) {
       _addSystemMsg(
         'Esse pedido parece depender da tela, codigo, documento ou janela aberta. Vou pedir contexto para a interface.',
@@ -953,6 +957,13 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     final config = ref.read(configProvider);
     if (config.selectedIsConnectedAgent) {
       await _ensureConnectedWorkspacePermission(rawApiText);
+    } else if (_lastWorkspacePath != null &&
+        rawApiText.isNotEmpty &&
+        !_normalizeLoose(rawApiText).contains('contexto local do workspace')) {
+      // Workspace selecionado: os provedores do backend recebem o mapa e os
+      // arquivos relevantes do projeto em toda mensagem, sem depender de
+      // detecção de intenção. Agentes conectados exploram sozinhos via cwd.
+      apiText = await _withWorkspaceContext(apiText, rawApiText);
     }
     final history = ref.read(chatProvider.notifier).toApiHistory(10);
 
@@ -974,6 +985,9 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         workingDirectory: _lastWorkspacePath ?? '',
         allowWorkspaceEdits:
             _workspaceEditingAllowed && _editableWorkspaceRoot != null,
+        onAgentProgress: (activity) {
+          if (mounted) setState(() => _agentActivity = activity);
+        },
       );
 
       switch (config.responseMode) {
@@ -1038,7 +1052,29 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     }
 
     ref.read(isLoadingProvider.notifier).state = false;
+    if (mounted && _agentActivity != null) {
+      setState(() => _agentActivity = null);
+    }
     _scrollToBottom();
+  }
+
+  /// Anexa o mapa e os arquivos relevantes do workspace selecionado ao
+  /// pedido enviado aos provedores do backend; em caso de falha na leitura,
+  /// a mensagem segue sem contexto.
+  Future<String> _withWorkspaceContext(String apiText, String query) async {
+    try {
+      final snapshot = await LocalWorkspaceService.inspectWorkspace(
+        query: query,
+        rootPath: _lastWorkspacePath!,
+      );
+      return snapshot.toPromptText(
+        userRequest: apiText,
+        actionName: 'Contexto automatico do workspace selecionado',
+        allowEdits: _workspaceEditingAllowed && _editableWorkspaceRoot != null,
+      );
+    } catch (_) {
+      return apiText;
+    }
   }
 
   Future<void> _speakPreview(String content, int maxLength) async {
@@ -1150,6 +1186,60 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (_desktopContext == null) return;
     setState(() => _desktopContext = null);
     _addSystemMsg('Contexto da janela removido.');
+    _scrollToBottom();
+  }
+
+  /// Seleção manual do workspace pelo botão da barra de input, sem depender
+  /// da detecção automática de pedidos de edição.
+  Future<void> _manageWorkspaceSelection() async {
+    final permission = await showDialog<_CodingWorkspacePermission>(
+      context: context,
+      builder: (_) => _CodingWorkspacePermissionDialog(
+        title: 'Selecionar workspace',
+        description:
+            'Escolha a pasta do projeto usada como contexto nas próximas '
+            'mensagens. Se você autorizar a edição, o agente conectado edita '
+            'os arquivos diretamente nessa pasta; sem autorização, ele '
+            'apenas lê e responde.',
+        initialPath: _lastWorkspacePath ?? '',
+      ),
+    );
+    if (permission == null || !mounted) return;
+
+    final root = permission.rootPath.trim();
+    if (root.isEmpty || !await Directory(root).exists()) {
+      _addSystemMsg('Pasta do workspace inválida: informe um caminho '
+          'existente ou use o botão Selecionar.');
+      _scrollToBottom();
+      return;
+    }
+    if (!mounted) return;
+
+    setState(() {
+      _lastWorkspacePath = root;
+      _workspaceEditingAllowed = permission.allowEdits;
+      _editableWorkspaceRoot = permission.allowEdits ? root : null;
+      _connectedEditPromptDeclined = false;
+    });
+    _addSystemMsg(permission.allowEdits
+        ? 'Workspace selecionado com edição autorizada: $root.'
+        : 'Workspace selecionado em modo somente leitura: $root.');
+    _scrollToBottom();
+  }
+
+  void _clearWorkspaceSelection() {
+    if (_lastWorkspacePath == null &&
+        _editableWorkspaceRoot == null &&
+        !_workspaceEditingAllowed) {
+      return;
+    }
+    setState(() {
+      _lastWorkspacePath = null;
+      _editableWorkspaceRoot = null;
+      _workspaceEditingAllowed = false;
+      _connectedEditPromptDeclined = false;
+    });
+    _addSystemMsg('Seleção de workspace removida.');
     _scrollToBottom();
   }
 
@@ -1723,8 +1813,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         title: 'Trabalhar no workspace local',
         description:
             'O agente conectado pode analisar o projeto com as ferramentas '
-            'dele e propor edições. Escolha a pasta e autorize a edição para '
-            'que as propostas possam ser aplicadas após sua confirmação.',
+            'dele. Se você autorizar a edição, ele edita os arquivos '
+            'diretamente na pasta escolhida (como o Codex e o Claude Code '
+            'fazem no VSCode), limitado a ela; sem autorização, ele apenas '
+            'lê e responde.',
         initialPath: _lastWorkspacePath ?? '',
       ),
     );
@@ -1742,12 +1834,15 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       return;
     }
 
-    _lastWorkspacePath = root;
-    _workspaceEditingAllowed = permission.allowEdits;
-    _editableWorkspaceRoot = permission.allowEdits ? root : null;
+    setState(() {
+      _lastWorkspacePath = root;
+      _workspaceEditingAllowed = permission.allowEdits;
+      _editableWorkspaceRoot = permission.allowEdits ? root : null;
+    });
     _addSystemMsg(permission.allowEdits
-        ? 'Edição autorizada em $root. As propostas do agente serão '
-            'aplicadas somente após sua confirmação.'
+        ? 'Edição autorizada em $root. O agente edita os arquivos '
+            'diretamente nessa pasta enquanto trabalha; ao final, mostro o '
+            'resumo e os arquivos alterados.'
         : 'Workspace definido em modo somente leitura: $root.');
   }
 
@@ -2423,6 +2518,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
               ? 'A interface vai ler a estrutura e arquivos importantes do workspace local para enviar como contexto para a IA.'
               : action.description.trim(),
           initialPath: defaultRootPath,
+          confirmLabel: 'Inspecionar',
         ),
       );
       if (permission == null) {
@@ -2451,9 +2547,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             .toInt(),
       );
 
-      _lastWorkspacePath = snapshot.path;
-      _workspaceEditingAllowed = allowEdits;
-      _editableWorkspaceRoot = allowEdits ? snapshot.path : null;
+      setState(() {
+        _lastWorkspacePath = snapshot.path;
+        _workspaceEditingAllowed = allowEdits;
+        _editableWorkspaceRoot = allowEdits ? snapshot.path : null;
+      });
 
       _addSystemMsg(
         'Workspace lido: ${snapshot.name} (${snapshot.scannedFiles} arquivos). '
@@ -2979,7 +3077,7 @@ ${result.toPromptText()}
               itemCount: visibleMessages.length + (isLoading ? 1 : 0),
               itemBuilder: (_, i) {
                 if (i == visibleMessages.length) {
-                  return const _TypingIndicator();
+                  return _TypingIndicator(activity: _agentActivity);
                 }
                 final msg = visibleMessages[i];
                 return msg.multiResponses != null
@@ -3003,10 +3101,16 @@ ${result.toPromptText()}
             sendOnEnter: config.sendMessageOnEnter,
             voiceStatus: _voiceStatus,
             desktopContextLabel: _desktopContext?.label,
+            workspaceLabel: _lastWorkspacePath == null
+                ? null
+                : '$_lastWorkspacePath '
+                    '(${_workspaceEditingAllowed && _editableWorkspaceRoot != null ? 'edição autorizada' : 'somente leitura'})',
             onSend: () => _sendMessage(_inputCtrl.text),
             onVoice: _toggleVoice,
             onPickWindow: _chooseDesktopWindow,
             onClearWindowContext: _clearDesktopContext,
+            onPickWorkspace: _manageWorkspaceSelection,
+            onClearWorkspace: _clearWorkspaceSelection,
             onClear: () => ref.read(chatProvider.notifier).clear(),
           ),
         ],
@@ -3029,11 +3133,13 @@ class _CodingWorkspacePermissionDialog extends StatefulWidget {
   final String title;
   final String description;
   final String initialPath;
+  final String confirmLabel;
 
   const _CodingWorkspacePermissionDialog({
     required this.title,
     required this.description,
     required this.initialPath,
+    this.confirmLabel = 'Confirmar',
   });
 
   @override
@@ -3194,7 +3300,7 @@ class _CodingWorkspacePermissionDialogState
                   ),
                 ),
                 subtitle: const Text(
-                  'A IA recebe essa permissao no contexto, mas a interface continua limitada ao diretorio selecionado.',
+                  'Agentes conectados (Codex/Claude) editam os arquivos diretamente, limitados a esta pasta. Provedores do backend apenas propoem edicoes que voce confirma antes de aplicar.',
                   style: TextStyle(
                     fontFamily: 'JetBrains Mono',
                     fontSize: 11,
@@ -3226,7 +3332,7 @@ class _CodingWorkspacePermissionDialogState
                   const SizedBox(width: 8),
                   ElevatedButton(
                     onPressed: _confirm,
-                    child: const Text('Inspecionar'),
+                    child: Text(widget.confirmLabel),
                   ),
                 ],
               ),
@@ -3874,7 +3980,11 @@ class _MultiResponseCard extends StatelessWidget {
 }
 
 class _TypingIndicator extends StatefulWidget {
-  const _TypingIndicator();
+  /// Atividade atual do agente conectado (ex: arquivo em edição), exibida ao
+  /// lado da animação enquanto a resposta não chega.
+  final String? activity;
+
+  const _TypingIndicator({this.activity});
 
   @override
   State<_TypingIndicator> createState() => _TypingIndicatorState();
@@ -3911,24 +4021,42 @@ class _TypingIndicatorState extends State<_TypingIndicator>
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
-          children: List.generate(
-              3,
-              (i) => AnimatedBuilder(
-                    animation: _ctrl,
-                    builder: (_, __) {
-                      final phase = ((_ctrl.value * 3) - i).clamp(0.0, 1.0);
-                      return Container(
-                        margin: const EdgeInsets.only(right: 5),
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color:
-                              AssistantTheme.c1.withOpacity(0.3 + 0.7 * phase),
-                        ),
-                      );
-                    },
-                  )),
+          children: [
+            ...List.generate(
+                3,
+                (i) => AnimatedBuilder(
+                      animation: _ctrl,
+                      builder: (_, __) {
+                        final phase = ((_ctrl.value * 3) - i).clamp(0.0, 1.0);
+                        return Container(
+                          margin: const EdgeInsets.only(right: 5),
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AssistantTheme.c1
+                                .withOpacity(0.3 + 0.7 * phase),
+                          ),
+                        );
+                      },
+                    )),
+            if (widget.activity?.trim().isNotEmpty ?? false) ...[
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Text(
+                  widget.activity!,
+                  style: const TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 10,
+                    color: AssistantTheme.textSecondary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -3944,10 +4072,13 @@ class _InputArea extends StatelessWidget {
   final bool sendOnEnter;
   final String? voiceStatus;
   final String? desktopContextLabel;
+  final String? workspaceLabel;
   final VoidCallback onSend;
   final VoidCallback onVoice;
   final VoidCallback onPickWindow;
   final VoidCallback onClearWindowContext;
+  final VoidCallback onPickWorkspace;
+  final VoidCallback onClearWorkspace;
   final VoidCallback onClear;
 
   const _InputArea({
@@ -3959,10 +4090,13 @@ class _InputArea extends StatelessWidget {
     required this.sendOnEnter,
     this.voiceStatus,
     this.desktopContextLabel,
+    this.workspaceLabel,
     required this.onSend,
     required this.onVoice,
     required this.onPickWindow,
     required this.onClearWindowContext,
+    required this.onPickWorkspace,
+    required this.onClearWorkspace,
     required this.onClear,
   });
 
@@ -4028,6 +4162,37 @@ class _InputArea extends StatelessWidget {
             ),
             const SizedBox(height: 8),
           ],
+          if (workspaceLabel?.trim().isNotEmpty ?? false) ...[
+            Row(
+              children: [
+                const Icon(Icons.folder_open,
+                    size: 13, color: AssistantTheme.c1),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Workspace: $workspaceLabel',
+                    style: const TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 10,
+                      color: AssistantTheme.textSecondary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remover workspace',
+                  constraints:
+                      const BoxConstraints.tightFor(width: 28, height: 28),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.close, size: 14),
+                  color: AssistantTheme.textSecondary,
+                  onPressed: onClearWorkspace,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
           Row(
             children: [
               _ActionBtn(
@@ -4044,6 +4209,14 @@ class _InputArea extends StatelessWidget {
                 isActive: isWindowPickerBusy ||
                     (desktopContextLabel?.trim().isNotEmpty ?? false),
                 onTap: isWindowPickerBusy ? null : onPickWindow,
+              ),
+              const SizedBox(width: 10),
+              _IconActionBtn(
+                icon: Icons.folder_open,
+                tooltip: 'Selecionar workspace',
+                color: AssistantTheme.c1,
+                isActive: workspaceLabel?.trim().isNotEmpty ?? false,
+                onTap: onPickWorkspace,
               ),
               const SizedBox(width: 10),
               Expanded(

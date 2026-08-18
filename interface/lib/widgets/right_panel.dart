@@ -265,10 +265,7 @@ class _EventCard extends ConsumerWidget {
       'outlook': '📙 Outlook'
     };
 
-    final until = event.timeUntil;
-    final untilStr = until.inMinutes < 60
-        ? 'em ${until.inMinutes}min'
-        : 'em ${until.inHours}h${until.inMinutes.remainder(60).toString().padLeft(2, '0')}';
+    final untilStr = _untilLabel(event.timeUntil);
 
     return Container(
       decoration: BoxDecoration(
@@ -314,19 +311,7 @@ class _EventCard extends ConsumerWidget {
               _SmallBtn(
                 label: '📨 Notificar',
                 color: color,
-                onTap: () async {
-                  final config = ref.read(configProvider);
-                  final svc =
-                      NotificationService(config.notif, config.assistantName);
-                  final msg = svc.buildEventMessage(event, is15min: false);
-                  final result = await svc.send(msg, event: event);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(result.summary),
-                      backgroundColor: AssistantTheme.surface2,
-                    ));
-                  }
-                },
+                onTap: () => _notifyFlow(context, ref, color),
               ),
               if (event.meetingUrl?.isNotEmpty ?? false) ...[
                 const SizedBox(width: 6),
@@ -342,6 +327,199 @@ class _EventCard extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  String _untilLabel(Duration until) {
+    if (until.isNegative) return 'agora';
+    final days = until.inDays;
+    final hours = until.inHours.remainder(24);
+    final minutes = until.inMinutes.remainder(60);
+    if (days > 0) return 'em ${days}d ${hours}h ${minutes}min';
+    if (until.inHours > 0) return 'em ${hours}h ${minutes}min';
+    return 'em ${minutes}min';
+  }
+
+  String _fireAtLabel(DateTime time) {
+    final now = DateTime.now();
+    final hhmm = '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}';
+    final sameDay = time.year == now.year &&
+        time.month == now.month &&
+        time.day == now.day;
+    if (sameDay) return hhmm;
+    return '${time.day.toString().padLeft(2, '0')}/'
+        '${time.month.toString().padLeft(2, '0')} $hhmm';
+  }
+
+  Future<void> _notifyFlow(
+    BuildContext context,
+    WidgetRef ref,
+    Color color,
+  ) async {
+    final config = ref.read(configProvider);
+    final pending = EventReminderScheduler.pendingFor(event.id);
+    final minutes = await _pickReminderMinutes(context, color, pending);
+    if (minutes == null || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (minutes == _cancelReminder) {
+      EventReminderScheduler.cancel(event.id);
+      messenger.showSnackBar(const SnackBar(
+        content: Text('🔕 Lembrete cancelado.'),
+        backgroundColor: AssistantTheme.surface2,
+      ));
+      return;
+    }
+
+    if (minutes == 0) {
+      final svc = NotificationService(config.notif, config.assistantName);
+      final msg = svc.buildEventMessage(event, is15min: false);
+      final result = await svc.send(msg, event: event);
+      if (context.mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(result.summary),
+          backgroundColor: AssistantTheme.surface2,
+        ));
+      }
+      return;
+    }
+
+    final fireAt = EventReminderScheduler.schedule(
+      event: event,
+      minutesBefore: minutes,
+      notif: config.notif,
+      assistantName: config.assistantName,
+    );
+    messenger.showSnackBar(SnackBar(
+      content: Text(fireAt.isBefore(DateTime.now())
+          ? '⏰ Evento a menos de ${minutes}min; notificação enviada agora.'
+          : '⏰ Notificação agendada: ${minutes}min antes '
+              '(${_fireAtLabel(fireAt)}).'),
+      backgroundColor: AssistantTheme.surface2,
+    ));
+  }
+
+  static const _cancelReminder = -1;
+
+  /// Retorna os minutos de antecedência escolhidos, 0 para enviar agora,
+  /// [_cancelReminder] para cancelar o lembrete atual ou null se fechado.
+  Future<int?> _pickReminderMinutes(
+    BuildContext context,
+    Color color,
+    PendingEventReminder? pending,
+  ) async {
+    final customCtrl = TextEditingController();
+    const optionStyle = TextStyle(
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11,
+      color: AssistantTheme.textSecondary,
+    );
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: Text(
+          event.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 13,
+            color: AssistantTheme.textPrimary,
+          ),
+        ),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (pending != null) ...[
+                Text(
+                  '⏰ Lembrete atual: ${pending.minutesBefore}min antes '
+                  '(${_fireAtLabel(pending.fireAt)}).',
+                  style: optionStyle,
+                ),
+                const SizedBox(height: 10),
+              ],
+              const Text(
+                'Enviar agora ou agendar para antes do evento:',
+                style: optionStyle,
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final option in const [0, 5, 15, 30, 60, 120])
+                    _SmallBtn(
+                      label: option == 0
+                          ? 'Agora'
+                          : option >= 60
+                              ? '${option ~/ 60}h antes'
+                              : '${option}min antes',
+                      color: color,
+                      onTap: () => Navigator.pop(dialogContext, option),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: customCtrl,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: 12,
+                        color: AssistantTheme.textPrimary,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Minutos antes (ex: 45)',
+                        labelStyle: TextStyle(
+                          fontSize: 11,
+                          color: AssistantTheme.textSecondary,
+                        ),
+                        isDense: true,
+                      ),
+                      onSubmitted: (_) =>
+                          _confirmCustom(dialogContext, customCtrl.text),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () =>
+                        _confirmCustom(dialogContext, customCtrl.text),
+                    child: const Text('Agendar'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          if (pending != null)
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, _cancelReminder),
+              child: const Text('Cancelar lembrete'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+    customCtrl.dispose();
+    return result;
+  }
+
+  void _confirmCustom(BuildContext dialogContext, String text) {
+    final minutes = int.tryParse(text.trim());
+    // Limite de 7 dias evita agendamentos por engano (ex: digitar o horário).
+    if (minutes == null || minutes <= 0 || minutes > 10080) return;
+    Navigator.pop(dialogContext, minutes);
   }
 }
 

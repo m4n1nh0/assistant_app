@@ -41,6 +41,11 @@ class ConnectedAiResult {
 /// Authentication remains in each vendor's CLI credential store. INTARQ only
 /// detects login state and starts a restricted, non-interactive process; it
 /// never reads or copies OAuth tokens.
+///
+/// By default the agents run read-only. When the user authorizes edits on a
+/// workspace, the agent process gains write access limited to that folder
+/// (Codex: sandbox workspace-write; Claude: permission-mode acceptEdits) and
+/// edits files directly with its own tools, like the VSCode extensions do.
 class ConnectedAiService {
   static const supportedAgents = <String, String>{
     'codex_cli': 'Codex conectado',
@@ -155,6 +160,7 @@ class ConnectedAiService {
     String language = 'pt-BR',
     String workingDirectory = '',
     bool allowWorkspaceEdits = false,
+    void Function(String activity)? onProgress,
   }) async {
     final status = await check(agentId);
     if (!status.installed || !status.authenticated) {
@@ -167,32 +173,58 @@ class ConnectedAiService {
       );
     }
 
+    final root = workingDirectory.trim();
+    final writeMode = allowWorkspaceEdits && root.isNotEmpty;
+    // Sessões agênticas com escrita leem e editam vários arquivos; precisam
+    // de mais tempo do que uma resposta somente leitura.
+    final timeout =
+        writeMode ? const Duration(minutes: 10) : const Duration(minutes: 5);
+
     final fullPrompt = _buildPrompt(
       prompt: prompt,
       history: history,
       assistantName: assistantName,
       personality: personality,
       language: language,
-      allowWorkspaceEdits: allowWorkspaceEdits,
-      workspaceRoot: workingDirectory,
+      allowWorkspaceEdits: writeMode,
+      workspaceRoot: root,
     );
     try {
+      final statusBefore = writeMode
+          ? await _gitStatusLines(root)
+          : const <String>{};
       final content = agentId == 'codex_cli'
           ? await _runCodex(
               status.executablePath,
               fullPrompt,
-              workingDirectory,
+              root,
+              allowEdits: writeMode,
+              timeout: timeout,
+              onProgress: onProgress,
             )
           : await _runClaude(
               status.executablePath,
               fullPrompt,
-              workingDirectory,
+              root,
+              allowEdits: writeMode,
+              timeout: timeout,
+              onProgress: onProgress,
             );
-      return ConnectedAiResult(agentId: agentId, content: content);
+      var finalContent = content;
+      if (writeMode) {
+        final changed = (await _gitStatusLines(root)).difference(statusBefore);
+        if (changed.isNotEmpty) {
+          finalContent = '$content\n\n---\n'
+              'Arquivos alterados no workspace (via git):\n'
+              '${_describeGitChanges(changed)}';
+        }
+      }
+      return ConnectedAiResult(agentId: agentId, content: finalContent);
     } on TimeoutException {
       return ConnectedAiResult(
         agentId: agentId,
-        content: 'O agente local excedeu o limite de 5 minutos.',
+        content:
+            'O agente local excedeu o limite de ${timeout.inMinutes} minutos.',
         isError: true,
       );
     } catch (error) {
@@ -221,23 +253,22 @@ class ConnectedAiService {
     if (allowWorkspaceEdits) {
       buffer
         ..writeln(
-            'Você roda com ferramentas somente leitura; quem grava arquivos é '
-            'a interface INTARQ, sempre depois de o usuário confirmar. O '
-            'usuário autorizou edições no workspace'
-            '${workspaceRoot.trim().isEmpty ? '' : ' em ${workspaceRoot.trim()}'}.')
+            'O usuário autorizou você a editar arquivos diretamente no '
+            'workspace em ${workspaceRoot.trim()} usando suas próprias '
+            'ferramentas de leitura e edição.')
         ..writeln(
-            'Quando o pedido envolver alterar código, proponha as edições '
-            'respondendo com um único bloco fenced chamado workspace_edits '
-            'contendo JSON: {"summary":"resumo curto","edits":[...]}. Cada '
-            'item de edits usa uma destas formas: '
-            '{"path":"caminho/relativo.ext","content":"conteúdo completo"} '
-            'para criar ou reescrever um arquivo inteiro, ou '
-            '{"path":"caminho/relativo.ext","find":"trecho exato atual",'
-            '"replace":"trecho novo"} para alterar apenas um trecho. '
-            'Prefira find/replace em mudanças pequenas; no find, copie o '
-            'trecho exatamente como está no arquivo e inclua linhas '
-            'suficientes para ele ser único. Use apenas caminhos relativos '
-            'dentro do workspace. Fora do bloco, responda em texto.');
+            'Trabalhe como em uma sessão de código na IDE: explore os '
+            'arquivos necessários, faça as alterações pedidas e mantenha as '
+            'mudanças mínimas e consistentes com o estilo do projeto. Para '
+            'pedidos de revisão ou análise, apenas leia e responda em texto, '
+            'sem editar nada.')
+        ..writeln(
+            'Nunca altere arquivos fora do workspace nem arquivos sensíveis '
+            '(.env, segredos, chaves, tokens) e não execute ações '
+            'destrutivas.')
+        ..writeln(
+            'Ao terminar, responda com um resumo objetivo do que foi feito, '
+            'listando cada arquivo alterado e o motivo da mudança.');
     } else {
       buffer.writeln(
           'Não altere arquivos nem execute ações destrutivas; responda ao usuário em texto.');
@@ -259,8 +290,11 @@ class ConnectedAiService {
   static Future<String> _runCodex(
     String executable,
     String prompt,
-    String workingDirectory,
-  ) async {
+    String workingDirectory, {
+    bool allowEdits = false,
+    Duration timeout = const Duration(minutes: 5),
+    void Function(String activity)? onProgress,
+  }) async {
     final output = File(
       '${Directory.systemTemp.path}${Platform.pathSeparator}'
       'intarq_codex_${DateTime.now().microsecondsSinceEpoch}.txt',
@@ -269,7 +303,8 @@ class ConnectedAiService {
       final args = <String>[
         'exec',
         '--sandbox',
-        'read-only',
+        // workspace-write limita a escrita do Codex à pasta autorizada.
+        allowEdits ? 'workspace-write' : 'read-only',
         '--ephemeral',
         '--skip-git-repo-check',
         '--color',
@@ -282,7 +317,18 @@ class ConnectedAiService {
         ],
         '-',
       ];
-      final result = await _runProcess(executable, args, prompt);
+      final result = await _runProcess(
+        executable,
+        args,
+        prompt,
+        timeout: timeout,
+        onOutputLine: onProgress == null
+            ? null
+            : (line) {
+                final label = _codexProgressLabel(line);
+                if (label != null) onProgress(label);
+              },
+      );
       if (result.exitCode != 0) {
         throw Exception(_safeProcessError(result));
       }
@@ -299,23 +345,37 @@ class ConnectedAiService {
   static Future<String> _runClaude(
     String executable,
     String prompt,
-    String workingDirectory,
-  ) async {
+    String workingDirectory, {
+    bool allowEdits = false,
+    Duration timeout = const Duration(minutes: 5),
+    void Function(String activity)? onProgress,
+  }) async {
     final args = <String>[
       '--print',
-      '--output-format',
-      'json',
       '--permission-mode',
-      'plan',
+      // acceptEdits aceita edições apenas dentro do diretório de trabalho;
+      // sem autorização o Claude segue em modo plan (somente leitura).
+      allowEdits ? 'acceptEdits' : 'plan',
       '--no-session-persistence',
       '--tools',
-      'Read,Glob,Grep',
+      allowEdits ? 'Read,Glob,Grep,Edit,Write' : 'Read,Glob,Grep',
     ];
+    if (onProgress != null) {
+      return _runClaudeStreaming(
+        executable,
+        args,
+        prompt,
+        workingDirectory,
+        timeout,
+        onProgress,
+      );
+    }
     final result = await _runProcess(
       executable,
-      args,
+      [...args, '--output-format', 'json'],
       prompt,
       workingDirectory: workingDirectory,
+      timeout: timeout,
     );
     if (result.exitCode != 0) throw Exception(_safeProcessError(result));
     final data = jsonDecode(result.stdout) as Map<String, dynamic>;
@@ -326,11 +386,141 @@ class ConnectedAiService {
     return content;
   }
 
+  /// Executa o Claude com saída stream-json para relatar em tempo real qual
+  /// ferramenta está em uso (leitura, busca, edição), como a extensão do
+  /// VSCode faz. O texto final vem no evento `result`.
+  static Future<String> _runClaudeStreaming(
+    String executable,
+    List<String> baseArgs,
+    String prompt,
+    String workingDirectory,
+    Duration timeout,
+    void Function(String activity) onProgress,
+  ) async {
+    final process = await Process.start(
+      executable,
+      // stream-json no modo --print exige --verbose para emitir os eventos.
+      [...baseArgs, '--output-format', 'stream-json', '--verbose'],
+      workingDirectory:
+          workingDirectory.trim().isEmpty ? null : workingDirectory.trim(),
+    );
+    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+    String? result;
+    String? resultError;
+    final stdoutDone = process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .forEach((line) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) return;
+      try {
+        final event = jsonDecode(trimmed);
+        if (event is! Map<String, dynamic>) return;
+        final type = event['type']?.toString();
+        if (type == 'assistant') {
+          final message = event['message'];
+          final content = message is Map ? message['content'] : null;
+          if (content is! List) return;
+          for (final block in content) {
+            if (block is! Map) continue;
+            if (block['type'] == 'tool_use') {
+              final label = _toolProgressLabel(
+                block['name']?.toString() ?? '',
+                block['input'],
+              );
+              if (label != null) onProgress(label);
+            } else if (block['type'] == 'text' &&
+                '${block['text'] ?? ''}'.trim().isNotEmpty) {
+              onProgress('💬 Escrevendo resposta...');
+            }
+          }
+        } else if (type == 'result') {
+          final text = event['result']?.toString().trim() ?? '';
+          if (event['is_error'] == true) {
+            resultError = text.isEmpty ? 'o agente reportou erro' : text;
+          } else {
+            result = text;
+          }
+        }
+      } catch (_) {
+        // Linhas que não são JSON (avisos, etc.) são ignoradas.
+      }
+    });
+    process.stdin.write(prompt);
+    await process.stdin.close();
+    try {
+      final exitCode = await process.exitCode.timeout(timeout);
+      await stdoutDone;
+      if (resultError != null) throw Exception(_redact(resultError!));
+      if (exitCode != 0) {
+        throw Exception(
+          _safeProcessError(_ProcessOutput(exitCode, '', await stderrFuture)),
+        );
+      }
+      final content = result?.trim() ?? '';
+      if (content.isEmpty) {
+        throw Exception('Claude terminou sem devolver uma resposta.');
+      }
+      return content;
+    } on TimeoutException {
+      process.kill();
+      rethrow;
+    }
+  }
+
+  static String? _toolProgressLabel(String tool, dynamic input) {
+    String field(String key) {
+      if (input is Map && input[key] != null) return '${input[key]}'.trim();
+      return '';
+    }
+
+    String shorten(String path) {
+      final normalized = path.replaceAll('\\', '/');
+      final parts =
+          normalized.split('/').where((item) => item.isNotEmpty).toList();
+      return parts.length <= 2
+          ? normalized
+          : parts.sublist(parts.length - 2).join('/');
+    }
+
+    switch (tool) {
+      case 'Read':
+        return '📖 Lendo ${shorten(field('file_path'))}';
+      case 'Edit':
+        return '✏️ Editando ${shorten(field('file_path'))}';
+      case 'Write':
+        return '📝 Gravando ${shorten(field('file_path'))}';
+      case 'Glob':
+        return '🔎 Listando ${field('pattern')}';
+      case 'Grep':
+        return '🔎 Procurando "${field('pattern')}"';
+      default:
+        return tool.isEmpty ? null : '⚙️ $tool...';
+    }
+  }
+
+  /// Converte uma linha de progresso do `codex exec` em um rótulo curto para
+  /// a interface; retorna null para linhas de ruído.
+  static String? _codexProgressLabel(String line) {
+    var text = line.trim().replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '');
+    if (text.isEmpty) return null;
+    final lower = text.toLowerCase();
+    if (lower.startsWith('reading prompt') ||
+        lower.startsWith('tokens used') ||
+        lower.startsWith('--------')) {
+      return null;
+    }
+    if (text.length > 90) text = '${text.substring(0, 90)}...';
+    return '🤖 $text';
+  }
+
   static Future<_ProcessOutput> _runProcess(
     String executable,
     List<String> args,
     String stdin, {
     String workingDirectory = '',
+    Duration timeout = const Duration(minutes: 5),
+    void Function(String line)? onOutputLine,
   }) async {
     final process = await Process.start(
       executable,
@@ -338,13 +528,26 @@ class ConnectedAiService {
       workingDirectory:
           workingDirectory.trim().isEmpty ? null : workingDirectory.trim(),
     );
-    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
-    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+
+    Future<String> collect(Stream<List<int>> stream) async {
+      if (onOutputLine == null) return stream.transform(utf8.decoder).join();
+      final buffer = StringBuffer();
+      await stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .forEach((line) {
+        buffer.writeln(line);
+        if (line.trim().isNotEmpty) onOutputLine(line);
+      });
+      return buffer.toString();
+    }
+
+    final stdoutFuture = collect(process.stdout);
+    final stderrFuture = collect(process.stderr);
     process.stdin.write(stdin);
     await process.stdin.close();
     try {
-      final exitCode =
-          await process.exitCode.timeout(const Duration(minutes: 5));
+      final exitCode = await process.exitCode.timeout(timeout);
       return _ProcessOutput(
         exitCode,
         await stdoutFuture,
@@ -354,6 +557,44 @@ class ConnectedAiService {
       process.kill();
       rethrow;
     }
+  }
+
+  /// Linhas de `git status --porcelain` do workspace, ou vazio quando a
+  /// pasta não é um repositório git ou o git não está disponível.
+  static Future<Set<String>> _gitStatusLines(String root) async {
+    try {
+      final result = await Process.run(
+        'git',
+        ['status', '--porcelain'],
+        workingDirectory: root,
+      ).timeout(const Duration(seconds: 10));
+      if (result.exitCode != 0) return const {};
+      return '${result.stdout}'
+          .split(RegExp(r'[\r\n]+'))
+          .map((line) => line.trimRight())
+          .where((line) => line.trim().isNotEmpty)
+          .toSet();
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  static String _describeGitChanges(Set<String> lines) {
+    String label(String code) {
+      if (code.contains('?')) return 'novo';
+      if (code.contains('A')) return 'novo';
+      if (code.contains('D')) return 'removido';
+      if (code.contains('R')) return 'renomeado';
+      return 'modificado';
+    }
+
+    final entries = lines.map((line) {
+      final code = line.length >= 2 ? line.substring(0, 2) : line;
+      final path = line.length > 3 ? line.substring(3).trim() : line.trim();
+      return '- $path (${label(code)})';
+    }).toList()
+      ..sort();
+    return entries.join('\n');
   }
 
   static String _safeProcessError(_ProcessOutput result) {

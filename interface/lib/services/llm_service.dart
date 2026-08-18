@@ -17,10 +17,15 @@ class LlmService {
   /// instrução de edição pelo contexto do workspace enviado na mensagem.
   final bool allowWorkspaceEdits;
 
+  /// Recebe a atividade em tempo real do agente conectado (por exemplo, o
+  /// arquivo sendo lido/editado) para a interface exibir enquanto ele trabalha.
+  final void Function(String activity)? onAgentProgress;
+
   LlmService({
     this.config,
     this.workingDirectory = '',
     this.allowWorkspaceEdits = false,
+    this.onAgentProgress,
   });
 
   /// Agente conectado escolhido na conversa, ou null para usar o backend.
@@ -57,6 +62,7 @@ class LlmService {
       language: current.language,
       workingDirectory: workingDirectory,
       allowWorkspaceEdits: allowWorkspaceEdits,
+      onProgress: onAgentProgress,
     );
     if (!response.isError) {
       // Mantém histórico e memória do backend completos mesmo quando a

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/app_config.dart';
@@ -65,6 +66,17 @@ class NotificationService {
     }
   }
 
+  String buildReminderMessage(CalendarEvent event, int minutesBefore) {
+    final when = minutesBefore >= 60
+        ? 'em ${minutesBefore ~/ 60}h${(minutesBefore % 60) == 0 ? '' : '${minutesBefore % 60}min'}'
+        : 'em $minutesBefore minutos';
+    final buf = StringBuffer('🔔 [$assistantName] ${event.title} — $when');
+    if (config.includeLink && (event.meetingUrl?.isNotEmpty ?? false)) {
+      buf.write('\n🔗 ${event.meetingUrl}');
+    }
+    return buf.toString();
+  }
+
   Future<bool> _sendWhatsApp(String message) async {
     try {
       switch (config.waProvider) {
@@ -83,5 +95,70 @@ class NotificationService {
     } catch (_) {
       return false;
     }
+  }
+}
+
+/// Lembrete agendado pelo botão Notificar do painel de próximos eventos.
+class PendingEventReminder {
+  final String eventId;
+  final String title;
+  final int minutesBefore;
+  final DateTime fireAt;
+
+  const PendingEventReminder({
+    required this.eventId,
+    required this.title,
+    required this.minutesBefore,
+    required this.fireAt,
+  });
+}
+
+/// Agenda lembretes por evento com antecedência escolhida pelo usuário.
+/// Os timers vivem enquanto o app estiver aberto (mesma limitação dos
+/// lembretes automáticos da agenda) e cada evento tem no máximo um lembrete
+/// manual: reagendar substitui o anterior.
+class EventReminderScheduler {
+  static final Map<String, Timer> _timers = {};
+  static final Map<String, PendingEventReminder> _pending = {};
+
+  static PendingEventReminder? pendingFor(String eventId) => _pending[eventId];
+
+  /// Agenda (ou reagenda) o envio para [minutesBefore] minutos antes do
+  /// início do evento e retorna o horário de disparo. Se esse horário já
+  /// passou, o envio acontece imediatamente.
+  static DateTime schedule({
+    required CalendarEvent event,
+    required int minutesBefore,
+    required NotifConfig notif,
+    required String assistantName,
+  }) {
+    cancel(event.id);
+    final fireAt = event.startTime.subtract(Duration(minutes: minutesBefore));
+    var delay = fireAt.difference(DateTime.now());
+    if (delay.isNegative) delay = Duration.zero;
+
+    _pending[event.id] = PendingEventReminder(
+      eventId: event.id,
+      title: event.title,
+      minutesBefore: minutesBefore,
+      fireAt: fireAt,
+    );
+    _timers[event.id] = Timer(delay, () {
+      _timers.remove(event.id);
+      _pending.remove(event.id);
+      final service = NotificationService(notif, assistantName);
+      unawaited(
+        service.send(
+          service.buildReminderMessage(event, minutesBefore),
+          event: event,
+        ),
+      );
+    });
+    return fireAt;
+  }
+
+  static bool cancel(String eventId) {
+    _timers.remove(eventId)?.cancel();
+    return _pending.remove(eventId) != null;
   }
 }

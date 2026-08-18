@@ -454,10 +454,14 @@ class _OverviewMetrics extends StatelessWidget {
       0,
       (total, item) => total + item.studentCount,
     );
-    final weeklyMeetings = active.fold<int>(
-      0,
-      (total, item) => total + item.schedules.length,
-    );
+    // Turmas diferentes no mesmo dia e horário são lecionadas juntas e
+    // contam como uma única aula na semana.
+    final weeklySlots = <String>{
+      for (final item in active)
+        for (final schedule in item.schedules)
+          '${schedule.weekday}|${schedule.startTime.trim()}',
+    };
+    final weeklyMeetings = weeklySlots.length;
     final summaries = lessons.where(
       (item) => item.summary?.trim().isNotEmpty ?? false,
     );
