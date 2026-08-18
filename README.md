@@ -19,7 +19,9 @@ configurável da assistente como persona individual de cada usuário. Sem nome,
 a persona usa `Assistant`; a pronúncia opcional pode fazer `Hannah` ser
 reconhecida e falada como `Raná` sem alterar sua grafia. Splash, acesso, barra
 superior e relatórios exibem somente o símbolo e o nome `INTARQ`, sem lema ou
-textos institucionais pequenos. Modo Educação, ícone do Windows e documentos
+textos institucionais pequenos. Na interface, `INTAR` usa prata e o `Q` azul;
+nos relatórios, a assinatura branca usa `INTAR` em azul-noite e `Q` azul. Modo
+Educação, ícone do Windows e documentos
 seguem a paleta azul-noite, azul
 elétrico, ouro premium, prata tecnológica e grafite. Os PDFs continuam claros
 para impressão e recebem uma placa compacta com essa assinatura simplificada.

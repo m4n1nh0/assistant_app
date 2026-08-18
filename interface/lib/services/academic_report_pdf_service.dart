@@ -164,10 +164,7 @@ Future<Uint8List> buildAcademicReportPdf({
       footer: (context) => pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: [
-          pw.Text(
-            'INTARQ',
-            style: const pw.TextStyle(color: _muted, fontSize: 8),
-          ),
+          IntarqBrand.pdfWordmark(fontSize: 8, intarColor: _muted),
           pw.Text(
             'Página ${context.pageNumber} de ${context.pagesCount}',
             style: const pw.TextStyle(color: _muted, fontSize: 8),

@@ -46,9 +46,12 @@ como erro e sucesso, para não prejudicar a compreensão da interface.
 - Splash, acesso, barra superior e relatórios usam somente o símbolo isolado e
   o nome `INTARQ`, compostos em código para permanecerem legíveis em qualquer
   tamanho. Lema e textos institucionais não acompanham a assinatura do produto.
+- Nas superfícies escuras da interface, `INTAR` usa prata clara e o `Q` mantém
+  o azul elétrico. Nos relatórios, a assinatura tem fundo branco, `INTAR` em
+  azul-noite e `Q` azul, preservando o contraste para impressão.
 - O símbolo identifica o Modo Educação.
-- Relatórios mantêm corpo claro para impressão e exibem símbolo + `INTARQ` em
-  uma placa azul-noite compacta; o documento inteiro não recebe fundo escuro.
+- Relatórios mantêm corpo e assinatura claros para impressão e exibem somente
+  símbolo + `INTARQ`.
 - A personalidade configurável continua aparecendo ao lado da marca.
 - Não distorcer, recolorir, redesenhar ou usar a prancha completa como logo.
 

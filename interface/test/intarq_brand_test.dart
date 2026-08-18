@@ -22,7 +22,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(Image), findsNWidgets(4));
-    expect(find.text('INTARQ'), findsNWidgets(3));
+    expect(find.byKey(const Key('intarq-wordmark')), findsNWidgets(3));
+    final wordmark = tester.widget<Text>(
+      find.byKey(const Key('intarq-wordmark')).first,
+    );
+    final rootSpan = wordmark.textSpan! as TextSpan;
+    final qSpan = rootSpan.children!.last as TextSpan;
+    expect(rootSpan.toPlainText(), 'INTARQ');
+    expect(wordmark.style!.color, IntarqBrand.technologySilver);
+    expect(qSpan.style!.color, IntarqBrand.electricBlue);
     expect(tester.takeException(), isNull);
   });
 

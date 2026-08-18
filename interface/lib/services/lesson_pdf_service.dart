@@ -323,10 +323,7 @@ pw.Widget _buildFooter(pw.Context context) {
     child: pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
-        pw.Text(
-          'INTARQ',
-          style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
-        ),
+        IntarqBrand.pdfWordmark(fontSize: 8, intarColor: _inkSoft),
         pw.Text(
           '${context.pageNumber}/${context.pagesCount}',
           style: const pw.TextStyle(fontSize: 8, color: _inkSoft),

@@ -45,8 +45,8 @@ class IntarqBrand {
       height: height,
       padding: const pw.EdgeInsets.all(6),
       decoration: pw.BoxDecoration(
-        color: pdfNavy,
-        border: pw.Border.all(color: pdfGold, width: .6),
+        color: PdfColors.white,
+        border: pw.Border.all(color: pdfSilver, width: .6),
         borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
       ),
       child: pw.Row(
@@ -61,17 +61,39 @@ class IntarqBrand {
             ),
             pw.SizedBox(width: 5),
           ],
-          pw.Text(
-            name,
-            style: pw.TextStyle(
-              color: PdfColors.white,
-              fontSize: nameSize,
-              letterSpacing: 1.4,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
+          pdfWordmark(fontSize: nameSize),
         ],
       ),
+    );
+  }
+
+  static pw.Widget pdfWordmark({
+    double fontSize = 14,
+    PdfColor intarColor = pdfNavy,
+  }) {
+    final spacing = fontSize * .1;
+    return pw.Row(
+      mainAxisSize: pw.MainAxisSize.min,
+      children: [
+        pw.Text(
+          'INTAR',
+          style: pw.TextStyle(
+            color: intarColor,
+            fontSize: fontSize,
+            letterSpacing: spacing,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.Text(
+          'Q',
+          style: pw.TextStyle(
+            color: pdfBlue,
+            fontSize: fontSize,
+            letterSpacing: spacing,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -103,8 +125,17 @@ class IntarqLockup extends StatelessWidget {
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  IntarqBrand.name,
+                child: Text.rich(
+                  const TextSpan(
+                    children: [
+                      TextSpan(text: 'INTAR'),
+                      TextSpan(
+                        text: 'Q',
+                        style: TextStyle(color: IntarqBrand.electricBlue),
+                      ),
+                    ],
+                  ),
+                  key: const Key('intarq-wordmark'),
                   maxLines: 1,
                   style: TextStyle(
                     fontFamily: 'Rajdhani',

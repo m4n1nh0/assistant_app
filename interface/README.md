@@ -13,7 +13,9 @@ opcional de pronúncia permite, por exemplo, exibir `Hannah` e reconhecer/falar
 `Raná`. A paleta oficial e os caminhos dos ativos são definidos
 em `lib/branding/intarq_brand.dart`. Splash, acesso, barra superior e relatórios
 mostram somente o símbolo com o nome `INTARQ`, sem lema ou textos institucionais
-pequenos. O símbolo também identifica o Modo Educação e o ícone
+pequenos. Na interface escura, `INTAR` aparece em prata e o `Q` em azul; nos
+relatórios, a assinatura usa fundo branco, `INTAR` em azul-noite e `Q` azul.
+O símbolo também identifica o Modo Educação e o ícone
 multirresolução permanece no runner Windows. Os documentos mantêm o corpo claro
 para impressão.
 
