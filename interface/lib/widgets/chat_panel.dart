@@ -17,6 +17,7 @@ import '../services/external_launcher_service.dart';
 import '../services/installed_apps_service.dart';
 import '../services/local_computer_action_service.dart';
 import '../services/local_desktop_context_service.dart';
+import '../services/connected_ai_service.dart';
 import '../services/local_script_service.dart';
 import '../services/local_workspace_service.dart';
 import '../services/llm_service.dart';
@@ -128,6 +129,9 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   bool _connectedEditPromptDeclined = false;
   bool _windowPickerBusy = false;
   String? _agentActivity;
+  final List<String> _agentActivityLog = [];
+  String? _cachedWorkspaceEditAgent;
+  bool _workspaceEditAgentChecked = false;
   DateTime? _wakeWordArmedUntil;
   int _wakePromptAttempts = 0;
 
@@ -958,20 +962,28 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
 
     final config = ref.read(configProvider);
     var workspaceContextAttached = false;
+    String? routedConnectedAgent;
     if (config.selectedIsConnectedAgent) {
       await _ensureConnectedWorkspacePermission(rawApiText);
     } else if (attachWorkspaceContext &&
         _lastWorkspacePath != null &&
         rawApiText.isNotEmpty &&
         !_normalizeLoose(rawApiText).contains('contexto local do workspace')) {
-      // Workspace selecionado: os provedores do backend recebem o mapa e os
-      // arquivos relevantes do projeto na mensagem digitada pelo usuário,
-      // sem depender de detecção de intenção. Agentes conectados exploram
-      // sozinhos via cwd; mensagens internas (resultados de ações) não são
-      // embrulhadas.
-      final wrapped = await _withWorkspaceContext(apiText, rawApiText);
-      workspaceContextAttached = wrapped != apiText;
-      apiText = wrapped;
+      // Com edição autorizada, pedidos vão para o agente conectado
+      // (Claude/Codex) trabalhar direto no workspace em modo agêntico —
+      // o backend com modelo local é lento e não edita sozinho.
+      if (_workspaceEditingAllowed && _editableWorkspaceRoot != null) {
+        routedConnectedAgent = await _connectedAgentForWorkspaceEdits();
+      }
+      if (routedConnectedAgent == null) {
+        // Sem agente conectado: os provedores do backend recebem o mapa e
+        // os arquivos relevantes do projeto na mensagem digitada pelo
+        // usuário. Mensagens internas (resultados de ações) não são
+        // embrulhadas.
+        final wrapped = await _withWorkspaceContext(apiText, rawApiText);
+        workspaceContextAttached = wrapped != apiText;
+        apiText = wrapped;
+      }
     }
     final history = ref.read(chatProvider.notifier).toApiHistory(10);
 
@@ -985,7 +997,15 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       _scrollToBottom();
     }
 
+    if (routedConnectedAgent != null) {
+      _addSystemMsg(
+          '${ConnectedAiService.supportedAgents[routedConnectedAgent]} vai '
+          'trabalhar direto no workspace autorizado.');
+      _scrollToBottom();
+    }
+
     ref.read(isLoadingProvider.notifier).state = true;
+    _agentActivityLog.clear();
 
     try {
       final llmSvc = LlmService(
@@ -993,8 +1013,13 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         workingDirectory: _lastWorkspacePath ?? '',
         allowWorkspaceEdits:
             _workspaceEditingAllowed && _editableWorkspaceRoot != null,
+        forcedConnectedAgent: routedConnectedAgent,
         onAgentProgress: (activity) {
-          if (mounted) setState(() => _agentActivity = activity);
+          if (!mounted) return;
+          if (_agentActivityLog.isEmpty || _agentActivityLog.last != activity) {
+            _agentActivityLog.add(activity);
+          }
+          setState(() => _agentActivity = activity);
         },
       );
 
@@ -1064,6 +1089,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           await _handleGeneratedScripts(result, shownText);
           await _handleWorkspaceEditProposals(result);
       }
+      _maybeAddAgentStepsSummary(config, routedConnectedAgent);
     } catch (e) {
       _addSystemMsg('Erro: $e');
     }
@@ -1073,6 +1099,46 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       setState(() => _agentActivity = null);
     }
     _scrollToBottom();
+  }
+
+  /// Agente conectado (Claude/Codex) instalado e logado, para rotear pedidos
+  /// de edição do workspace. Consultar os CLIs custa alguns segundos, então o
+  /// resultado — inclusive "nenhum disponível" — fica em cache na sessão.
+  /// Trocar a seleção de workspace limpa o cache.
+  Future<String?> _connectedAgentForWorkspaceEdits() async {
+    if (_workspaceEditAgentChecked) return _cachedWorkspaceEditAgent;
+    try {
+      final statuses = await ConnectedAiService.checkAll();
+      for (final id in const ['claude_cli', 'codex_cli']) {
+        final matches = statuses.where((status) => status.id == id);
+        if (matches.isEmpty) continue;
+        final status = matches.first;
+        if (status.installed && status.authenticated) {
+          _cachedWorkspaceEditAgent = id;
+          _workspaceEditAgentChecked = true;
+          return id;
+        }
+      }
+      _workspaceEditAgentChecked = true;
+    } catch (_) {
+      // Falha na consulta não vira cache: a próxima mensagem tenta de novo.
+    }
+    return null;
+  }
+
+  /// Mostra a trilha de passos do agente conectado (arquivos lidos/editados)
+  /// depois da resposta, como as extensões do VSCode fazem.
+  void _maybeAddAgentStepsSummary(AppConfig config, String? routedAgent) {
+    if (routedAgent == null && !config.selectedIsConnectedAgent) return;
+    final steps = _agentActivityLog
+        .where((step) => !step.startsWith('💬'))
+        .toList();
+    if (steps.length < 2) return;
+    const maxSteps = 12;
+    final shown = steps.take(maxSteps).toList();
+    final extra = steps.length - shown.length;
+    _addSystemMsg('Passos do agente:\n${shown.map((s) => '• $s').join('\n')}'
+        '${extra > 0 ? '\n• ... (+$extra passos)' : ''}');
   }
 
   /// Anexa o mapa e os arquivos relevantes do workspace selecionado ao
@@ -1242,6 +1308,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       _workspaceEditingAllowed = permission.allowEdits;
       _editableWorkspaceRoot = permission.allowEdits ? root : null;
       _connectedEditPromptDeclined = false;
+      // Reconsulta os CLIs: o usuário pode ter conectado Claude/Codex depois
+      // de uma verificação anterior sem agente disponível.
+      _workspaceEditAgentChecked = false;
+      _cachedWorkspaceEditAgent = null;
     });
     _addSystemMsg(permission.allowEdits
         ? 'Workspace selecionado com edição autorizada: $root.'

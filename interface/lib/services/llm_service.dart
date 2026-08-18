@@ -21,15 +21,27 @@ class LlmService {
   /// arquivo sendo lido/editado) para a interface exibir enquanto ele trabalha.
   final void Function(String activity)? onAgentProgress;
 
+  /// Agente conectado imposto pela interface para este envio (roteamento de
+  /// pedidos de edição do workspace), ignorando a seleção da conversa.
+  final String? forcedConnectedAgent;
+
   LlmService({
     this.config,
     this.workingDirectory = '',
     this.allowWorkspaceEdits = false,
     this.onAgentProgress,
+    this.forcedConnectedAgent,
   });
+
+  /// Timeout dos modos do backend; maior com workspace ativo, porque o
+  /// contexto do projeto deixa a resposta dos modelos locais bem mais lenta.
+  Duration _timeoutFor(int baseSeconds) => Duration(
+      seconds:
+          workingDirectory.trim().isEmpty ? baseSeconds : baseSeconds + 180);
 
   /// Agente conectado escolhido na conversa, ou null para usar o backend.
   String? get _selectedConnectedAgent {
+    if (forcedConnectedAgent != null) return forcedConnectedAgent;
     final current = config;
     if (current == null || !current.selectedIsConnectedAgent) return null;
     return current.effectiveAgent;
@@ -92,8 +104,8 @@ class LlmService {
   ) async {
     final connected = _selectedConnectedAgent;
     if (connected != null) return _runConnectedAgent(connected, history, text);
+    final timeout = _timeoutFor(120);
     try {
-      const timeout = Duration(seconds: 120);
       final data = await api
           .chat(
             message: text,
@@ -107,7 +119,7 @@ class LlmService {
       return ChatResult(responses: [
         LlmResponse(
           llm: 'backend',
-          content: _friendlyTimeout('chat', const Duration(seconds: 120)),
+          content: _friendlyTimeout('chat', timeout),
           isError: true,
         ),
       ]);
@@ -128,8 +140,8 @@ class LlmService {
   ) async {
     final connected = _selectedConnectedAgent;
     if (connected != null) return _runConnectedAgent(connected, history, text);
+    final timeout = _timeoutFor(150);
     try {
-      const timeout = Duration(seconds: 150);
       final data = await api
           .chat(
             message: text,
@@ -143,8 +155,7 @@ class LlmService {
       return ChatResult(responses: [
         LlmResponse(
           llm: 'error',
-          content:
-              _friendlyTimeout('modo paralelo', const Duration(seconds: 150)),
+          content: _friendlyTimeout('modo paralelo', timeout),
           isError: true,
         ),
       ]);
@@ -161,8 +172,8 @@ class LlmService {
   ) async {
     final connected = _selectedConnectedAgent;
     if (connected != null) return _runConnectedAgent(connected, history, text);
+    final timeout = _timeoutFor(180);
     try {
-      const timeout = Duration(seconds: 180);
       final data = await api
           .chat(
             message: text,
@@ -176,8 +187,7 @@ class LlmService {
       return ChatResult(responses: [
         LlmResponse(
           llm: 'chain',
-          content:
-              _friendlyTimeout('modo em etapas', const Duration(seconds: 180)),
+          content: _friendlyTimeout('modo em etapas', timeout),
           isError: true,
         ),
       ]);
