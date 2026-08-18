@@ -94,6 +94,7 @@ class LlmService {
         llm: response.agentId,
         content: response.content,
         isError: response.isError,
+        changedFiles: response.changedFiles,
       ),
     ]);
   }

@@ -30,6 +30,7 @@ import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../utils/chat_input_shortcuts.dart';
 import 'education_dialog.dart';
+import 'workspace_diff_dialog.dart';
 import 'workspace_editor_dialog.dart';
 
 class ChatPanel extends ConsumerStatefulWidget {
@@ -1037,6 +1038,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             content:
                 _visibleChatText(primary.content, isError: primary.isError),
             multiResponses: responses,
+            changedFiles: primary.changedFiles,
+            workspaceRoot: _editableWorkspaceRoot,
           );
           ref.read(chatProvider.notifier).addMessage(msg);
           if (config.ttsEnabled && !primary.isError) {
@@ -1057,6 +1060,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             role: 'assistant',
             content: _visibleChatText(resp.content, isError: resp.isError),
             llm: resp.llm,
+            changedFiles: resp.changedFiles,
+            workspaceRoot: _editableWorkspaceRoot,
           );
           ref.read(chatProvider.notifier).addMessage(msg);
           if (config.ttsEnabled && !resp.isError) {
@@ -1077,6 +1082,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             role: 'assistant',
             content: _visibleChatText(resp.content, isError: resp.isError),
             llm: resp.llm,
+            changedFiles: resp.changedFiles,
+            workspaceRoot: _editableWorkspaceRoot,
           );
           ref.read(chatProvider.notifier).addMessage(msg);
           if (config.ttsEnabled && !resp.isError) {
@@ -3953,13 +3960,25 @@ class _MessageBubble extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 12),
-                        child: _ChatText(
-                          text: _parseMarkdown(visibleContent),
-                          color: isUser
-                              ? const Color(0xFF9FEFCF)
-                              : AssistantTheme.textPrimary,
-                          fontSize: 12,
-                          height: 1.55,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _ChatText(
+                              text: _parseMarkdown(visibleContent),
+                              color: isUser
+                                  ? const Color(0xFF9FEFCF)
+                                  : AssistantTheme.textPrimary,
+                              fontSize: 12,
+                              height: 1.55,
+                            ),
+                            if (_hasChanges) ...[
+                              const SizedBox(height: 10),
+                              _ChangedFilesCard(
+                                files: msg.changedFiles!,
+                                rootPath: msg.workspaceRoot!,
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ],
@@ -3972,6 +3991,10 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+
+  bool get _hasChanges =>
+      (msg.changedFiles?.isNotEmpty ?? false) &&
+      (msg.workspaceRoot?.isNotEmpty ?? false);
 
   void _showContextMenu(BuildContext ctx, Offset pos, String content) {
     showMenu(
@@ -3991,6 +4014,98 @@ class _MessageBubble extends StatelessWidget {
 
   String _formatTime(DateTime dt) =>
       '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+/// Resumo das alterações feitas pelo agente no workspace, com atalho para o
+/// visualizador de diff.
+class _ChangedFilesCard extends StatelessWidget {
+  final List<String> files;
+  final String rootPath;
+
+  const _ChangedFilesCard({required this.files, required this.rootPath});
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = files.take(6).toList();
+    final extra = files.length - shown.length;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: AssistantTheme.c3.withOpacity(0.28)),
+        borderRadius: BorderRadius.circular(3),
+        color: AssistantTheme.c3.withOpacity(0.05),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.difference_outlined,
+                  size: 13, color: AssistantTheme.c3),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  files.length == 1
+                      ? '1 arquivo alterado'
+                      : '${files.length} arquivos alterados',
+                  style: const TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 10,
+                    color: AssistantTheme.c3,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => WorkspaceDiffDialog(
+                    rootPath: rootPath,
+                    relativePaths: files,
+                  ),
+                ),
+                icon: const Icon(Icons.visibility_outlined, size: 13),
+                label: const Text('Ver alterações'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AssistantTheme.c1,
+                  textStyle: const TextStyle(fontSize: 11),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          for (final file in shown)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '• $file',
+                style: const TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 10,
+                  color: AssistantTheme.textSecondary,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          if (extra > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '• ... (+$extra)',
+                style: const TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 10,
+                  color: AssistantTheme.textMuted,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ChatText extends StatelessWidget {

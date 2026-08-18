@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../services/local_workspace_service.dart';
 import '../services/syntax_check_service.dart';
 import '../utils/theme.dart';
+import 'workspace_diff_dialog.dart';
 
 /// Modo editor do workspace: navega pelos diretórios, abre arquivos para
 /// edição na própria ferramenta (com gravação apenas quando o usuário
@@ -242,6 +243,32 @@ class _WorkspaceEditorDialogState extends State<WorkspaceEditorDialog> {
     }
   }
 
+  /// Abre o diff do arquivo aberto ou, sem arquivo, de todas as alterações
+  /// pendentes do workspace. Recarrega o conteúdo depois, porque o diff
+  /// permite desfazer alterações.
+  Future<void> _showDiff() async {
+    final relative = _openRelativePath;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => WorkspaceDiffDialog(
+        rootPath: widget.rootPath,
+        relativePaths: relative == null ? const [] : [relative],
+      ),
+    );
+    if (!mounted || _openAbsolutePath == null || _dirty) return;
+    try {
+      final content = await File(_openAbsolutePath!).readAsString();
+      if (!mounted || content == _loadedContent) return;
+      setState(() {
+        _loadedContent = content;
+        _contentCtrl.text = content;
+        _dirty = false;
+      });
+    } catch (_) {
+      // Arquivo pode ter sido removido pelo "desfazer" do diff.
+    }
+  }
+
   void _setStatus(String message, {bool isError = false}) {
     if (!mounted) return;
     setState(() {
@@ -440,6 +467,14 @@ class _WorkspaceEditorDialogState extends State<WorkspaceEditorDialog> {
             onPressed: _openAbsolutePath != null && !_busy ? _validate : null,
             icon: const Icon(Icons.rule, size: 18),
             color: AssistantTheme.c2,
+          ),
+          IconButton(
+            tooltip: _openRelativePath == null
+                ? 'Ver alterações do workspace'
+                : 'Ver alterações deste arquivo',
+            onPressed: _busy ? null : _showDiff,
+            icon: const Icon(Icons.difference_outlined, size: 17),
+            color: AssistantTheme.c3,
           ),
           IconButton(
             tooltip: 'Mencionar arquivo no chat',

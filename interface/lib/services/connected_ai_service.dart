@@ -29,10 +29,15 @@ class ConnectedAiResult {
   final String content;
   final bool isError;
 
+  /// Caminhos relativos alterados pelo agente nesta execução, detectados
+  /// pelo git. Vazio quando o workspace não é um repositório git.
+  final List<String> changedFiles;
+
   const ConnectedAiResult({
     required this.agentId,
     required this.content,
     this.isError = false,
+    this.changedFiles = const [],
   });
 }
 
@@ -210,16 +215,16 @@ class ConnectedAiService {
               timeout: timeout,
               onProgress: onProgress,
             );
-      var finalContent = content;
-      if (writeMode) {
-        final changed = (await _gitStatusLines(root)).difference(statusBefore);
-        if (changed.isNotEmpty) {
-          finalContent = '$content\n\n---\n'
-              'Arquivos alterados no workspace (via git):\n'
-              '${_describeGitChanges(changed)}';
-        }
-      }
-      return ConnectedAiResult(agentId: agentId, content: finalContent);
+      // O diff completo é mostrado pela interface; aqui basta a lista de
+      // arquivos tocados nesta execução.
+      final changedFiles = writeMode
+          ? _changedPaths((await _gitStatusLines(root)).difference(statusBefore))
+          : const <String>[];
+      return ConnectedAiResult(
+        agentId: agentId,
+        content: content,
+        changedFiles: changedFiles,
+      );
     } on TimeoutException {
       return ConnectedAiResult(
         agentId: agentId,
@@ -579,22 +584,18 @@ class ConnectedAiService {
     }
   }
 
-  static String _describeGitChanges(Set<String> lines) {
-    String label(String code) {
-      if (code.contains('?')) return 'novo';
-      if (code.contains('A')) return 'novo';
-      if (code.contains('D')) return 'removido';
-      if (code.contains('R')) return 'renomeado';
-      return 'modificado';
+  /// Extrai os caminhos relativos de linhas de `git status --porcelain`.
+  static List<String> _changedPaths(Set<String> lines) {
+    final paths = <String>{};
+    for (final line in lines) {
+      final raw = line.length > 3 ? line.substring(3).trim() : line.trim();
+      if (raw.isEmpty) continue;
+      // Renomeações vêm como "antigo -> novo"; interessa o destino.
+      final arrow = raw.indexOf(' -> ');
+      paths.add(arrow >= 0 ? raw.substring(arrow + 4).trim() : raw);
     }
-
-    final entries = lines.map((line) {
-      final code = line.length >= 2 ? line.substring(0, 2) : line;
-      final path = line.length > 3 ? line.substring(3).trim() : line.trim();
-      return '- $path (${label(code)})';
-    }).toList()
-      ..sort();
-    return entries.join('\n');
+    final sorted = paths.toList()..sort();
+    return sorted;
   }
 
   static String _safeProcessError(_ProcessOutput result) {

@@ -473,6 +473,13 @@ class ChatMessage {
   final DateTime timestamp;
   final List<LlmResponse>? multiResponses;
 
+  /// Arquivos alterados no workspace por esta resposta, para a mensagem
+  /// oferecer o visualizador de diff.
+  final List<String>? changedFiles;
+
+  /// Raiz do workspace onde as alterações aconteceram.
+  final String? workspaceRoot;
+
   ChatMessage({
     required this.id,
     required this.role,
@@ -480,6 +487,8 @@ class ChatMessage {
     this.llm,
     DateTime? timestamp,
     this.multiResponses,
+    this.changedFiles,
+    this.workspaceRoot,
   }) : timestamp = timestamp ?? DateTime.now();
 }
 
@@ -489,11 +498,15 @@ class LlmResponse {
   final bool isError;
   final int? durationMs;
 
+  /// Caminhos relativos alterados no workspace por um agente conectado.
+  final List<String> changedFiles;
+
   LlmResponse({
     required this.llm,
     required this.content,
     this.isError = false,
     this.durationMs,
+    this.changedFiles = const [],
   });
 }
 
