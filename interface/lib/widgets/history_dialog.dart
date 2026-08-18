@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -22,11 +23,19 @@ class _HistoryDialogState extends State<HistoryDialog> {
   List<Map<String, dynamic>> _backendMessages = [];
   List<ShortcutLaunchEntry> _launches = [];
   List<ActionAuditEntry> _audits = [];
+  final _searchCtrl = TextEditingController();
+  String _search = '';
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -100,6 +109,10 @@ class _HistoryDialogState extends State<HistoryDialog> {
               ),
               if (_status != null)
                 _StatusStrip(text: _status!, color: AssistantTheme.c4),
+              _SearchField(
+                controller: _searchCtrl,
+                onChanged: (value) => setState(() => _search = value),
+              ),
               Expanded(
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
@@ -117,13 +130,27 @@ class _HistoryDialogState extends State<HistoryDialog> {
     );
   }
 
+  bool _matchesSearch(String text) {
+    final term = _search.trim().toLowerCase();
+    if (term.isEmpty) return true;
+    return text.toLowerCase().contains(term);
+  }
+
   Widget _buildConversations() {
-    final messages =
-        _localMessages.isNotEmpty ? _localMessages : _backendMessages;
+    final all = _localMessages.isNotEmpty ? _localMessages : _backendMessages;
     final source = _localMessages.isNotEmpty ? 'LOCAL' : 'BACKEND';
 
-    if (messages.isEmpty) {
+    if (all.isEmpty) {
       return const _EmptyState(text: 'Sem conversas registradas');
+    }
+
+    final messages = all
+        .where((msg) => _matchesSearch(
+              '${msg['content'] ?? ''} ${msg['role'] ?? ''} ${msg['llm'] ?? ''}',
+            ))
+        .toList();
+    if (messages.isEmpty) {
+      return _EmptyState(text: 'Nenhuma conversa com "${_search.trim()}"');
     }
 
     return ListView.separated(
@@ -132,7 +159,11 @@ class _HistoryDialogState extends State<HistoryDialog> {
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (_, index) {
         final msg = messages[index];
-        return _ConversationTile(message: msg, source: source);
+        return _ConversationTile(
+          message: msg,
+          source: source,
+          highlight: _search,
+        );
       },
     );
   }
@@ -142,6 +173,23 @@ class _HistoryDialogState extends State<HistoryDialog> {
       return const _EmptyState(text: 'Sem acoes registradas');
     }
 
+    final launches = _launches
+        .where((item) => _matchesSearch(
+              '${item.shortcutName} ${item.target} ${item.targetType} '
+              '${item.status} ${item.error ?? ''}',
+            ))
+        .toList();
+    final audits = _audits
+        .where((item) => _matchesSearch(
+              '${item.actionType} ${item.status} ${jsonEncode(item.request)} '
+              '${jsonEncode(item.result)}',
+            ))
+        .toList();
+
+    if (launches.isEmpty && audits.isEmpty) {
+      return _EmptyState(text: 'Nenhuma acao com "${_search.trim()}"');
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -149,13 +197,13 @@ class _HistoryDialogState extends State<HistoryDialog> {
           title: 'EXECUCOES DE PROGRAMAS',
           emptyText: 'Sem execucoes registradas',
           children:
-              _launches.map((item) => _LaunchHistoryTile(item: item)).toList(),
+              launches.map((item) => _LaunchHistoryTile(item: item)).toList(),
         ),
         const SizedBox(height: 14),
         _HistorySection(
           title: 'AUDITORIA DA IA',
           emptyText: 'Sem auditoria registrada',
-          children: _audits.map((item) => _AuditTile(item: item)).toList(),
+          children: audits.map((item) => _AuditTile(item: item)).toList(),
         ),
       ],
     );
@@ -211,6 +259,56 @@ class _Header extends StatelessWidget {
   }
 }
 
+class _SearchField extends StatelessWidget {
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  const _SearchField({required this.controller, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        style: const TextStyle(
+          fontFamily: 'JetBrains Mono',
+          fontSize: 11,
+          color: AssistantTheme.textPrimary,
+        ),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Buscar no historico...',
+          hintStyle: const TextStyle(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 11,
+            color: AssistantTheme.textMuted,
+          ),
+          prefixIcon: const Icon(Icons.search,
+              size: 15, color: AssistantTheme.textMuted),
+          prefixIconConstraints:
+              const BoxConstraints.tightFor(width: 32, height: 30),
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Limpar busca',
+                  constraints:
+                      const BoxConstraints.tightFor(width: 30, height: 30),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.close, size: 14),
+                  color: AssistantTheme.textMuted,
+                  onPressed: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                ),
+        ),
+      ),
+    );
+  }
+}
+
 class _StatusStrip extends StatelessWidget {
   final String text;
   final Color color;
@@ -241,10 +339,12 @@ class _StatusStrip extends StatelessWidget {
 class _ConversationTile extends StatelessWidget {
   final Map<String, dynamic> message;
   final String source;
+  final String highlight;
 
   const _ConversationTile({
     required this.message,
     required this.source,
+    this.highlight = '',
   });
 
   @override
@@ -271,6 +371,7 @@ class _ConversationTile extends StatelessWidget {
       ].join(' | '),
       time: timestamp == null ? '' : _formatDate(timestamp),
       body: content.isEmpty ? 'Sem texto' : content,
+      highlight: highlight,
       onCopy: content.isEmpty
           ? null
           : () => Clipboard.setData(ClipboardData(text: content)),
@@ -301,6 +402,14 @@ class _LaunchHistoryTile extends StatelessWidget {
       title: item.shortcutName.isEmpty ? item.targetType : item.shortcutName,
       time: _formatDate(item.launchedAt),
       body: body,
+      details: [
+        _DetailSection(label: 'Destino', text: item.target),
+        _DetailSection(label: 'Tipo', text: item.targetType),
+        _DetailSection(label: 'Status', text: item.status),
+        if (item.error?.trim().isNotEmpty ?? false)
+          _DetailSection(label: 'Erro', text: item.error!.trim()),
+      ],
+      onCopy: () => Clipboard.setData(ClipboardData(text: item.target)),
     );
   }
 }
@@ -319,15 +428,29 @@ class _AuditTile extends StatelessWidget {
             ? AssistantTheme.danger
             : AssistantTheme.c4;
 
+    const encoder = JsonEncoder.withIndent('  ');
     return _HistoryTileFrame(
       leading: Icon(Icons.rule_folder_outlined, size: 16, color: color),
       color: color,
       title: '${item.actionType} | ${item.status}',
       time: _formatDate(item.createdAt),
       body: _auditDetail(item),
+      details: [
+        _DetailSection(label: 'Resumo', text: _auditDetail(item)),
+        if (item.request.isNotEmpty)
+          _DetailSection(
+            label: 'Requisição',
+            text: encoder.convert(item.request),
+          ),
+        if (item.result.isNotEmpty)
+          _DetailSection(
+            label: 'Resultado',
+            text: encoder.convert(item.result),
+          ),
+      ],
       onCopy: () => Clipboard.setData(
         ClipboardData(
-          text: const JsonEncoder.withIndent('  ').convert({
+          text: encoder.convert({
             'action_type': item.actionType,
             'status': item.status,
             'request': item.request,
@@ -391,13 +514,27 @@ class _HistorySection extends StatelessWidget {
   }
 }
 
-class _HistoryTileFrame extends StatelessWidget {
+/// Uma seção de texto na visão de detalhe do item do histórico.
+class _DetailSection {
+  final String label;
+  final String text;
+
+  const _DetailSection({required this.label, required this.text});
+}
+
+class _HistoryTileFrame extends StatefulWidget {
   final Widget leading;
   final Color color;
   final String title;
   final String time;
   final String body;
   final VoidCallback? onCopy;
+
+  /// Conteúdo completo mostrado ao clicar no cartão. Vazio usa apenas [body].
+  final List<_DetailSection> details;
+
+  /// Trecho destacado no corpo quando há busca ativa.
+  final String highlight;
 
   const _HistoryTileFrame({
     required this.leading,
@@ -406,81 +543,361 @@ class _HistoryTileFrame extends StatelessWidget {
     required this.time,
     required this.body,
     this.onCopy,
+    this.details = const [],
+    this.highlight = '',
+  });
+
+  @override
+  State<_HistoryTileFrame> createState() => _HistoryTileFrameState();
+}
+
+class _HistoryTileFrameState extends State<_HistoryTileFrame> {
+  bool _hovered = false;
+
+  List<_DetailSection> get _sections => widget.details.isNotEmpty
+      ? widget.details
+      : [_DetailSection(label: '', text: widget.body)];
+
+  int get _bodyLines => '\n'.allMatches(widget.body).length + 1;
+
+  /// Só vale abrir o detalhe quando há mais conteúdo do que o preview mostra.
+  bool get _hasMore =>
+      widget.details.isNotEmpty || _bodyLines > 4 || widget.body.length > 260;
+
+  void _openDetail() {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _HistoryDetailDialog(
+        title: widget.title,
+        time: widget.time,
+        color: widget.color,
+        icon: widget.leading,
+        sections: _sections,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: _openDetail,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: widget.color.withOpacity(_hovered ? 0.5 : 0.24),
+            ),
+            borderRadius: BorderRadius.circular(4),
+            color: widget.color.withOpacity(_hovered ? 0.07 : 0.035),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: widget.leading,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 10.5,
+                              color: widget.color,
+                            ),
+                          ),
+                        ),
+                        if (widget.time.isNotEmpty)
+                          Text(
+                            widget.time,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 9,
+                              color: AssistantTheme.textMuted,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    _HighlightedText(
+                      text: widget.body,
+                      highlight: widget.highlight,
+                      maxLines: 4,
+                    ),
+                    if (_hasMore) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.unfold_more,
+                            size: 12,
+                            color: widget.color.withOpacity(0.8),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Clique para ver o conteúdo completo',
+                            style: TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 9,
+                              color: widget.color.withOpacity(0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (widget.onCopy != null) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Copiar',
+                  constraints:
+                      const BoxConstraints.tightFor(width: 30, height: 30),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.copy, size: 14),
+                  color: AssistantTheme.textSecondary,
+                  onPressed: widget.onCopy,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Texto do preview com o termo buscado destacado.
+class _HighlightedText extends StatelessWidget {
+  final String text;
+  final String highlight;
+  final int maxLines;
+
+  const _HighlightedText({
+    required this.text,
+    required this.highlight,
+    required this.maxLines,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        border: Border.all(color: color.withOpacity(0.24)),
+    const style = TextStyle(
+      fontFamily: 'JetBrains Mono',
+      fontSize: 10,
+      height: 1.35,
+      color: AssistantTheme.textSecondary,
+    );
+    final term = highlight.trim();
+    if (term.isEmpty) {
+      return Text(
+        text,
+        maxLines: maxLines,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
+
+    final spans = <TextSpan>[];
+    final lowerText = text.toLowerCase();
+    final lowerTerm = term.toLowerCase();
+    var start = 0;
+    while (true) {
+      final index = lowerText.indexOf(lowerTerm, start);
+      if (index < 0) {
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index)));
+      }
+      spans.add(TextSpan(
+        text: text.substring(index, index + term.length),
+        style: const TextStyle(
+          color: AssistantTheme.c2,
+          fontWeight: FontWeight.w700,
+        ),
+      ));
+      start = index + term.length;
+    }
+
+    return RichText(
+      maxLines: maxLines,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(style: style, children: spans),
+    );
+  }
+}
+
+/// Conteúdo completo de um item do histórico, com texto selecionável.
+class _HistoryDetailDialog extends StatefulWidget {
+  final String title;
+  final String time;
+  final Color color;
+  final Widget icon;
+  final List<_DetailSection> sections;
+
+  const _HistoryDetailDialog({
+    required this.title,
+    required this.time,
+    required this.color,
+    required this.icon,
+    required this.sections,
+  });
+
+  @override
+  State<_HistoryDetailDialog> createState() => _HistoryDetailDialogState();
+}
+
+class _HistoryDetailDialogState extends State<_HistoryDetailDialog> {
+  bool _copied = false;
+  Timer? _copyTimer;
+
+  @override
+  void dispose() {
+    _copyTimer?.cancel();
+    super.dispose();
+  }
+
+  String get _fullText => widget.sections
+      .map((section) => section.label.isEmpty
+          ? section.text
+          : '${section.label}\n${section.text}')
+      .join('\n\n');
+
+  void _copyAll() {
+    Clipboard.setData(ClipboardData(text: _fullText));
+    setState(() => _copied = true);
+    _copyTimer?.cancel();
+    _copyTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.color;
+    final time = widget.time;
+    final sections = widget.sections;
+    final size = MediaQuery.of(context).size;
+    return Dialog(
+      backgroundColor: AssistantTheme.surface,
+      insetPadding: const EdgeInsets.all(28),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(4),
-        color: color.withOpacity(0.035),
+        side: BorderSide(color: color.withOpacity(0.4)),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: leading,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: 'JetBrains Mono',
-                          fontSize: 10.5,
-                          color: color,
+      child: SizedBox(
+        width: (size.width - 120).clamp(480.0, 900.0),
+        height: (size.height - 140).clamp(320.0, 720.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 10),
+              child: Row(
+                children: [
+                  widget.icon,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: TextStyle(
+                            fontFamily: 'JetBrains Mono',
+                            fontSize: 12,
+                            color: color,
+                          ),
                         ),
-                      ),
+                        if (time.isNotEmpty)
+                          Text(
+                            time,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 9,
+                              color: AssistantTheme.textMuted,
+                            ),
+                          ),
+                      ],
                     ),
-                    if (time.isNotEmpty)
-                      Text(
-                        time,
-                        style: const TextStyle(
-                          fontFamily: 'JetBrains Mono',
-                          fontSize: 9,
-                          color: AssistantTheme.textMuted,
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  body,
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 10,
-                    height: 1.35,
+                  ),
+                  IconButton(
+                    tooltip: _copied ? 'Copiado!' : 'Copiar tudo',
+                    icon: Icon(_copied ? Icons.check : Icons.copy, size: 16),
+                    color:
+                        _copied ? AssistantTheme.c3 : AssistantTheme.textSecondary,
+                    onPressed: _copyAll,
+                  ),
+                  IconButton(
+                    tooltip: 'Fechar',
+                    icon: const Icon(Icons.close, size: 18),
                     color: AssistantTheme.textSecondary,
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AssistantTheme.border),
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                color: AssistantTheme.bg,
+                child: Scrollbar(
+                  child: SingleChildScrollView(
+                    primary: true,
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final section in sections) ...[
+                          if (section.label.isNotEmpty) ...[
+                            Text(
+                              section.label.toUpperCase(),
+                              style: const TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 9,
+                                letterSpacing: 2,
+                                color: AssistantTheme.textMuted,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                          ],
+                          SelectableText(
+                            section.text.trim().isEmpty
+                                ? 'Sem texto'
+                                : section.text,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 11.5,
+                              height: 1.55,
+                              color: AssistantTheme.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
-          if (onCopy != null) ...[
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: 'Copiar',
-              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-              padding: EdgeInsets.zero,
-              icon: const Icon(Icons.copy, size: 14),
-              color: AssistantTheme.textSecondary,
-              onPressed: onCopy,
+              ),
             ),
           ],
-        ],
+        ),
       ),
     );
   }
