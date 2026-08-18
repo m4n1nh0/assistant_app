@@ -67,6 +67,44 @@ def test_computer_action_short_circuits_llm_dispatch(monkeypatch):
     assert "Diagnostico de rede" in result["responses"][0].content
 
 
+def test_workspace_context_message_skips_action_detection_and_goes_to_llm(
+    monkeypatch,
+):
+    async def rank_providers(candidates, task="general", available_only=False):
+        return ["gpt"]
+
+    async def run_with_tools(
+        provider, message, history, system_prompt, tools, **kwargs
+    ):
+        return LLMResponse(llm=provider, content="Analise do arquivo."), []
+
+    monkeypatch.setattr(
+        chat_graph_service.agent_service, "rank_auto_llms", rank_providers
+    )
+    monkeypatch.setattr(
+        chat_graph_service.agent_service.langchain_agent_service,
+        "run_with_tools",
+        run_with_tools,
+    )
+
+    # Blob de contexto com gatilhos que antes disparavam acoes locais:
+    # "ip" no codigo (diagnostico de rede) e "vscode" no caminho (atalho).
+    message = (
+        "Contexto local do workspace capturado pela interface.\n"
+        "Acao: Contexto automatico do workspace selecionado\n"
+        "Caminho: C:\\Users\\dev\\vscode-projects\\crafter-gestor\n"
+        "--- server.js ---\n"
+        "app.set('trust proxy', 1); // usa req.ip\n\n"
+        "Pedido original do usuario:\n"
+        "Analise e edite o arquivo index.html para citar o produto.\n"
+    )
+    result = run_graph(message=message, active_llms=["gpt"])
+
+    assert result["action_kind"] == "chat"
+    assert result.get("action") is None
+    assert result["responses"][0].content == "Analise do arquivo."
+
+
 def test_registration_tool_routes_structured_action_to_interface():
     result = run_graph(
         message="Cadastre o Notepad como bloco",

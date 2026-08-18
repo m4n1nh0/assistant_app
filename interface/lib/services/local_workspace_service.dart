@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
+
 import 'project_discovery_service.dart';
 
 class WorkspaceInspectionException implements Exception {
@@ -85,6 +87,8 @@ class WorkspaceSnapshot {
       ..writeln('Instrucao para a IA:')
       ..writeln(
         'Use somente esse contexto local e o historico da conversa para analisar o projeto. '
+        'Nao repita nem transcreva este contexto na resposta: responda apenas ao pedido do usuario. '
+        'Nao acione acoes locais do computador (abrir apps, diagnosticos); o assunto e o codigo do workspace. '
         'Se precisar de mais arquivos, peca para a interface ler caminhos especificos. '
         'Quando sugerir comandos, explique o objetivo e prefira comandos seguros de diagnostico/teste. '
         '$editInstruction',
@@ -196,17 +200,40 @@ class LocalWorkspaceService {
   };
 
   static Future<String?> pickDirectory({String initialPath = ''}) async {
-    if (Platform.isWindows) {
-      return _pickDirectoryWindows(initialPath: initialPath);
+    // file_picker usa o seletor moderno do sistema (IFileDialog no Windows).
+    try {
+      final initial = initialPath.trim();
+      final picked = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Selecione a pasta do workspace',
+        initialDirectory:
+            initial.isNotEmpty && await Directory(initial).exists()
+                ? initial
+                : null,
+      );
+      final path = picked?.trim() ?? '';
+      return path.isEmpty ? null : path;
+    } catch (_) {
+      // Fallback para os seletores por script usados anteriormente.
+      if (Platform.isWindows) {
+        return _pickDirectoryWindows(initialPath: initialPath);
+      }
+      if (Platform.isMacOS) {
+        return _pickDirectoryMac(initialPath: initialPath);
+      }
+      if (Platform.isLinux) {
+        return _pickDirectoryLinux();
+      }
+      return null;
     }
-    if (Platform.isMacOS) {
-      return _pickDirectoryMac(initialPath: initialPath);
-    }
-    if (Platform.isLinux) {
-      return _pickDirectoryLinux();
-    }
-    return null;
   }
+
+  /// Regras de exclusão compartilhadas com o navegador/editor de workspace
+  /// da interface (pastas de build, binários, arquivos sensíveis).
+  static bool shouldSkipEntry(String name, {required bool isDirectory}) =>
+      _shouldSkip(name, isDirectory);
+
+  static bool isSensitive(String relativePath) =>
+      _isSensitivePath(relativePath);
 
   static Future<WorkspaceSnapshot> inspectWorkspace({
     String query = '',

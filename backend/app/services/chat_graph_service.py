@@ -104,9 +104,29 @@ def _calendar_proposal_text(action: Any) -> str:
     )
 
 
+_LOCAL_CONTEXT_MARKERS = (
+    "contexto local do workspace",
+    "contexto automatico do workspace",
+    "contexto da janela",
+)
+
+
+def _is_context_wrapped(message: str) -> bool:
+    """Mensagens embrulhadas pela interface com contexto local (workspace ou
+    janela) sao conversa sobre codigo/conteudo, nunca pedido direto de acao
+    local. O texto do contexto dispara falsos positivos nos detectores por
+    palavra-chave (ex.: "ip" dentro de codigo fonte vira diagnostico de rede,
+    "vscode-projects" no caminho vira atalho para abrir o VSCode)."""
+    head = message[:600].lower()
+    return any(marker in head for marker in _LOCAL_CONTEXT_MARKERS)
+
+
 async def _detect_action(state: ChatGraphState) -> dict[str, Any]:
     message = state["message"]
     system_prompt = state["system_prompt"]
+
+    if _is_context_wrapped(message):
+        return {"action_kind": "chat"}
 
     education_action = build_education_open_action(message)
     if education_action:

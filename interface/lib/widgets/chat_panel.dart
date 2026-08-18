@@ -29,6 +29,7 @@ import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../utils/chat_input_shortcuts.dart';
 import 'education_dialog.dart';
+import 'workspace_editor_dialog.dart';
 
 class ChatPanel extends ConsumerStatefulWidget {
   const ChatPanel({super.key});
@@ -926,6 +927,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     String? displayText,
     bool showUserMessage = true,
     bool allowDesktopContext = true,
+    bool attachWorkspaceContext = true,
   }) async {
     final rawApiText = text.trim();
     final shownText = (displayText ?? text).trim();
@@ -955,15 +957,21 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     }
 
     final config = ref.read(configProvider);
+    var workspaceContextAttached = false;
     if (config.selectedIsConnectedAgent) {
       await _ensureConnectedWorkspacePermission(rawApiText);
-    } else if (_lastWorkspacePath != null &&
+    } else if (attachWorkspaceContext &&
+        _lastWorkspacePath != null &&
         rawApiText.isNotEmpty &&
         !_normalizeLoose(rawApiText).contains('contexto local do workspace')) {
       // Workspace selecionado: os provedores do backend recebem o mapa e os
-      // arquivos relevantes do projeto em toda mensagem, sem depender de
-      // detecção de intenção. Agentes conectados exploram sozinhos via cwd.
-      apiText = await _withWorkspaceContext(apiText, rawApiText);
+      // arquivos relevantes do projeto na mensagem digitada pelo usuário,
+      // sem depender de detecção de intenção. Agentes conectados exploram
+      // sozinhos via cwd; mensagens internas (resultados de ações) não são
+      // embrulhadas.
+      final wrapped = await _withWorkspaceContext(apiText, rawApiText);
+      workspaceContextAttached = wrapped != apiText;
+      apiText = wrapped;
     }
     final history = ref.read(chatProvider.notifier).toApiHistory(10);
 
@@ -1009,7 +1017,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           if (config.ttsEnabled && !primary.isError) {
             await _speakPreview(primary.content, 300);
           }
-          await _handleAssistantAction(result);
+          await _handleAssistantActionGuarded(
+            result,
+            workspaceContextAttached: workspaceContextAttached,
+          );
           await _handleGeneratedScripts(result, shownText);
           await _handleWorkspaceEditProposals(result);
 
@@ -1026,7 +1037,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           if (config.ttsEnabled && !resp.isError) {
             await _speakPreview(resp.content, 300);
           }
-          await _handleAssistantAction(result);
+          await _handleAssistantActionGuarded(
+            result,
+            workspaceContextAttached: workspaceContextAttached,
+          );
           await _handleGeneratedScripts(result, shownText);
           await _handleWorkspaceEditProposals(result);
 
@@ -1043,7 +1057,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           if (config.ttsEnabled && !resp.isError) {
             await _speakPreview(resp.content, 400);
           }
-          await _handleAssistantAction(result);
+          await _handleAssistantActionGuarded(
+            result,
+            workspaceContextAttached: workspaceContextAttached,
+          );
           await _handleGeneratedScripts(result, shownText);
           await _handleWorkspaceEditProposals(result);
       }
@@ -1066,6 +1083,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       final snapshot = await LocalWorkspaceService.inspectWorkspace(
         query: query,
         rootPath: _lastWorkspacePath!,
+        // Contexto por mensagem mais enxuto que a inspeção manual: modelos
+        // locais respondem melhor e ecoam menos com blocos menores.
+        maxTreeFiles: 200,
+        maxFileChars: 6000,
+        maxTotalChars: 14000,
       );
       return snapshot.toPromptText(
         userRequest: apiText,
@@ -1225,6 +1247,31 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         ? 'Workspace selecionado com edição autorizada: $root.'
         : 'Workspace selecionado em modo somente leitura: $root.');
     _scrollToBottom();
+  }
+
+  /// Abre o modo editor do workspace (árvore de arquivos + edição na
+  /// ferramenta). Sem workspace selecionado, pede a seleção antes. Ao
+  /// "mencionar no chat", o caminho relativo entra no campo de mensagem para
+  /// a IA priorizar esse arquivo.
+  Future<void> _openWorkspaceEditor() async {
+    if (_lastWorkspacePath == null) {
+      await _manageWorkspaceSelection();
+      if (_lastWorkspacePath == null) return;
+    }
+    if (!mounted) return;
+    final mention = await showDialog<String>(
+      context: context,
+      builder: (_) => WorkspaceEditorDialog(
+        rootPath: _lastWorkspacePath!,
+        allowEdits: _workspaceEditingAllowed && _editableWorkspaceRoot != null,
+      ),
+    );
+    final file = mention?.trim() ?? '';
+    if (file.isEmpty || !mounted) return;
+    final current = _inputCtrl.text.trim();
+    final text = current.isEmpty ? 'No arquivo $file: ' : '$current $file';
+    _inputCtrl.text = text;
+    _inputCtrl.selection = TextSelection.collapsed(offset: text.length);
   }
 
   void _clearWorkspaceSelection() {
@@ -1453,6 +1500,33 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       return true;
     }
     return false;
+  }
+
+  /// O detector de ações do backend roda sobre a mensagem inteira; quando o
+  /// pedido levou o contexto do workspace anexado (com caminhos, código e
+  /// nomes como "vscode-projects"), palavras do blob disparam ações locais
+  /// erradas — diagnóstico de rede, abrir VSCode etc. Nesse caso as ações
+  /// automáticas são ignoradas e valem apenas a resposta em texto e as
+  /// propostas de edição do workspace.
+  Future<void> _handleAssistantActionGuarded(
+    ChatResult result, {
+    required bool workspaceContextAttached,
+  }) async {
+    if (workspaceContextAttached) {
+      final hasAction = result.action != null ||
+          result.computerAction != null ||
+          result.codingAction != null ||
+          result.registrationAction != null ||
+          result.calendarCreateAction != null ||
+          result.educationOpenAction != null;
+      if (hasAction) {
+        _addSystemMsg(
+            'Ação automática do backend ignorada: a mensagem era sobre o '
+            'workspace selecionado.');
+        return;
+      }
+    }
+    await _handleAssistantAction(result);
   }
 
   Future<void> _handleAssistantAction(ChatResult result) async {
@@ -2023,6 +2097,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             ? 'Analise o timeout do script: ${script.name}'
             : 'Analise o resultado do script: ${script.name}',
         allowDesktopContext: false,
+        attachWorkspaceContext: false,
       );
     } catch (e) {
       _addSystemMsg('Nao consegui executar o script gerado: $e');
@@ -2564,6 +2639,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           allowEdits: allowEdits,
         ),
         displayText: 'Analise o workspace local: ${snapshot.name}',
+        attachWorkspaceContext: false,
       );
     } catch (e) {
       _addSystemMsg('Nao consegui inspecionar o workspace: $e');
@@ -2635,6 +2711,7 @@ ${result.toPromptText()}
         displayText: 'Analise o resultado local: ${result.actionName}',
         showUserMessage: false,
         allowDesktopContext: false,
+        attachWorkspaceContext: false,
       );
     } catch (e) {
       _addSystemMsg('Nao consegui executar ${action.name}: $e');
@@ -2699,6 +2776,7 @@ ${result.toPromptText()}
             ? 'Analise o timeout do script: ${detected.name}'
             : 'Analise o resultado do script: ${detected.name}',
         allowDesktopContext: false,
+        attachWorkspaceContext: false,
       );
     } catch (e) {
       _addSystemMsg('Nao consegui executar o script local: $e');
@@ -3111,6 +3189,7 @@ ${result.toPromptText()}
             onClearWindowContext: _clearDesktopContext,
             onPickWorkspace: _manageWorkspaceSelection,
             onClearWorkspace: _clearWorkspaceSelection,
+            onOpenEditor: _openWorkspaceEditor,
             onClear: () => ref.read(chatProvider.notifier).clear(),
           ),
         ],
@@ -4079,6 +4158,7 @@ class _InputArea extends StatelessWidget {
   final VoidCallback onClearWindowContext;
   final VoidCallback onPickWorkspace;
   final VoidCallback onClearWorkspace;
+  final VoidCallback onOpenEditor;
   final VoidCallback onClear;
 
   const _InputArea({
@@ -4097,6 +4177,7 @@ class _InputArea extends StatelessWidget {
     required this.onClearWindowContext,
     required this.onPickWorkspace,
     required this.onClearWorkspace,
+    required this.onOpenEditor,
     required this.onClear,
   });
 
@@ -4181,6 +4262,15 @@ class _InputArea extends StatelessWidget {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Abrir no modo editor',
+                  constraints:
+                      const BoxConstraints.tightFor(width: 28, height: 28),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.edit_note, size: 15),
+                  color: AssistantTheme.c1,
+                  onPressed: onOpenEditor,
+                ),
+                IconButton(
                   tooltip: 'Remover workspace',
                   constraints:
                       const BoxConstraints.tightFor(width: 28, height: 28),
@@ -4217,6 +4307,14 @@ class _InputArea extends StatelessWidget {
                 color: AssistantTheme.c1,
                 isActive: workspaceLabel?.trim().isNotEmpty ?? false,
                 onTap: onPickWorkspace,
+              ),
+              const SizedBox(width: 10),
+              _IconActionBtn(
+                icon: Icons.edit_note,
+                tooltip: 'Modo editor do workspace',
+                color: AssistantTheme.c3,
+                isActive: false,
+                onTap: onOpenEditor,
               ),
               const SizedBox(width: 10),
               Expanded(
