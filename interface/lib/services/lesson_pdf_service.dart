@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../branding/intarq_brand.dart';
 import 'education_service.dart';
 
 /// Gera o PDF do resumo da aula com a identidade visual do aplicativo.
@@ -14,14 +15,14 @@ import 'education_service.dart';
 /// alta com espacamento, do mesmo jeito que na interface.
 
 // Paleta espelhada de AssistantTheme.
-const _accent = PdfColor.fromInt(0xFF34D399);
-const _accentDark = PdfColor.fromInt(0xFF087F5B);
-const _accentSoft = PdfColor.fromInt(0xFF1677A6);
+const _accent = PdfColor.fromInt(0xFF00A9D4);
+const _accentDark = PdfColor.fromInt(0xFF0A3A59);
+const _accentSoft = PdfColor.fromInt(0xFF9A7621);
 const _ink = PdfColor.fromInt(0xFF111827);
 const _inkSoft = PdfColor.fromInt(0xFF44566B);
 const _rule = PdfColor.fromInt(0xFFD8E0EA);
 const _panel = PdfColor.fromInt(0xFFF3F6FA);
-const _header = PdfColor.fromInt(0xFFF0F9F6);
+const _header = PdfColor.fromInt(0xFFF4F8FC);
 const _headerBadge = PdfColor.fromInt(0xFFFFFFFF);
 
 enum SummaryBlockKind { heading, bullet, paragraph }
@@ -161,9 +162,10 @@ Future<Uint8List> buildLessonSummaryPdf({
 }) async {
   final document = pw.Document(
     title: 'Resumo da aula - ${lesson.discipline}',
-    author: 'Assistente',
+    author: 'INTARQ',
   );
   final blocks = parseSummary(summary);
+  final brandLockup = await IntarqBrand.loadPdfLockup();
   final turmas = lesson.classLabels.isEmpty
       ? lesson.classGroup
       : lesson.classLabels.join(' + ');
@@ -176,8 +178,8 @@ Future<Uint8List> buildLessonSummaryPdf({
         theme: await _pdfTheme(),
       ),
       header: (context) => context.pageNumber == 1
-          ? _buildBanner(lesson, turmas)
-          : _buildRunningHeader(lesson),
+          ? _buildBanner(lesson, turmas, brandLockup)
+          : _buildRunningHeader(lesson, brandLockup),
       footer: (context) => _buildFooter(context),
       build: (context) => [
         pw.SizedBox(height: 18),
@@ -190,7 +192,11 @@ Future<Uint8List> buildLessonSummaryPdf({
   return document.save();
 }
 
-pw.Widget _buildBanner(Lesson lesson, String turmas) {
+pw.Widget _buildBanner(
+  Lesson lesson,
+  String turmas,
+  pw.MemoryImage? brandLockup,
+) {
   return pw.Container(
     width: double.infinity,
     margin: const pw.EdgeInsets.only(bottom: 4),
@@ -198,7 +204,7 @@ pw.Widget _buildBanner(Lesson lesson, String turmas) {
     decoration: const pw.BoxDecoration(
       color: _header,
       border: pw.Border(
-        left: pw.BorderSide(color: _accentDark, width: 5),
+        left: pw.BorderSide(color: IntarqBrand.pdfGold, width: 5),
         bottom: pw.BorderSide(color: _rule, width: 1),
       ),
     ),
@@ -249,41 +255,61 @@ pw.Widget _buildBanner(Lesson lesson, String turmas) {
             ],
           ),
         ),
-        if (lesson.semester.isNotEmpty) ...[
-          pw.SizedBox(width: 12),
-          pw.Container(
-            padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: pw.BoxDecoration(
-              color: _headerBadge,
-              border: pw.Border.all(color: _accent),
-              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
-            ),
-            child: pw.Text(
-              lesson.semester,
-              style: pw.TextStyle(
-                fontSize: 9,
-                color: _accentDark,
-                fontWeight: pw.FontWeight.bold,
+        pw.SizedBox(width: 12),
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            IntarqBrand.pdfPlaque(brandLockup, width: 132, height: 51),
+            if (lesson.semester.isNotEmpty) ...[
+              pw.SizedBox(height: 7),
+              pw.Container(
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: pw.BoxDecoration(
+                  color: _headerBadge,
+                  border: pw.Border.all(color: IntarqBrand.pdfGold),
+                  borderRadius:
+                      const pw.BorderRadius.all(pw.Radius.circular(4)),
+                ),
+                child: pw.Text(
+                  lesson.semester,
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    color: _accentDark,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
+          ],
+        ),
       ],
     ),
   );
 }
 
-pw.Widget _buildRunningHeader(Lesson lesson) {
+pw.Widget _buildRunningHeader(
+  Lesson lesson,
+  pw.MemoryImage? brandLockup,
+) {
   return pw.Container(
     margin: const pw.EdgeInsets.only(bottom: 12),
     padding: const pw.EdgeInsets.only(top: 24, bottom: 6),
     decoration: const pw.BoxDecoration(
       border: pw.Border(bottom: pw.BorderSide(color: _rule)),
     ),
-    child: pw.Text(
-      '${lesson.semester.isEmpty ? "" : "${lesson.semester}   |   "}'
-      '${lesson.discipline}   |   ${_formatDate(lesson.startedAt)}',
-      style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
+    child: pw.Row(
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      children: [
+        pw.Expanded(
+          child: pw.Text(
+            '${lesson.semester.isEmpty ? "" : "${lesson.semester}   |   "}'
+            '${lesson.discipline}   |   ${_formatDate(lesson.startedAt)}',
+            style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
+          ),
+        ),
+        IntarqBrand.pdfPlaque(brandLockup, width: 82, height: 30),
+      ],
     ),
   );
 }
@@ -298,7 +324,7 @@ pw.Widget _buildFooter(pw.Context context) {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
         pw.Text(
-          'Gerado a partir da transcricao da aula',
+          'INTARQ  |  Gerado a partir da transcricao da aula',
           style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
         ),
         pw.Text(

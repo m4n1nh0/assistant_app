@@ -5,6 +5,19 @@ configuração inicial, conversa, autenticação, atalhos, ações locais,
 notificações e visualização de agenda. O repositório versiona atualmente o
 runner Windows.
 
+## Marca INTARQ
+
+A marca do produto é INTARQ; o nome escolhido para a assistente permanece uma
+persona configurável. A paleta oficial e os caminhos dos ativos são definidos
+em `lib/branding/intarq_brand.dart`. A interface usa o lockup no splash, acesso
+e barra superior, o símbolo no Modo Educação e o ícone multirresolução no
+runner Windows. Os geradores de PDF carregam a mesma logomarca empacotada pelo
+Flutter, mantendo o corpo dos documentos claro para impressão.
+
+Consulte [Identidade INTARQ](../docs/IDENTIDADE_INTARQ.md) para regras de uso e
+[Roadmap comercial](../docs/ROADMAP_COMERCIAL_30_DIAS.md) para o plano de beta
+em 30 dias.
+
 ## Requisitos
 
 - Flutter com suporte a Windows Desktop habilitado

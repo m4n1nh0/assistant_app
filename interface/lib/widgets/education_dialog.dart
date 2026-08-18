@@ -17,6 +17,7 @@ import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
 import '../providers/app_provider.dart';
+import '../branding/intarq_brand.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'education_dashboard.dart';
@@ -186,20 +187,20 @@ class _EducationDialogState extends State<EducationDialog> {
       padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
       child: Row(
         children: [
-          const Icon(Icons.school_outlined, size: 18, color: AssistantTheme.c3),
+          const IntarqMark(size: 36),
           const SizedBox(width: 10),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'MODO AULA',
+                  'MODO EDUCAÇÃO',
                   style: TextStyle(
                     fontFamily: 'Rajdhani',
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 3,
-                    color: AssistantTheme.textPrimary,
+                    color: AssistantTheme.c2,
                   ),
                 ),
                 Text(

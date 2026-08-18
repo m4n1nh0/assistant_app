@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "assistant_app" "\0"
+            VALUE "CompanyName", "INTARQ" "\0"
+            VALUE "FileDescription", "INTARQ Assistente" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "assistant_app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "InternalName", "INTARQ" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 INTARQ. Todos os direitos reservados." "\0"
             VALUE "OriginalFilename", "assistant_app.exe" "\0"
-            VALUE "ProductName", "assistant_app" "\0"
+            VALUE "ProductName", "INTARQ" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

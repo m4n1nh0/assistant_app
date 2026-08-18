@@ -824,7 +824,7 @@ class _OutputPane extends StatelessWidget {
               decoration: BoxDecoration(
                 border: Border.all(color: AssistantTheme.border),
                 borderRadius: BorderRadius.circular(4),
-                color: const Color(0xFF090C13),
+                color: AssistantTheme.bg2,
               ),
               child: running
                   ? const Center(child: CircularProgressIndicator())

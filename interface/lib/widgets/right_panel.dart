@@ -21,7 +21,7 @@ class RightPanel extends ConsumerWidget {
 
     return Container(
       width: 260,
-      color: const Color(0xFF090C13),
+      color: AssistantTheme.bg2,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

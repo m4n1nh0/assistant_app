@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../branding/intarq_brand.dart';
+
 class AssistantTheme {
-  static const bg = Color(0xFF07090E);
-  static const bg2 = Color(0xFF0C1018);
-  static const surface = Color(0xFF111827);
-  static const surface2 = Color(0xFF1A2335);
-  static const border = Color(0xFF1E2D45);
-  static const border2 = Color(0xFF263650);
+  static const bg = IntarqBrand.navy;
+  static const bg2 = Color(0xFF0C1728);
+  static const surface = Color(0xFF101B2C);
+  static const surface2 = Color(0xFF15253A);
+  static const border = Color(0xFF1A3A58);
+  static const border2 = Color(0xFF245675);
 
-  static const c1 = Color(0xFF38BDF8);
-  static const c2 = Color(0xFFA78BFA);
+  static const c1 = IntarqBrand.electricBlue;
+  static const c2 = IntarqBrand.premiumGold;
   static const c3 = Color(0xFF34D399);
-  static const c4 = Color(0xFFFB923C);
-  static const c5 = Color(0xFFF472B6);
-  static const cHF = Color(0xFFFBBF24);
+  static const c4 = Color(0xFFE0B84A);
+  static const c5 = IntarqBrand.technologySilver;
+  static const cHF = IntarqBrand.premiumGold;
 
-  static const textPrimary = Color(0xFFE2EAF5);
-  static const textSecondary = Color(0xFF8BA3BE);
-  static const textMuted = Color(0xFF3D5A73);
+  static const textPrimary = Color(0xFFE8EEF5);
+  static const textSecondary = IntarqBrand.technologySilver;
+  static const textMuted = Color(0xFF68839E);
   static const danger = Color(0xFFF87171);
 
   static const llmColors = {

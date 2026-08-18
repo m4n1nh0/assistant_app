@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../utils/theme.dart';
+import '../branding/intarq_brand.dart';
 
 class AuthDialog extends StatefulWidget {
   final String assistantName;
@@ -153,6 +154,8 @@ class _AuthDialogState extends State<AuthDialog> {
               padding: const EdgeInsets.all(28),
               child: Column(
                 children: [
+                  const IntarqLockup(width: 245, height: 92),
+                  const SizedBox(height: 14),
                   Text(
                     '${widget.assistantName} — ACESSO',
                     style: const TextStyle(

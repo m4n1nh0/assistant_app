@@ -551,7 +551,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               children: [
                 Container(
                   width: 180,
-                  color: const Color(0xFF090C13),
+                  color: AssistantTheme.bg2,
                   child: Column(
                     children: [
                       const SizedBox(height: 24),

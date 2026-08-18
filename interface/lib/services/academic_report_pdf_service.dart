@@ -4,10 +4,11 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../branding/intarq_brand.dart';
 import 'education_service.dart';
 
-const _accent = PdfColor.fromInt(0xFF087F5B);
-const _accentLight = PdfColor.fromInt(0xFFE8F7F1);
+const _accent = PdfColor.fromInt(0xFF007F9E);
+const _accentLight = PdfColor.fromInt(0xFFEAF8FC);
 const _ink = PdfColor.fromInt(0xFF111827);
 const _muted = PdfColor.fromInt(0xFF526277);
 const _rule = PdfColor.fromInt(0xFFD8E0EA);
@@ -105,8 +106,9 @@ Future<Uint8List> buildAcademicReportPdf({
 }) async {
   final document = pw.Document(
     title: kind.title,
-    author: 'Assistente',
+    author: 'INTARQ',
   );
+  final brandLockup = await IntarqBrand.loadPdfLockup();
   final orderedClasses = [...classes]..sort((a, b) =>
       '${a.semester}${a.discipline}${a.label}'
           .compareTo('${b.semester}${b.discipline}${b.label}'));
@@ -151,15 +153,7 @@ Future<Uint8List> buildAcademicReportPdf({
         child: pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            pw.Text(
-              'ASSISTENTE EDUCACIONAL',
-              style: pw.TextStyle(
-                color: _accent,
-                fontSize: 9,
-                letterSpacing: 2,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
+            IntarqBrand.pdfPlaque(brandLockup, width: 122, height: 45),
             pw.Text(
               _formatDate(generatedAt),
               style: const pw.TextStyle(color: _muted, fontSize: 9),
@@ -167,12 +161,18 @@ Future<Uint8List> buildAcademicReportPdf({
           ],
         ),
       ),
-      footer: (context) => pw.Align(
-        alignment: pw.Alignment.centerRight,
-        child: pw.Text(
-          'Página ${context.pageNumber} de ${context.pagesCount}',
-          style: const pw.TextStyle(color: _muted, fontSize: 8),
-        ),
+      footer: (context) => pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(
+            'INTARQ  |  Tecnologia com propósito',
+            style: const pw.TextStyle(color: _muted, fontSize: 8),
+          ),
+          pw.Text(
+            'Página ${context.pageNumber} de ${context.pagesCount}',
+            style: const pw.TextStyle(color: _muted, fontSize: 8),
+          ),
+        ],
       ),
       build: (context) => [
         pw.SizedBox(height: 16),

@@ -27,7 +27,7 @@ class _LeftPanelState extends ConsumerState<LeftPanel> {
 
     return Container(
       width: 240,
-      color: const Color(0xFF090C13),
+      color: AssistantTheme.bg2,
       child: Column(
         children: [
           _StatusSummary(

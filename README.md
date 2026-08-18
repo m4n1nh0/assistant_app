@@ -1,4 +1,4 @@
-# Assistente Desktop
+# INTARQ — Assistente Desktop
 
 Aplicacao de assistente pessoal desktop com backend FastAPI, interface Flutter,
 memoria vetorial, automacoes locais, integracao com calendarios, voz,
@@ -11,6 +11,18 @@ variaveis de infraestrutura e provedores que continuam vindo do ambiente. As
 configuracoes de notificacao e as autorizações das contas de calendário são
 persistidas no banco pela própria aplicação. Segredos de aplicações OAuth, como
 o App Registration Microsoft multitenant, permanecem no ambiente do backend.
+
+## Identidade INTARQ
+
+A ferramenta adota a INTARQ como marca do produto, preservando o nome
+configurável da assistente como persona. Splash, acesso, barra superior, Modo
+Educação, ícone do Windows e relatórios seguem a paleta azul-noite, azul
+elétrico, ouro premium, prata tecnológica e grafite. Os PDFs continuam claros
+para impressão e recebem uma placa compacta com a logomarca.
+
+As regras e ativos estão em [Identidade INTARQ](docs/IDENTIDADE_INTARQ.md). A
+sequência recomendada para um beta comercial está em
+[Roadmap comercial de 30 dias](docs/ROADMAP_COMERCIAL_30_DIAS.md).
 
 ## Arquitetura
 

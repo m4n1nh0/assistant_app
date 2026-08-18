@@ -1,6 +1,7 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
+import '../branding/intarq_brand.dart';
 import '../providers/app_provider.dart';
 import '../utils/theme.dart';
 
@@ -17,31 +18,35 @@ class AssistantTitleBar extends ConsumerWidget {
       child: Container(
         height: 48,
         decoration: const BoxDecoration(
-          color: Color(0xFF090C13),
-          border: Border(bottom: BorderSide(color: AssistantTheme.border, width: 1)),
+          color: AssistantTheme.bg2,
+          border: Border(
+              bottom: BorderSide(color: AssistantTheme.border, width: 1)),
         ),
         child: Row(
           children: [
-            const SizedBox(width: 16),
-
+            const SizedBox(width: 12),
+            const IntarqLockup(width: 142, height: 38),
+            Container(
+              height: 22,
+              width: 1,
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              color: AssistantTheme.border2,
+            ),
             Text(
-              config.assistantName.trim(),
+              config.assistantName.trim().isEmpty
+                  ? 'ASSISTENTE'
+                  : config.assistantName.trim().toUpperCase(),
               style: const TextStyle(
                 fontFamily: 'Rajdhani',
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 8,
-                color: AssistantTheme.c1,
-                shadows: [Shadow(color: Color(0x6038BDF8), blurRadius: 20)],
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 3,
+                color: AssistantTheme.textSecondary,
               ),
             ),
-
-            const SizedBox(width: 16),
-
+            const SizedBox(width: 14),
             _StatusPill(isOnline: isAuth),
-
             const Spacer(),
-
             if (config.userName.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(right: 12),
@@ -55,19 +60,16 @@ class AssistantTitleBar extends ConsumerWidget {
                   ),
                 ),
               ),
-
             _TitleBtn(
               icon: Icons.settings_outlined,
               tooltip: 'Configurações',
               onTap: () => Navigator.pushNamed(context, '/config'),
             ),
-
             _TitleBtn(
               icon: Icons.remove,
               tooltip: 'Minimizar',
               onTap: windowManager.minimize,
             ),
-
             _TitleBtn(
               icon: Icons.crop_square_outlined,
               tooltip: 'Maximizar',
@@ -79,14 +81,12 @@ class AssistantTitleBar extends ConsumerWidget {
                 }
               },
             ),
-
             _TitleBtn(
               icon: Icons.close,
               tooltip: 'Fechar',
               onTap: windowManager.close,
               hoverColor: AssistantTheme.danger,
             ),
-
             const SizedBox(width: 4),
           ],
         ),
@@ -111,11 +111,18 @@ class _StatusPill extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 6, height: 6,
+            width: 6,
+            height: 6,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: isOnline ? AssistantTheme.c3 : AssistantTheme.textMuted,
-              boxShadow: isOnline ? [BoxShadow(color: AssistantTheme.c3.withOpacity(0.6), blurRadius: 6)] : null,
+              boxShadow: isOnline
+                  ? [
+                      BoxShadow(
+                          color: AssistantTheme.c3.withOpacity(0.6),
+                          blurRadius: 6)
+                    ]
+                  : null,
             ),
           ),
           const SizedBox(width: 6),
@@ -140,7 +147,11 @@ class _TitleBtn extends StatefulWidget {
   final VoidCallback onTap;
   final Color? hoverColor;
 
-  const _TitleBtn({required this.icon, required this.tooltip, required this.onTap, this.hoverColor});
+  const _TitleBtn(
+      {required this.icon,
+      required this.tooltip,
+      required this.onTap,
+      this.hoverColor});
 
   @override
   State<_TitleBtn> createState() => _TitleBtnState();
@@ -160,7 +171,8 @@ class _TitleBtnState extends State<_TitleBtn> {
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
-            width: 40, height: 40,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: _hovered
                   ? (widget.hoverColor ?? AssistantTheme.c1).withOpacity(0.12)

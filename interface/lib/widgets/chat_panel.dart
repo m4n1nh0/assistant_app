@@ -3374,7 +3374,7 @@ class _ChatHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: AssistantTheme.border)),
-        color: Color(0xFF090C13),
+        color: AssistantTheme.bg2,
       ),
       child: Row(
         children: [
@@ -3807,7 +3807,7 @@ class _InputArea extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: AssistantTheme.border)),
-        color: Color(0xFF090C13),
+        color: AssistantTheme.bg2,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

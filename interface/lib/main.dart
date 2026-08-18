@@ -22,7 +22,7 @@ void main() async {
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
-    title: 'Assistente',
+    title: 'INTARQ',
   );
   await windowManager.waitUntilReadyToShow(windowOptions);
   await windowManager.show();
@@ -48,7 +48,7 @@ class AssistantApp extends ConsumerWidget {
     return _StartupWindowMaximizer(
       child: MaterialApp(
         navigatorKey: appNavigatorKey,
-        title: 'Assistente',
+        title: 'INTARQ',
         debugShowCheckedModeBanner: false,
         theme: AssistantTheme.darkTheme,
         initialRoute: '/',

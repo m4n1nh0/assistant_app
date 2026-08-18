@@ -5,6 +5,7 @@ import '../models/app_config.dart';
 import '../services/storage_service.dart';
 import '../providers/app_provider.dart';
 import '../utils/theme.dart';
+import '../branding/intarq_brand.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -58,17 +59,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'ASSISTENTE',
-              style: TextStyle(
-                fontFamily: 'Rajdhani',
-                fontSize: 32,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 8,
-                color: AssistantTheme.c1,
-              ),
-            ),
-            const SizedBox(height: 36),
+            const IntarqLockup(width: 390, height: 160),
+            const SizedBox(height: 24),
             SizedBox(
               width: 220,
               child: LinearProgressIndicator(
