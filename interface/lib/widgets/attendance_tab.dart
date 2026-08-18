@@ -105,6 +105,29 @@ String attendanceSessionTranscript(AttendanceSession session) {
   return buffer.toString().trimRight();
 }
 
+AttendanceReport attendanceReportForSession(AttendanceSession session) =>
+    AttendanceReport(
+      dateFrom: session.attendanceDate,
+      dateTo: session.attendanceDate,
+      classId: session.classId,
+      sessionCount: 1,
+      expectedTotal: session.expectedCount,
+      presentTotal: session.presentCount,
+      sessions: [session],
+    );
+
+String attendanceSessionPdfFilename(AttendanceSession session) {
+  final date = session.attendanceDate.isEmpty
+      ? DateTime.now().toIso8601String().split('T').first
+      : session.attendanceDate;
+  final reference = session.id
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9-]'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-|-$'), '');
+  return 'relatorio-presenca-$date${reference.isEmpty ? '' : '-$reference'}.pdf';
+}
+
 class AttendanceTab extends StatefulWidget {
   final ValueNotifier<List<ClassGroup>?> classes;
 
@@ -386,7 +409,10 @@ class _AttendanceTabState extends State<AttendanceTab> {
   Future<void> _openSessionReport(AttendanceSession session) async {
     await showDialog<void>(
       context: context,
-      builder: (_) => _AttendanceSessionReportDialog(session: session),
+      builder: (_) => _AttendanceSessionReportDialog(
+        session: session,
+        onPrint: () => _exportSessionAttendance(session),
+      ),
     );
   }
 
@@ -410,19 +436,11 @@ class _AttendanceTabState extends State<AttendanceTab> {
     if (kind == null || !mounted) return;
     setState(() => _exporting = true);
     try {
-      final needsAttendance = kind == AcademicReportKind.attendance ||
-          kind == AcademicReportKind.consolidated;
-      final report = needsAttendance
-          ? await education.attendanceReport(
-              dateFrom: _date(_from),
-              dateTo: _date(_to),
-            )
-          : const AttendanceReport();
       final bytes = await buildAcademicReportPdf(
         classes: _reportClasses,
         disciplines: _disciplines,
         students: _students,
-        attendance: report,
+        attendance: const AttendanceReport(),
         generatedAt: DateTime.now(),
         kind: kind,
       );
@@ -453,6 +471,59 @@ class _AttendanceTabState extends State<AttendanceTab> {
       _report('${kind.title} salvo em ${file.path}');
     } catch (e) {
       _report('Falha ao gerar relatorio: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _exportSessionAttendance(AttendanceSession session) async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final report = attendanceReportForSession(session);
+      final sessionClassIds = session.classIds.isEmpty
+          ? {session.classId}
+          : session.classIds.toSet();
+      final bytes = await buildAcademicReportPdf(
+        classes: _reportClasses
+            .where((group) => sessionClassIds.contains(group.id))
+            .toList(),
+        disciplines: _disciplines,
+        students: _students
+            .where((student) => sessionClassIds.contains(student.classId))
+            .toList(),
+        attendance: report,
+        generatedAt: DateTime.now(),
+        kind: AcademicReportKind.attendance,
+      );
+      if (!mounted) return;
+      final fileName = attendanceSessionPdfFilename(session);
+      final save = await showDialog<bool>(
+        context: context,
+        builder: (_) => _AcademicPdfPreview(
+          bytes: bytes,
+          fileName: fileName,
+          reportTitle: 'Presença da chamada de ${session.attendanceDate}',
+          allowPrinting: true,
+        ),
+      );
+      if (save != true) return;
+      final path = await FilePicker.saveFile(
+        dialogTitle: 'Salvar presença desta chamada',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        bytes: bytes,
+      );
+      if (path == null) return;
+      final file =
+          File(path.toLowerCase().endsWith('.pdf') ? path : '$path.pdf');
+      if (!await file.exists() || await file.length() != bytes.length) {
+        await file.writeAsBytes(bytes);
+      }
+      _report('Presença desta chamada salva em ${file.path}');
+    } catch (e) {
+      _report('Falha ao imprimir a presença desta chamada: $e', error: true);
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
@@ -1429,8 +1500,12 @@ class _AttendanceDateButton extends StatelessWidget {
 
 class _AttendanceSessionReportDialog extends StatelessWidget {
   final AttendanceSession session;
+  final VoidCallback onPrint;
 
-  const _AttendanceSessionReportDialog({required this.session});
+  const _AttendanceSessionReportDialog({
+    required this.session,
+    required this.onPrint,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1464,7 +1539,7 @@ class _AttendanceSessionReportDialog extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          'Formato direto para copiar ao ambiente da faculdade',
+                          'Copie, salve ou imprima somente este registro',
                           style: TextStyle(
                             color: AssistantTheme.textMuted,
                             fontSize: 10,
@@ -1532,14 +1607,23 @@ class _AttendanceSessionReportDialog extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
                     child: const Text('FECHAR'),
                   ),
-                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onPrint();
+                    },
+                    icon: const Icon(Icons.print_outlined, size: 16),
+                    label: const Text('IMPRIMIR / PDF'),
+                  ),
                   FilledButton.icon(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: transcript));
@@ -1656,10 +1740,10 @@ class _ReportKindDialog extends StatelessWidget {
                 Flexible(
                   child: ListView.separated(
                     shrinkWrap: true,
-                    itemCount: AcademicReportKind.values.length,
+                    itemCount: generalAcademicReportKinds.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (_, index) {
-                      final kind = AcademicReportKind.values[index];
+                      final kind = generalAcademicReportKinds[index];
                       final consolidated =
                           kind == AcademicReportKind.consolidated;
                       return InkWell(
@@ -1772,11 +1856,13 @@ class _AcademicPdfPreview extends StatelessWidget {
   final Uint8List bytes;
   final String fileName;
   final String reportTitle;
+  final bool allowPrinting;
 
   const _AcademicPdfPreview({
     required this.bytes,
     required this.fileName,
     required this.reportTitle,
+    this.allowPrinting = false,
   });
 
   @override
@@ -1818,8 +1904,8 @@ class _AcademicPdfPreview extends StatelessWidget {
                 child: PdfPreview(
                   build: (_) async => bytes,
                   pdfFileName: fileName,
-                  useActions: false,
-                  allowPrinting: false,
+                  useActions: allowPrinting,
+                  allowPrinting: allowPrinting,
                   allowSharing: false,
                   canChangePageFormat: false,
                   canChangeOrientation: false,

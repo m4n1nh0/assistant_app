@@ -6,7 +6,7 @@ import 'package:assistant_app/services/education_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('builds the consolidated schedule, attendance and roster PDF', () async {
+  test('builds independent academic PDFs', () async {
     const group = ClassGroup(
       id: 'c1',
       code: '3001',
@@ -104,5 +104,17 @@ void main() {
       );
     }
     expect(filenames, hasLength(AcademicReportKind.values.length));
+    expect(
+      generalAcademicReportKinds,
+      isNot(contains(AcademicReportKind.attendance)),
+    );
+    expect(
+      academicReportIncludesAttendance(AcademicReportKind.consolidated),
+      isFalse,
+    );
+    expect(
+      academicReportIncludesAttendance(AcademicReportKind.attendance),
+      isTrue,
+    );
   });
 }

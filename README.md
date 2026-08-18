@@ -555,12 +555,12 @@ professor acompanha a lista atualizada a cada cinco segundos, pode marcar ou
 remover uma presenca manualmente e encerrar o QR antes do vencimento.
 Cada chamada possui ainda um relatório exclusivo, agrupado por turma, com
 matrícula, aluno e situação. O botão de relatório permite copiar esse texto
-diretamente para transcrição no ambiente da faculdade.
+diretamente para transcrição no ambiente da faculdade ou imprimir/salvar o PDF
+daquela chamada. A presença não aparece nos relatórios gerais por período.
 
 Os PDFs não dependem de um pacote único: **Gerar relatório** abre uma escolha
-entre presença, quadro de aulas, turmas e alunos, disciplinas ou o documento
-educacional completo. Cada opção gera somente seu conteúdo e usa um nome de
-arquivo próprio.
+entre quadro de aulas, turmas e alunos, disciplinas ou o documento educacional
+geral. Cada opção gera somente seu conteúdo e usa um nome de arquivo próprio.
 
 ```mermaid
 sequenceDiagram

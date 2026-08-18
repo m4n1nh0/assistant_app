@@ -121,11 +121,11 @@ void main() {
         await tester.tap(find.text('GERAR RELATORIO'));
         await tester.pumpAndSettle();
         expect(find.text('ESCOLHA O RELATORIO'), findsOneWidget);
-        expect(find.text('Relatório de presença'), findsOneWidget);
+        expect(find.text('Relatório de presença'), findsNothing);
         expect(find.text('Quadro de aulas'), findsOneWidget);
         expect(find.text('Relatório de turmas e alunos'), findsOneWidget);
         expect(find.text('Relatório de disciplinas'), findsOneWidget);
-        expect(find.text('Relatório educacional completo'), findsOneWidget);
+        expect(find.text('Relatório educacional geral'), findsOneWidget);
         await tester.tap(find.text('CANCELAR'));
         await tester.pumpAndSettle();
 
@@ -144,6 +144,7 @@ void main() {
         await tester.tap(find.byTooltip('Relatorio exclusivo desta chamada'));
         await tester.pumpAndSettle();
         expect(find.text('RELATORIO DESTA CHAMADA'), findsOneWidget);
+        expect(find.text('IMPRIMIR / PDF'), findsOneWidget);
         expect(find.text('COPIAR PARA A FACULDADE'), findsOneWidget);
         expect(find.textContaining('2026001 | Ana | PRESENTE'), findsOneWidget);
         await tester.tap(find.text('FECHAR'));
@@ -335,11 +336,20 @@ void main() {
     );
 
     final report = attendanceSessionTranscript(session);
+    final printable = attendanceReportForSession(session);
 
     expect(report, contains('3001 | Banco de Dados | 2026.2'));
     expect(report, contains('2026001 | Ana | PRESENTE'));
     expect(report, contains('2026002 | Bruno | AUSENTE'));
     expect(report, contains('3002 | Banco de Dados | 2026.2'));
     expect(report, contains('2026003 | Carla | PRESENTE'));
+    expect(printable.sessionCount, 1);
+    expect(printable.sessions.single.id, 'a1');
+    expect(printable.expectedTotal, 3);
+    expect(printable.presentTotal, 2);
+    expect(
+      attendanceSessionPdfFilename(session),
+      'relatorio-presenca-2026-08-17-a1.pdf',
+    );
   });
 }

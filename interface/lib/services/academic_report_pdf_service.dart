@@ -20,13 +20,23 @@ enum AcademicReportKind {
   consolidated,
 }
 
+const generalAcademicReportKinds = [
+  AcademicReportKind.schedule,
+  AcademicReportKind.roster,
+  AcademicReportKind.disciplines,
+  AcademicReportKind.consolidated,
+];
+
+bool academicReportIncludesAttendance(AcademicReportKind kind) =>
+    kind == AcademicReportKind.attendance;
+
 extension AcademicReportKindDetails on AcademicReportKind {
   String get title => switch (this) {
         AcademicReportKind.attendance => 'Relatório de presença',
         AcademicReportKind.schedule => 'Quadro de aulas',
         AcademicReportKind.roster => 'Relatório de turmas e alunos',
         AcademicReportKind.disciplines => 'Relatório de disciplinas',
-        AcademicReportKind.consolidated => 'Relatório educacional completo',
+        AcademicReportKind.consolidated => 'Relatório educacional geral',
       };
 
   String get description => switch (this) {
@@ -39,7 +49,7 @@ extension AcademicReportKindDetails on AcademicReportKind {
         AcademicReportKind.disciplines =>
           'Disciplinas cadastradas, semestre e situação.',
         AcademicReportKind.consolidated =>
-          'Todos os quadros reunidos em um único documento.',
+          'Aulas, turmas, alunos e disciplinas. Presença sai pela chamada.',
       };
 
   String get filePrefix => switch (this) {
@@ -118,8 +128,7 @@ Future<Uint8List> buildAcademicReportPdf({
     final day = _weekdays.indexOf(a[0]).compareTo(_weekdays.indexOf(b[0]));
     return day != 0 ? day : a[1].compareTo(b[1]);
   });
-  final includeAttendance = kind == AcademicReportKind.attendance ||
-      kind == AcademicReportKind.consolidated;
+  final includeAttendance = academicReportIncludesAttendance(kind);
   final includeSchedule = kind == AcademicReportKind.schedule ||
       kind == AcademicReportKind.consolidated;
   final includeRoster = kind == AcademicReportKind.roster ||
@@ -255,12 +264,10 @@ Future<Uint8List> buildAcademicReportPdf({
 }
 
 pw.Widget _summary(
-  AttendanceReport attendance,
   List<ClassGroup> classes,
   List<Discipline> disciplines,
   List<Student> students,
 ) {
-  final rate = (attendance.presenceRate * 100).toStringAsFixed(1);
   return pw.Container(
     padding: const pw.EdgeInsets.all(14),
     decoration: pw.BoxDecoration(
@@ -274,8 +281,6 @@ pw.Widget _summary(
         _metric('${classes.length}', 'turmas'),
         _metric('${disciplines.length}', 'disciplinas'),
         _metric('${students.length}', 'alunos'),
-        _metric('${attendance.sessionCount}', 'chamadas'),
-        _metric('$rate%', 'presença'),
       ],
     ),
   );
@@ -290,7 +295,7 @@ pw.Widget _kindSummary(
   int scheduleCount,
 ) {
   if (kind == AcademicReportKind.consolidated) {
-    return _summary(attendance, classes, disciplines, students);
+    return _summary(classes, disciplines, students);
   }
   final metrics = switch (kind) {
     AcademicReportKind.attendance => [

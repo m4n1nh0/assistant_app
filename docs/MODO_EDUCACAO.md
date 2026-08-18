@@ -97,15 +97,16 @@ Code; a seleção pode ser revisada antes da abertura.
 
 Cada item em **Chamadas no período** oferece **Relatório exclusivo desta
 chamada**. Ele separa os alunos por turma, informa matrícula e situação
-presente/ausente e pode ser copiado em texto para o ambiente da faculdade.
+presente/ausente, pode ser copiado em texto para o ambiente da faculdade e é o
+único local para imprimir ou salvar a lista de presença em PDF. O arquivo recebe
+somente o registro de chamada selecionado.
 
 Para PDFs, **Gerar relatório** permite escolher independentemente:
 
-- relatório de presença do período;
 - quadro semanal de aulas;
 - turmas e alunos;
 - disciplinas;
-- relatório educacional completo.
+- relatório educacional geral, sem listas de presença.
 
 A escolha abre a pré-visualização correspondente e cada documento possui nome
 de arquivo próprio.
