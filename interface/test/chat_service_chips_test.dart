@@ -82,4 +82,17 @@ void main() {
 
     expect(find.text('BACKEND'), findsOneWidget);
   });
+
+  testWidgets('modo conectado mostra somente o agente desktop escolhido',
+      (tester) async {
+    final config = _config(['claude', 'gpt'])
+      ..connectedAgentMode = true
+      ..connectedAgentId = 'codex_cli';
+
+    await _pump(tester, config, 800);
+
+    expect(find.text('CODEX CONECTADO'), findsOneWidget);
+    expect(find.text('CLAUDE SONNET 4'), findsNothing);
+    expect(find.text('GPT-4O'), findsNothing);
+  });
 }

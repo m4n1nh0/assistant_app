@@ -14,6 +14,7 @@ import '../services/external_launcher_service.dart';
 import '../services/neural_tts_service.dart';
 import '../services/neural_audio_player.dart';
 import '../services/audio_input_service.dart';
+import '../services/connected_ai_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
@@ -68,6 +69,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final Map<String, TextEditingController> _llmKeyCtrls = {};
   final Set<String> _llmKeysToClear = {};
   bool _llmBusy = false;
+  List<ConnectedAiStatus> _connectedAiStatuses = const [];
+  bool _connectedAiBusy = false;
 
   @override
   void initState() {
@@ -79,6 +82,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _loadCalendarAccounts();
       _loadAccountManagement();
       _loadLlmConfig();
+      _loadConnectedAiStatuses();
       _loadMicrophones();
     });
   }
@@ -208,6 +212,99 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     } finally {
       if (mounted) setState(() => _llmBusy = false);
     }
+  }
+
+  Future<void> _loadConnectedAiStatuses() async {
+    if (_connectedAiBusy) return;
+    setState(() => _connectedAiBusy = true);
+    try {
+      final statuses = await ConnectedAiService.checkAll();
+      if (mounted) setState(() => _connectedAiStatuses = statuses);
+    } finally {
+      if (mounted) setState(() => _connectedAiBusy = false);
+    }
+  }
+
+  Future<void> _connectConnectedAi(String id) async {
+    if (_connectedAiBusy) return;
+    setState(() => _connectedAiBusy = true);
+    try {
+      await ConnectedAiService.startLogin(id);
+      _showSnack('Login oficial aberto. Conclua a autenticação no navegador.');
+      for (var attempt = 0; attempt < 60; attempt++) {
+        await Future.delayed(const Duration(seconds: 2));
+        final status = await ConnectedAiService.check(id);
+        if (!mounted) return;
+        final updated = [..._connectedAiStatuses];
+        final index = updated.indexWhere((item) => item.id == id);
+        if (index >= 0) {
+          updated[index] = status;
+        } else {
+          updated.add(status);
+        }
+        setState(() => _connectedAiStatuses = updated);
+        if (status.authenticated) {
+          setState(() {
+            _draft.connectedAgentId = id;
+            _draft.connectedAgentMode = true;
+          });
+          _showSnack('${status.label} conectado. Salve para ativar o modo.');
+          return;
+        }
+      }
+      _showSnack(
+          'O login ainda não foi concluído. Use ATUALIZAR após autorizar.');
+    } catch (e) {
+      _showSnack('Não foi possível abrir o login: $e');
+    } finally {
+      if (mounted) setState(() => _connectedAiBusy = false);
+    }
+  }
+
+  Future<void> _disconnectConnectedAi(ConnectedAiStatus status) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: Text('Desconectar ${status.label}',
+            style: const TextStyle(color: AssistantTheme.textPrimary)),
+        content: const Text(
+          'Esta sessão é compartilhada com o cliente oficial e a extensão do '
+          'VS Code. Ao sair aqui, eles também poderão solicitar novo login.',
+          style: TextStyle(color: AssistantTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Desconectar',
+                style: TextStyle(color: AssistantTheme.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _connectedAiBusy = true);
+    try {
+      await ConnectedAiService.logout(status.id);
+      if (_draft.connectedAgentId == status.id) {
+        _draft.connectedAgentMode = false;
+      }
+      await _loadConnectedAiStatusesAfterAction();
+      _showSnack('${status.label} desconectado.');
+    } catch (e) {
+      _showSnack('Falha ao desconectar: $e');
+    } finally {
+      if (mounted) setState(() => _connectedAiBusy = false);
+    }
+  }
+
+  Future<void> _loadConnectedAiStatusesAfterAction() async {
+    final statuses = await ConnectedAiService.checkAll();
+    if (mounted) setState(() => _connectedAiStatuses = statuses);
   }
 
   Future<void> _save() async {
@@ -845,6 +942,50 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         'para todos. Provedores externos, gratuitos ou pagos, pertencem '
         'somente ao usuário conectado.',
       ),
+      _SectionCard(title: 'AGENTES CONECTADOS NESTE COMPUTADOR', children: [
+        const _InfoBox(
+          'Usa o login oficial já mantido pelo Codex ou Claude Code. A INTARQ '
+          'não lê, copia nem envia os tokens para o backend. Esse modo executa '
+          'o agente localmente e com permissões restritas.',
+        ),
+        _Toggle(
+          'Usar agente conectado nas conversas',
+          _draft.connectedAgentMode,
+          (value) {
+            final selected = _connectedAiStatuses.where(
+              (item) => item.id == _draft.connectedAgentId,
+            );
+            if (value && (selected.isEmpty || !selected.first.authenticated)) {
+              _showSnack('Conecte o agente escolhido antes de ativar o modo.');
+              return;
+            }
+            setState(() => _draft.connectedAgentMode = value);
+          },
+        ),
+        _Label('AGENTE PREFERIDO'),
+        _Dropdown(
+          value: _draft.connectedAgentId,
+          items: ConnectedAiService.supportedAgents,
+          onChanged: (value) => setState(() {
+            _draft.connectedAgentId = value ?? 'codex_cli';
+            final status = _connectedAiStatuses.where(
+              (item) => item.id == _draft.connectedAgentId,
+            );
+            if (status.isEmpty || !status.first.authenticated) {
+              _draft.connectedAgentMode = false;
+            }
+          }),
+        ),
+        const SizedBox(height: 10),
+        if (_connectedAiBusy && _connectedAiStatuses.isEmpty)
+          const LinearProgressIndicator()
+        else
+          ..._connectedAiStatuses.map(_buildConnectedAgent),
+        _ActionBtn(
+          label: _connectedAiBusy ? 'CONSULTANDO...' : 'ATUALIZAR CONEXÕES',
+          onTap: _connectedAiBusy ? null : _loadConnectedAiStatuses,
+        ),
+      ]),
       _SectionCard(title: 'AGENTES LOCAIS DA APLICAÇÃO', children: [
         if (_llmBusy && local.isEmpty)
           const LinearProgressIndicator()
@@ -879,6 +1020,86 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         'não salva nem volta a exibir uma chave já cadastrada.',
       ),
     ]);
+  }
+
+  Widget _buildConnectedAgent(ConnectedAiStatus status) {
+    final state = !status.installed
+        ? 'NÃO INSTALADO'
+        : status.authenticated
+            ? 'CONECTADO'
+            : 'SEM LOGIN';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AssistantTheme.bg2,
+        border: Border.all(
+          color: status.authenticated
+              ? AssistantTheme.c3.withOpacity(.5)
+              : AssistantTheme.border,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(
+            status.authenticated
+                ? Icons.verified_user_outlined
+                : Icons.link_off_outlined,
+            color: status.authenticated
+                ? AssistantTheme.c3
+                : AssistantTheme.textMuted,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(status.label,
+                style: const TextStyle(
+                    color: AssistantTheme.textPrimary,
+                    fontFamily: 'JetBrains Mono')),
+          ),
+          Text(state,
+              style: TextStyle(
+                  color: status.authenticated
+                      ? AssistantTheme.c3
+                      : AssistantTheme.textMuted,
+                  fontSize: 9,
+                  fontFamily: 'JetBrains Mono')),
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          [
+            if (status.accountLabel.isNotEmpty) status.accountLabel,
+            if (status.version.isNotEmpty) status.version,
+            status.detail,
+          ].join(' · '),
+          style: const TextStyle(color: AssistantTheme.textMuted, fontSize: 10),
+        ),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: _ActionBtn(
+              label: status.authenticated ? 'RECONECTAR' : 'CONECTAR',
+              color: AssistantTheme.c1,
+              onTap: !status.installed || _connectedAiBusy
+                  ? null
+                  : () => _connectConnectedAi(status.id),
+            ),
+          ),
+          if (status.authenticated) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ActionBtn(
+                label: 'DESCONECTAR',
+                color: AssistantTheme.danger,
+                onTap: _connectedAiBusy
+                    ? null
+                    : () => _disconnectConnectedAi(status),
+              ),
+            ),
+          ],
+        ]),
+      ]),
+    );
   }
 
   Widget _buildExternalAgent(LlmProviderConfig item) {

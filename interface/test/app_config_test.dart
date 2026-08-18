@@ -123,4 +123,16 @@ void main() {
     expect(restored.assistantPronunciation, 'Raná');
     expect(restored.toJson()['assistantPronunciation'], 'Raná');
   });
+
+  test('connected desktop agent mode is isolated in user configuration', () {
+    final restored = AppConfig.fromJson({
+      'connectedAgentMode': true,
+      'connectedAgentId': 'claude_cli',
+    });
+
+    expect(restored.connectedAgentMode, isTrue);
+    expect(restored.connectedAgentId, 'claude_cli');
+    expect(restored.serviceName('claude_cli'), 'Claude conectado');
+    expect(restored.toSafeJson()['connectedAgentId'], 'claude_cli');
+  });
 }

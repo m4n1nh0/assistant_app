@@ -19,8 +19,11 @@ class _LeftPanelState extends ConsumerState<LeftPanel> {
     final config = ref.watch(configProvider);
     final isRec = ref.watch(isRecordingProvider);
     final isSpeaking = ref.watch(isSpeakingProvider);
-    final backendServices =
-        config.activeList.isEmpty ? ['backend'] : config.activeList;
+    final backendServices = config.connectedAgentMode
+        ? [config.connectedAgentId]
+        : config.activeList.isEmpty
+            ? ['backend']
+            : config.activeList;
     final activeSummary = backendServices.length == 1
         ? config.serviceName(backendServices.first)
         : '${backendServices.length} agentes ativos';

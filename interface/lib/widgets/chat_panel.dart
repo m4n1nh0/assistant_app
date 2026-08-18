@@ -965,7 +965,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     ref.read(isLoadingProvider.notifier).state = true;
 
     try {
-      final llmSvc = LlmService();
+      final llmSvc = LlmService(
+        config: config,
+        workingDirectory: _lastWorkspacePath ?? '',
+      );
 
       switch (config.responseMode) {
         case 'multi':
@@ -3353,12 +3356,17 @@ class ChatServiceChips extends StatelessWidget {
     'localai': AssistantTheme.c3,
     'llama': AssistantTheme.c2,
     'hf': AssistantTheme.cHF,
+    'codex_cli': AssistantTheme.c1,
+    'claude_cli': AssistantTheme.c4,
   };
 
   @override
   Widget build(BuildContext context) {
-    final services =
-        config.activeList.isEmpty ? ['backend'] : config.activeList;
+    final services = config.connectedAgentMode
+        ? [config.connectedAgentId]
+        : config.activeList.isEmpty
+            ? ['backend']
+            : config.activeList;
 
     // Quebra para a linha de baixo em vez de estourar: esconder um servico
     // atras da borda seria pior do que ocupar mais 20px de altura.

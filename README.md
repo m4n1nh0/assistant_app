@@ -75,6 +75,7 @@ flowchart LR
 
     UI --> State[Riverpod Providers]
     UI --> LocalServices[Servicos locais do desktop]
+    LocalServices --> ConnectedAgents[Codex / Claude Code autenticados localmente]
     UI --> ApiClient[ApiService HTTP / SSE / WebSocket]
 
     ApiClient --> FastAPI[Backend FastAPI]
@@ -329,6 +330,29 @@ não é salva localmente e a API informa apenas `configured=true/false`. As
 variáveis antigas de provedores externos no `.env` servem somente para uma
 migração única da primeira conta administrativa; novas contas nunca herdam
 essas credenciais.
+
+### Agentes conectados pelo cliente oficial
+
+A interface Windows também detecta os executáveis instalados pelas extensões
+do **Codex** e do **Claude Code** no VS Code. Em **Configurações > Agentes** o
+usuário pode conectar ou reconectar cada conta pelo login oficial e ativar o
+**modo agente conectado**.
+
+- a autenticação e os tokens continuam sob responsabilidade do CLI oficial;
+- nenhum token é lido, copiado, salvo pela INTARQ ou enviado ao backend;
+- a execução ocorre no computador do usuário, portanto funciona mesmo quando
+  o backend está hospedado na Railway;
+- Codex roda de forma efêmera com sandbox `read-only`;
+- Claude Code roda sem persistir sessão, em modo de planejamento, limitado às
+  ferramentas de leitura `Read`, `Glob` e `Grep`;
+- quando um workspace foi selecionado pela interface, ele é usado como pasta
+  de trabalho; caso contrário, o agente responde como assistente de texto.
+
+O Codex oferece oficialmente login pelo navegador com `codex login` e SDK/App
+Server para integração em aplicações. A implementação usa o cliente local já
+autenticado em vez de tentar transformar uma assinatura pessoal em API key:
+[autenticação](https://learn.chatgpt.com/docs/auth) e
+[Codex SDK](https://learn.chatgpt.com/docs/codex-sdk).
 
 | Especialista | Atende | Ferramentas |
 | --- | --- | --- |

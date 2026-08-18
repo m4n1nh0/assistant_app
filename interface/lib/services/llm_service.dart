@@ -2,18 +2,41 @@ import 'dart:async';
 
 import '../models/app_config.dart';
 import 'api_service.dart';
+import 'connected_ai_service.dart';
 
 String _friendlyTimeout(String operation, Duration timeout) =>
     'Tempo limite excedido em $operation (${timeout.inSeconds}s). '
     'Tente novamente, use outro agente ou reduza o pedido.';
 
 class LlmService {
-  LlmService();
+  final AppConfig? config;
+  final String workingDirectory;
+
+  LlmService({this.config, this.workingDirectory = ''});
 
   Future<ChatResult> call(
     List<Map<String, String>> history,
     String text,
   ) async {
+    final current = config;
+    if (current?.connectedAgentMode == true) {
+      final response = await ConnectedAiService.run(
+        agentId: current!.connectedAgentId,
+        prompt: text,
+        history: history,
+        assistantName: current.assistantName,
+        personality: current.personality,
+        language: current.language,
+        workingDirectory: workingDirectory,
+      );
+      return ChatResult(responses: [
+        LlmResponse(
+          llm: response.agentId,
+          content: response.content,
+          isError: response.isError,
+        ),
+      ]);
+    }
     try {
       const timeout = Duration(seconds: 120);
       final data = await api
@@ -47,6 +70,7 @@ class LlmService {
     List<Map<String, String>> history,
     String text,
   ) async {
+    if (config?.connectedAgentMode == true) return call(history, text);
     try {
       const timeout = Duration(seconds: 150);
       final data = await api
@@ -77,6 +101,7 @@ class LlmService {
     List<Map<String, String>> history,
     String text,
   ) async {
+    if (config?.connectedAgentMode == true) return call(history, text);
     try {
       const timeout = Duration(seconds: 180);
       final data = await api

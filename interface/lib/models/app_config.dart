@@ -12,6 +12,8 @@ class AppConfig {
     'localai': 'LocalAI',
     'llama': 'Ollama',
     'hf': 'Hugging Face',
+    'codex_cli': 'Codex conectado',
+    'claude_cli': 'Claude conectado',
   };
 
   static String serviceLabel(String id) =>
@@ -37,6 +39,10 @@ class AppConfig {
   Map<String, bool> activeLlms;
   Map<String, String> llmLabels;
   Map<String, LlmStatus> llmStatuses;
+
+  /// Agente autenticado pelo cliente oficial instalado no computador.
+  bool connectedAgentMode;
+  String connectedAgentId;
 
   NotifConfig notif;
 
@@ -74,6 +80,8 @@ class AppConfig {
     Map<String, bool>? activeLlms,
     Map<String, String>? llmLabels,
     Map<String, LlmStatus>? llmStatuses,
+    this.connectedAgentMode = false,
+    this.connectedAgentId = 'codex_cli',
     NotifConfig? notif,
     CalendarConfig? calendar,
     this.ttsEnabled = true,
@@ -119,6 +127,8 @@ class AppConfig {
         'llmLabels': llmLabels,
         'llmStatus':
             llmStatuses.map((key, value) => MapEntry(key, value.toJson())),
+        'connectedAgentMode': connectedAgentMode,
+        'connectedAgentId': connectedAgentId,
         'notif': notif.toJson(),
         'calendar': calendar.toJson(),
         'ttsEnabled': ttsEnabled,
@@ -156,6 +166,8 @@ class AppConfig {
       activeLlms: activeLlms,
       llmLabels: _stringMap(j['llmLabels']),
       llmStatuses: _llmStatusMap(j['llmStatus'] ?? j['llm_status']),
+      connectedAgentMode: j['connectedAgentMode'] == true,
+      connectedAgentId: j['connectedAgentId']?.toString() ?? 'codex_cli',
       notif: NotifConfig.fromJson(_map(j['notif'])),
       calendar: CalendarConfig.fromJson(_map(j['calendar'])),
       ttsEnabled: j['ttsEnabled'] ?? true,

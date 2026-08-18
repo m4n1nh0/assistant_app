@@ -221,9 +221,12 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   void _startWelcome() {
     final config = ref.read(configProvider);
-    final services = config.activeList.isEmpty
+    final activeServices = config.connectedAgentMode
+        ? [config.connectedAgentId]
+        : config.activeList;
+    final services = activeServices.isEmpty
         ? config.serviceName('backend')
-        : config.activeList
+        : activeServices
             .map((id) => _welcomeServiceName(config, id))
             .join(', ');
     final user = config.userName.isNotEmpty ? ', ${config.userName}' : '';
@@ -235,7 +238,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
               'Olá$user. Pode falar ou escrever para começar.\n\n'
               '• Serviços: $services\n'
               '• Modo: ${AppConfig.responseModeLabel(config.responseMode)}',
-          llm: config.activeList.isNotEmpty ? config.activeList.first : null,
+          llm: activeServices.isNotEmpty ? activeServices.first : null,
         ));
   }
 
@@ -248,6 +251,8 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       'localai': 'LocalAI',
       'llama': 'Ollama',
       'hf': 'Hugging Face',
+      'codex_cli': 'Codex conectado',
+      'claude_cli': 'Claude conectado',
     };
     return compactNames[id] ?? config.serviceName(id);
   }
