@@ -292,6 +292,7 @@ def _lesson_response(
         summary=item.summary,
         summary_llm=item.summary_llm,
         summary_at=item.summary_at,
+        summary_style=getattr(item, "summary_style", None),
         segment_count=item.segment_count or 0,
         transcript_chars=item.transcript_chars or 0,
         metadata=item.metadata_ or {},
@@ -1550,6 +1551,7 @@ async def update_lesson_segment(
     lesson.summary = None
     lesson.summary_llm = None
     lesson.summary_at = None
+    lesson.summary_style = None
     await db.commit()
     await db.refresh(segment)
 
@@ -1601,12 +1603,14 @@ async def summarize_lesson(
     if not segments:
         raise HTTPException(409, "A aula ainda nao tem transcricao")
 
+    style = education_service.normalize_summary_style(body.style)
     outcome = await education_service.generate_summary(
         discipline=lesson.discipline,
         title=lesson.title or "",
         segments=segments,
         llm=body.llm,
         focus=body.focus,
+        style=style,
     )
     if not outcome["summary"]:
         raise HTTPException(
@@ -1617,6 +1621,7 @@ async def summarize_lesson(
     lesson.summary = outcome["summary"]
     lesson.summary_llm = outcome["llm"]
     lesson.summary_at = datetime.now(timezone.utc)
+    lesson.summary_style = style
     if body.close_lesson and lesson.status != "closed":
         lesson.status = "closed"
         lesson.ended_at = datetime.now(timezone.utc)
@@ -1636,6 +1641,7 @@ async def summarize_lesson(
         llm=lesson.summary_llm,
         generated_at=lesson.summary_at,
         used_segments=outcome["used_segments"],
+        style=lesson.summary_style or style,
         points=points,
     )
 

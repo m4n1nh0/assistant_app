@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../utils/theme.dart';
+import 'education_service.dart';
 
 /// Navegador raiz usado por avisos que precisam sobreviver ao fechamento do
 /// dialogo que iniciou uma operacao longa.
@@ -17,6 +18,7 @@ class InAppNotificationService {
     required String llm,
     required int usedSegments,
     String title = '',
+    String style = summaryStyleStandard,
   }) {
     final overlay = appNavigatorKey.currentState?.overlay;
     if (overlay == null) return;
@@ -29,6 +31,7 @@ class InAppNotificationService {
         title: title,
         llm: llm,
         usedSegments: usedSegments,
+        style: style,
         onClose: () => _remove(entry),
       ),
     );
@@ -59,6 +62,7 @@ class _SummaryReadyNotice extends StatelessWidget {
   final String title;
   final String llm;
   final int usedSegments;
+  final String style;
   final VoidCallback onClose;
 
   const _SummaryReadyNotice({
@@ -67,6 +71,7 @@ class _SummaryReadyNotice extends StatelessWidget {
     required this.llm,
     required this.usedSegments,
     required this.onClose,
+    this.style = summaryStyleStandard,
   });
 
   @override
@@ -114,9 +119,11 @@ class _SummaryReadyNotice extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text(
-                          'RESUMO PRONTO',
-                          style: TextStyle(
+                        Text(
+                          style == summaryStyleDetailed
+                              ? 'RESUMO DETALHADO PRONTO'
+                              : 'RESUMO PRONTO',
+                          style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 1.1,

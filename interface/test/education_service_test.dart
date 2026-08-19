@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:assistant_app/services/api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -27,6 +29,53 @@ void main() {
     expect(result['students_created'], 3);
   });
 
+  group('resumo', () {
+    test('envia o formato escolhido e le o que o backend usou', () async {
+      final service = EducationService(ApiService(backendUrl: 'https://test'));
+      Map<String, dynamic>? sent;
+      final client = MockClient((request) async {
+        sent = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(request.url.path, '/education/lessons/l1/summary');
+        return http.Response(
+          '{"lesson_id":"l1","summary":"## Resumo geral","llm":"localai",'
+          '"generated_at":"2026-08-04T13:00:00","used_segments":9,'
+          '"style":"detailed"}',
+          200,
+        );
+      });
+
+      final summary = await http.runWithClient(
+        () => service.generateSummary('l1', style: summaryStyleDetailed),
+        () => client,
+      );
+
+      expect(sent?['style'], 'detailed');
+      expect(summary.style, summaryStyleDetailed);
+    });
+
+    test('sem escolha explicita pede o resumo comum', () async {
+      final service = EducationService(ApiService(backendUrl: 'https://test'));
+      Map<String, dynamic>? sent;
+      final client = MockClient((request) async {
+        sent = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          '{"lesson_id":"l1","summary":"## Resumo","llm":"localai",'
+          '"generated_at":"2026-08-04T13:00:00","used_segments":2}',
+          200,
+        );
+      });
+
+      final summary = await http.runWithClient(
+        () => service.generateSummary('l1'),
+        () => client,
+      );
+
+      // Backend antigo nao devolve `style`: o resumo conta como comum.
+      expect(sent?['style'], 'standard');
+      expect(summary.style, summaryStyleStandard);
+    });
+  });
+
   group('Lesson', () {
     test('reads the payload returned by the backend', () {
       final lesson = Lesson.fromJson({
@@ -54,8 +103,21 @@ void main() {
 
       expect(lesson.title, '');
       expect(lesson.summary, isNull);
+      expect(lesson.summaryStyle, isNull);
       expect(lesson.segmentCount, 0);
       expect(lesson.startedAt, isNull);
+    });
+
+    test('guarda o formato do resumo ja gerado', () {
+      final lesson = Lesson.fromJson({
+        'id': 'l1',
+        'discipline': 'Fisica',
+        'summary': '## Resumo geral',
+        'summary_style': 'detailed',
+      });
+
+      expect(lesson.summaryStyle, summaryStyleDetailed);
+      expect(summaryStyleLabel(lesson.summaryStyle), 'DETALHADO');
     });
 
     test('closed lesson is flagged', () {

@@ -5,6 +5,20 @@ import 'package:http/http.dart' as http;
 import 'api_service.dart';
 import 'student_csv_parser.dart';
 
+/// Formatos de resumo aceitos pelo backend. O comum cabe em uma tela; o
+/// detalhado reconstroi o desenvolvimento da aula secao por secao.
+const summaryStyleStandard = 'standard';
+const summaryStyleDetailed = 'detailed';
+
+/// Rotulo curto para mostrar na interface e no PDF.
+String summaryStyleLabel(String? style) =>
+    style == summaryStyleDetailed ? 'DETALHADO' : 'COMUM';
+
+/// Aula resumida antes da opcao existir, ou valor desconhecido, conta como
+/// resumo comum: e o formato que o backend usava.
+String summaryStyleOrStandard(String? style) =>
+    style == summaryStyleDetailed ? summaryStyleDetailed : summaryStyleStandard;
+
 /// Cliente do modo educacao: aulas, trechos de transcricao, resumo,
 /// pontuacoes extras e cadastro de turma.
 class EducationService {
@@ -336,6 +350,7 @@ class EducationService {
     String? llm,
     String focus = '',
     bool closeLesson = false,
+    String style = summaryStyleStandard,
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/lessons/$lessonId/summary'),
@@ -344,6 +359,7 @@ class EducationService {
         if (llm != null && llm.isNotEmpty) 'llm': llm,
         'focus': focus,
         'close_lesson': closeLesson,
+        'style': style,
       }),
     );
     return LessonSummary.fromJson(_decode(response) as Map<String, dynamic>);
@@ -857,6 +873,9 @@ class Lesson {
   final String? summary;
   final String? summaryLlm;
   final DateTime? summaryAt;
+  /// Formato do resumo guardado: `standard` ou `detailed`. Nulo nas aulas
+  /// resumidas antes da opcao existir.
+  final String? summaryStyle;
   final int segmentCount;
   final int transcriptChars;
 
@@ -874,6 +893,7 @@ class Lesson {
     this.summary,
     this.summaryLlm,
     this.summaryAt,
+    this.summaryStyle,
     this.segmentCount = 0,
     this.transcriptChars = 0,
   });
@@ -898,6 +918,7 @@ class Lesson {
         summary: json['summary']?.toString(),
         summaryLlm: json['summary_llm']?.toString(),
         summaryAt: _toDate(json['summary_at']),
+        summaryStyle: json['summary_style']?.toString(),
         segmentCount: _toInt(json['segment_count']),
         transcriptChars: _toInt(json['transcript_chars']),
       );
@@ -921,6 +942,7 @@ class LessonDetail extends Lesson {
     super.summary,
     super.summaryLlm,
     super.summaryAt,
+    super.summaryStyle,
     super.segmentCount,
     super.transcriptChars,
     this.segments = const [],
@@ -943,6 +965,7 @@ class LessonDetail extends Lesson {
       summary: lesson.summary,
       summaryLlm: lesson.summaryLlm,
       summaryAt: lesson.summaryAt,
+      summaryStyle: lesson.summaryStyle,
       segmentCount: lesson.segmentCount,
       transcriptChars: lesson.transcriptChars,
       segments: ((json['segments'] as List<dynamic>?) ?? [])
@@ -1062,6 +1085,7 @@ class LessonSummary {
   final String llm;
   final DateTime? generatedAt;
   final int usedSegments;
+  final String style;
   final List<LessonPoint> points;
 
   LessonSummary({
@@ -1070,6 +1094,7 @@ class LessonSummary {
     required this.llm,
     required this.usedSegments,
     this.generatedAt,
+    this.style = summaryStyleStandard,
     this.points = const [],
   });
 
@@ -1079,6 +1104,7 @@ class LessonSummary {
         llm: json['llm']?.toString() ?? '',
         generatedAt: _toDate(json['generated_at']),
         usedSegments: _toInt(json['used_segments']),
+        style: summaryStyleOrStandard(json['style']?.toString()),
         points: ((json['points'] as List<dynamic>?) ?? [])
             .map((item) => LessonPoint.fromJson(item as Map<String, dynamic>))
             .toList(),

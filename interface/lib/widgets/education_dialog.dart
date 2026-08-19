@@ -266,7 +266,11 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   var _sessionExpired = false;
   var _elapsed = Duration.zero;
   var _status = '';
+  var _summaryStyle = summaryStyleStandard;
   String? _summary;
+  /// Formato do resumo exibido no painel, que pode diferir do escolhido para
+  /// a proxima geracao.
+  String? _summaryShownStyle;
   EmbeddingStatus? _embedding;
 
   /// Turmas atendidas pela aula. Mais de uma e aula reunida.
@@ -373,6 +377,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         _segments.clear();
         _points.clear();
         _summary = null;
+        _summaryShownStyle = null;
         _startedAt = DateTime.now();
         _elapsed = Duration.zero;
       });
@@ -597,28 +602,33 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     }
 
     setState(() => _summarising = true);
-    _setStatus('Gerando resumo...');
+    _setStatus(_summaryStyle == summaryStyleDetailed
+        ? 'Gerando resumo detalhado (leva mais tempo que o comum)...'
+        : 'Gerando resumo...');
     try {
       final summary = await education.generateSummary(
         lesson.id,
         focus: _focusCtrl.text.trim(),
         closeLesson: close,
+        style: _summaryStyle,
       );
       InAppNotificationService.showSummaryReady(
         discipline: lesson.discipline,
         title: lesson.title,
         llm: summary.llm,
         usedSegments: summary.usedSegments,
+        style: summary.style,
       );
       if (!mounted) return;
       setState(() {
         _summary = summary.summary;
+        _summaryShownStyle = summary.style;
         _points
           ..clear()
           ..addAll(summary.points);
       });
-      _setStatus('Resumo pronto (${summary.llm}, '
-          '${summary.usedSegments} trechos).');
+      _setStatus('Resumo ${summaryStyleLabel(summary.style).toLowerCase()} '
+          'pronto (${summary.llm}, ${summary.usedSegments} trechos).');
       if (close) {
         final refreshed =
             await education.getLesson(lesson.id, includeSegments: false);
@@ -953,7 +963,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   Widget _buildTranscript() {
     if (_summary != null) {
       return _Panel(
-        title: 'RESUMO DA AULA',
+        title: 'RESUMO DA AULA  -  ${summaryStyleLabel(_summaryShownStyle)}',
         trailing: TextButton(
           onPressed: () => setState(() => _summary = null),
           child: const Text('VER TRANSCRICAO', style: TextStyle(fontSize: 10)),
@@ -1047,6 +1057,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         if (index >= 0) _segments[index] = updated;
         _lesson = lesson;
         _summary = null;
+        _summaryShownStyle = null;
         _status = updated.indexed
             ? 'Transcricao corrigida e busca atualizada.'
             : 'Transcricao corrigida; reindexacao pendente.';
@@ -1085,6 +1096,16 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                       },
                     ),
                   ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _SummaryStylePicker(
+            style: _summaryStyle,
+            enabled: !_summarising,
+            showLabel: true,
+            onChanged: (style) => setState(() => _summaryStyle = style),
           ),
         ),
         const SizedBox(height: 10),
@@ -2379,6 +2400,7 @@ class _HistoryTabState extends State<_HistoryTab> {
   var _showTranscript = false;
   var _summarising = false;
   var _exporting = false;
+  var _summaryStyle = summaryStyleStandard;
   var _status = '';
 
   @override
@@ -2435,6 +2457,7 @@ class _HistoryTabState extends State<_HistoryTab> {
         setState(() {
           _detail = detail;
           _showTranscript = detail.summary == null || detail.summary!.isEmpty;
+          _summaryStyle = summaryStyleOrStandard(detail.summaryStyle);
         });
       }
     } catch (e) {
@@ -2615,22 +2638,27 @@ class _HistoryTabState extends State<_HistoryTab> {
   Future<void> _summarise(LessonDetail detail) async {
     setState(() {
       _summarising = true;
-      _status = 'Gerando resumo da aula...';
+      _status = _summaryStyle == summaryStyleDetailed
+          ? 'Gerando resumo detalhado da aula (leva mais tempo que o comum)...'
+          : 'Gerando resumo da aula...';
     });
     try {
-      final summary = await education.generateSummary(detail.id);
+      final summary =
+          await education.generateSummary(detail.id, style: _summaryStyle);
       InAppNotificationService.showSummaryReady(
         discipline: detail.discipline,
         title: detail.title,
         llm: summary.llm,
         usedSegments: summary.usedSegments,
+        style: summary.style,
       );
       await _open(detail.id);
       if (mounted) {
         setState(() {
           _showTranscript = false;
-          _status = 'Resumo pronto (${summary.llm}, '
-              '${summary.usedSegments} trechos).';
+          _status =
+              'Resumo ${summaryStyleLabel(summary.style).toLowerCase()} pronto '
+              '(${summary.llm}, ${summary.usedSegments} trechos).';
         });
       }
     } catch (e) {
@@ -2703,6 +2731,12 @@ class _HistoryTabState extends State<_HistoryTab> {
                 const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
           ),
         ),
+        _SummaryStylePicker(
+          style: _summaryStyle,
+          enabled: !_summarising && detail.segments.isNotEmpty,
+          onChanged: (style) => setState(() => _summaryStyle = style),
+        ),
+        const SizedBox(width: 8),
         OutlinedButton.icon(
           onPressed: _summarising || detail.segments.isEmpty
               ? null
@@ -2912,7 +2946,7 @@ class _HistoryTabState extends State<_HistoryTab> {
           child: _Panel(
             title: _showTranscript || !hasSummary
                 ? 'TRANSCRICAO  -  ${detail.segments.length} TRECHOS'
-                : 'RESUMO',
+                : 'RESUMO  -  ${summaryStyleLabel(detail.summaryStyle)}',
             trailing: hasSummary
                 ? TextButton(
                     onPressed: () =>
@@ -3880,6 +3914,95 @@ class _DateButton extends StatelessWidget {
           child: Text(text, style: const TextStyle(fontSize: 12)),
         ),
       ],
+    );
+  }
+}
+
+/// Escolha entre resumo comum e detalhado. Fica ao lado de quem gera o resumo
+/// (aula ao vivo e historico) porque a decisao e tomada na hora de gerar, e o
+/// custo de escolher errado e uma nova rodada no modelo.
+class _SummaryStylePicker extends StatelessWidget {
+  final String style;
+  final ValueChanged<String> onChanged;
+  final bool enabled;
+
+  /// Com rotulo no painel da aula, onde ha espaco vertical; sem rotulo na
+  /// linha de botoes do historico.
+  final bool showLabel;
+
+  const _SummaryStylePicker({
+    required this.style,
+    required this.onChanged,
+    this.enabled = true,
+    this.showLabel = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final chips = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        _chip(
+          'COMUM',
+          summaryStyleStandard,
+          'Resumo em uma tela: fio condutor, topicos, definicoes, tarefas e '
+              'duvidas.',
+        ),
+        _chip(
+          'DETALHADO',
+          summaryStyleDetailed,
+          'Reconstroi a aula: desenvolvimento na ordem em que foi dada, '
+              'exemplos resolvidos e pontos de atencao. Demora mais.',
+        ),
+      ],
+    );
+
+    if (!showLabel) return chips;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'FORMATO DO RESUMO',
+          style: TextStyle(
+            fontSize: 9,
+            letterSpacing: 1.5,
+            color: AssistantTheme.textMuted,
+          ),
+        ),
+        const SizedBox(height: 6),
+        chips,
+      ],
+    );
+  }
+
+  Widget _chip(String label, String value, String tooltip) {
+    final selected = style == value;
+    return Tooltip(
+      message: tooltip,
+      child: ChoiceChip(
+        selected: selected,
+        onSelected: enabled ? (_) => onChanged(value) : null,
+        label: Text(label),
+        labelStyle: TextStyle(
+          fontSize: 10,
+          letterSpacing: 1,
+          color: selected ? AssistantTheme.c3 : AssistantTheme.textMuted,
+        ),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+        showCheckmark: false,
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        backgroundColor: AssistantTheme.bg2,
+        selectedColor: AssistantTheme.c3.withValues(alpha: 0.22),
+        side: BorderSide(
+          color: selected ? AssistantTheme.c3 : AssistantTheme.border,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ),
     );
   }
 }

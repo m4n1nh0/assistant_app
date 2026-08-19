@@ -128,6 +128,36 @@ Para PDFs, **Gerar relatório** permite escolher independentemente:
 A escolha abre a pré-visualização correspondente e cada documento possui nome
 de arquivo próprio.
 
+## Formato do resumo
+
+O resumo da aula tem dois formatos, escolhidos no seletor **Formato do resumo**
+que fica ao lado do botão que gera o resumo — tanto em `2. Gravar Aula` quanto
+em `4. Histórico`:
+
+- **Comum**: fio condutor da aula, principais tópicos, definições e fórmulas,
+  tarefas e avisos, dúvidas levantadas. É o formato usado até aqui e cabe em
+  uma tela.
+- **Detalhado**: além do resumo geral, reconstrói o desenvolvimento na ordem em
+  que a aula foi dada, os conceitos com a explicação que os acompanhou,
+  demonstrações passo a passo, exemplos e exercícios resolvidos e os pontos de
+  atenção destacados pelo professor. Serve para quem faltou ou vai estudar para
+  a prova.
+
+O detalhado escreve bem mais texto e leva mais tempo; em modelo local, ele
+também reserva mais espaço de resposta e envia blocos menores de transcrição
+por chamada. O formato usado fica gravado na aula: ao reabrir uma aula no
+histórico, o seletor já vem marcado com o formato do resumo existente, e o
+título do painel mostra se o que está na tela é `COMUM` ou `DETALHADO`.
+
+No PDF exportado, o formato aparece na etiqueta do topo da primeira página
+(`RESUMO DA AULA | DETALHADO`), na faixa que se repete nas páginas seguintes e
+no título do documento. O arquivo do resumo detalhado ainda ganha o sufixo
+`-detalhado`, então exportar os dois formatos da mesma aula não sobrescreve
+nada.
+
+Corrigir um trecho da transcrição continua invalidando o resumo, qualquer que
+seja o formato — ele precisa ser gerado de novo.
+
 ## Segurança da chamada
 
 Cada QR Code usa um token temporário aleatório e o banco armazena apenas seu

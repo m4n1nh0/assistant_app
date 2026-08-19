@@ -90,6 +90,26 @@ void main() {
       );
     });
 
+    test('resumo detalhado ganha sufixo para nao sobrescrever o comum', () {
+      final lesson = Lesson(
+        id: 'l1',
+        discipline: 'ARA0040 - BANCO DE DADOS',
+        semester: '2026.2',
+        title: 'Normalizacao',
+        classGroup: '',
+        classLabels: const ['3001 Presencial'],
+        status: 'closed',
+        startedAt: DateTime(2026, 8, 13, 18, 30),
+        summaryStyle: summaryStyleDetailed,
+      );
+
+      expect(
+        lessonPdfFilename(lesson),
+        '2026-2-ara0040-banco-de-dados-3001-presencial-13-08-2026-'
+        'detalhado.pdf',
+      );
+    });
+
     test('lesson without discipline still gets a name', () {
       final lesson = Lesson(
         id: 'l2',
@@ -125,6 +145,31 @@ void main() {
 
       expect(bytes.length, greaterThan(1000));
       expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+    });
+
+    test('o cabecalho identifica o formato do resumo', () async {
+      final lesson = Lesson(
+        id: 'l1',
+        discipline: 'ARA0040 - BANCO DE DADOS',
+        semester: '2026.2',
+        title: 'Normalizacao',
+        classGroup: '',
+        status: 'closed',
+        startedAt: DateTime(2026, 8, 13, 18, 30),
+        summaryStyle: summaryStyleDetailed,
+      );
+
+      final bytes = await buildLessonSummaryPdf(
+        lesson: lesson,
+        summary: '## Resumo geral\nA aula tratou de normalizacao.',
+      );
+
+      // O texto do PDF sai comprimido; o titulo do documento nao, e e por
+      // ele que o visualizador identifica o arquivo aberto.
+      expect(
+        String.fromCharCodes(bytes).contains('Resumo detalhado'),
+        isTrue,
+      );
     });
 
     test('works without points', () async {

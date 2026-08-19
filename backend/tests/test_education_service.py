@@ -470,6 +470,91 @@ def test_localai_summary_disables_thinking_and_limits_output(monkeypatch):
     }
 
 
+def test_detailed_summary_asks_for_the_long_structure(monkeypatch):
+    calls = fake_llm(monkeypatch, "resumo detalhado")
+
+    outcome = run(service.generate_summary(
+        discipline="Banco de Dados",
+        title="Normalizacao",
+        segments=["trecho da aula"],
+        llm="localai",
+        style="detailed",
+    ))
+
+    prompt = calls[0]["message"]
+    assert outcome["style"] == "detailed"
+    assert "## Desenvolvimento da aula" in prompt
+    assert "## Exemplos e exercicios resolvidos" in prompt
+    # O detalhado precisa de mais espaco de resposta que o comum, senao o
+    # modelo corta o texto antes das ultimas secoes.
+    assert calls[0]["options"]["max_tokens"] == (
+        service._DETAILED_FINAL_SUMMARY_MAX_TOKENS
+    )
+
+
+def test_standard_summary_keeps_the_short_structure(monkeypatch):
+    calls = fake_llm(monkeypatch, "resumo")
+
+    outcome = run(service.generate_summary(
+        discipline="Banco de Dados",
+        title="",
+        segments=["trecho da aula"],
+        llm="localai",
+    ))
+
+    prompt = calls[0]["message"]
+    assert outcome["style"] == "standard"
+    assert "## Principais topicos" in prompt
+    assert "## Desenvolvimento da aula" not in prompt
+    assert calls[0]["options"]["max_tokens"] == service._FINAL_SUMMARY_MAX_TOKENS
+
+
+def test_unknown_summary_style_falls_back_to_standard(monkeypatch):
+    calls = fake_llm(monkeypatch, "resumo")
+
+    outcome = run(service.generate_summary(
+        discipline="Banco de Dados",
+        title="",
+        segments=["trecho da aula"],
+        style="completissimo",
+    ))
+
+    assert outcome["style"] == "standard"
+    assert "## Desenvolvimento da aula" not in calls[0]["message"]
+
+
+def test_detailed_partials_may_be_longer_than_standard_ones(monkeypatch):
+    fake_settings(monkeypatch, max_chars=2000, context_tokens=32000)
+    calls = fake_llm(monkeypatch, "parcial")
+
+    run(service.generate_summary(
+        discipline="Banco de Dados",
+        title="",
+        segments=["x" * 1500 for _ in range(4)],
+        llm="claude",
+        style="detailed",
+    ))
+
+    partial = calls[0]
+    assert "Este e um trecho de uma aula longa" in partial["message"]
+    assert "no maximo 16 linhas" in partial["message"]
+    assert partial["options"]["max_tokens"] == (
+        service._DETAILED_PARTIAL_SUMMARY_MAX_TOKENS
+    )
+
+
+def test_detailed_summary_reserves_more_window_on_local_models(monkeypatch):
+    fake_settings(monkeypatch, max_chars=24000, context_tokens=8192)
+
+    standard = service.summary_budget_chars("localai")
+    detailed = service.summary_budget_chars("localai", "detailed")
+
+    # A resposta longa do detalhado sai do espaco da transcricao: o bloco
+    # enviado ao modelo local encolhe para a aula nao estourar a janela.
+    assert detailed < standard
+    assert detailed > 800
+
+
 def test_summary_candidates_can_forbid_paid_fallback(monkeypatch):
     monkeypatch.setattr(
         service,

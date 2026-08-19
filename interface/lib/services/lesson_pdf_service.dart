@@ -144,6 +144,10 @@ String lessonPdfFilename(Lesson lesson) {
         ? lesson.classGroup
         : lesson.classLabels.join('-'),
     _formatDate(lesson.startedAt).split(' ').first.replaceAll('/', '-'),
+    // So o detalhado leva sufixo: assim o nome do resumo comum continua o
+    // mesmo de sempre e os dois formatos da mesma aula convivem na pasta.
+    if (summaryStyleOrStandard(lesson.summaryStyle) == summaryStyleDetailed)
+      'detalhado',
   ].where((part) => part.trim().isNotEmpty);
 
   final slug = parts
@@ -160,8 +164,9 @@ Future<Uint8List> buildLessonSummaryPdf({
   required String summary,
   List<LessonPoint> points = const [],
 }) async {
+  final style = summaryStyleOrStandard(lesson.summaryStyle);
   final document = pw.Document(
-    title: 'Resumo da aula - ${lesson.discipline}',
+    title: '${_styleTitle(style)} - ${lesson.discipline}',
     author: 'INTARQ',
   );
   final blocks = parseSummary(summary);
@@ -178,8 +183,8 @@ Future<Uint8List> buildLessonSummaryPdf({
         theme: await _pdfTheme(),
       ),
       header: (context) => context.pageNumber == 1
-          ? _buildBanner(lesson, turmas, brandMark)
-          : _buildRunningHeader(lesson, brandMark),
+          ? _buildBanner(lesson, turmas, brandMark, style)
+          : _buildRunningHeader(lesson, brandMark, style),
       footer: (context) => _buildFooter(context),
       build: (context) => [
         pw.SizedBox(height: 18),
@@ -192,10 +197,15 @@ Future<Uint8List> buildLessonSummaryPdf({
   return document.save();
 }
 
+/// Como o formato aparece escrito por extenso no PDF.
+String _styleTitle(String style) =>
+    style == summaryStyleDetailed ? 'Resumo detalhado' : 'Resumo comum';
+
 pw.Widget _buildBanner(
   Lesson lesson,
   String turmas,
   pw.MemoryImage? brandMark,
+  String style,
 ) {
   return pw.Container(
     width: double.infinity,
@@ -216,7 +226,7 @@ pw.Widget _buildBanner(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text(
-                'RESUMO DA AULA',
+                'RESUMO DA AULA   |   ${summaryStyleLabel(style)}',
                 style: pw.TextStyle(
                   fontSize: 9,
                   letterSpacing: 3,
@@ -291,6 +301,7 @@ pw.Widget _buildBanner(
 pw.Widget _buildRunningHeader(
   Lesson lesson,
   pw.MemoryImage? brandMark,
+  String style,
 ) {
   return pw.Container(
     margin: const pw.EdgeInsets.only(bottom: 12),
@@ -304,7 +315,8 @@ pw.Widget _buildRunningHeader(
         pw.Expanded(
           child: pw.Text(
             '${lesson.semester.isEmpty ? "" : "${lesson.semester}   |   "}'
-            '${lesson.discipline}   |   ${_formatDate(lesson.startedAt)}',
+            '${lesson.discipline}   |   ${_formatDate(lesson.startedAt)}'
+            '   |   ${_styleTitle(style)}',
             style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
           ),
         ),

@@ -465,6 +465,8 @@ class LessonModel(Base):
     summary        = Column(Text, nullable=True)
     summary_llm    = Column(String(80), nullable=True)
     summary_at     = Column(DateTime, nullable=True)
+    # "standard" ou "detailed": qual formato gerou o resumo guardado.
+    summary_style  = Column(String(16), nullable=True)
     segment_count  = Column(Integer, nullable=False, default=0)
     transcript_chars = Column(Integer, nullable=False, default=0)
     metadata_      = Column("metadata", JSON, default=dict)
@@ -593,6 +595,7 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "lessons": {
             "semester": "VARCHAR(16) NOT NULL DEFAULT ''",
+            "summary_style": "VARCHAR(16) NULL",
         },
         "lesson_segments": {
             "embedding_model": "VARCHAR(120) NULL",

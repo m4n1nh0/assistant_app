@@ -1012,6 +1012,7 @@ class LessonResponse(BaseModel):
     summary: Optional[str] = None
     summary_llm: Optional[str] = None
     summary_at: Optional[datetime] = None
+    summary_style: Optional[str] = None
     segment_count: int = 0
     transcript_chars: int = 0
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -1042,6 +1043,10 @@ class LessonSummaryRequest(BaseModel):
     llm: Optional[str] = None
     focus: str = ""
     close_lesson: bool = False
+    # "standard" cabe em uma tela; "detailed" reconstroi o desenvolvimento da
+    # aula. O servico normaliza: valor desconhecido vira o comum, e um cliente
+    # antigo que nao manda o campo continua recebendo o resumo de sempre.
+    style: str = "standard"
 
 
 class LessonSummaryResponse(BaseModel):
@@ -1050,6 +1055,7 @@ class LessonSummaryResponse(BaseModel):
     llm: str
     generated_at: datetime
     used_segments: int
+    style: str = "standard"
     points: List[LessonPointResponse] = Field(default_factory=list)
 
 

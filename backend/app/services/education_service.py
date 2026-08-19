@@ -370,6 +370,52 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 
+# Dois formatos de resumo: o comum cabe em uma tela e serve para revisar
+# depois da aula; o detalhado reconstroi o desenvolvimento e serve para quem
+# faltou ou vai estudar para a prova. A escolha muda o prompt, o tamanho da
+# resposta pedida ao modelo e, em modelo local, o tamanho do bloco enviado.
+STANDARD_SUMMARY_STYLE = "standard"
+DETAILED_SUMMARY_STYLE = "detailed"
+SUMMARY_STYLES = (STANDARD_SUMMARY_STYLE, DETAILED_SUMMARY_STYLE)
+
+
+def normalize_summary_style(value: Optional[str]) -> str:
+    """Aceita so os formatos conhecidos; qualquer outro vira o comum."""
+    style = (value or "").strip().lower()
+    return style if style in SUMMARY_STYLES else STANDARD_SUMMARY_STYLE
+
+
+_STANDARD_STRUCTURE = (
+    "## Resumo\n(2 a 4 paragrafos com o fio condutor da aula)\n"
+    "## Principais topicos\n(lista com os conceitos trabalhados)\n"
+    "## Definicoes e formulas\n(o que foi enunciado literalmente; omita a "
+    "secao se nao houver)\n"
+    "## Tarefas e avisos\n(trabalhos, prazos, datas de prova; omita se nao "
+    "houver)\n"
+    "## Duvidas levantadas\n(perguntas da turma e as respostas; omita se "
+    "nao houver)\n"
+)
+
+_DETAILED_STRUCTURE = (
+    "## Resumo geral\n(4 a 6 paragrafos com o fio condutor da aula)\n"
+    "## Desenvolvimento da aula\n(os assuntos na ordem em que foram tratados; "
+    "para cada um, o raciocinio que o professor construiu, e nao apenas o "
+    "titulo)\n"
+    "## Conceitos e definicoes\n(cada conceito com a definicao dada em aula e "
+    "a explicacao que a acompanhou)\n"
+    "## Formulas, demonstracoes e passo a passo\n(reproduza as etapas na ordem "
+    "apresentada, com a notacao usada; omita a secao se nao houver)\n"
+    "## Exemplos e exercicios resolvidos\n(enunciado, caminho da resolucao e "
+    "resultado; omita a secao se nao houver)\n"
+    "## Tarefas e avisos\n(trabalhos, prazos, datas de prova; omita se nao "
+    "houver)\n"
+    "## Duvidas levantadas\n(pergunta da turma e a resposta dada; omita se "
+    "nao houver)\n"
+    "## Pontos de atencao\n(o que o professor destacou como importante ou como "
+    "provavel cobranca em prova; omita se nao houver)\n"
+)
+
+
 def _summary_prompt(
     *,
     discipline: str,
@@ -377,37 +423,56 @@ def _summary_prompt(
     transcript: str,
     focus: str,
     partial: bool = False,
+    style: str = STANDARD_SUMMARY_STYLE,
 ) -> str:
     header = f"Disciplina: {discipline}"
     if title:
         header += f"\nAula: {title}"
     extra = f"\nDe atencao especial a: {focus}" if focus.strip() else ""
+    detailed = style == DETAILED_SUMMARY_STYLE
 
     if partial:
+        # O parcial do detalhado pode ser mais longo porque o resumo final
+        # precisa do desenvolvimento, e nao so do titulo de cada assunto.
+        length = (
+            "Responda em no maximo 16 linhas"
+            if detailed
+            else "Responda em no maximo 8 linhas"
+        )
+        keep = (
+            "termos tecnicos, definicoes na forma em que foram enunciadas, o "
+            "encadeamento do raciocinio, exemplos resolvidos com seus numeros "
+            "e qualquer tarefa ou data citada"
+            if detailed
+            else "termos tecnicos, definicoes, exemplos e qualquer tarefa ou "
+            "data citada"
+        )
         return (
             f"{header}{extra}\n\n"
-            "Este e um trecho de uma aula longa. Resuma o trecho preservando "
-            "termos tecnicos, definicoes, exemplos e qualquer tarefa ou data "
-            "citada. Normalize frases quebradas e corrija palavras claramente "
+            f"Este e um trecho de uma aula longa. Resuma o trecho preservando "
+            f"{keep}. Normalize frases quebradas e corrija palavras claramente "
             "transcritas de forma errada usando o contexto da disciplina, sem "
             "criar fatos nem completar passagens ambiguas. Nao escreva "
-            "introducao nem conclusao. Responda em no "
-            "maximo 8 linhas: os parciais sao juntados depois e precisam caber "
-            "na janela do modelo.\n\n"
+            f"introducao nem conclusao. {length}: os parciais sao juntados "
+            "depois e precisam caber na janela do modelo.\n\n"
             f'Trecho:\n"""\n{transcript}\n"""'
         )
 
+    depth = (
+        "Escreva um resumo detalhado: percorra a aula inteira, mantenha a "
+        "ordem em que os assuntos apareceram e preserve as definicoes, os "
+        "numeros e os passos como foram ditos. Prefira o detalhe a brevidade, "
+        "mas nao repita a mesma informacao em secoes diferentes.\n\n"
+        if detailed
+        else ""
+    )
+    structure = _DETAILED_STRUCTURE if detailed else _STANDARD_STRUCTURE
+
     return (
         f"{header}{extra}\n\n"
+        f"{depth}"
         "Monte o resumo da aula a partir da transcricao, nesta estrutura:\n"
-        "## Resumo\n(2 a 4 paragrafos com o fio condutor da aula)\n"
-        "## Principais topicos\n(lista com os conceitos trabalhados)\n"
-        "## Definicoes e formulas\n(o que foi enunciado literalmente; omita a "
-        "secao se nao houver)\n"
-        "## Tarefas e avisos\n(trabalhos, prazos, datas de prova; omita se nao "
-        "houver)\n"
-        "## Duvidas levantadas\n(perguntas da turma e as respostas; omita se "
-        "nao houver)\n\n"
+        f"{structure}\n"
         "Antes de redigir, ajuste mentalmente frases quebradas e erros evidentes "
         "de reconhecimento de fala usando a disciplina, o tema e as frases "
         "vizinhas. Use no resumo a forma corrigida quando ela for inequivoca. "
@@ -425,11 +490,30 @@ _CHARS_PER_TOKEN = 3.0
 # resposta que o modelo ainda precisa escrever.
 _PROMPT_TOKENS = 350
 _ANSWER_TOKENS = 700
+# O detalhado tem prompt maior (mais secoes) e pede uma resposta bem mais
+# longa; em modelo local isso precisa sair do espaco da transcricao, senao o
+# servidor corta o resumo no meio.
+_DETAILED_PROMPT_TOKENS = 520
+_DETAILED_ANSWER_TOKENS = 1600
 _LOCAL_PROVIDERS = frozenset({"localai", "llama"})
 # Rodadas de condensacao antes de aceitar o que ja foi resumido.
 _MAX_CONDENSE_ROUNDS = 4
 _PARTIAL_SUMMARY_MAX_TOKENS = 192
 _FINAL_SUMMARY_MAX_TOKENS = 512
+_DETAILED_PARTIAL_SUMMARY_MAX_TOKENS = 384
+_DETAILED_FINAL_SUMMARY_MAX_TOKENS = 1400
+
+
+def _partial_max_tokens(style: str) -> int:
+    if style == DETAILED_SUMMARY_STYLE:
+        return _DETAILED_PARTIAL_SUMMARY_MAX_TOKENS
+    return _PARTIAL_SUMMARY_MAX_TOKENS
+
+
+def _final_max_tokens(style: str) -> int:
+    if style == DETAILED_SUMMARY_STYLE:
+        return _DETAILED_FINAL_SUMMARY_MAX_TOKENS
+    return _FINAL_SUMMARY_MAX_TOKENS
 
 # Servidores compativeis com a API da OpenAI reclamam de contexto cheio de
 # formas diferentes; todos, porem, dizem o tamanho da janela na mensagem.
@@ -441,17 +525,30 @@ _CONTEXT_LIMIT_PATTERNS = (
 )
 
 
-def _budget_from_tokens(context_tokens: int) -> int:
-    usable = int(context_tokens) - _PROMPT_TOKENS - _ANSWER_TOKENS
+def _budget_from_tokens(
+    context_tokens: int,
+    style: str = STANDARD_SUMMARY_STYLE,
+) -> int:
+    if style == DETAILED_SUMMARY_STYLE:
+        reserved = _DETAILED_PROMPT_TOKENS + _DETAILED_ANSWER_TOKENS
+    else:
+        reserved = _PROMPT_TOKENS + _ANSWER_TOKENS
+    usable = int(context_tokens) - reserved
     return max(800, int(usable * _CHARS_PER_TOKEN))
 
 
-def summary_budget_chars(provider: str) -> int:
+def summary_budget_chars(
+    provider: str,
+    style: str = STANDARD_SUMMARY_STYLE,
+) -> int:
     """Quantos caracteres de transcricao cabem em uma chamada ao modelo."""
     ceiling = max(2000, settings.education_summary_max_chars)
     if provider not in _LOCAL_PROVIDERS:
         return ceiling
-    return min(ceiling, _budget_from_tokens(settings.local_llm_context_tokens))
+    return min(
+        ceiling,
+        _budget_from_tokens(settings.local_llm_context_tokens, style),
+    )
 
 
 def context_limit_from_error(message: str) -> Optional[int]:
@@ -595,6 +692,7 @@ async def _summarise_within(
     texts: Sequence[str],
     focus: str,
     budget: int,
+    style: str = STANDARD_SUMMARY_STYLE,
 ) -> Dict[str, Any]:
     """Condensa a aula em rodadas ate ela caber em uma unica chamada."""
     chunks = _windows(texts, budget)
@@ -618,8 +716,9 @@ async def _summarise_within(
                     transcript=chunk,
                     focus=focus,
                     partial=True,
+                    style=style,
                 ),
-                max_tokens=_PARTIAL_SUMMARY_MAX_TOKENS,
+                max_tokens=_partial_max_tokens(style),
             )
             if response.is_error:
                 error = response.content
@@ -679,8 +778,9 @@ async def _summarise_within(
             title=title,
             transcript=chunks[0],
             focus=focus,
+            style=style,
         ),
-        max_tokens=_FINAL_SUMMARY_MAX_TOKENS,
+        max_tokens=_final_max_tokens(style),
     )
     if response.is_error:
         logger.warning(f"Resumo falhou ({provider}): {response.content}")
@@ -717,9 +817,10 @@ async def _summarise_provider(
     title: str,
     texts: Sequence[str],
     focus: str,
+    style: str = STANDARD_SUMMARY_STYLE,
 ) -> Dict[str, Any]:
     """Executa um provedor e adapta uma vez a janela informada por ele."""
-    budget = summary_budget_chars(provider)
+    budget = summary_budget_chars(provider, style)
     outcome = await _summarise_within(
         provider=provider,
         discipline=discipline,
@@ -727,6 +828,7 @@ async def _summarise_provider(
         texts=texts,
         focus=focus,
         budget=budget,
+        style=style,
     )
     if outcome["summary"]:
         return outcome
@@ -737,7 +839,7 @@ async def _summarise_provider(
     if limit is None:
         return outcome
 
-    corrected = _budget_from_tokens(limit)
+    corrected = _budget_from_tokens(limit, style)
     if corrected >= budget:
         return outcome
 
@@ -751,6 +853,7 @@ async def _summarise_provider(
         texts=texts,
         focus=focus,
         budget=corrected,
+        style=style,
     )
 
 
@@ -788,6 +891,7 @@ class SummaryGraphState(TypedDict, total=False):
     title: str
     texts: List[str]
     focus: str
+    style: str
     requested_llm: Optional[str]
     providers: List[str]
     provider_index: int
@@ -803,10 +907,16 @@ async def _summary_resolve_node(state: SummaryGraphState) -> Dict[str, Any]:
 
 async def _summary_run_node(state: SummaryGraphState) -> Dict[str, Any]:
     provider = state["providers"][state["provider_index"]]
+    style = state.get("style", STANDARD_SUMMARY_STYLE)
     timeout = max(
         10,
         int(getattr(settings, "education_summary_provider_timeout_seconds", 180)),
     )
+    # O detalhado escreve quase tres vezes mais texto e, em modelo local,
+    # ainda parte a aula em mais blocos. Com o mesmo teto de tempo ele
+    # estouraria antes de terminar uma resposta que estava saindo bem.
+    if style == DETAILED_SUMMARY_STYLE:
+        timeout *= 2
     started = asyncio.get_running_loop().time()
     try:
         outcome = await asyncio.wait_for(
@@ -816,6 +926,7 @@ async def _summary_run_node(state: SummaryGraphState) -> Dict[str, Any]:
                 title=state["title"],
                 texts=state["texts"],
                 focus=state["focus"],
+                style=style,
             ),
             timeout=timeout,
         )
@@ -893,19 +1004,23 @@ async def generate_summary(
     segments: Sequence[str],
     llm: Optional[str] = None,
     focus: str = "",
+    style: str = STANDARD_SUMMARY_STYLE,
 ) -> Dict[str, Any]:
     """Resume a aula com LangGraph, janela adaptativa e fallback free-first."""
+    style = normalize_summary_style(style)
     texts = [text for text in segments if text and text.strip()]
     if not texts:
-        return {"summary": "", "llm": "", "used_segments": 0}
+        return {"summary": "", "llm": "", "used_segments": 0, "style": style}
 
     result = await summary_graph.ainvoke({
         "discipline": discipline,
         "title": title,
         "texts": texts,
         "focus": focus,
+        "style": style,
         "requested_llm": llm,
     })
     outcome = dict(result["outcome"])
     outcome["attempts"] = result.get("attempts", [])
+    outcome["style"] = style
     return outcome

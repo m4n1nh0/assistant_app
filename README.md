@@ -698,6 +698,17 @@ Pontos de atencao do fluxo:
   Qdrant. Se o indice estiver indisponivel, a correcao fica salva e entra na
   reindexacao pendente. Um resumo feito antes da correcao e invalidado para nao
   continuar mostrando a palavra errada e deve ser gerado novamente.
+- **O resumo tem dois formatos.** `COMUM` entrega o resumo de sempre — fio
+  condutor, principais topicos, definicoes, tarefas e duvidas — e cabe em uma
+  tela. `DETALHADO` reconstroi a aula: desenvolvimento na ordem em que foi
+  dada, conceitos com a explicacao que os acompanhou, demonstracoes passo a
+  passo, exemplos resolvidos e pontos de atencao para a prova. O detalhado pede
+  uma resposta bem maior ao modelo, entao recebe o dobro do tempo limite por
+  provedor e, em modelo local, reserva mais janela para a resposta — o bloco de
+  transcricao enviado por chamada encolhe na mesma medida. A escolha fica ao
+  lado do botao que gera o resumo, tanto na aula ao vivo quanto no historico,
+  e vai guardada na aula (`summary_style`): refazer o resumo de uma aula antiga
+  ja vem marcado com o formato usado da ultima vez.
 - **O resumo recupera frases reconheciveis.** Antes de redigir, o LLM usa
   disciplina, tema e frases vizinhas para corrigir silenciosamente palavras
   evidentemente transcritas de forma errada e reorganizar frases quebradas. A
@@ -736,6 +747,10 @@ Pontos de atencao do fluxo:
   embutido em `interface/assets/fonts` — sem uma TTF de verdade o `pdf` cai na
   Helvetica interna, que nao tem acento e devolveria "normalizacao" no lugar de
   "normalização". O semestre tambem aparece no nome sugerido para o arquivo.
+  O formato do resumo e identificado no documento: na etiqueta do topo da
+  primeira pagina, na faixa que se repete nas demais e no titulo do PDF. Um
+  resumo detalhado ainda recebe o sufixo `-detalhado` no nome do arquivo, para
+  os dois formatos da mesma aula conviverem na mesma pasta.
 - **A sessao e renovada durante a aula.** O token vale 24h; uma aula de duas
   horas com token velho estourava no meio e os blocos passavam a voltar 401.
   Agora o app chama `POST /auth/refresh` ao abrir, ao iniciar a aula e a cada 20
@@ -781,7 +796,7 @@ Endpoints principais:
 | `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
 | `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
 | `PATCH /education/lessons/{id}/segments/{segment_id}` | Corrige o texto e substitui seu vetor |
-| `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda |
+| `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda (`style`: `standard` ou `detailed`) |
 | `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
 | `GET /education/disciplines` | Disciplinas por status/semestre, com total de turmas |
