@@ -117,6 +117,37 @@ def test_registration_tool_routes_structured_action_to_interface():
     assert "cadastrar o atalho" in result["responses"][0].content
 
 
+def test_asking_for_a_script_goes_to_the_llm_instead_of_registering_a_shortcut(
+    monkeypatch,
+):
+    async def rank_providers(candidates, task="general", available_only=False):
+        return ["gpt"]
+
+    async def run_with_tools(
+        provider, message, history, system_prompt, tools, **kwargs
+    ):
+        return LLMResponse(llm=provider, content="Segue o script."), []
+
+    monkeypatch.setattr(
+        chat_graph_service.agent_service, "rank_auto_llms", rank_providers
+    )
+    monkeypatch.setattr(
+        chat_graph_service.agent_service.langchain_agent_service,
+        "run_with_tools",
+        run_with_tools,
+    )
+
+    result = run_graph(
+        message="Crie um script para backup automatico de arquivos "
+                "importantes, multiplataforma.",
+        active_llms=["gpt"],
+    )
+
+    assert result["action_kind"] == "chat"
+    assert result.get("action") is None
+    assert result["responses"][0].content == "Segue o script."
+
+
 def test_lesson_start_routes_to_education_interface_without_calling_llm(monkeypatch):
     async def fail_dispatch(*args, **kwargs):
         raise AssertionError("LLM dispatch should not run for an interface action")

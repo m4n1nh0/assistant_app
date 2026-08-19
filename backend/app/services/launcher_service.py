@@ -24,17 +24,47 @@ _LAUNCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Verbos que, no vocabulario deste app, so aparecem quando o usuario pede um
+# atalho.
+_REGISTER_SHORTCUT_VERBS = r"cadastre|cadastrar|registre|registrar"
+# Verbos de criacao em geral. "Crie um script para backup", "salve esse texto"
+# e "adicione um lembrete" nao sao pedidos de atalho: eles so contam quando a
+# frase diz que o objeto e um atalho/app ou traz um caminho ou uma URL.
+_REGISTER_GENERIC_VERBS = (
+    r"salve|salvar|crie|criar|adicione|adicionar|inclua|incluir"
+)
+
 _REGISTER_RE = re.compile(
-    r"\b(cadastre|cadastrar|registre|registrar|salve|salvar|"
-    r"crie|criar|adicione|adicionar|inclua|incluir)\b",
+    rf"\b({_REGISTER_SHORTCUT_VERBS}|{_REGISTER_GENERIC_VERBS})\b",
     re.IGNORECASE,
 )
 
+_REGISTER_SHORTCUT_VERB_RE = re.compile(
+    rf"\b({_REGISTER_SHORTCUT_VERBS})\b",
+    re.IGNORECASE,
+)
+
+# O que faz a frase falar de atalho, e nao de um arquivo qualquer que o
+# usuario esta pedindo para a IA escrever.
+_SHORTCUT_OBJECT_RE = re.compile(
+    r"\b(atalho|atalhos|shortcut|shortcuts|app|apps|aplicativo|aplicativos|"
+    r"programa|programas|executavel|executaveis)\b|\.(?:exe|lnk)\b",
+    re.IGNORECASE,
+)
+
+# Endereco escrito por extenso. Deliberadamente mais restrito que `_URL_RE`,
+# que aceita qualquer token com ponto: em "crie um script que leia
+# config.json" o nome do arquivo nao pode virar destino de atalho.
+_EXPLICIT_URL_RE = re.compile(r"(?:https?://|www\.)", re.IGNORECASE)
+
+# O `\b` no fim de cada palavra de ligacao e obrigatorio: sem ele o `a` da
+# alternancia casava com a primeira letra de "atalho" e o nome do atalho saia
+# comecando no meio da palavra ("crie um atalho para o Chrome" virava
+# "talho para o Chrome").
 _REGISTER_COMMAND_RE = re.compile(
-    r"\b(?:cadastre|cadastrar|registre|registrar|salve|salvar|"
-    r"crie|criar|adicione|adicionar|inclua|incluir)\b"
+    rf"\b(?:{_REGISTER_SHORTCUT_VERBS}|{_REGISTER_GENERIC_VERBS})\b"
     r"(?:\s+(?:um|uma|o|a|novo|nova|atalho|programa|app|"
-    r"aplicativo|execucao|do|da|de|para))*\s*",
+    r"aplicativo|execucao|do|da|de|para)\b)*\s*",
     re.IGNORECASE,
 )
 
@@ -149,7 +179,23 @@ def detect_launch_keywords(message: str) -> bool:
 
 
 def detect_registration_keywords(message: str) -> bool:
-    return bool(_REGISTER_RE.search(_fold(message)))
+    """Diz se a frase pede o cadastro de um atalho.
+
+    "cadastre"/"registre" bastam, porque aqui so sao usados para isso. Verbo
+    de criacao generico precisa de prova de que o objeto e um atalho: a
+    palavra (atalho, app, programa) ou um destino concreto — caminho do
+    Windows ou URL. Sem essa exigencia, "crie um script para backup
+    automatico de arquivos" virava cadastro de atalho em vez de resposta no
+    chat.
+    """
+    folded = _fold(message)
+    if not _REGISTER_RE.search(folded):
+        return False
+    if _REGISTER_SHORTCUT_VERB_RE.search(folded):
+        return True
+    if _SHORTCUT_OBJECT_RE.search(folded):
+        return True
+    return bool(_EXPLICIT_URL_RE.search(folded) or _first_windows_path(message))
 
 
 def _fold(text: str) -> str:

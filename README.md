@@ -309,6 +309,16 @@ escolhido: classifica o pedido (`code`, `study`, `calendar`, `general`) e, so
 quando e estudo, busca trechos das aulas gravadas no Qdrant e os anexa ao
 prompt. A busca vetorial nao roda no caminho comum de conversa.
 
+O no `detect_action` so desvia do chat quando a frase pede mesmo uma acao
+local. No cadastro de atalho, "cadastre" e "registre" bastam, porque aqui so
+sao usados para isso; verbo de criacao generico ("crie", "adicione", "salve",
+"inclua") exige que a frase diga que o objeto e um atalho — a palavra `atalho`,
+`app`, `programa`, `executavel` — ou traga um destino concreto: caminho do
+Windows ou URL escrita com `http://`/`www.`. Sem essa exigencia, "crie um
+script para backup automatico de arquivos" era lido como pedido de atalho e
+nunca chegava ao provedor. Nome de arquivo com ponto (`config.json`) nao conta
+como destino: so URL por extenso.
+
 O modo `single` passa por especialistas. O roteador escolhe quem atende a
 partir da tarefa, o especialista recebe apenas as ferramentas da area dele e
 pode transferir a conversa (A2A) quando o pedido nao for seu. A transferencia e

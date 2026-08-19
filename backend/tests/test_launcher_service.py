@@ -171,6 +171,43 @@ def test_build_shortcut_registration_action_extracts_url_and_name():
     assert action.target_type.value == "url"
 
 
+def test_asking_for_a_script_is_not_a_shortcut_request():
+    # "Crie" sozinho nao e pedido de atalho: o usuario quer o script escrito
+    # na resposta, e a frase virava cadastro de atalho com o pedido inteiro
+    # no lugar do nome.
+    assert launcher_service.build_shortcut_registration_action(
+        "Crie um script para backup automatico de arquivos importantes, "
+        "multiplataforma."
+    ) is None
+
+
+def test_file_name_in_a_code_request_is_not_a_shortcut_target():
+    # `config.json` tem a forma de dominio; so URL escrita por extenso conta
+    # como destino de atalho.
+    assert launcher_service.build_shortcut_registration_action(
+        "crie uma funcao em python que leia config.json"
+    ) is None
+
+
+def test_generic_verb_registers_when_the_message_says_atalho():
+    action = launcher_service.build_shortcut_registration_action(
+        "Crie um atalho para o Visual Studio Code"
+    )
+
+    assert action is not None
+    # A palavra "atalho" e consumida como ligacao; o nome comeca depois dela.
+    assert action.name == "Visual Studio Code"
+
+
+def test_generic_verb_registers_when_the_message_says_app():
+    action = launcher_service.build_shortcut_registration_action(
+        "adicione o app Spotify"
+    )
+
+    assert action is not None
+    assert action.name == "Spotify"
+
+
 def test_registration_intent_is_detected_even_with_open_word():
     registration = launcher_service.build_shortcut_registration_action(
         "cadastre o visual studio code para abrir depois"
