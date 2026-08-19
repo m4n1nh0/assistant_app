@@ -10,8 +10,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:record/record.dart';
 
+import '../models/app_config.dart';
 import '../services/api_service.dart';
 import '../services/audio_input_service.dart';
+import '../services/connected_ai_service.dart';
 import '../services/education_service.dart';
 import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
@@ -267,6 +269,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   var _elapsed = Duration.zero;
   var _status = '';
   var _summaryStyle = summaryStyleStandard;
+  /// Quem escreve o resumo: '' = fila automatica do backend.
+  var _summaryEngine = '';
   String? _summary;
   /// Formato do resumo exibido no painel, que pode diferir do escolhido para
   /// a proxima geracao.
@@ -602,20 +606,24 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     }
 
     setState(() => _summarising = true);
+    final quem = _engineLabel(_summaryEngine, ref.read(configProvider));
     _setStatus(_summaryStyle == summaryStyleDetailed
-        ? 'Gerando resumo detalhado (leva mais tempo que o comum)...'
-        : 'Gerando resumo...');
+        ? 'Gerando resumo detalhado com $quem (leva mais tempo)...'
+        : 'Gerando resumo com $quem...');
     try {
-      final summary = await education.generateSummary(
-        lesson.id,
+      final summary = await _runSummary(
+        lessonId: lesson.id,
+        style: _summaryStyle,
+        engine: _summaryEngine,
+        config: ref.read(configProvider),
         focus: _focusCtrl.text.trim(),
         closeLesson: close,
-        style: _summaryStyle,
+        onProgress: _setStatus,
       );
       InAppNotificationService.showSummaryReady(
         discipline: lesson.discipline,
         title: lesson.title,
-        llm: summary.llm,
+        llm: _engineLabel(summary.llm, ref.read(configProvider)),
         usedSegments: summary.usedSegments,
         style: summary.style,
       );
@@ -628,7 +636,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           ..addAll(summary.points);
       });
       _setStatus('Resumo ${summaryStyleLabel(summary.style).toLowerCase()} '
-          'pronto (${summary.llm}, ${summary.usedSegments} trechos).');
+          'pronto (${_engineLabel(summary.llm, ref.read(configProvider))}, '
+          '${summary.usedSegments} trechos).');
       if (close) {
         final refreshed =
             await education.getLesson(lesson.id, includeSegments: false);
@@ -1099,14 +1108,23 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           ),
         ),
         const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: _SummaryStylePicker(
-            style: _summaryStyle,
-            enabled: !_summarising,
-            showLabel: true,
-            onChanged: (style) => setState(() => _summaryStyle = style),
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _SummaryStylePicker(
+              style: _summaryStyle,
+              enabled: !_summarising,
+              showLabel: true,
+              onChanged: (style) => setState(() => _summaryStyle = style),
+            ),
+            const Spacer(),
+            _SummaryEnginePicker(
+              engine: _summaryEngine,
+              config: ref.watch(configProvider),
+              enabled: !_summarising,
+              onChanged: (engine) => setState(() => _summaryEngine = engine),
+            ),
+          ],
         ),
         const SizedBox(height: 10),
         _Field(
@@ -1117,6 +1135,69 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       ],
     );
   }
+}
+
+/// Como o motor escolhido aparece escrito na interface.
+String _engineLabel(String engine, AppConfig? config) {
+  if (engine.isEmpty) return 'automatico';
+  if (AppConfig.connectedAgentIds.contains(engine)) {
+    return AppConfig.serviceLabel(engine);
+  }
+  return config?.serviceName(engine) ?? AppConfig.serviceLabel(engine);
+}
+
+/// Gera o resumo pelo motor escolhido e devolve o que ficou salvo na aula.
+///
+/// Provedor do backend: o servidor le a transcricao, resume e grava. Agente
+/// conectado (Codex, Claude Code): o backend so entrega o prompt, o CLI do
+/// usuario escreve o resumo com a aula inteira em uma chamada — a janela dele
+/// dispensa a mapa-reducao — e o texto volta para ser gravado na aula.
+Future<LessonSummary> _runSummary({
+  required String lessonId,
+  required String style,
+  required String engine,
+  AppConfig? config,
+  String focus = '',
+  bool closeLesson = false,
+  void Function(String activity)? onProgress,
+}) async {
+  if (!AppConfig.connectedAgentIds.contains(engine)) {
+    return education.generateSummary(
+      lessonId,
+      llm: engine.isEmpty ? null : engine,
+      focus: focus,
+      closeLesson: closeLesson,
+      style: style,
+    );
+  }
+
+  final built = await education.summaryPrompt(
+    lessonId,
+    style: style,
+    focus: focus,
+  );
+  onProgress?.call(
+    '${AppConfig.serviceLabel(engine)} lendo a aula '
+    '(${built.transcriptChars} caracteres em uma chamada)...',
+  );
+  final result = await ConnectedAiService.run(
+    agentId: engine,
+    prompt: built.prompt,
+    systemPrompt: built.systemPrompt,
+    language: config?.language ?? 'pt-BR',
+    // Aula inteira de uma vez: leva mais que uma resposta de chat.
+    timeoutOverride: const Duration(minutes: 15),
+    onProgress: onProgress,
+  );
+  if (result.isError) throw EducationException(result.content);
+
+  return education.saveExternalSummary(
+    lessonId,
+    summary: result.content,
+    llm: engine,
+    style: built.style,
+    closeLesson: closeLesson,
+  );
 }
 
 class _PendingChunk {
@@ -2382,16 +2463,16 @@ class _RosterTabState extends State<_RosterTab> {
 
 // --- Historico de aulas ----------------------------------------------------
 
-class _HistoryTab extends StatefulWidget {
+class _HistoryTab extends ConsumerStatefulWidget {
   final _Classes classes;
 
   const _HistoryTab({required this.classes});
 
   @override
-  State<_HistoryTab> createState() => _HistoryTabState();
+  ConsumerState<_HistoryTab> createState() => _HistoryTabState();
 }
 
-class _HistoryTabState extends State<_HistoryTab> {
+class _HistoryTabState extends ConsumerState<_HistoryTab> {
   DateTime? _from;
   DateTime? _to;
   List<Lesson> _lessons = [];
@@ -2401,6 +2482,7 @@ class _HistoryTabState extends State<_HistoryTab> {
   var _summarising = false;
   var _exporting = false;
   var _summaryStyle = summaryStyleStandard;
+  var _summaryEngine = '';
   var _status = '';
 
   @override
@@ -2636,19 +2718,28 @@ class _HistoryTabState extends State<_HistoryTab> {
   /// Resumo de aula antiga: o backend le a transcricao guardada e devolve o
   /// texto, mesmo que a aula ja esteja encerrada.
   Future<void> _summarise(LessonDetail detail) async {
+    final config = ref.read(configProvider);
+    final quem = _engineLabel(_summaryEngine, config);
     setState(() {
       _summarising = true;
       _status = _summaryStyle == summaryStyleDetailed
-          ? 'Gerando resumo detalhado da aula (leva mais tempo que o comum)...'
-          : 'Gerando resumo da aula...';
+          ? 'Gerando resumo detalhado da aula com $quem (leva mais tempo)...'
+          : 'Gerando resumo da aula com $quem...';
     });
     try {
-      final summary =
-          await education.generateSummary(detail.id, style: _summaryStyle);
+      final summary = await _runSummary(
+        lessonId: detail.id,
+        style: _summaryStyle,
+        engine: _summaryEngine,
+        config: config,
+        onProgress: (activity) {
+          if (mounted) setState(() => _status = activity);
+        },
+      );
       InAppNotificationService.showSummaryReady(
         discipline: detail.discipline,
         title: detail.title,
-        llm: summary.llm,
+        llm: _engineLabel(summary.llm, config),
         usedSegments: summary.usedSegments,
         style: summary.style,
       );
@@ -2658,7 +2749,8 @@ class _HistoryTabState extends State<_HistoryTab> {
           _showTranscript = false;
           _status =
               'Resumo ${summaryStyleLabel(summary.style).toLowerCase()} pronto '
-              '(${summary.llm}, ${summary.usedSegments} trechos).';
+              '(${_engineLabel(summary.llm, config)}, '
+              '${summary.usedSegments} trechos).';
         });
       }
     } catch (e) {
@@ -2735,6 +2827,13 @@ class _HistoryTabState extends State<_HistoryTab> {
           style: _summaryStyle,
           enabled: !_summarising && detail.segments.isNotEmpty,
           onChanged: (style) => setState(() => _summaryStyle = style),
+        ),
+        const SizedBox(width: 10),
+        _SummaryEnginePicker(
+          engine: _summaryEngine,
+          config: ref.watch(configProvider),
+          enabled: !_summarising && detail.segments.isNotEmpty,
+          onChanged: (engine) => setState(() => _summaryEngine = engine),
         ),
         const SizedBox(width: 8),
         OutlinedButton.icon(
@@ -4002,6 +4101,101 @@ class _SummaryStylePicker extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(3),
         ),
+      ),
+    );
+  }
+}
+
+/// Escolha de quem escreve o resumo: a fila automatica do backend, um
+/// provedor configurado (Claude, GPT, Gemini...) ou um agente conectado que
+/// roda no proprio computador (Codex, Claude Code).
+class _SummaryEnginePicker extends StatelessWidget {
+  final String engine;
+  final AppConfig config;
+  final ValueChanged<String> onChanged;
+  final bool enabled;
+
+  const _SummaryEnginePicker({
+    required this.engine,
+    required this.config,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final backend = config.activeList;
+    final connected = config.connectedAgentList;
+    // A selecao pode ter perdido validade: provedor desativado, agente que
+    // saiu do ar. Nesse caso o seletor volta a mostrar o automatico.
+    final current =
+        backend.contains(engine) || connected.contains(engine) ? engine : '';
+
+    return SizedBox(
+      height: 30,
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: current,
+          isDense: true,
+          focusColor: Colors.transparent,
+          dropdownColor: AssistantTheme.surface,
+          borderRadius: BorderRadius.circular(3),
+          icon: const Icon(Icons.arrow_drop_down,
+              size: 16, color: AssistantTheme.textMuted),
+          style: const TextStyle(fontSize: 10, color: AssistantTheme.c2),
+          selectedItemBuilder: (_) => [
+            for (final item in ['', ...backend, ...connected])
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'IA: ${_engineLabel(item, config).toUpperCase()}',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 0.6,
+                    color: AssistantTheme.c2,
+                  ),
+                ),
+              ),
+          ],
+          items: [
+            _item('', 'Automatico', 'a fila do backend, do gratuito ao pago'),
+            for (final id in backend)
+              _item(id, config.serviceName(id), 'provedor do backend'),
+            for (final id in connected)
+              _item(
+                id,
+                AppConfig.serviceLabel(id),
+                'roda neste computador, aula inteira de uma vez',
+              ),
+          ],
+          onChanged: enabled ? (value) => onChanged(value ?? '') : null,
+        ),
+      ),
+    );
+  }
+
+  DropdownMenuItem<String> _item(String value, String label, String hint) {
+    return DropdownMenuItem(
+      value: value,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              color: AssistantTheme.textPrimary,
+            ),
+          ),
+          Text(
+            hint,
+            style: const TextStyle(
+              fontSize: 9,
+              color: AssistantTheme.textMuted,
+            ),
+          ),
+        ],
       ),
     );
   }

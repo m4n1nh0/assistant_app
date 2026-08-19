@@ -212,3 +212,130 @@ def test_cannot_correct_segment_from_another_lesson(monkeypatch):
         )
 
     assert exc_info.value.status_code == 404
+
+
+# --- Resumo escrito por um agente conectado --------------------------------
+
+
+class ExternalSummaryDb:
+    """Banco do caminho de resumo externo: transcricao, commit e pontuacoes."""
+
+    def __init__(self, lesson, segments):
+        self.lesson = lesson
+        self.segments = segments
+        self.commits = 0
+
+    async def get(self, _model, item_id):
+        return self.lesson if item_id == self.lesson.id else None
+
+    async def execute(self, query):
+        if "lesson_points" in str(query):
+            return _Result([])
+        return _Result(self.segments)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _item):
+        pass
+
+
+def _segments(total=3):
+    return [
+        SimpleNamespace(id=f"s{i}", text=f"trecho {i}", sequence=i)
+        for i in range(1, total + 1)
+    ]
+
+
+def test_connected_agent_prompt_carries_the_whole_lesson():
+    lesson = _lesson()
+    lesson.summary_style = None
+    db = ExternalSummaryDb(lesson, _segments())
+
+    built = run(
+        education.lesson_summary_prompt(
+            "l1",
+            style="detailed",
+            user={"tutor_id": "t1"},
+            db=db,
+        )
+    )
+
+    # Agente conectado tem janela para a aula inteira: o prompt vai completo,
+    # sem os parciais que a mapa-reducao precisa fazer nos provedores comuns.
+    assert built.style == "detailed"
+    assert built.used_segments == 3
+    assert "## Desenvolvimento da aula" in built.prompt
+    for trecho in ("trecho 1", "trecho 2", "trecho 3"):
+        assert trecho in built.prompt
+    assert built.system_prompt
+
+
+def test_external_summary_is_stored_with_the_agent_that_wrote_it():
+    lesson = _lesson()
+    lesson.summary_style = None
+    lesson.status = "recording"
+    lesson.ended_at = None
+    db = ExternalSummaryDb(lesson, _segments())
+
+    response = run(
+        education.store_external_summary(
+            "l1",
+            education.ExternalLessonSummaryRequest(
+                summary="## Resumo geral\nA aula tratou de normalizacao.",
+                llm="claude_cli",
+                style="detailed",
+                close_lesson=True,
+            ),
+            user={"tutor_id": "t1"},
+            db=db,
+        )
+    )
+
+    assert response.llm == "claude_cli"
+    assert response.style == "detailed"
+    assert response.used_segments == 3
+    assert lesson.summary_style == "detailed"
+    assert lesson.status == "closed"
+    assert db.commits == 1
+
+
+def test_external_summary_refuses_empty_text():
+    lesson = _lesson()
+    db = ExternalSummaryDb(lesson, _segments())
+
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.store_external_summary(
+                "l1",
+                education.ExternalLessonSummaryRequest(
+                    summary="   ", llm="codex_cli",
+                ),
+                user={"tutor_id": "t1"},
+                db=db,
+            )
+        )
+
+    assert error.value.status_code == 400
+    # O resumo anterior continua no lugar: um agente que devolveu vazio nao
+    # pode apagar o que ja estava salvo.
+    assert lesson.summary == "resumo antigo"
+
+
+def test_external_summary_belongs_to_the_tutor_that_owns_the_lesson():
+    lesson = _lesson()
+    db = ExternalSummaryDb(lesson, _segments())
+
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.store_external_summary(
+                "l1",
+                education.ExternalLessonSummaryRequest(
+                    summary="resumo", llm="codex_cli",
+                ),
+                user={"tutor_id": "outro"},
+                db=db,
+            )
+        )
+
+    assert error.value.status_code == 404

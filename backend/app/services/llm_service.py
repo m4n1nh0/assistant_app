@@ -98,11 +98,18 @@ def _format_history(history: List[Message]) -> List[dict]:
     return [{"role": m.role, "content": m.content} for m in history if m.role != "system"]
 
 
+# Teto de saida usado quando quem chama nao pede outro. Vale para o chat, em
+# que resposta curta e o esperado; tarefas que precisam escrever mais, como o
+# resumo de aula, informam o proprio teto.
+_DEFAULT_MAX_TOKENS = 2000
+
+
 async def call_claude(
     message: str,
     history: List[Message],
     system_prompt: str,
     stream: bool = False,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     api_key = _claude_api_key()
     if not api_key:
@@ -116,7 +123,7 @@ async def call_claude(
 
         response = await client.messages.create(
             model=settings.claude_model,
-            max_tokens=2000,
+            max_tokens=max_tokens or _DEFAULT_MAX_TOKENS,
             system=system_prompt,
             messages=messages,
         )
@@ -148,7 +155,10 @@ async def stream_claude(
 
 
 async def call_gpt(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     if not settings.openai_api_key:
         return LLMResponse(llm="gpt", content="Credencial não configurada", is_error=True)
@@ -160,7 +170,9 @@ async def call_gpt(
                    _format_history(history) + \
                    [{"role": "user", "content": message}]
         resp = await client.chat.completions.create(
-            model=settings.openai_model, max_tokens=2000, messages=messages
+            model=settings.openai_model,
+            max_tokens=max_tokens or _DEFAULT_MAX_TOKENS,
+            messages=messages,
         )
         return LLMResponse(
             llm="gpt",
@@ -183,6 +195,7 @@ async def call_openai_compatible(
     system_prompt: str,
     extra_headers: Optional[dict] = None,
     require_api_key: bool = True,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     if require_api_key and not api_key:
         return LLMResponse(llm=service_id, content="Credencial não configurada", is_error=True)
@@ -198,7 +211,11 @@ async def call_openai_compatible(
             resp = await client.post(
                 url,
                 headers=headers,
-                json={"model": model, "max_tokens": 2000, "messages": messages},
+                json={
+                    "model": model,
+                    "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
+                    "messages": messages,
+                },
             )
         data = _json_response(resp)
         if resp.is_error:
@@ -224,7 +241,10 @@ async def call_openai_compatible(
 
 
 async def call_together(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     return await call_openai_compatible(
         "together",
@@ -234,11 +254,15 @@ async def call_together(
         message,
         history,
         system_prompt,
+        max_tokens=max_tokens,
     )
 
 
 async def call_openrouter(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     return await call_openai_compatible(
         "openrouter",
@@ -249,11 +273,15 @@ async def call_openrouter(
         history,
         system_prompt,
         {"HTTP-Referer": "http://localhost", "X-Title": "Assistant App"},
+        max_tokens=max_tokens,
     )
 
 
 async def call_deepseek(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     return await call_openai_compatible(
         "deepseek",
@@ -263,6 +291,7 @@ async def call_deepseek(
         message,
         history,
         system_prompt,
+        max_tokens=max_tokens,
     )
 
 
@@ -283,7 +312,10 @@ async def stream_gpt(
 
 
 async def call_gemini(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     if not settings.gemini_api_key:
         return LLMResponse(llm="gemini", content="Credencial não configurada", is_error=True)
@@ -306,7 +338,9 @@ async def call_gemini(
             resp = await client.post(url, json={
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": contents,
-                "generationConfig": {"maxOutputTokens": 2000},
+                "generationConfig": {
+                    "maxOutputTokens": max_tokens or _DEFAULT_MAX_TOKENS,
+                },
             })
         data = _json_response(resp)
         if not isinstance(data, dict):
@@ -324,7 +358,10 @@ async def call_gemini(
 
 
 async def call_grok(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     if not settings.grok_api_key:
         return LLMResponse(llm="grok", content="Credencial não configurada", is_error=True)
@@ -338,7 +375,7 @@ async def call_grok(
                 headers={"Authorization": f"Bearer {settings.grok_api_key}"},
                 json={
                     "model": settings.active_grok_model,
-                    "max_tokens": 2000,
+                    "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
                     "messages": messages,
                 },
             )
@@ -574,7 +611,10 @@ async def stream_llama(
 
 
 async def call_hf(
-    message: str, history: List[Message], system_prompt: str
+    message: str,
+    history: List[Message],
+    system_prompt: str,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     if not settings.huggingface_api_key:
         return LLMResponse(llm="hf", content="Credencial não configurada", is_error=True)
@@ -589,7 +629,13 @@ async def call_hf(
             resp = await client.post(
                 "https://router.huggingface.co/v1/chat/completions",
                 headers={"Authorization": f"Bearer {settings.huggingface_api_key}"},
-                json={"model": model, "max_tokens": 500, "messages": messages},
+                json={
+                    "model": model,
+                    # O router da HF cobra por token e costuma servir modelos
+                    # pequenos: o padrao daqui e menor que o dos outros.
+                    "max_tokens": max_tokens or 500,
+                    "messages": messages,
+                },
             )
         data = _json_response(resp)
         if resp.is_error:
@@ -665,7 +711,12 @@ async def dispatch_single(
                 content=f"Serviço '{llm}' desconhecido",
                 is_error=True,
             )
-        response = await caller(message, history, system_prompt)
+        # So repassa quando quem chamou pediu um teto: sem isso o provedor
+        # mantem o proprio padrao. O resumo de aula depende deste repasse —
+        # sem ele, o teto do chat (2000 tokens) cortava o resumo detalhado no
+        # meio em todo provedor de nuvem.
+        options = {"max_tokens": max_tokens} if max_tokens is not None else {}
+        response = await caller(message, history, system_prompt, **options)
 
     if response.is_error:
         await mark_llm_failure(llm, response.content)

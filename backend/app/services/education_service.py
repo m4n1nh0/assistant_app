@@ -424,6 +424,7 @@ def _summary_prompt(
     focus: str,
     partial: bool = False,
     style: str = STANDARD_SUMMARY_STYLE,
+    partial_lines: int = 8,
 ) -> str:
     header = f"Disciplina: {discipline}"
     if title:
@@ -432,13 +433,10 @@ def _summary_prompt(
     detailed = style == DETAILED_SUMMARY_STYLE
 
     if partial:
-        # O parcial do detalhado pode ser mais longo porque o resumo final
-        # precisa do desenvolvimento, e nao so do titulo de cada assunto.
-        length = (
-            "Responda em no maximo 16 linhas"
-            if detailed
-            else "Responda em no maximo 8 linhas"
-        )
+        # O tamanho do parcial vem do espaco que sobra na chamada final, nao
+        # de um numero fixo: e o que permite um parcial longo o bastante para
+        # o resumo detalhado ter de onde tirar o desenvolvimento da aula.
+        length = f"Responda em no maximo {partial_lines} linhas"
         keep = (
             "termos tecnicos, definicoes na forma em que foram enunciadas, o "
             "encadeamento do raciocinio, exemplos resolvidos com seus numeros "
@@ -458,6 +456,8 @@ def _summary_prompt(
             f'Trecho:\n"""\n{transcript}\n"""'
         )
 
+    # O tamanho do resumo e decidido aqui, no prompt, e nao por um corte de
+    # tokens: cada formato diz explicitamente ate onde deve ir.
     depth = (
         "Escreva um resumo detalhado: percorra a aula inteira, mantenha a "
         "ordem em que os assuntos apareceram e preserve as definicoes, os "
@@ -466,6 +466,14 @@ def _summary_prompt(
         if detailed
         else ""
     )
+    extent = (
+        "Escreva cada secao ate o conteudo da aula sobre ela acabar; nao "
+        "encurte para economizar espaco. Este resumo substitui a aula para "
+        "quem faltou, entao ele e naturalmente longo."
+        if detailed
+        else "Mantenha o resumo enxuto: ele e para revisar depois da aula e "
+        "precisa caber em uma tela."
+    )
     structure = _DETAILED_STRUCTURE if detailed else _STANDARD_STRUCTURE
 
     return (
@@ -473,6 +481,7 @@ def _summary_prompt(
         f"{depth}"
         "Monte o resumo da aula a partir da transcricao, nesta estrutura:\n"
         f"{structure}\n"
+        f"{extent}\n\n"
         "Antes de redigir, ajuste mentalmente frases quebradas e erros evidentes "
         "de reconhecimento de fala usando a disciplina, o tema e as frases "
         "vizinhas. Use no resumo a forma corrigida quando ela for inequivoca. "
@@ -488,32 +497,34 @@ def _summary_prompt(
 _CHARS_PER_TOKEN = 3.0
 # O que ocupa a janela alem da transcricao: as instrucoes do prompt e a
 # resposta que o modelo ainda precisa escrever.
-_PROMPT_TOKENS = 350
-_ANSWER_TOKENS = 700
-# O detalhado tem prompt maior (mais secoes) e pede uma resposta bem mais
-# longa; em modelo local isso precisa sair do espaco da transcricao, senao o
-# servidor corta o resumo no meio.
-_DETAILED_PROMPT_TOKENS = 520
-_DETAILED_ANSWER_TOKENS = 1600
+_PROMPT_TOKENS = 520
 _LOCAL_PROVIDERS = frozenset({"localai", "llama"})
 # Rodadas de condensacao antes de aceitar o que ja foi resumido.
 _MAX_CONDENSE_ROUNDS = 4
-_PARTIAL_SUMMARY_MAX_TOKENS = 192
-_FINAL_SUMMARY_MAX_TOKENS = 512
-_DETAILED_PARTIAL_SUMMARY_MAX_TOKENS = 384
-_DETAILED_FINAL_SUMMARY_MAX_TOKENS = 1400
+
+# Teto de saida de uma chamada de resumo. Nao esta aqui para encurtar o
+# resumo — quem diz o tamanho e a estrutura do resumo e o prompt — e sim
+# porque provedor nenhum aceita resposta sem limite. O valor e alto de
+# proposito: um resumo detalhado de aula inteira cabe folgado abaixo dele, e
+# nenhum dos dois formatos deve terminar cortado no meio de uma frase.
+_SUMMARY_ANSWER_TOKENS = 4000
+# Fracao da janela local que pode virar resposta. O modelo local divide o
+# mesmo espaco entre a transcricao que le e o resumo que escreve; reservar
+# demais deixa a aula de fora, reservar de menos corta o resumo.
+_LOCAL_ANSWER_SHARE = 0.34
 
 
-def _partial_max_tokens(style: str) -> int:
-    if style == DETAILED_SUMMARY_STYLE:
-        return _DETAILED_PARTIAL_SUMMARY_MAX_TOKENS
-    return _PARTIAL_SUMMARY_MAX_TOKENS
+def _answer_tokens_for_window(window: int) -> int:
+    return max(768, min(_SUMMARY_ANSWER_TOKENS, int(int(window) * _LOCAL_ANSWER_SHARE)))
 
 
-def _final_max_tokens(style: str) -> int:
-    if style == DETAILED_SUMMARY_STYLE:
-        return _DETAILED_FINAL_SUMMARY_MAX_TOKENS
-    return _FINAL_SUMMARY_MAX_TOKENS
+def _answer_tokens(provider: str) -> int:
+    """Quanto de saida uma chamada de resumo pode ocupar neste provedor."""
+    if provider not in _LOCAL_PROVIDERS:
+        return _SUMMARY_ANSWER_TOKENS
+    return _answer_tokens_for_window(
+        getattr(settings, "local_llm_context_tokens", 8192)
+    )
 
 # Servidores compativeis com a API da OpenAI reclamam de contexto cheio de
 # formas diferentes; todos, porem, dizem o tamanho da janela na mensagem.
@@ -525,30 +536,42 @@ _CONTEXT_LIMIT_PATTERNS = (
 )
 
 
-def _budget_from_tokens(
-    context_tokens: int,
-    style: str = STANDARD_SUMMARY_STYLE,
-) -> int:
-    if style == DETAILED_SUMMARY_STYLE:
-        reserved = _DETAILED_PROMPT_TOKENS + _DETAILED_ANSWER_TOKENS
-    else:
-        reserved = _PROMPT_TOKENS + _ANSWER_TOKENS
-    usable = int(context_tokens) - reserved
+def _budget_from_tokens(context_tokens: int) -> int:
+    window = int(context_tokens)
+    usable = window - _PROMPT_TOKENS - _answer_tokens_for_window(window)
     return max(800, int(usable * _CHARS_PER_TOKEN))
 
 
-def summary_budget_chars(
-    provider: str,
-    style: str = STANDARD_SUMMARY_STYLE,
-) -> int:
+def summary_budget_chars(provider: str) -> int:
     """Quantos caracteres de transcricao cabem em uma chamada ao modelo."""
     ceiling = max(2000, settings.education_summary_max_chars)
     if provider not in _LOCAL_PROVIDERS:
         return ceiling
-    return min(
-        ceiling,
-        _budget_from_tokens(settings.local_llm_context_tokens, style),
-    )
+    return min(ceiling, _budget_from_tokens(settings.local_llm_context_tokens))
+
+
+# Caracteres por linha de resumo. Serve so para traduzir o espaco disponivel
+# em um numero de linhas que o prompt consiga pedir.
+_PARTIAL_LINE_CHARS = 80
+# Folga: os parciais precisam caber JUNTOS na chamada final. Sem margem, um
+# modelo que passa um pouco do tamanho pedido faz a condensacao empacar, e a
+# aula perde o final.
+_PARTIAL_SHARE = 0.75
+
+
+def _partial_budget_chars(budget: int, chunks: int) -> int:
+    """Quanto cada parcial pode ocupar para todos caberem na chamada final.
+
+    E daqui que sai o tamanho do parcial, e nao de um numero fixo: com dois
+    blocos cada parcial pode ser longo e preservar o desenvolvimento da aula;
+    com dez, cada um precisa ser mais curto para o conjunto ainda caber.
+    """
+    return max(800, int(budget * _PARTIAL_SHARE) // max(1, chunks))
+
+
+def _partial_lines(share_chars: int) -> int:
+    """O mesmo espaco dito em linhas, que e como o prompt pede."""
+    return max(8, share_chars // _PARTIAL_LINE_CHARS)
 
 
 def context_limit_from_error(message: str) -> Optional[int]:
@@ -693,19 +716,26 @@ async def _summarise_within(
     focus: str,
     budget: int,
     style: str = STANDARD_SUMMARY_STYLE,
+    answer_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Condensa a aula em rodadas ate ela caber em uma unica chamada."""
     chunks = _windows(texts, budget)
     error = ""
     truncated = False
+    if answer_tokens is None:
+        answer_tokens = _answer_tokens(provider)
 
     rounds = 0
     while len(chunks) > 1 and rounds < _MAX_CONDENSE_ROUNDS:
         rounds += 1
         partials: List[str] = []
+        share = _partial_budget_chars(budget, len(chunks))
+        lines = _partial_lines(share)
+        partial_tokens = min(answer_tokens, max(256, int(share / _CHARS_PER_TOKEN)))
         logger.info(
             f"Resumo ({provider}): condensando {len(chunks)} blocos, "
-            f"rodada {rounds}/{_MAX_CONDENSE_ROUNDS}"
+            f"rodada {rounds}/{_MAX_CONDENSE_ROUNDS}, "
+            f"{lines} linhas por parcial"
         )
         for index, chunk in enumerate(chunks, start=1):
             response = await _dispatch_summary(
@@ -717,8 +747,9 @@ async def _summarise_within(
                     focus=focus,
                     partial=True,
                     style=style,
+                    partial_lines=lines,
                 ),
-                max_tokens=_partial_max_tokens(style),
+                max_tokens=partial_tokens,
             )
             if response.is_error:
                 error = response.content
@@ -780,7 +811,7 @@ async def _summarise_within(
             focus=focus,
             style=style,
         ),
-        max_tokens=_final_max_tokens(style),
+        max_tokens=answer_tokens,
     )
     if response.is_error:
         logger.warning(f"Resumo falhou ({provider}): {response.content}")
@@ -820,7 +851,7 @@ async def _summarise_provider(
     style: str = STANDARD_SUMMARY_STYLE,
 ) -> Dict[str, Any]:
     """Executa um provedor e adapta uma vez a janela informada por ele."""
-    budget = summary_budget_chars(provider, style)
+    budget = summary_budget_chars(provider)
     outcome = await _summarise_within(
         provider=provider,
         discipline=discipline,
@@ -839,7 +870,7 @@ async def _summarise_provider(
     if limit is None:
         return outcome
 
-    corrected = _budget_from_tokens(limit, style)
+    corrected = _budget_from_tokens(limit)
     if corrected >= budget:
         return outcome
 
@@ -854,6 +885,9 @@ async def _summarise_provider(
         focus=focus,
         budget=corrected,
         style=style,
+        # A janela real e menor que a configurada: o teto de saida tem de
+        # encolher junto, senao a proxima chamada estoura pelo mesmo motivo.
+        answer_tokens=_answer_tokens_for_window(limit),
     )
 
 
@@ -995,6 +1029,40 @@ def _build_summary_graph():
 
 
 summary_graph = _build_summary_graph()
+
+
+def build_summary_prompt(
+    *,
+    discipline: str,
+    title: str,
+    segments: Sequence[str],
+    focus: str = "",
+    style: str = STANDARD_SUMMARY_STYLE,
+) -> Dict[str, Any]:
+    """Monta o prompt do resumo para quem tem janela para a aula inteira.
+
+    Agente conectado (Codex, Claude Code) roda na maquina do usuario com uma
+    janela de centenas de milhares de tokens: a aula vai inteira em uma
+    chamada, sem mapa-reducao e sem os parciais, que sao justamente onde o
+    detalhe se perde. A redacao do prompt continua vivendo aqui, e nao no
+    cliente, para os dois caminhos pedirem a mesma coisa.
+    """
+    style = normalize_summary_style(style)
+    texts = [text for text in segments if text and text.strip()]
+    transcript = "\n".join(texts)
+    return {
+        "style": style,
+        "system_prompt": _SUMMARY_SYSTEM_PROMPT,
+        "prompt": _summary_prompt(
+            discipline=discipline,
+            title=title,
+            transcript=transcript,
+            focus=focus,
+            style=style,
+        ),
+        "used_segments": len(texts),
+        "transcript_chars": len(transcript),
+    }
 
 
 async def generate_summary(

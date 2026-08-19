@@ -465,7 +465,7 @@ def test_localai_summary_disables_thinking_and_limits_output(monkeypatch):
 
     assert outcome["summary"] == "resumo"
     assert calls[0]["options"] == {
-        "max_tokens": service._FINAL_SUMMARY_MAX_TOKENS,
+        "max_tokens": service._answer_tokens("localai"),
         "reasoning_effort": "none",
     }
 
@@ -485,11 +485,8 @@ def test_detailed_summary_asks_for_the_long_structure(monkeypatch):
     assert outcome["style"] == "detailed"
     assert "## Desenvolvimento da aula" in prompt
     assert "## Exemplos e exercicios resolvidos" in prompt
-    # O detalhado precisa de mais espaco de resposta que o comum, senao o
-    # modelo corta o texto antes das ultimas secoes.
-    assert calls[0]["options"]["max_tokens"] == (
-        service._DETAILED_FINAL_SUMMARY_MAX_TOKENS
-    )
+    # O tamanho e pedido no prompt, nao imposto por um corte de tokens.
+    assert "nao encurte para economizar espaco" in prompt
 
 
 def test_standard_summary_keeps_the_short_structure(monkeypatch):
@@ -506,7 +503,29 @@ def test_standard_summary_keeps_the_short_structure(monkeypatch):
     assert outcome["style"] == "standard"
     assert "## Principais topicos" in prompt
     assert "## Desenvolvimento da aula" not in prompt
-    assert calls[0]["options"]["max_tokens"] == service._FINAL_SUMMARY_MAX_TOKENS
+    assert "Mantenha o resumo enxuto" in prompt
+
+
+def test_both_styles_get_the_same_output_ceiling(monkeypatch):
+    # O teto de saida e tecnico (nenhum provedor aceita resposta infinita) e
+    # nao um jeito de encurtar um dos formatos: quem define o tamanho e o
+    # prompt. Se o teto voltar a variar por estilo, o detalhado volta a sair
+    # cortado antes das ultimas secoes.
+    padrao = fake_llm(monkeypatch, "resumo")
+    run(service.generate_summary(
+        discipline="Banco de Dados", title="", segments=["trecho"],
+        llm="claude",
+    ))
+
+    detalhado = fake_llm(monkeypatch, "resumo")
+    run(service.generate_summary(
+        discipline="Banco de Dados", title="", segments=["trecho"],
+        llm="claude", style="detailed",
+    ))
+
+    teto = service._answer_tokens("claude")
+    assert padrao[0]["options"]["max_tokens"] == teto
+    assert detalhado[0]["options"]["max_tokens"] == teto
 
 
 def test_unknown_summary_style_falls_back_to_standard(monkeypatch):
@@ -523,36 +542,58 @@ def test_unknown_summary_style_falls_back_to_standard(monkeypatch):
     assert "## Desenvolvimento da aula" not in calls[0]["message"]
 
 
-def test_detailed_partials_may_be_longer_than_standard_ones(monkeypatch):
-    fake_settings(monkeypatch, max_chars=2000, context_tokens=32000)
+def test_partial_size_comes_from_the_share_of_the_final_window(monkeypatch):
+    # O parcial nao tem tamanho fixo: ele recebe a fatia da janela final que
+    # sobra para ele. Com poucos blocos a fatia e grande e o parcial preserva
+    # o desenvolvimento da aula; era o corte fixo em 8/16 linhas que fazia o
+    # resumo detalhado chegar sem material e sair menor que o comum.
+    fake_settings(monkeypatch, max_chars=24000, context_tokens=32000)
     calls = fake_llm(monkeypatch, "parcial")
 
     run(service.generate_summary(
         discipline="Banco de Dados",
         title="",
-        segments=["x" * 1500 for _ in range(4)],
+        segments=["x" * 20000 for _ in range(2)],
         llm="claude",
         style="detailed",
     ))
 
+    esperado = service._partial_lines(service._partial_budget_chars(24000, 2))
     partial = calls[0]
     assert "Este e um trecho de uma aula longa" in partial["message"]
-    assert "no maximo 16 linhas" in partial["message"]
-    assert partial["options"]["max_tokens"] == (
-        service._DETAILED_PARTIAL_SUMMARY_MAX_TOKENS
-    )
+    assert f"no maximo {esperado} linhas" in partial["message"]
+    assert esperado > 100
 
 
-def test_detailed_summary_reserves_more_window_on_local_models(monkeypatch):
+def test_more_blocks_means_shorter_partials(monkeypatch):
+    # A soma dos parciais precisa caber em uma chamada: quanto mais blocos,
+    # menor a fatia de cada um.
+    dois = service._partial_lines(service._partial_budget_chars(24000, 2))
+    dez = service._partial_lines(service._partial_budget_chars(24000, 10))
+
+    assert dez < dois
+    assert dez >= 8
+
+
+def test_partials_fit_together_in_the_final_call():
+    # Com folga: um modelo que passa um pouco do tamanho pedido nao pode
+    # fazer a condensacao empacar, porque empacar trunca o fim da aula.
+    for blocos in (2, 3, 5, 10):
+        soma = service._partial_budget_chars(24000, blocos) * blocos
+        assert soma < 24000
+
+
+def test_local_window_keeps_room_for_the_answer(monkeypatch):
     fake_settings(monkeypatch, max_chars=24000, context_tokens=8192)
 
-    standard = service.summary_budget_chars("localai")
-    detailed = service.summary_budget_chars("localai", "detailed")
+    budget = service.summary_budget_chars("localai")
+    answer = service._answer_tokens("localai")
 
-    # A resposta longa do detalhado sai do espaco da transcricao: o bloco
-    # enviado ao modelo local encolhe para a aula nao estourar a janela.
-    assert detailed < standard
-    assert detailed > 800
+    # Transcricao + prompt + resposta cabem na janela do modelo local: o que
+    # o modelo escreve nao pode disputar espaco com o que ele le.
+    usados = budget / service._CHARS_PER_TOKEN + service._PROMPT_TOKENS + answer
+    assert usados <= 8192
+    assert answer >= 768
 
 
 def test_summary_candidates_can_forbid_paid_fallback(monkeypatch):

@@ -166,6 +166,8 @@ class ConnectedAiService {
     String workingDirectory = '',
     bool allowWorkspaceEdits = false,
     void Function(String activity)? onProgress,
+    String systemPrompt = '',
+    Duration? timeoutOverride,
   }) async {
     final status = await check(agentId);
     if (!status.installed || !status.authenticated) {
@@ -182,8 +184,8 @@ class ConnectedAiService {
     final writeMode = allowWorkspaceEdits && root.isNotEmpty;
     // Sessões agênticas com escrita leem e editam vários arquivos; precisam
     // de mais tempo do que uma resposta somente leitura.
-    final timeout =
-        writeMode ? const Duration(minutes: 10) : const Duration(minutes: 5);
+    final timeout = timeoutOverride ??
+        (writeMode ? const Duration(minutes: 10) : const Duration(minutes: 5));
 
     final fullPrompt = _buildPrompt(
       prompt: prompt,
@@ -193,6 +195,7 @@ class ConnectedAiService {
       language: language,
       allowWorkspaceEdits: writeMode,
       workspaceRoot: root,
+      systemPrompt: systemPrompt,
     );
     try {
       final statusBefore = writeMode
@@ -249,7 +252,23 @@ class ConnectedAiService {
     required String language,
     bool allowWorkspaceEdits = false,
     String workspaceRoot = '',
+    String systemPrompt = '',
   }) {
+    // Tarefa fora do chat (resumo de aula, por exemplo): as instrucoes da
+    // tarefa substituem a persona do assistente e o historico da conversa,
+    // que so atrapalhariam o formato pedido. A trava de nao escrever em
+    // arquivo continua, porque estes clientes sabem editar disco.
+    if (systemPrompt.trim().isNotEmpty) {
+      final task = StringBuffer()
+        ..writeln(systemPrompt.trim())
+        ..writeln(
+            'Nao altere arquivos nem execute acoes destrutivas: responda '
+            'apenas com o texto pedido, sem comentarios antes ou depois.')
+        ..writeln()
+        ..writeln(prompt);
+      return task.toString().trim();
+    }
+
     final buffer = StringBuffer()
       ..writeln('Você está atendendo dentro do assistente INTARQ.')
       ..writeln('Na interface, seu nome é $assistantName.')

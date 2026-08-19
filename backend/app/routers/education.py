@@ -46,6 +46,8 @@ from ..models.schemas import (
     LessonSegmentUpdate,
     SemesterResponse,
     SemesterUpdate,
+    ExternalLessonSummaryRequest,
+    LessonSummaryPromptResponse,
     LessonSummaryRequest,
     LessonSummaryResponse,
     LessonUpdate,
@@ -1584,6 +1586,128 @@ async def update_lesson_segment(
     return _segment_response(segment)
 
 
+# Um resumo de aula inteira e longo, mas nao ilimitado: o corpo chega de um
+# cliente e a coluna e Text. O teto so barra payload absurdo.
+_MAX_SUMMARY_CHARS = 200_000
+
+
+async def _lesson_transcript(lesson_id: str, db: AsyncSession) -> List[str]:
+    result = await db.execute(
+        select(LessonSegmentModel)
+        .where(LessonSegmentModel.lesson_id == lesson_id)
+        .order_by(LessonSegmentModel.sequence)
+    )
+    return [item.text for item in result.scalars().all()]
+
+
+async def _store_summary(
+    lesson: LessonModel,
+    *,
+    summary: str,
+    llm: str,
+    style: str,
+    close_lesson: bool,
+    used_segments: int,
+    db: AsyncSession,
+) -> LessonSummaryResponse:
+    """Guarda o resumo na aula, venha ele do backend ou de um agente local."""
+    lesson.summary = summary
+    lesson.summary_llm = llm
+    lesson.summary_at = datetime.now(timezone.utc)
+    lesson.summary_style = style
+    if close_lesson and lesson.status != "closed":
+        lesson.status = "closed"
+        lesson.ended_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(lesson)
+
+    result = await db.execute(
+        select(LessonPointModel)
+        .where(LessonPointModel.lesson_id == lesson.id)
+        .order_by(LessonPointModel.created_at)
+    )
+    points = [_point_response(item) for item in result.scalars().all()]
+
+    return LessonSummaryResponse(
+        lesson_id=lesson.id,
+        summary=lesson.summary,
+        llm=lesson.summary_llm,
+        generated_at=lesson.summary_at,
+        used_segments=used_segments,
+        style=lesson.summary_style or style,
+        points=points,
+    )
+
+
+@router.get(
+    "/lessons/{lesson_id}/summary/prompt",
+    response_model=LessonSummaryPromptResponse,
+)
+async def lesson_summary_prompt(
+    lesson_id: str,
+    style: str = "standard",
+    focus: str = "",
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Devolve o prompt do resumo para um agente conectado gerar o texto.
+
+    Codex e Claude Code rodam no computador do usuario e nao sao provedores
+    do backend. Eles pedem o prompt aqui — mesma redacao, mesmo formato — e
+    devolvem o resultado em `/summary/external`.
+    """
+    lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
+    segments = await _lesson_transcript(lesson_id, db)
+    if not segments:
+        raise HTTPException(409, "A aula ainda nao tem transcricao")
+
+    built = education_service.build_summary_prompt(
+        discipline=lesson.discipline,
+        title=lesson.title or "",
+        segments=segments,
+        focus=focus,
+        style=style,
+    )
+    return LessonSummaryPromptResponse(lesson_id=lesson.id, **built)
+
+
+@router.post(
+    "/lessons/{lesson_id}/summary/external",
+    response_model=LessonSummaryResponse,
+)
+async def store_external_summary(
+    lesson_id: str,
+    body: ExternalLessonSummaryRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Guarda um resumo gerado por um agente conectado do proprio usuario."""
+    lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
+
+    summary = (body.summary or "").strip()
+    if not summary:
+        raise HTTPException(400, "O agente nao devolveu texto para o resumo")
+    if len(summary) > _MAX_SUMMARY_CHARS:
+        raise HTTPException(
+            400,
+            f"Resumo acima do limite de {_MAX_SUMMARY_CHARS} caracteres",
+        )
+
+    llm = (body.llm or "").strip()
+    if not llm:
+        raise HTTPException(400, "Informe qual agente gerou o resumo")
+
+    return await _store_summary(
+        lesson,
+        summary=summary,
+        llm=llm,
+        style=education_service.normalize_summary_style(body.style),
+        close_lesson=body.close_lesson,
+        used_segments=len(await _lesson_transcript(lesson_id, db)),
+        db=db,
+    )
+
+
 @router.post("/lessons/{lesson_id}/summary", response_model=LessonSummaryResponse)
 async def summarize_lesson(
     lesson_id: str,
@@ -1594,12 +1718,7 @@ async def summarize_lesson(
 ):
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
 
-    result = await db.execute(
-        select(LessonSegmentModel)
-        .where(LessonSegmentModel.lesson_id == lesson_id)
-        .order_by(LessonSegmentModel.sequence)
-    )
-    segments = [item.text for item in result.scalars().all()]
+    segments = await _lesson_transcript(lesson_id, db)
     if not segments:
         raise HTTPException(409, "A aula ainda nao tem transcricao")
 
@@ -1618,31 +1737,14 @@ async def summarize_lesson(
             f"Nao foi possivel gerar o resumo: {outcome.get('error', 'sem resposta do modelo')}",
         )
 
-    lesson.summary = outcome["summary"]
-    lesson.summary_llm = outcome["llm"]
-    lesson.summary_at = datetime.now(timezone.utc)
-    lesson.summary_style = style
-    if body.close_lesson and lesson.status != "closed":
-        lesson.status = "closed"
-        lesson.ended_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(lesson)
-
-    result = await db.execute(
-        select(LessonPointModel)
-        .where(LessonPointModel.lesson_id == lesson_id)
-        .order_by(LessonPointModel.created_at)
-    )
-    points = [_point_response(item) for item in result.scalars().all()]
-
-    return LessonSummaryResponse(
-        lesson_id=lesson.id,
-        summary=lesson.summary,
-        llm=lesson.summary_llm,
-        generated_at=lesson.summary_at,
+    return await _store_summary(
+        lesson,
+        summary=outcome["summary"],
+        llm=outcome["llm"],
+        style=style,
+        close_lesson=body.close_lesson,
         used_segments=outcome["used_segments"],
-        style=lesson.summary_style or style,
-        points=points,
+        db=db,
     )
 
 

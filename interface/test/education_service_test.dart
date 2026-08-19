@@ -76,6 +76,64 @@ void main() {
     });
   });
 
+  group('resumo por agente conectado', () {
+    test('pede ao backend o prompt com a aula inteira', () async {
+      final service = EducationService(ApiService(backendUrl: 'https://test'));
+      Uri? pedida;
+      final client = MockClient((request) async {
+        pedida = request.url;
+        return http.Response(
+          '{"lesson_id":"l1","style":"detailed","system_prompt":"voce resume",'
+          '"prompt":"Disciplina: Fisica","used_segments":12,'
+          '"transcript_chars":48000}',
+          200,
+        );
+      });
+
+      final built = await http.runWithClient(
+        () => service.summaryPrompt('l1', style: summaryStyleDetailed),
+        () => client,
+      );
+
+      expect(pedida?.path, '/education/lessons/l1/summary/prompt');
+      expect(pedida?.queryParameters['style'], 'detailed');
+      expect(built.systemPrompt, 'voce resume');
+      expect(built.transcriptChars, 48000);
+      expect(built.style, summaryStyleDetailed);
+    });
+
+    test('devolve ao backend o texto escrito pelo agente local', () async {
+      final service = EducationService(ApiService(backendUrl: 'https://test'));
+      Map<String, dynamic>? enviado;
+      final client = MockClient((request) async {
+        enviado = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(request.url.path, '/education/lessons/l1/summary/external');
+        return http.Response(
+          '{"lesson_id":"l1","summary":"## Resumo geral","llm":"claude_cli",'
+          '"generated_at":"2026-08-19T10:00:00","used_segments":12,'
+          '"style":"detailed"}',
+          200,
+        );
+      });
+
+      final summary = await http.runWithClient(
+        () => service.saveExternalSummary(
+          'l1',
+          summary: '## Resumo geral',
+          llm: 'claude_cli',
+          style: summaryStyleDetailed,
+        ),
+        () => client,
+      );
+
+      expect(enviado?['llm'], 'claude_cli');
+      expect(enviado?['style'], 'detailed');
+      expect(enviado?['close_lesson'], false);
+      expect(summary.llm, 'claude_cli');
+      expect(summary.style, summaryStyleDetailed);
+    });
+  });
+
   group('Lesson', () {
     test('reads the payload returned by the backend', () {
       final lesson = Lesson.fromJson({

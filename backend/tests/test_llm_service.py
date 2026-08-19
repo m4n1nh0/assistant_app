@@ -104,6 +104,39 @@ def test_dispatch_real_failure_updates_provider_availability(monkeypatch):
     assert recorded == [("claude", "Your credit balance is too low")]
 
 
+def test_dispatch_forwards_max_tokens_to_a_cloud_provider(monkeypatch):
+    # Sem este repasse, o teto pedido por quem chama era descartado e todo
+    # provedor de nuvem usava o teto do chat: o resumo detalhado de aula saia
+    # cortado no mesmo tamanho do comum.
+    recebido = {}
+
+    async def caller(_message, _history, _system_prompt, max_tokens=None):
+        recebido["max_tokens"] = max_tokens
+        return LLMResponse(llm="together", content="resumo longo")
+
+    monkeypatch.setitem(llm_service.LLM_CALLERS, "together", caller)
+
+    response = run(
+        llm_service.dispatch_single(
+            "together", "resuma", [], "system", max_tokens=4000
+        )
+    )
+
+    assert response.is_error is False
+    assert recebido["max_tokens"] == 4000
+
+
+def test_dispatch_keeps_the_provider_default_when_no_ceiling_is_asked(monkeypatch):
+    async def caller(_message, _history, _system_prompt):
+        return LLMResponse(llm="together", content="resposta curta")
+
+    monkeypatch.setitem(llm_service.LLM_CALLERS, "together", caller)
+
+    response = run(llm_service.dispatch_single("together", "ola", [], "system"))
+
+    assert response.content == "resposta curta"
+
+
 def test_dispatch_chain_preserves_last_success_after_refiner_error(monkeypatch):
     async def dispatch(provider, message, history, system_prompt, **options):
         if provider == "localai":

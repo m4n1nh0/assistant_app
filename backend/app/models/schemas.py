@@ -1049,6 +1049,27 @@ class LessonSummaryRequest(BaseModel):
     style: str = "standard"
 
 
+class ExternalLessonSummaryRequest(BaseModel):
+    """Resumo gerado fora do backend, por um agente conectado do usuario.
+
+    Codex e Claude Code rodam na maquina do usuario; o texto nasce la e este
+    endpoint e o que o guarda na aula, como o `/chat/log` faz com a conversa.
+    """
+    summary: str
+    llm: str
+    style: str = "standard"
+    close_lesson: bool = False
+
+
+class LessonSummaryPromptResponse(BaseModel):
+    lesson_id: str
+    style: str
+    system_prompt: str
+    prompt: str
+    used_segments: int
+    transcript_chars: int
+
+
 class LessonSummaryResponse(BaseModel):
     lesson_id: str
     summary: str

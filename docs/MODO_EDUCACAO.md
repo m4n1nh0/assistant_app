@@ -143,11 +143,36 @@ em `4. Histórico`:
   atenção destacados pelo professor. Serve para quem faltou ou vai estudar para
   a prova.
 
-O detalhado escreve bem mais texto e leva mais tempo; em modelo local, ele
-também reserva mais espaço de resposta e envia blocos menores de transcrição
-por chamada. O formato usado fica gravado na aula: ao reabrir uma aula no
-histórico, o seletor já vem marcado com o formato do resumo existente, e o
-título do painel mostra se o que está na tela é `COMUM` ou `DETALHADO`.
+O detalhado escreve bem mais texto e leva mais tempo — ele recebe o dobro do
+tempo limite por provedor. Nenhum dos dois formatos tem o texto cortado por
+tamanho: quem define até onde o resumo vai é o prompt, que descreve a estrutura
+pedida. O teto de saída por chamada é o mesmo para os dois e existe só porque
+nenhum provedor aceita resposta sem limite.
+
+O formato usado fica gravado na aula: ao reabrir uma aula no histórico, o
+seletor já vem marcado com o formato do resumo existente, e o título do painel
+mostra se o que está na tela é `COMUM` ou `DETALHADO`.
+
+## Quem gera o resumo
+
+Ao lado do formato há um seletor de IA, com três tipos de opção:
+
+- **Automático**: mantém a fila do backend, que tenta os provedores do mais
+  barato ao mais caro e pula quem está offline ou sem saldo. É o padrão.
+- **Um provedor configurado** (Claude, GPT, Gemini, Together, DeepSeek,
+  LocalAI...): fixa a geração naquele provedor. Não há fallback: se ele falhar,
+  o resumo falha e a mensagem diz por quê.
+- **Codex conectado / Claude conectado**: o resumo é escrito pelo cliente
+  oficial instalado no seu computador, o mesmo do modo agente conectado do
+  chat. Não consome crédito de API e, como a janela desses clientes comporta a
+  aula inteira em uma única chamada, o resumo sai sem a divisão em blocos —
+  é a melhor opção para o formato detalhado de aulas longas.
+
+Os agentes conectados só aparecem no seletor quando estão instalados e
+conectados em **Configurações > Agentes**. Nesse caminho a interface pede o
+prompt ao backend, roda o CLI local em modo somente leitura e devolve o texto
+para o backend gravar na aula — o resumo fica salvo do mesmo jeito, aparece no
+histórico e sai no PDF como qualquer outro.
 
 No PDF exportado, o formato aparece na etiqueta do topo da primeira página
 (`RESUMO DA AULA | DETALHADO`), na faixa que se repete nas páginas seguintes e

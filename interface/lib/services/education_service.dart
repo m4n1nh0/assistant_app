@@ -365,6 +365,45 @@ class EducationService {
     return LessonSummary.fromJson(_decode(response) as Map<String, dynamic>);
   }
 
+  /// Prompt do resumo para um agente conectado gerar o texto na maquina do
+  /// usuario. A redacao vem do backend para os dois caminhos pedirem a mesma
+  /// coisa; aqui so trafega.
+  Future<LessonSummaryPrompt> summaryPrompt(
+    String lessonId, {
+    String style = summaryStyleStandard,
+    String focus = '',
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/lessons/$lessonId/summary/prompt')
+        .replace(queryParameters: {
+      'style': style,
+      if (focus.trim().isNotEmpty) 'focus': focus.trim(),
+    });
+    final response = await http.get(uri, headers: _headers);
+    return LessonSummaryPrompt.fromJson(
+        _decode(response) as Map<String, dynamic>);
+  }
+
+  /// Guarda na aula um resumo que o agente conectado gerou localmente.
+  Future<LessonSummary> saveExternalSummary(
+    String lessonId, {
+    required String summary,
+    required String llm,
+    String style = summaryStyleStandard,
+    bool closeLesson = false,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/lessons/$lessonId/summary/external'),
+      headers: _headers,
+      body: jsonEncode({
+        'summary': summary,
+        'llm': llm,
+        'style': style,
+        'close_lesson': closeLesson,
+      }),
+    );
+    return LessonSummary.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
   // --- Pontuacao extra -----------------------------------------------------
 
   Future<LessonPoint> addPoint(
@@ -1076,6 +1115,36 @@ class SegmentIngestResult {
             .map((item) => LessonPoint.fromJson(item as Map<String, dynamic>))
             .toList(),
         lesson: Lesson.fromJson(json['lesson'] as Map<String, dynamic>),
+      );
+}
+
+/// Prompt pronto para o agente conectado: a aula inteira em uma chamada, sem
+/// a mapa-reducao que o backend precisa fazer com janelas menores.
+class LessonSummaryPrompt {
+  final String lessonId;
+  final String style;
+  final String systemPrompt;
+  final String prompt;
+  final int usedSegments;
+  final int transcriptChars;
+
+  LessonSummaryPrompt({
+    required this.lessonId,
+    required this.style,
+    required this.systemPrompt,
+    required this.prompt,
+    required this.usedSegments,
+    required this.transcriptChars,
+  });
+
+  factory LessonSummaryPrompt.fromJson(Map<String, dynamic> json) =>
+      LessonSummaryPrompt(
+        lessonId: json['lesson_id']?.toString() ?? '',
+        style: summaryStyleOrStandard(json['style']?.toString()),
+        systemPrompt: json['system_prompt']?.toString() ?? '',
+        prompt: json['prompt']?.toString() ?? '',
+        usedSegments: _toInt(json['used_segments']),
+        transcriptChars: _toInt(json['transcript_chars']),
       );
 }
 

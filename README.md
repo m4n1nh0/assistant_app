@@ -712,13 +712,30 @@ Pontos de atencao do fluxo:
   condutor, principais topicos, definicoes, tarefas e duvidas — e cabe em uma
   tela. `DETALHADO` reconstroi a aula: desenvolvimento na ordem em que foi
   dada, conceitos com a explicacao que os acompanhou, demonstracoes passo a
-  passo, exemplos resolvidos e pontos de atencao para a prova. O detalhado pede
-  uma resposta bem maior ao modelo, entao recebe o dobro do tempo limite por
-  provedor e, em modelo local, reserva mais janela para a resposta — o bloco de
-  transcricao enviado por chamada encolhe na mesma medida. A escolha fica ao
-  lado do botao que gera o resumo, tanto na aula ao vivo quanto no historico,
-  e vai guardada na aula (`summary_style`): refazer o resumo de uma aula antiga
-  ja vem marcado com o formato usado da ultima vez.
+  passo, exemplos resolvidos e pontos de atencao para a prova. O detalhado
+  recebe o dobro do tempo limite por provedor, porque escreve muito mais. A
+  escolha fica ao lado do botao que gera o resumo, tanto na aula ao vivo quanto
+  no historico, e vai guardada na aula (`summary_style`): refazer o resumo de
+  uma aula antiga ja vem marcado com o formato usado da ultima vez.
+- **Quem escreve o resumo e escolhido na interface.** Ao lado do formato ha um
+  seletor com tres tipos de opcao: `Automatico` mantem a fila do backend (do
+  gratuito ao pago, pulando quem o health check marcou como offline); um
+  provedor configurado (Claude, GPT, Gemini, Together...) fixa a geracao nele,
+  sem fallback; e um agente conectado (Codex, Claude Code) gera o resumo no
+  proprio computador. No caminho do agente conectado o backend so entrega o
+  prompt — a redacao continua vivendo em um lugar so — e recebe o texto de
+  volta em `/summary/external`, como o `/chat/log` ja faz com a conversa
+  respondida localmente. A vantagem nao e apenas de custo: a janela desses
+  clientes comporta a aula inteira em uma chamada, entao o resumo sai sem
+  mapa-reducao e sem parciais, que e onde o detalhe se perde.
+- **O tamanho do resumo vem do prompt, nao de um corte de tokens.** Os dois
+  formatos usam o mesmo teto de saida por chamada — 4000 tokens na nuvem, ou a
+  fatia da janela no modelo local — e esse teto existe so porque provedor
+  nenhum aceita resposta sem limite; quem diz ate onde ir e a estrutura pedida
+  no prompt. Tetos diferentes por formato ja causaram o efeito contrario ao
+  esperado: como `max_tokens` nao chegava aos provedores de nuvem, os dois
+  formatos disputavam o mesmo limite do chat e o detalhado terminava antes das
+  ultimas secoes.
 - **O resumo recupera frases reconheciveis.** Antes de redigir, o LLM usa
   disciplina, tema e frases vizinhas para corrigir silenciosamente palavras
   evidentemente transcritas de forma errada e reorganizar frases quebradas. A
@@ -777,6 +794,15 @@ Pontos de atencao do fluxo:
   operacao so atinge alunos daquela turma e preserva as pontuacoes ja gravadas.
   Enquanto o backend novo ainda nao foi publicado, a interface aceita o `405`
   da versao anterior e conclui a acao pelas exclusoes individuais existentes.
+- **O parcial tem o tamanho da fatia que sobra para ele.** Na mapa-reducao,
+  cada bloco e resumido com um limite calculado a partir do que a chamada
+  final ainda comporta (75% da janela dividido pelo numero de blocos), e o
+  prompt pede exatamente esse numero de linhas. Com dois blocos cada parcial
+  pode passar de cem linhas e preservar o desenvolvimento da aula; com dez, ele
+  encolhe para o conjunto ainda caber. Um limite fixo de poucas linhas era o
+  que fazia o resumo detalhado chegar a chamada final sem material — e sair
+  menor que o comum. A folga de 25% e proposital: se os parciais nao couberem
+  juntos, a condensacao empaca e a aula perde o final.
 - **Aulas longas usam mapa-reducao.** A transcricao e resumida em janelas e
   depois consolidada, em quantas rodadas forem necessarias, ate caber em uma
   chamada. Com modelo local a janela sai de `LOCAL_LLM_CONTEXT_TOKENS`
@@ -806,7 +832,9 @@ Endpoints principais:
 | `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
 | `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
 | `PATCH /education/lessons/{id}/segments/{segment_id}` | Corrige o texto e substitui seu vetor |
-| `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda (`style`: `standard` ou `detailed`) |
+| `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda (`style`: `standard` ou `detailed`; `llm` fixa o provedor) |
+| `GET /education/lessons/{id}/summary/prompt` | Prompt do resumo para um agente conectado gerar localmente |
+| `POST /education/lessons/{id}/summary/external` | Guarda o resumo escrito por Codex/Claude Code |
 | `GET /education/points` | Nome e total de extra por dia, disciplina e turma |
 | `GET /education/search` | Busca semantica nas transcricoes |
 | `GET /education/disciplines` | Disciplinas por status/semestre, com total de turmas |
