@@ -1139,3 +1139,73 @@ class LessonReindexResponse(BaseModel):
     pending: int = 0
     embedding: str = ""
     error: Optional[str] = None
+
+
+# --- Quiz Schemas ---
+
+class QuestionOption(BaseModel):
+    label: str
+    texto: str
+    correta: bool = False
+
+
+class QuestionCreate(BaseModel):
+    tipo: Literal["multipla_escolha", "verdadeiro_falso", "aberta", "preenchimento"]
+    dificuldade: Literal["facil", "medio", "dificil"] = "medio"
+    enunciado: str
+    opcoes: Optional[List[QuestionOption]] = None
+    resposta_correta: Optional[str] = None
+    justificativa: str
+    conceitos_relacionados: Optional[List[str]] = None
+    topico_origem: Optional[str] = None
+
+
+class QuestionResponse(QuestionCreate):
+    id: str
+    quiz_id: str
+    grounding_score: float = 0.0
+    verificado: bool = False
+    created_at: datetime
+
+
+class QuizCreateRequest(BaseModel):
+    lesson_id: str
+    tipo_quiz: Literal["revisao", "diagnostico", "pratica"] = "pratica"
+    quantidade_questoes: int = 10
+    tipos_questao: List[Literal["multipla_escolha", "verdadeiro_falso", "aberta"]] = ["multipla_escolha", "verdadeiro_falso"]
+    dificuldade: Literal["mista", "facil", "medio", "dificil"] = "mista"
+
+
+class QuizResponse(BaseModel):
+    id: str
+    lesson_id: str
+    titulo: str
+    tipo_quiz: str
+    total_questoes: int
+    tempo_estimado: int
+    questoes: List[QuestionResponse] = []
+    created_at: datetime
+
+
+class QuizGenerateResponse(BaseModel):
+    quiz_id: str
+    titulo: str
+    questoes: List[QuestionResponse]
+    tempo_estimado_resposta: int
+    status: str = "success"
+    message: str = ""
+
+
+class StudentAnswerRequest(BaseModel):
+    question_id: str
+    resposta: Optional[str] = None
+    tempo_resposta: Optional[int] = None
+
+
+class StudentAnswerResponse(BaseModel):
+    id: str
+    question_id: str
+    resposta: Optional[str]
+    correta: Optional[bool]
+    tempo_resposta: Optional[int]
+    respondido_em: datetime

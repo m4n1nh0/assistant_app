@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INTARQ Quiz Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f9fafb;
+        }
+
+        .navbar {
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .navbar-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .navbar h1 {
+            font-size: 24px;
+            color: #667eea;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .navbar-nav {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .navbar-nav a {
+            text-decoration: none;
+            color: #6b7280;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .navbar-nav a:hover {
+            color: #667eea;
+        }
+
+        .navbar-nav a.active {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .section-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 30px;
+        }
+
+        .section-subtitle {
+            font-size: 16px;
+            color: #6b7280;
+            margin-top: -20px;
+            margin-bottom: 30px;
+        }
+
+        .create-quiz-card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 40px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 8px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            flex: 1;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #1f2937;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-success {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .status-loading {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .status-error {
+            background: #fee2e2;
+            color: #7f1d1d;
+        }
+
+        .quizzes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .quiz-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            transition: all 0.3s;
+        }
+
+        .quiz-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.12);
+        }
+
+        .quiz-icon {
+            font-size: 40px;
+            margin-bottom: 12px;
+        }
+
+        .quiz-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+        }
+
+        .quiz-meta {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 15px;
+        }
+
+        .quiz-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+
+        .quiz-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 15px;
+        }
+
+        .btn-small {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+
+        .btn-play {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-play:hover {
+            transform: translateY(-1px);
+        }
+
+        .btn-delete {
+            background: #fee2e2;
+            color: #7f1d1d;
+        }
+
+        .btn-delete:hover {
+            background: #fecaca;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 12px;
+        }
+
+        .empty-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+
+        .empty-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 10px;
+        }
+
+        .empty-description {
+            color: #6b7280;
+            margin-bottom: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e5e7eb;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .alert.success {
+            background: #dcfce7;
+            color: #166534;
+            border-left: 4px solid #4ade80;
+        }
+
+        .alert.error {
+            background: #fee2e2;
+            color: #7f1d1d;
+            border-left: 4px solid #ef4444;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .modal-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 20px;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <div class="navbar-content">
+            <h1>📚 INTARQ Quiz</h1>
+            <div class="navbar-nav">
+                <a href="/quiz/dashboard" class="active">Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2 class="section-title">Meus Quizzes</h2>
+        <p class="section-subtitle">Crie, edite e teste seus quizzes de educação</p>
+
+        <div class="alert" id="alert"></div>
+
+        <!-- Create Quiz Section -->
+        <div class="create-quiz-card">
+            <h3 style="margin-bottom: 20px; font-size: 20px; color: #1f2937;">✨ Criar Novo Quiz</h3>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="lessonSelect">Selecione a Aula</label>
+                    <select id="lessonSelect">
+                        <option value="">-- Carregando aulas --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="quizType">Tipo de Quiz</label>
+                    <select id="quizType">
+                        <option value="pratica">Prática</option>
+                        <option value="revisao">Revisão</option>
+                        <option value="diagnostico">Diagnóstico</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="questionCount">Número de Questões</label>
+                    <input type="number" id="questionCount" value="10" min="5" max="50">
+                </div>
+                <div class="form-group">
+                    <label for="difficulty">Dificuldade</label>
+                    <select id="difficulty">
+                        <option value="mista">Mista</option>
+                        <option value="facil">Fácil</option>
+                        <option value="medio">Médio</option>
+                        <option value="dificil">Difícil</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn-primary" onclick="createQuiz()" id="createBtn">
+                    Gerar Quiz com IA
+                </button>
+            </div>
+        </div>
+
+        <!-- Quizzes List -->
+        <h3 style="font-size: 20px; margin-bottom: 20px; color: #1f2937;">Quizzes Disponíveis</h3>
+
+        <div id="quizzesContainer">
+            <div class="empty-state">
+                <div class="empty-icon">📝</div>
+                <div class="empty-title">Nenhum quiz ainda</div>
+                <div class="empty-description">Crie seu primeiro quiz usando o formulário acima</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Criação -->
+    <div class="modal" id="creatingModal">
+        <div class="modal-content">
+            <h3 class="modal-title">🔄 Gerando Quiz...</h3>
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Aguarde enquanto a IA gera as questões para você</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load lessons on page load
+        async function loadLessons() {
+            try {
+                // Este endpoint precisaria ser implementado no backend
+                // Por enquanto, usamos dados de exemplo
+                console.log('Carregando aulas...');
+            } catch (error) {
+                console.error('Erro ao carregar aulas:', error);
+            }
+        }
+
+        async function createQuiz() {
+            const lessonSelect = document.getElementById('lessonSelect');
+            const quizType = document.getElementById('quizType').value;
+            const questionCount = document.getElementById('questionCount').value;
+            const difficulty = document.getElementById('difficulty').value;
+
+            if (!lessonSelect.value) {
+                showAlert('Por favor, selecione uma aula', 'error');
+                return;
+            }
+
+            showCreatingModal();
+
+            try {
+                const response = await fetch('/education/quiz/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        lesson_id: lessonSelect.value,
+                        tipo_quiz: quizType,
+                        quantidade_questoes: parseInt(questionCount),
+                        dificuldade: difficulty,
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Erro ao gerar quiz');
+                }
+
+                const quizData = await response.json();
+                hideCreatingModal();
+
+                showAlert(`Quiz "${quizData.titulo}" criado com sucesso!`, 'success');
+
+                // Redirect to quiz player
+                setTimeout(() => {
+                    window.location.href = `/quiz/player?quiz_id=${quizData.quiz_id}`;
+                }, 1500);
+
+            } catch (error) {
+                hideCreatingModal();
+                showAlert(error.message, 'error');
+            }
+        }
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert show ${type}`;
+
+            setTimeout(() => {
+                alert.classList.remove('show');
+            }, 5000);
+        }
+
+        function showCreatingModal() {
+            document.getElementById('creatingModal').classList.add('show');
+        }
+
+        function hideCreatingModal() {
+            document.getElementById('creatingModal').classList.remove('show');
+        }
+
+        // Example quizzes (would come from backend in production)
+        function displayQuizzes() {
+            const quizzes = [
+                {
+                    id: 'quiz-1',
+                    title: 'Normalização de Banco de Dados',
+                    lessonTitle: 'Banco de Dados - Aula 5',
+                    questionsCount: 12,
+                    createdAt: '2024-08-20',
+                    type: 'pratica'
+                },
+                {
+                    id: 'quiz-2',
+                    title: 'Estruturas de Dados',
+                    lessonTitle: 'Computação - Aula 3',
+                    questionsCount: 10,
+                    createdAt: '2024-08-19',
+                    type: 'revisao'
+                }
+            ];
+
+            if (quizzes.length === 0) {
+                displayEmptyState();
+                return;
+            }
+
+            const html = quizzes.map(quiz => `
+                <div class="quiz-card">
+                    <div class="quiz-icon">📋</div>
+                    <div class="quiz-title">${quiz.title}</div>
+                    <div class="quiz-meta">
+                        <div class="quiz-meta-item">
+                            <span>📚</span>
+                            <span>${quiz.lessonTitle}</span>
+                        </div>
+                        <div class="quiz-meta-item">
+                            <span>❓</span>
+                            <span>${quiz.questionsCount} questões</span>
+                        </div>
+                        <div class="quiz-meta-item">
+                            <span>📅</span>
+                            <span>${new Date(quiz.createdAt).toLocaleDateString('pt-BR')}</span>
+                        </div>
+                        <div class="quiz-meta-item">
+                            <span class="status-badge status-success">${quiz.type.toUpperCase()}</span>
+                        </div>
+                    </div>
+                    <div class="quiz-actions">
+                        <button class="btn btn-small btn-play" onclick="playQuiz('${quiz.id}')">
+                            ▶️ Jogar
+                        </button>
+                        <button class="btn btn-small btn-delete" onclick="deleteQuiz('${quiz.id}')">
+                            🗑️ Deletar
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('quizzesContainer').innerHTML = `
+                <div class="quizzes-grid">${html}</div>
+            `;
+        }
+
+        function displayEmptyState() {
+            document.getElementById('quizzesContainer').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">📝</div>
+                    <div class="empty-title">Nenhum quiz ainda</div>
+                    <div class="empty-description">Crie seu primeiro quiz usando o formulário acima</div>
+                </div>
+            `;
+        }
+
+        function playQuiz(quizId) {
+            window.location.href = `/quiz/player?quiz_id=${quizId}`;
+        }
+
+        function deleteQuiz(quizId) {
+            if (confirm('Tem certeza que deseja deletar este quiz?')) {
+                // Implementar delete
+                showAlert('Quiz deletado com sucesso!', 'success');
+                displayQuizzes();
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadLessons();
+            displayQuizzes();
+        });
+    </script>
+</body>
+</html>

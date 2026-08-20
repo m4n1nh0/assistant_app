@@ -3,6 +3,7 @@
 from collections import defaultdict
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
+import json
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -21,6 +22,9 @@ from ..core.database import (
     LessonSegmentModel,
     StudentModel,
     DisciplineModel,
+    QuizModel,
+    QuestionModel,
+    StudentAnswerModel,
     current_semester_code,
     get_db,
 )
@@ -63,6 +67,13 @@ from ..models.schemas import (
     DisciplineCreate,
     DisciplineResponse,
     DisciplineUpdate,
+    QuestionOption,
+    QuestionResponse,
+    QuizCreateRequest,
+    QuizResponse,
+    QuizGenerateResponse,
+    StudentAnswerRequest,
+    StudentAnswerResponse,
 )
 from ..services import (
     education_service,
@@ -72,6 +83,7 @@ from ..services import (
 )
 from ..services.voice_service import transcribe_audio, trim_transcript_overlap
 from ..services.user_llm_config_service import user_llm_context
+from ..services import quiz_generator_service
 
 settings = get_settings()
 
@@ -1975,3 +1987,246 @@ async def reindex_lessons(
         limit=body.limit,
     )
     return LessonReindexResponse(**outcome)
+
+
+# --- Quiz Generation ---
+
+
+@router.post("/quiz/generate")
+async def generate_quiz_from_lesson(
+    request: LessonSummaryRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gera quiz automaticamente baseado no resumo de uma aula."""
+
+    tutor_id = user["tutor_id"]
+    lesson_id = request.lesson_id
+
+    # Valida que a aula existe e pertence ao professor
+    lesson = await db.get(LessonModel, lesson_id)
+    if not lesson or lesson.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Aula não encontrada")
+
+    # Busca o resumo da aula
+    stmt = select(LessonSegmentModel).where(
+        (LessonSegmentModel.lesson_id == lesson_id) &
+        (LessonSegmentModel.summary != "")
+    )
+    segments = (await db.execute(stmt)).scalars().all()
+
+    if not segments:
+        raise HTTPException(
+            status_code=400,
+            detail="Aula sem resumo. Gere um resumo antes de criar o quiz."
+        )
+
+    # Concatena resumos
+    resumo_completo = "\n".join([s.summary for s in segments if s.summary])
+
+    # Busca disciplina
+    discipline_stmt = select(DisciplineModel).where(
+        DisciplineModel.id == lesson.discipline_id
+    )
+    discipline = (await db.execute(discipline_stmt)).scalar_one_or_none()
+    disciplina_nome = discipline.name if discipline else "Geral"
+
+    # Gera quiz via serviço
+    quiz_data = await quiz_generator_service.generate_quiz(
+        resumo=resumo_completo,
+        disciplina=disciplina_nome,
+        titulo_aula=lesson.title or "Aula",
+        tipo_quiz=request.style if hasattr(request, 'style') else "pratica",
+        quantidade_questoes=10,
+        tipos_questao=["multipla_escolha", "verdadeiro_falso", "aberta"],
+        dificuldade="mista",
+        llm=request.llm,
+    )
+
+    if quiz_data.get("error"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao gerar quiz: {quiz_data['error']}"
+        )
+
+    # Persiste quiz e questões no banco
+    quiz_id = str(uuid.uuid4())
+    quiz = QuizModel(
+        id=quiz_id,
+        tutor_id=tutor_id,
+        lesson_id=lesson_id,
+        titulo=f"Quiz: {lesson.title or 'Aula'}",
+        tipo_quiz="pratica",
+        total_questoes=len(quiz_data.get("questoes", [])),
+        tempo_estimado=quiz_data.get("tempo_estimado", 15),
+    )
+    db.add(quiz)
+
+    # Insere questões
+    questoes_responses = []
+
+    for q_data in quiz_data.get("questoes", []):
+        question_id = str(uuid.uuid4())
+
+        # Serializa opcoes se for multipla escolha
+        opcoes_json = None
+        if q_data.get("tipo") == "multipla_escolha" and q_data.get("opcoes"):
+            opcoes_json = json.dumps(q_data["opcoes"], ensure_ascii=False)
+
+        # Serializa conceitos
+        conceitos_json = json.dumps(
+            q_data.get("conceitos", []),
+            ensure_ascii=False
+        ) if q_data.get("conceitos") else None
+
+        question = QuestionModel(
+            id=question_id,
+            quiz_id=quiz_id,
+            tipo=q_data.get("tipo", "multipla_escolha"),
+            dificuldade=q_data.get("dificuldade", "medio"),
+            enunciado=q_data.get("enunciado", ""),
+            opcoes=opcoes_json,
+            resposta_correta=q_data.get("resposta_correta", ""),
+            justificativa=q_data.get("justificativa", ""),
+            conceitos_relacionados=conceitos_json,
+            topico_origem=q_data.get("topico_origem"),
+            grounding_score=q_data.get("grounding_score", 0.8),
+            verificado=q_data.get("verificado", True),
+        )
+        db.add(question)
+
+        questoes_responses.append(QuestionResponse(
+            id=question_id,
+            quiz_id=quiz_id,
+            tipo=q_data.get("tipo", "multipla_escolha"),
+            dificuldade=q_data.get("dificuldade", "medio"),
+            enunciado=q_data.get("enunciado", ""),
+            opcoes=[QuestionOption(**o) for o in (q_data.get("opcoes", []) or [])],
+            resposta_correta=q_data.get("resposta_correta"),
+            justificativa=q_data.get("justificativa", ""),
+            conceitos_relacionados=q_data.get("conceitos", []),
+            topico_origem=q_data.get("topico_origem"),
+            created_at=datetime.now(timezone.utc),
+        ))
+
+    await db.commit()
+
+    return QuizGenerateResponse(
+        quiz_id=quiz_id,
+        titulo=f"Quiz: {lesson.title or 'Aula'}",
+        questoes=questoes_responses,
+        tempo_estimado_resposta=quiz_data.get("tempo_estimado", 15),
+        status="success",
+        message=f"{len(questoes_responses)} questões geradas com sucesso"
+    )
+
+
+@router.get("/quiz/{quiz_id}")
+async def get_quiz(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recupera um quiz específico com suas questões."""
+
+    tutor_id = user["tutor_id"]
+
+    # Valida propriedade
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+
+    # Busca questões
+    stmt = select(QuestionModel).where(
+        QuestionModel.quiz_id == quiz_id
+    )
+    questions = (await db.execute(stmt)).scalars().all()
+
+    questoes_responses = []
+    for q in questions:
+        opcoes = []
+        if q.opcoes:
+            try:
+                opcoes = [QuestionOption(**o) for o in json.loads(q.opcoes)]
+            except:
+                pass
+
+        questoes_responses.append(QuestionResponse(
+            id=q.id,
+            quiz_id=q.quiz_id,
+            tipo=q.tipo,
+            dificuldade=q.dificuldade,
+            enunciado=q.enunciado,
+            opcoes=opcoes,
+            resposta_correta=q.resposta_correta,
+            justificativa=q.justificativa,
+            conceitos_relacionados=json.loads(q.conceitos_relacionados or "[]"),
+            topico_origem=q.topico_origem,
+            created_at=q.created_at,
+        ))
+
+    return QuizResponse(
+        id=quiz.id,
+        lesson_id=quiz.lesson_id,
+        titulo=quiz.titulo,
+        tipo_quiz=quiz.tipo_quiz,
+        total_questoes=quiz.total_questoes,
+        tempo_estimado=quiz.tempo_estimado,
+        questoes=questoes_responses,
+        created_at=quiz.created_at,
+    )
+
+
+@router.post("/quiz/{quiz_id}/answer")
+async def submit_quiz_answer(
+    quiz_id: str,
+    answer: StudentAnswerRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Registra resposta de um aluno a uma questão do quiz."""
+
+    tutor_id = user["tutor_id"]
+
+    # Valida quiz
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+
+    # Valida questão
+    question = await db.get(QuestionModel, answer.question_id)
+    if not question or question.quiz_id != quiz_id:
+        raise HTTPException(status_code=404, detail="Questão não encontrada")
+
+    # Valida resposta
+    resposta_correta = None
+    if question.tipo == "verdadeiro_falso":
+        # Normaliza resposta V/F
+        if answer.resposta.lower() in ["verdadeiro", "v", "true", "sim"]:
+            resposta_correta = question.resposta_correta.lower() in ["verdadeiro", "v", "true"]
+        else:
+            resposta_correta = question.resposta_correta.lower() not in ["verdadeiro", "v", "true"]
+    elif question.tipo == "multipla_escolha":
+        resposta_correta = answer.resposta == question.resposta_correta
+    # Para aberta, não validamos automaticamente
+
+    # Registra resposta
+    student_answer = StudentAnswerModel(
+        id=str(uuid.uuid4()),
+        question_id=answer.question_id,
+        student_id=user.get("id"),
+        resposta=answer.resposta,
+        correta=resposta_correta,
+        tempo_resposta=answer.tempo_resposta,
+    )
+    db.add(student_answer)
+    await db.commit()
+
+    return StudentAnswerResponse(
+        id=student_answer.id,
+        question_id=student_answer.question_id,
+        resposta=student_answer.resposta,
+        correta=student_answer.correta,
+        tempo_resposta=student_answer.tempo_resposta,
+        respondido_em=student_answer.respondido_em,
+    )

@@ -507,6 +507,46 @@ class LessonPointModel(Base):
     created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class QuizModel(Base):
+    __tablename__ = "quizzes"
+    id               = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id         = Column(String(64), nullable=False, index=True)
+    lesson_id        = Column(String(64), nullable=False, index=True)
+    titulo           = Column(String(255), nullable=False)
+    tipo_quiz        = Column(String(50), default="pratica")  # revisao, diagnostico, pratica
+    total_questoes   = Column(Integer, default=0)
+    tempo_estimado   = Column(Integer, default=0)  # minutos
+    created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class QuestionModel(Base):
+    __tablename__ = "questions"
+    id                   = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id              = Column(String(64), nullable=False, index=True, foreign_key="quizzes.id")
+    tipo                 = Column(String(50), nullable=False)  # multipla_escolha, verdadeiro_falso, aberta, preenchimento
+    dificuldade          = Column(String(50), default="medio")  # facil, medio, dificil
+    enunciado            = Column(Text, nullable=False)
+    opcoes               = Column(Text, nullable=True)  # JSON array for multipla_escolha
+    resposta_correta     = Column(Text, nullable=True)
+    justificativa        = Column(Text, nullable=True)
+    conceitos_relacionados = Column(Text, nullable=True)  # JSON array
+    topico_origem        = Column(String(255), nullable=True)
+    grounding_score      = Column(Float, default=0.0)  # Score de source validation
+    verificado           = Column(Boolean, default=False)
+    created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class StudentAnswerModel(Base):
+    __tablename__ = "student_answers"
+    id               = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id      = Column(String(64), nullable=False, index=True, foreign_key="questions.id")
+    student_id       = Column(String(64), nullable=True, index=True)  # Anônimo se None
+    resposta         = Column(Text, nullable=True)
+    correta          = Column(Boolean, nullable=True)
+    tempo_resposta   = Column(Integer, nullable=True)  # segundos
+    respondido_em    = Column(DateTime, nullable=False, index=True, default=lambda: datetime.now(timezone.utc))
+
+
 async def init_db():
     async with engine.begin() as conn:
         # Antes do create_all: senao ele cria as tabelas novas vazias ao lado
