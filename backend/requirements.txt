@@ -2,6 +2,7 @@ fastapi==0.136.1
 uvicorn[standard]==0.47.0
 websockets==15.0.1
 python-multipart==0.0.29
+qrcode[pil]==8.0
 langchain==1.3.14
 langgraph==1.2.10
 mcp==1.29.0

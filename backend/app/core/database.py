@@ -513,25 +513,25 @@ class QuizModel(Base):
     tutor_id         = Column(String(64), nullable=False, index=True)
     lesson_id        = Column(String(64), nullable=False, index=True)
     titulo           = Column(String(255), nullable=False)
-    tipo_quiz        = Column(String(50), default="pratica")  # revisao, diagnostico, pratica
+    tipo_quiz        = Column(String(50), default="pratica")
     total_questoes   = Column(Integer, default=0)
-    tempo_estimado   = Column(Integer, default=0)  # minutos
+    tempo_estimado   = Column(Integer, default=0)
     created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class QuestionModel(Base):
     __tablename__ = "questions"
     id                   = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    quiz_id              = Column(String(64), nullable=False, index=True, foreign_key="quizzes.id")
-    tipo                 = Column(String(50), nullable=False)  # multipla_escolha, verdadeiro_falso, aberta, preenchimento
-    dificuldade          = Column(String(50), default="medio")  # facil, medio, dificil
+    quiz_id              = Column(String(64), nullable=False, index=True)
+    tipo                 = Column(String(50), nullable=False)
+    dificuldade          = Column(String(50), default="medio")
     enunciado            = Column(Text, nullable=False)
-    opcoes               = Column(Text, nullable=True)  # JSON array for multipla_escolha
+    opcoes               = Column(Text, nullable=True)
     resposta_correta     = Column(Text, nullable=True)
     justificativa        = Column(Text, nullable=True)
-    conceitos_relacionados = Column(Text, nullable=True)  # JSON array
+    conceitos_relacionados = Column(Text, nullable=True)
     topico_origem        = Column(String(255), nullable=True)
-    grounding_score      = Column(Float, default=0.0)  # Score de source validation
+    grounding_score      = Column(Float, default=0.0)
     verificado           = Column(Boolean, default=False)
     created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -539,11 +539,11 @@ class QuestionModel(Base):
 class StudentAnswerModel(Base):
     __tablename__ = "student_answers"
     id               = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    question_id      = Column(String(64), nullable=False, index=True, foreign_key="questions.id")
-    student_id       = Column(String(64), nullable=True, index=True)  # Anônimo se None
+    question_id      = Column(String(64), nullable=False, index=True)
+    student_id       = Column(String(64), nullable=True, index=True)
     resposta         = Column(Text, nullable=True)
     correta          = Column(Boolean, nullable=True)
-    tempo_resposta   = Column(Integer, nullable=True)  # segundos
+    tempo_resposta   = Column(Integer, nullable=True)
     respondido_em    = Column(DateTime, nullable=False, index=True, default=lambda: datetime.now(timezone.utc))
 
 
