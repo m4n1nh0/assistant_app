@@ -5,7 +5,6 @@ from loguru import logger
 import json
 
 from ..services.sia_scraper_service import SiaScraperService
-from ..core.database import education
 
 router = APIRouter(prefix="/education/sia", tags=["SIA Integration"])
 
