@@ -67,7 +67,7 @@ async def lesson_attendance(ref_id: str):
     from sqlalchemy import select, or_
     from ..core.database import (
         AsyncSessionLocal, AttendanceRecordModel, AttendanceRosterModel,
-        AttendanceSessionModel,
+        AttendanceSessionModel, LessonModel,
     )
 
     async with AsyncSessionLocal() as db:
@@ -77,6 +77,27 @@ async def lesson_attendance(ref_id: str):
                 AttendanceSessionModel.lesson_id == ref_id,
             ))
         )).scalars().all()
+
+        # A chamada por QR nao guarda `lesson_id` (so o fluxo que abre a
+        # chamada a partir de uma aula preenche esse campo). Para o botao do
+        # historico funcionar, caimos no par disciplina + dia da aula.
+        casado_por = 'id'
+        if not chamadas:
+            aula = (await db.execute(
+                select(LessonModel).where(LessonModel.id == ref_id)
+            )).scalars().first()
+
+            if aula is not None and aula.started_at is not None:
+                dia = aula.started_at.date().isoformat()
+                chamadas = (await db.execute(
+                    select(AttendanceSessionModel).where(
+                        AttendanceSessionModel.tutor_id == aula.tutor_id,
+                        AttendanceSessionModel.attendance_date == dia,
+                        AttendanceSessionModel.discipline == aula.discipline,
+                    )
+                )).scalars().all()
+                if chamadas:
+                    casado_por = 'disciplina+data'
 
         if not chamadas:
             raise HTTPException(
@@ -104,6 +125,7 @@ async def lesson_attendance(ref_id: str):
     return {
         'ref_id': ref_id,
         'chamadas': len(chamadas),
+        'casado_por': casado_por,
         'discipline': principal.discipline,
         'class_group': principal.class_label,
         'data': principal.attendance_date,

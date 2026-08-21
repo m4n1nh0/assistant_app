@@ -96,6 +96,15 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   final Map<String, Completer<dynamic>> _pendentes = {};
 
   List<Map<String, dynamic>>? _presencaIntarq;
+
+  /// Dados da chamada que o backend encontrou (turma, data, como casou).
+  Map<String, dynamic>? _chamadaIntarq;
+
+  /// A chamada foi achada por disciplina + data, não pelo vínculo com a aula.
+  /// Vale conferir antes de aplicar: pode haver mais de uma no mesmo dia.
+  bool get _casouPorHeuristica =>
+      _chamadaIntarq?['casado_por'] == 'disciplina+data';
+
   _Comparacao? _comparacao;
   Map<String, dynamic>? _fichaSia;
 
@@ -416,6 +425,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       return null;
     }
 
+    _chamadaIntarq = resposta.data;
     final presentes = (resposta.data['presentes'] as List<dynamic>?) ?? const [];
     _presencaIntarq = [
       for (final p in presentes) Map<String, dynamic>.from(p as Map),
@@ -832,6 +842,52 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
           Text(
             'Turma ${ficha['turma']} · ${ficha['dataAula']}',
             style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (_chamadaIntarq != null) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _casouPorHeuristica ? Colors.amber[50] : Colors.blue[50],
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _casouPorHeuristica
+                    ? Colors.amber[300]!
+                    : Colors.blue[100]!,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Chamada do INTARQ',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blueGrey[700],
+                  ),
+                ),
+                Text(
+                  '${_chamadaIntarq!['data']} · '
+                  'turma ${_chamadaIntarq!['class_group']} · '
+                  '${_presencaIntarq?.length ?? 0} presentes',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                if (_casouPorHeuristica)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Esta chamada não estava ligada à aula: encontrei pela '
+                      'disciplina e pela data. Confira se é a certa.',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.amber[900],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
         ],
