@@ -44,10 +44,6 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   InAppWebViewController? _webView;
   final Map<String, Completer<String?>> _pendingFetches = {};
 
-  List<dynamic>? _periodos;
-  String? _selectedPeriodo;
-  List<dynamic>? _turmas;
-  String? _selectedTurma;
   Map<String, dynamic>? _attendancePage;
   List<bool>? _selectedStudents;
 
@@ -55,7 +51,6 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   bool _showWebView = true;
   bool _authenticated = false;
   String? _error;
-  int _step = 1;
 
   @override
   void dispose() {
@@ -70,14 +65,13 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   // Busca dentro do navegador autenticado
   // ---------------------------------------------------------------------
 
-  /// Busca uma URL do SIA de dentro do WebView e devolve o HTML.
+  /// Lê o HTML da pauta que está visível no WebView.
   ///
-  /// As páginas vêm em windows-1252 sem `charset` no `Content-Type`, então o
-  /// corpo é lido como bytes e decodificado explicitamente.
-  Future<String?> _fetchViaBrowser(
-    String url, {
-    Map<String, String>? form,
-  }) async {
+  /// O SIA monta a tela com frames aninhados, então a busca desce por
+  /// `window.frames` até achar o documento que contém a tabela de presença.
+  /// Ler o DOM (e não refazer a requisição) evita reconstruir a navegação de
+  /// menus e já vem com o encoding resolvido pelo navegador.
+  Future<String?> _capturePautaHtml() async {
     final controller = _webView;
     if (controller == null) return null;
 
@@ -85,29 +79,37 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     final completer = Completer<String?>();
     _pendingFetches[id] = completer;
 
-    final init = form == null
-        ? "{credentials: 'include'}"
-        : "{credentials: 'include', method: 'POST', "
-            "headers: {'Content-Type': 'application/x-www-form-urlencoded'}, "
-            "body: new URLSearchParams(${jsonEncode(form)}).toString()}";
-
     await controller.evaluateJavascript(source: '''
       (function () {
-        var reply = function (html) {
-          window.flutter_inappwebview.callHandler(
-            'siaFetch', ${jsonEncode(id)}, html);
+        var achados = [];
+
+        var visitar = function (win) {
+          try {
+            var html = win.document.documentElement.outerHTML;
+            // A pauta e o unico documento com a coluna Presenca sobre uma
+            // tabela de matriculas.
+            if (/Presen.a/i.test(html) && /Matr.cula/i.test(html) &&
+                /type=["']?checkbox/i.test(html)) {
+              achados.push(html);
+            }
+          } catch (e) { /* frame de outra origem */ }
+
+          for (var i = 0; i < win.frames.length; i++) {
+            try { visitar(win.frames[i]); } catch (e) { /* idem */ }
+          }
         };
-        fetch(${jsonEncode(url)}, $init)
-          .then(function (r) { return r.arrayBuffer(); })
-          .then(function (b) {
-            reply(new TextDecoder('windows-1252').decode(b));
-          })
-          .catch(function () { reply(null); });
+
+        visitar(window.top);
+
+        // O frame mais interno é o menor: os externos contêm os internos.
+        achados.sort(function (a, b) { return a.length - b.length; });
+        window.flutter_inappwebview.callHandler(
+          'siaFetch', ${jsonEncode(id)}, achados.length ? achados[0] : null);
       })();
     ''');
 
     return completer.future.timeout(
-      const Duration(seconds: 30),
+      const Duration(seconds: 15),
       onTimeout: () {
         _pendingFetches.remove(id);
         return null;
@@ -127,7 +129,10 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   // Fluxo
   // ---------------------------------------------------------------------
 
-  /// Verifica se o login já ocorreu e, em caso positivo, carrega os períodos.
+  /// Marca a sessão como autenticada assim que o cookie de login aparece.
+  ///
+  /// Só habilita o botão de importar — quem navega até a pauta é o professor,
+  /// pelo próprio menu do SIA.
   Future<void> _checkAuthentication() async {
     if (_authenticated) return;
 
@@ -138,112 +143,46 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       final logged = cookies.any(
         (c) => c.name == _authCookie && c.value.toString().isNotEmpty,
       );
-      if (!logged || !mounted) return;
-
-      setState(() {
-        _authenticated = true;
-        _loading = true;
-      });
-
-      final html = await _fetchViaBrowser(_frequenciaUrl);
-      if (html == null || !mounted) {
-        setState(() => _authenticated = false);
-        return;
-      }
-
-      final session = await _parseOnBackend('parse-session', html);
-      if (session == null || session['valid'] != true) {
-        // Cookie existe mas a tela ainda nao e a da pauta: segue no navegador.
-        if (mounted) setState(() => _authenticated = false);
-        return;
-      }
-
-      final periodos = await _parseOnBackend('parse-periodos', html);
-      if (!mounted) return;
-
-      setState(() {
-        _periodos = (periodos as List<dynamic>?) ?? [];
-        _showWebView = false;
-        _step = 2;
-      });
+      if (logged && mounted) setState(() => _authenticated = true);
     } catch (e) {
-      debugPrint('Falha ao validar sessao do SIA: $e');
-      if (mounted) setState(() => _authenticated = false);
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      debugPrint('Falha ao ler cookies do SIA: $e');
     }
   }
 
-  Future<void> _loadTurmas() async {
-    if (_selectedPeriodo == null) return;
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final html = await _fetchViaBrowser(
-        _frequenciaUrl,
-        form: {'num_seq_periodo_academico': _selectedPeriodo!},
-      );
-      final turmas =
-          html == null ? null : await _parseOnBackend('parse-turmas', html);
-
-      if (!mounted) return;
-      if (turmas == null) {
-        setState(() => _error = 'Nao foi possivel carregar as turmas.');
-        return;
-      }
-
-      setState(() {
-        _turmas = turmas as List<dynamic>;
-        _selectedTurma = null;
-        _step = 3;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Erro ao carregar turmas: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
+  /// Lê a pauta aberta no WebView e mostra a lista para conferência.
   Future<void> _loadAttendance() async {
-    if (_selectedPeriodo == null || _selectedTurma == null) return;
-
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final html = await _fetchViaBrowser(
-        '$_siaOrigin/doc/doc0032a.asp',
-        form: {
-          'selecao': _selectedTurma!,
-          'num_seq_periodo_academico': _selectedPeriodo!,
-          'acao': 'Continuar',
-        },
-      );
-      final page =
-          html == null ? null : await _parseOnBackend('parse-attendance', html);
-
-      if (!mounted) return;
-      if (page == null) {
-        setState(() => _error = 'Nao foi possivel carregar a pauta.');
+      final html = await _capturePautaHtml();
+      if (html == null) {
+        if (mounted) {
+          setState(() => _error =
+              'Não encontrei a pauta nesta tela. Abra Pauta Eletrônica → '
+              'Lançamento de Frequência e escolha a turma.');
+        }
         return;
       }
 
-      final students = (page['students'] as List<dynamic>?) ?? [];
+      final page = await _parseOnBackend('parse-attendance', html);
+      if (!mounted) return;
+
+      final students = (page?['students'] as List<dynamic>?) ?? const [];
+      if (students.isEmpty) {
+        setState(() => _error = 'A pauta desta tela está sem alunos.');
+        return;
+      }
+
       setState(() {
         _attendancePage = page as Map<String, dynamic>;
-        _selectedStudents = [
-          for (final s in students) s['presente'] == true,
-        ];
-        _step = 4;
+        _selectedStudents = [for (final s in students) s['presente'] == true];
+        _showWebView = false;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = 'Erro ao carregar presenca: $e');
+      if (mounted) setState(() => _error = 'Erro ao ler a pauta: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -460,7 +399,51 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
             onLoadStop: (controller, url) => _checkAuthentication(),
           ),
         ),
+        _buildCaptureBar(),
       ],
+    );
+  }
+
+  /// Barra sob o navegador: o professor navega até a pauta e manda ler a tela.
+  Widget _buildCaptureBar() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        border: Border(top: BorderSide(color: Colors.grey[300]!)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _authenticated ? Icons.check_circle : Icons.hourglass_empty,
+            size: 18,
+            color: _authenticated ? Colors.green : Colors.grey,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _authenticated
+                  ? 'Abra a pauta da turma e da data que quer importar.'
+                  : 'Aguardando o login...',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          if (_error != null) ...[
+            Tooltip(
+              message: _error!,
+              child: const Icon(Icons.error_outline,
+                  size: 18, color: Colors.red),
+            ),
+            const SizedBox(width: 8),
+          ],
+          ElevatedButton.icon(
+            onPressed: _authenticated && !_loading ? _loadAttendance : null,
+            icon: const Icon(Icons.download_done),
+            label: const Text('Ler esta pauta'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+          ),
+        ],
+      ),
     );
   }
 
@@ -471,9 +454,12 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     return Column(
       children: [
         _header(
-          icon: Icons.cloud_download,
-          title: 'Importar Presença',
-          subtitle: 'Passo ${_step - 1} de 3',
+          icon: Icons.fact_check_outlined,
+          title: 'Conferir e importar',
+          subtitle: page == null
+              ? null
+              : '${page['disciplina']} — Turma ${page['turma']} · '
+                  '${page['periodo']}',
         ),
         Expanded(
           child: SingleChildScrollView(
@@ -481,56 +467,20 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sectionTitle('Período acadêmico'),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _selectedPeriodo,
-                  decoration: _fieldDecoration('Período'),
-                  items: [
-                    for (final p in _periodos ?? const [])
-                      DropdownMenuItem(
-                        value: p['value'] as String,
-                        child: Text(p['label'] as String),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    setState(() => _selectedPeriodo = value);
-                    if (value != null) _loadTurmas();
-                  },
-                ),
-
-                if (_step >= 3) ...[
-                  const SizedBox(height: 20),
-                  _sectionTitle('Turma'),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: _selectedTurma,
-                    decoration: _fieldDecoration('Turma'),
-                    items: [
-                      for (final t in _turmas ?? const [])
-                        DropdownMenuItem(
-                          value: t['num_seq_turma'] as String,
-                          child: Text('${t['disciplina']} — ${t['turma']}'),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      setState(() => _selectedTurma = value);
-                      if (value != null) _loadAttendance();
-                    },
+                if (page != null) ...[
+                  _sectionTitle(
+                    '${_selectedStudents!.where((p) => p).length} de '
+                    '${students.length} presentes',
                   ),
-                ],
-
-                if (_step >= 4 && page != null) ...[
-                  const SizedBox(height: 20),
-                  _sectionTitle('Marcar presentes'),
                   const SizedBox(height: 4),
-                  Text(
-                    '${page['disciplina']} — ${page['turma']}',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  const Text(
+                    'A marcação veio da pauta do SIA. Ajuste se precisar '
+                    'antes de importar.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   const SizedBox(height: 12),
                   Container(
-                    height: 250,
+                    height: 320,
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.grey[300]!),
                       borderRadius: BorderRadius.circular(8),
@@ -542,6 +492,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
                         final student = students[index];
                         return CheckboxListTile(
                           key: ValueKey(student['matricula']),
+                          dense: true,
                           title: Text('${student['nome']}'),
                           subtitle: Text('${student['matricula']}'),
                           value: _selectedStudents![index],
@@ -553,17 +504,32 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _loading ? null : _importAttendance,
-                      icon: const Icon(Icons.cloud_upload),
-                      label: const Text('Importar presença'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        backgroundColor: Colors.blue,
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: _loading
+                            ? null
+                            : () => setState(() {
+                                  _showWebView = true;
+                                  _attendancePage = null;
+                                  _selectedStudents = null;
+                                }),
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Outra pauta'),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _loading ? null : _importAttendance,
+                          icon: const Icon(Icons.cloud_upload),
+                          label: const Text('Importar presença'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            backgroundColor: Colors.blue,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
 
@@ -606,8 +572,4 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
             ?.copyWith(fontWeight: FontWeight.bold),
       );
 
-  InputDecoration _fieldDecoration(String label) => InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-      );
 }

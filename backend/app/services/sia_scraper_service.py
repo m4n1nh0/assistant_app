@@ -1,6 +1,6 @@
 import httpx
 import re
-from html.parser import HTMLParser
+from html import unescape
 from typing import Optional
 from urllib.parse import quote
 from dataclasses import dataclass
@@ -33,81 +33,29 @@ class SiaTurma:
     turma: str
     num_seq_turma: str
 
-class SiaParserAttendance(HTMLParser):
-    """Parser para extrair dados de presença da página do SIA"""
+def _texto(html: str) -> str:
+    """Remove tags e normaliza entidades/espacos de um trecho de HTML."""
+    limpo = re.sub(r'<[^>]+>', ' ', html)
+    return unescape(limpo).replace('\xa0', ' ').strip()
 
-    def __init__(self):
-        super().__init__()
-        self.students = []
-        self.current_row = {}
-        self.in_table = False
-        self.cell_count = 0
-        self.capturing_name = False
-        self.capturing_select = False
 
-    def close(self):
-        # A ultima linha da tabela nao tem <tr> seguinte pra fecha-la.
-        super().close()
-        if self.current_row and 'numero' in self.current_row:
-            self.students.append(self.current_row)
-            self.current_row = {}
+def _linhas(html: str) -> list[tuple[str, list[str]]]:
+    """Devolve cada <tr> como (html da linha, celulas).
 
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
+    A linha inteira vem junto porque o SIA poe campos hidden fora das <td>.
+    """
+    return [
+        (
+            linha,
+            re.findall(
+                r'<t[dh][^>]*>(.*?)</t[dh]>', linha, re.IGNORECASE | re.DOTALL
+            ),
+        )
+        for linha in re.findall(
+            r'<tr[^>]*>(.*?)</tr>', html, re.IGNORECASE | re.DOTALL
+        )
+    ]
 
-        if tag == 'table' and attrs_dict.get('border') == '0':
-            # Tabela de alunos
-            for attr, value in attrs:
-                if attr == 'width' and value == '100%':
-                    self.in_table = True
-                    return
-
-        if self.in_table:
-            if tag == 'tr':
-                if self.current_row:  # Salva linha anterior
-                    if 'numero' in self.current_row:
-                        self.students.append(self.current_row)
-                self.current_row = {}
-                self.cell_count = 0
-
-            elif tag == 'td' and self.cell_count < 4:
-                self.cell_count += 1
-                if self.cell_count == 3:  # Coluna de nome
-                    self.capturing_name = True
-
-            elif tag == 'input':
-                input_name = attrs_dict.get('name', '')
-                input_type = attrs_dict.get('type', '')
-
-                # Captura checkbox de presença
-                if input_type == 'checkbox' and input_name.startswith('ckdPresenca_'):
-                    self.current_row['presente'] = 'checked' in attrs_dict
-                    idx = input_name.replace('ckdPresenca_', '')
-                    self.current_row['numero'] = int(idx)
-
-                # Captura ID do aluno (hidden field)
-                elif input_type == 'hidden' and input_name.startswith('numSeqAlunoTurma_'):
-                    self.current_row['numSeqAlunoTurma'] = attrs_dict.get('value', '')
-
-            elif tag == 'select':
-                # Captura ID da data da aula
-                select_name = attrs_dict.get('name', '')
-                if select_name == 'numSeqDataTurma':
-                    self.capturing_select = True
-
-    def handle_data(self, data):
-        if self.capturing_name and data.strip():
-            texto = data.strip()
-            # Ignora headers e labels
-            if texto and not texto.startswith('Matrícula') and len(texto) > 3:
-                self.current_row['nome'] = texto
-                self.capturing_name = False
-
-        elif 'numero' in self.current_row and 'matricula' not in self.current_row:
-            # Próximo dado é matrícula
-            texto = data.strip()
-            if texto and texto.isdigit():
-                self.current_row['matricula'] = texto
 
 class SiaScraperService:
     """Serviço para fazer scraping do SIA Estácio
@@ -195,16 +143,49 @@ class SiaScraperService:
         return turmas
 
     def parse_attendance(self, html: str) -> dict:
-        """Extrai a pauta (alunos, aulas e dados da turma) do HTML."""
-        parser = SiaParserAttendance()
-        parser.feed(html)
-        parser.close()
+        """Extrai a pauta (alunos, aulas e dados da turma) do HTML.
+
+        A tabela da tela de Lançamento de Frequência tem as colunas
+        Nº | Matrícula | Aluno | Presença | Abono | Bloqueado. A leitura e feita
+        por posicao de coluna, sem depender do `name` dos checkboxes.
+        """
+        students = []
+
+        for linha, celulas in _linhas(html):
+            if len(celulas) < 4:
+                continue
+
+            numero = _texto(celulas[0])
+            matricula = _texto(celulas[1])
+            nome = _texto(celulas[2])
+
+            # Cabecalho e linhas de layout caem fora deste filtro.
+            if not numero.isdigit() or not matricula.isdigit() or not nome:
+                continue
+
+            checkbox = re.search(r'<input[^>]*>', celulas[3], re.IGNORECASE)
+            if not checkbox:
+                continue
+
+            aluno_turma = re.search(
+                r'name="numSeqAlunoTurma[^"]*"[^>]*value="([^"]*)"',
+                linha,
+                re.IGNORECASE,
+            )
+
+            students.append({
+                'numero': int(numero),
+                'matricula': matricula,
+                'nome': nome,
+                'presente': 'checked' in checkbox.group(0).lower(),
+                'numSeqAlunoTurma': aluno_turma.group(1) if aluno_turma else '',
+            })
 
         return {
             'turma': self._extract_turma_info(html),
             'aulas': self._extract_aulas(html),
-            'students': parser.students,
-            'total': len(parser.students),
+            'students': students,
+            'total': len(students),
         }
 
     # ------------------------------------------------------------------
@@ -281,36 +262,36 @@ class SiaScraperService:
             print(f"Erro ao extrair página de presença: {e}")
             return None
 
+    def _valor_do_rotulo(self, html: str, rotulo: str) -> str:
+        """Le o valor do campo que segue um rotulo da ficha da turma.
+
+        Os `name` dos inputs nao sao estaveis entre telas do SIA, mas o rotulo
+        visivel e. O `.` nos padroes cobre acentos que variam com o encoding.
+        """
+        achado = re.search(
+            rotulo + r'.*?<input[^>]*value="([^"]*)"',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+        return unescape(achado.group(1)).strip() if achado else ''
+
     def _extract_turma_info(self, html: str) -> dict:
-        """Extrai informações da turma do HTML"""
-        info = {}
+        """Extrai a ficha da turma (professor, disciplina, turma...) do HTML."""
+        # Os rotulos vem acentuados como entidade (`Per&iacute;odo`) ou como
+        # byte cp1252, dependendo da tela; resolver as entidades uniformiza.
+        texto = unescape(html)
 
-        # Professor
-        prof_match = re.search(r'Prof\.:\s*([^\<]+)', html)
-        if prof_match:
-            info['professor'] = prof_match.group(1).strip()
+        professor = re.search(r'Prof\.:\s*([^<]+)', texto)
+        matricula = re.search(r'Matr.cula:\s*(\d+)', texto)
 
-        # Período
-        periodo_match = re.search(r'<input[^>]*name="nom_fantasia"[^>]*value="([^"]+)"', html)
-        if periodo_match:
-            info['periodo'] = periodo_match.group(1)
-
-        # Campus
-        campus_match = re.search(r'<input[^>]*name="nomCampus"[^>]*value="([^"]+)"', html)
-        if campus_match:
-            info['campus'] = campus_match.group(1)
-
-        # Disciplina
-        disc_match = re.search(r'<input[^>]*name="txtDisciplina"[^>]*value="([^"]+)"', html)
-        if disc_match:
-            info['disciplina'] = disc_match.group(1)
-
-        # Turma
-        turma_match = re.search(r'<input[^>]*name="txtTurma"[^>]*value="([^"]+)"', html)
-        if turma_match:
-            info['turma'] = turma_match.group(1)
-
-        return info
+        return {
+            'professor': professor.group(1).strip() if professor else '',
+            'matricula_professor': matricula.group(1) if matricula else '',
+            'periodo': self._valor_do_rotulo(texto, r'Per.odo\s+Acad.mico'),
+            'campus': self._valor_do_rotulo(texto, r'Campus'),
+            'disciplina': self._valor_do_rotulo(texto, r'Disciplina'),
+            'turma': self._valor_do_rotulo(texto, r'Turma'),
+        }
 
     def _extract_aulas(self, html: str) -> list[SiaAula]:
         """Extrai datas/horas de aula disponíveis"""
