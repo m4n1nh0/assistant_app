@@ -172,27 +172,74 @@ async def get_attendance_page(
 @router.post("/import-attendance")
 async def import_attendance(
     lesson_id: str,
-    students_data: list[dict]  # [{'matricula': '...', 'presente': True}, ...]
+    students_data: list[dict]  # [{'matricula': '...', 'nome': '...', 'presente': True}, ...]
 ):
     """
     Importa dados de presença do SIA para a aula
 
-    Atualiza a tabela de attendance
+    Cria registros de presença para alunos marcados como presentes
     """
     try:
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from ..core.database import get_session_maker
+
         if not lesson_id:
             raise HTTPException(status_code=400, detail="lesson_id obrigatório")
 
-        # TODO: Implementar lógica de import
-        # 1. Busca alunos da turma na aula
-        # 2. Atualiza presença
-        # 3. Retorna resultado
+        # Usa o SessionLocal do banco
+        from ..core.database import SessionLocal
+
+        async with SessionLocal() as session:
+            # Busca a aula
+            from ..core.database import LessonModel
+            stmt = select(LessonModel).where(LessonModel.id == lesson_id)
+            result = await session.execute(stmt)
+            lesson = result.scalars().first()
+
+            if not lesson:
+                raise HTTPException(status_code=404, detail="Aula não encontrada")
+
+            # Importa presença dos alunos
+            from ..core.database import AttendanceRecordModel
+            imported = 0
+
+            for student in students_data:
+                if not student.get('presente', False):
+                    continue  # Só importa presentes
+
+                try:
+                    # Tenta criar registro de presença
+                    record = AttendanceRecordModel(
+                        session_id=lesson_id,
+                        student_id=student.get('matricula', ''),
+                        enrollment=student.get('matricula', ''),
+                        student_name=student.get('nome', ''),
+                        source='sia'  # Fonte: SIA
+                    )
+                    session.add(record)
+                    imported += 1
+                except Exception as e:
+                    logger.warning(f"Falha ao importar {student.get('nome')}: {e}")
+                    continue
+
+            # Confirma todas as mudanças
+            await session.commit()
+
+            logger.info(
+                f"Importação SIA concluída: {imported} alunos presentes "
+                f"para aula {lesson.id} ({lesson.discipline})"
+            )
 
         return {
             'status': 'success',
-            'imported': len(students_data),
-            'lesson_id': lesson_id
+            'imported': imported,
+            'total': len(students_data),
+            'lesson_id': lesson_id,
+            'message': f'{imported} presentes registrados'
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Erro ao importar presença: {e}")
         raise HTTPException(status_code=400, detail=str(e))
