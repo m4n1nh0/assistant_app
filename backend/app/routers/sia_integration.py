@@ -56,6 +56,55 @@ class HtmlPayload(BaseModel):
     html: str
 
 
+class LancamentoConfirmado(BaseModel):
+    """Confirmacao de que a pauta foi gravada no sistema da instituicao."""
+    ref_id: str
+    turma: str = ""
+    marcados: int = 0
+    detalhe: str = ""
+
+
+@router.post("/mark-synced")
+async def mark_synced(req: LancamentoConfirmado):
+    """Registra que a chamada ja foi lancada no sistema da instituicao.
+
+    So e chamado depois que o SIA confirma a gravacao — evita o professor
+    relancar a mesma pauta sem saber.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import select, or_
+    from ..core.database import AsyncSessionLocal, AttendanceSessionModel
+
+    async with AsyncSessionLocal() as db:
+        chamadas = (await db.execute(
+            select(AttendanceSessionModel).where(or_(
+                AttendanceSessionModel.id == req.ref_id,
+                AttendanceSessionModel.lesson_id == req.ref_id,
+            ))
+        )).scalars().all()
+
+        if not chamadas:
+            raise HTTPException(status_code=404, detail="Chamada nao encontrada")
+
+        agora = datetime.now(timezone.utc)
+        detalhe = (
+            f"turma {req.turma}: {req.marcados} presentes"
+            if req.turma else req.detalhe
+        )[:255]
+
+        for chamada in chamadas:
+            chamada.external_synced_at = agora
+            chamada.external_system = 'sia'
+            chamada.external_detail = detalhe
+
+        await db.commit()
+
+    logger.info(
+        f"Chamada {req.ref_id} marcada como lancada no SIA ({detalhe})"
+    )
+    return {'status': 'ok', 'synced_at': agora.isoformat(), 'detalhe': detalhe}
+
+
 @router.get("/lesson/{ref_id}/attendance")
 async def lesson_attendance(ref_id: str):
     """Presenca registrada no INTARQ, pronta para espelhar na pauta do SIA.
@@ -121,7 +170,16 @@ async def lesson_attendance(ref_id: str):
             .where(AttendanceRosterModel.session_id.in_(ids))
         )).scalars().all()
 
+    # A pauta do SIA e por turma, mas uma chamada pode juntar varias
+    # (ex.: "3001 + 3029"). A turma de cada aluno so existe na lista da
+    # chamada, entao ela vem de la para o app filtrar depois.
+    turma_do_aluno = {
+        (r.session_id, r.student_id): r.class_label for r in matriculados
+    }
+
     principal = chamadas[0]
+    turmas = sorted({r.class_label for r in matriculados if r.class_label})
+
     return {
         'ref_id': ref_id,
         'chamadas': len(chamadas),
@@ -129,16 +187,22 @@ async def lesson_attendance(ref_id: str):
         'discipline': principal.discipline,
         'class_group': principal.class_label,
         'data': principal.attendance_date,
+        'turmas': turmas,
         'presentes': [
             {
                 'matricula': r.enrollment,
                 'nome': r.student_name,
                 'origem': r.source,
+                'turma': turma_do_aluno.get((r.session_id, r.student_id), ''),
             }
             for r in presentes
         ],
         'matriculados': [
-            {'matricula': r.enrollment, 'nome': r.student_name}
+            {
+                'matricula': r.enrollment,
+                'nome': r.student_name,
+                'turma': r.class_label,
+            }
             for r in matriculados
         ],
     }

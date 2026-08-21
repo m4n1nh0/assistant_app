@@ -86,6 +86,9 @@ class _Comparacao {
   bool get temMudanca => marcar.isNotEmpty || desmarcar.isNotEmpty;
   int get total =>
       marcar.length + desmarcar.length + jaCorretos.length + bloqueados.length;
+
+  /// Quantos vão perder o abono para a presença poder ser marcada.
+  int get abonosARemover => marcar.where((l) => l.abonado).length;
 }
 
 /// Matrículas variam de formatação entre os dois sistemas; só os dígitos casam.
@@ -113,9 +116,19 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   /// justamente para corrigir pauta já lançada — mas pede confirmação.
   String _avisoSia = '';
 
+  /// Turma da pauta aberta. A comparação fica restrita a ela.
+  String _turmaFiltrada = '';
+
+  /// Presentes da chamada que são de outra turma — ficam fora deste lançamento.
+  int _foraDaTurma = 0;
+
+  /// Quantos ficaram presentes na pauta, para registrar junto do lançamento.
+  int _marcadosNaPauta = 0;
+
   bool _loading = false;
   bool _autenticado = false;
   bool _aplicado = false;
+  bool _confirmado = false;
   String? _error;
 
   @override
@@ -202,15 +215,18 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
 
         linhas.push({
           elemento: chk,
+          abonoElemento: abono,
           indice: idx,
           matricula: aluno.matricula,
           nome: aluno.nome,
           presente: !!chk.checked,
           // Abono e presenca sao excludentes: validForm() recusa os dois
           // juntos, e fctDesabilita() desativa um quando o outro e marcado.
+          // Para marcar presenca em quem esta abonado, o abono sai antes.
           abonado: !!(abono && abono.checked),
-          bloqueado: !!chk.disabled ||
-                     _siaValor(doc, 'ckdBloqueio_' + idx) !== ''
+          // Só `ckdBloqueio_N` significa trava da coordenação. O `disabled` do
+          // checkbox costuma ser efeito do abono, e sai junto com ele.
+          bloqueado: _siaValor(doc, 'ckdBloqueio_' + idx) !== ''
         });
       }
       return linhas;
@@ -278,6 +294,47 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         if (aula) achado.dataAula = aula[1].trim();
       }
       return achado;
+    };
+
+    // O botao Confirmar chama validForm(), que valida a pauta e submete para
+    // doc0032c.asp. Se a validacao falhar, a tela usa alert() — por isso ele e
+    // interceptado antes, para virar resposta em vez de travar o WebView.
+    var _siaConfirmar = function (doc) {
+      var win = doc.defaultView;
+      var botao = null;
+      var inputs = doc.querySelectorAll('input[type="button"]');
+
+      for (var i = 0; i < inputs.length; i++) {
+        if (/confirmar/i.test(inputs[i].value || '')) { botao = inputs[i]; break; }
+      }
+      if (!botao) return { ok: false, motivo: 'Botão Confirmar não encontrado' };
+
+      var alertas = [];
+      var alertOriginal = win.alert;
+      win.alert = function (msg) { alertas.push(String(msg)); };
+
+      // Erro dentro de um handler de evento nao sobe pelo .click(): sem este
+      // listener, uma falha do validForm() passaria por sucesso.
+      var erros = [];
+      var pegarErro = function (ev) {
+        erros.push(String((ev && (ev.message || ev.error)) || 'erro'));
+      };
+      win.addEventListener('error', pegarErro);
+
+      try {
+        botao.click();
+      } catch (e) {
+        erros.push(String(e));
+      } finally {
+        win.alert = alertOriginal;
+        win.removeEventListener('error', pegarErro);
+      }
+
+      if (erros.length) return { ok: false, motivo: erros.join(' / ') };
+      if (alertas.length) {
+        return { ok: false, motivo: alertas.join(' / '), validacao: true };
+      }
+      return { ok: true };
     };
 
     var _siaFicha = function (doc) {
@@ -371,22 +428,71 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       if (!pauta || !pauta.linhas.length) {
         responder({ erro: 'pauta nao encontrada' });
       } else {
-        var relatorio = { marcados: 0, desmarcados: 0, ignorados: 0 };
+        var relatorio = { marcados: 0, desmarcados: 0,
+                          abonosRemovidos: 0, ignorados: 0 };
+
         pauta.linhas.forEach(function (linha) {
           var alvo = desejado[linha.matricula];
-          // Quem tem abono fica de fora: validForm() recusa presenca+abono.
-          if (alvo === undefined || linha.bloqueado || linha.abonado) {
+          // Bloqueio da coordenacao nao se desfaz por aqui.
+          if (alvo === undefined || linha.bloqueado) {
             relatorio.ignorados++;
             return;
           }
+
+          // O SIA recusa presenca + abono na mesma linha e desabilita o
+          // checkbox de presenca enquanto o abono estiver marcado.
+          if (alvo && linha.abonoElemento && linha.abonoElemento.checked) {
+            linha.abonoElemento.click();
+            relatorio.abonosRemovidos++;
+          }
+          // fctDesabilita() costuma reabilitar, mas nem toda tela tem o
+          // handler: garantimos que o campo aceite o clique seguinte.
+          linha.elemento.disabled = false;
+
           if (linha.elemento.checked === alvo) return;
-          // click() em vez de .checked: dispara fctDesabilitaPres() da tela,
-          // que ajusta o abono correspondente.
+          // click() em vez de .checked: dispara fctDesabilitaPres() da tela.
           linha.elemento.click();
           if (alvo) relatorio.marcados++; else relatorio.desmarcados++;
         });
         responder(relatorio);
       }
+    ''');
+    return resposta as Map<dynamic, dynamic>?;
+  }
+
+  /// Clica no Confirmar da pauta e devolve o que o SIA respondeu.
+  Future<Map<dynamic, dynamic>?> _confirmarNaPauta() async {
+    final resposta = await _noNavegador('''
+      var pauta = _siaPauta();
+      if (!pauta || !pauta.linhas.length) {
+        responder({ ok: false, motivo: 'pauta nao encontrada' });
+      } else {
+        responder(_siaConfirmar(pauta.doc));
+      }
+    ''');
+    return resposta as Map<dynamic, dynamic>?;
+  }
+
+  /// Confere se a tela que veio depois do Confirmar indica gravação.
+  Future<Map<dynamic, dynamic>?> _lerResultadoConfirmacao() async {
+    final resposta = await _noNavegador(r'''
+      var docs = _siaDocumentos();
+      var texto = '';
+      for (var i = 0; i < docs.length; i++) {
+        try {
+          if (docs[i].body) texto += ' ' + _siaTexto(docs[i].body);
+        } catch (e) {}
+      }
+
+      // O SIA nao tem uma mensagem unica de sucesso: aceitamos as variacoes
+      // que ele usa e tratamos qualquer "erro/falha" como recusa.
+      var sucesso = /lan.amento (j. )?(realizado|efetuado|gravado)/i.test(texto)
+                 || /sucesso/i.test(texto)
+                 || /dados (gravados|atualizados)/i.test(texto);
+      var falha = /erro|falha|n.o foi poss.vel|inv.lid/i.test(texto);
+
+      responder({ sucesso: sucesso && !falha, falha: falha,
+                  amostra: texto.substring(0, 300) });
     ''');
     return resposta as Map<dynamic, dynamic>?;
   }
@@ -475,8 +581,23 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         return;
       }
 
+      // A pauta do SIA é de uma turma só; a chamada pode ter juntado várias.
+      // Restringimos à turma aberta para não tratar aluno de outra turma como
+      // ausente, nem oferecer marcação onde ela não existe.
+      final turmaDaPauta = _soDigitos('${ficha?['turma'] ?? ''}');
+      final daTurma = turmaDaPauta.isEmpty
+          ? intarq
+          : intarq
+              .where((p) =>
+                  _soDigitos('${p['turma']}').isEmpty ||
+                  _soDigitos('${p['turma']}') == turmaDaPauta)
+              .toList();
+
+      _turmaFiltrada = turmaDaPauta;
+      _foraDaTurma = intarq.length - daTurma.length;
+
       final presentesIntarq = {
-        for (final p in intarq) _soDigitos('${p['matricula']}'),
+        for (final p in daTurma) _soDigitos('${p['matricula']}'),
       }..remove('');
 
       final comparacao = _Comparacao();
@@ -488,7 +609,12 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         vistasNaPauta.add(chave);
 
         final devePresente = presentesIntarq.contains(chave);
-        if (linha.bloqueado || linha.abonado) {
+        if (linha.bloqueado) {
+          comparacao.bloqueados.add(linha);
+        } else if (linha.abonado && devePresente) {
+          // O abono sai para a presença poder entrar.
+          comparacao.marcar.add(linha);
+        } else if (linha.abonado) {
           comparacao.bloqueados.add(linha);
         } else if (linha.presenteNoSia == devePresente) {
           comparacao.jaCorretos.add(linha);
@@ -547,21 +673,24 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         return;
       }
 
+      _marcadosNaPauta = (relatorio['marcados'] as num?)?.toInt() ?? 0;
       widget.onImported?.call();
       setState(() {
         _aplicado = true;
         _comparacao = null;
       });
 
+      final abonos = relatorio['abonosRemovidos'] ?? 0;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             '${relatorio['marcados']} marcados e '
-            '${relatorio['desmarcados']} desmarcados na pauta. '
-            'Confira e clique em Confirmar no SIA.',
+            '${relatorio['desmarcados']} desmarcados'
+            '${abonos == 0 ? '' : ', $abonos abonos removidos'}. '
+            'Agora é só confirmar.',
           ),
           backgroundColor: Colors.green,
-          duration: const Duration(seconds: 6),
+          duration: const Duration(seconds: 5),
         ),
       );
     } catch (e) {
@@ -569,6 +698,82 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Aciona o Confirmar do SIA, checa o retorno e registra o lançamento.
+  ///
+  /// A gravação é do SIA; aqui só constatamos que ela aconteceu. Se a tela não
+  /// confirmar de forma clara, nada é marcado como transferido — melhor deixar
+  /// o professor conferir do que registrar um lançamento que não ocorreu.
+  Future<void> _confirmarNoSia() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final clique = await _confirmarNaPauta();
+      if (!mounted) return;
+
+      if (clique == null || clique['ok'] != true) {
+        final motivo = '${clique?['motivo'] ?? 'sem resposta da tela'}';
+        setState(() => _error = clique?['validacao'] == true
+            ? 'O SIA recusou o lançamento: $motivo'
+            : 'Não consegui acionar o Confirmar: $motivo');
+        return;
+      }
+
+      // O submit navega para doc0032c.asp; a tela nova leva um instante.
+      await Future.delayed(const Duration(seconds: 3));
+      final resultado = await _lerResultadoConfirmacao();
+      if (!mounted) return;
+
+      if (resultado == null || resultado['sucesso'] != true) {
+        setState(() => _error =
+            'Enviei o Confirmar, mas não reconheci a resposta do SIA. '
+            'Verifique na tela se a frequência foi gravada.\n\n'
+            '${resultado?['amostra'] ?? ''}');
+        return;
+      }
+
+      await _registrarTransferencia();
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Erro ao confirmar: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Anota no INTARQ que esta chamada já foi para o sistema da instituição.
+  Future<void> _registrarTransferencia() async {
+    final resposta = await api.post(
+      '/education/sia/mark-synced',
+      body: {
+        'ref_id': widget.refId,
+        'turma': _turmaFiltrada,
+        'marcados': _marcadosNaPauta,
+      },
+    );
+
+    if (!mounted) return;
+
+    if (!resposta.success) {
+      setState(() => _error =
+          'O SIA gravou a frequência, mas não consegui anotar isso no '
+          'INTARQ: ${resposta.error ?? 'HTTP ${resposta.statusCode}'}');
+      return;
+    }
+
+    widget.onImported?.call();
+    setState(() => _confirmado = true);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Frequência gravada no SIA e marcada como transferida.'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 5),
+      ),
+    );
   }
 
   /// Pede confirmação quando a pauta já tem lançamento gravado.
@@ -789,16 +994,49 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
             ),
           ],
 
-          if (_aplicado) ...[
+          if (_confirmado) ...[
+            const Icon(Icons.verified, size: 40, color: Colors.green),
+            const SizedBox(height: 12),
+            Text(
+              'Frequência da turma $_turmaFiltrada gravada no SIA.\n'
+              'A chamada está marcada como transferida.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.check),
+              label: const Text('Fechar'),
+            ),
+            if (_foraDaTurma > 0) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Faltam $_foraDaTurma presentes de outra turma. '
+                'Abra a pauta dela e repita.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Colors.orange[900]),
+              ),
+            ],
+          ] else if (_aplicado) ...[
             const Icon(Icons.task_alt, size: 40, color: Colors.green),
             const SizedBox(height: 12),
             const Text(
-              'Pauta marcada. Revise ao lado e clique em Confirmar no SIA — '
-              'o INTARQ não grava por você.',
+              'Pauta marcada. Revise ao lado e confirme.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, height: 1.5),
             ),
             const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loading ? null : _confirmarNoSia,
+              icon: const Icon(Icons.send),
+              label: const Text('Confirmar no SIA'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green[700],
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _loading ? null : _comparar,
               icon: const Icon(Icons.refresh),
@@ -891,6 +1129,31 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
           ),
           const SizedBox(height: 12),
         ],
+        if (_foraDaTurma > 0) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.blueGrey[50],
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.filter_alt_outlined,
+                    size: 16, color: Colors.blueGrey[700]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Só a turma $_turmaFiltrada. Outros $_foraDaTurma '
+                    'presentes desta chamada são de outra turma — lance a '
+                    'pauta delas separadamente.',
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         if (_avisoSia.isNotEmpty) ...[
           Container(
             padding: const EdgeInsets.all(10),
@@ -921,8 +1184,15 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         Expanded(
           child: ListView(
             children: [
-              _grupo('Marcar presente', comparacao.marcar, Colors.green,
-                  Icons.add_task),
+              _grupo(
+                comparacao.abonosARemover == 0
+                    ? 'Marcar presente'
+                    : 'Marcar presente '
+                        '(${comparacao.abonosARemover} perdem o abono)',
+                comparacao.marcar,
+                Colors.green,
+                Icons.add_task,
+              ),
               _grupo('Desmarcar', comparacao.desmarcar, Colors.orange,
                   Icons.remove_circle_outline),
               _grupo('Já corretos', comparacao.jaCorretos, Colors.grey,

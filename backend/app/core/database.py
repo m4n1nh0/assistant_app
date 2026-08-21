@@ -394,6 +394,10 @@ class AttendanceSessionModel(Base):
     opened_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     expires_at      = Column(DateTime, nullable=False, index=True)
     closed_at       = Column(DateTime, nullable=True)
+    # Quando a chamada foi lancada no sistema da instituicao (SIA e afins).
+    external_synced_at = Column(DateTime, nullable=True)
+    external_system    = Column(String(32), nullable=True)
+    external_detail    = Column(String(255), nullable=True)
 
 
 class AttendanceSessionClassModel(Base):
@@ -644,6 +648,11 @@ def _add_compatibility_columns(sync_conn) -> None:
             "class_group_id": "VARCHAR(64) NULL",
             "class_label": "VARCHAR(180) NOT NULL DEFAULT ''",
             "discipline": "VARCHAR(180) NOT NULL DEFAULT ''",
+        },
+        "attendance_sessions": {
+            "external_synced_at": "DATETIME NULL",
+            "external_system": "VARCHAR(32) NULL",
+            "external_detail": "VARCHAR(255) NULL",
         },
     }
     for table_name, columns in additions.items():
