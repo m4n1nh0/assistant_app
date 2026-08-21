@@ -2718,18 +2718,8 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
   void _syncSiaPresence(String lessonId, String lessonTitle) {
     showDialog(
       context: context,
-      builder: (dialogContext) => SiaAttendanceImporter(
-        lessonId: lessonId,
-        onImported: () {
-          Navigator.of(dialogContext).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Presença sincronizada com sucesso!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        },
-      ),
+      // Sem fechar ao aplicar: a gravacao final e feita na tela do SIA.
+      builder: (_) => SiaAttendanceImporter(lessonId: lessonId),
     );
   }
 
@@ -4341,16 +4331,16 @@ class _IntegrationsTab extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'SINCRONIZAR PRESENÇA',
+            'LANÇAR PRESENÇA',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
           const SizedBox(height: 12),
-          Text(
-            'Importe dados de presença de sistemas acadêmicos. '
-            'Selecione a aula e o sistema para sincronizar.',
-            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          const Text(
+            'Leve a chamada feita no INTARQ para o sistema acadêmico, '
+            'sem reconferir aluno por aluno.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
           const SizedBox(height: 24),
 
@@ -4391,8 +4381,8 @@ class _IntegrationsTab extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Sincronize a presença registrada no SIA com suas aulas. '
-                    'Acesse uma aula finalizada para importar presença.',
+                    'Marca na Pauta Eletrônica quem fez check-in no INTARQ. '
+                    'Abra uma aula do histórico para lançar a chamada dela.',
                     style: TextStyle(fontSize: 12),
                   ),
                   const SizedBox(height: 16),
@@ -4401,7 +4391,7 @@ class _IntegrationsTab extends StatelessWidget {
                     child: ElevatedButton.icon(
                       onPressed: () => _openSiaImporter(context),
                       icon: const Icon(Icons.cloud_sync),
-                      label: const Text('Importar Presença'),
+                      label: const Text('Lançar presença no SIA'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
                         padding: const EdgeInsets.symmetric(vertical: 12),
@@ -4439,15 +4429,9 @@ class _IntegrationsTab extends StatelessWidget {
     showDialog(
       context: context,
       builder: (dialogContext) => SiaAttendanceImporter(
-        onImported: () {
-          Navigator.of(dialogContext).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Presença importada com sucesso!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        },
+        // O dialogo segue aberto: o professor ainda precisa conferir e gravar
+        // a pauta no proprio SIA.
+        onImported: () {},
       ),
     );
   }

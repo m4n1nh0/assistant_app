@@ -56,6 +56,55 @@ class HtmlPayload(BaseModel):
     html: str
 
 
+@router.get("/lesson/{lesson_id}/attendance")
+async def lesson_attendance(lesson_id: str):
+    """Presenca registrada no INTARQ para uma aula.
+
+    E a fonte da verdade que sera espelhada na pauta do SIA: quem fez check-in
+    (QR code ou chamada) entra como presente.
+    """
+    from sqlalchemy import select
+    from ..core.database import (
+        SessionLocal, AttendanceRecordModel, AttendanceRosterModel, LessonModel
+    )
+
+    async with SessionLocal() as session:
+        lesson = (await session.execute(
+            select(LessonModel).where(LessonModel.id == lesson_id)
+        )).scalars().first()
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Aula nao encontrada")
+
+        presentes = (await session.execute(
+            select(AttendanceRecordModel)
+            .where(AttendanceRecordModel.session_id == lesson_id)
+        )).scalars().all()
+
+        # A lista da chamada permite reportar quem faltou, nao so quem veio.
+        matriculados = (await session.execute(
+            select(AttendanceRosterModel)
+            .where(AttendanceRosterModel.session_id == lesson_id)
+        )).scalars().all()
+
+    return {
+        'lesson_id': lesson_id,
+        'discipline': lesson.discipline,
+        'class_group': lesson.class_group,
+        'presentes': [
+            {
+                'matricula': r.enrollment,
+                'nome': r.student_name,
+                'origem': r.source,
+            }
+            for r in presentes
+        ],
+        'matriculados': [
+            {'matricula': r.enrollment, 'nome': r.student_name}
+            for r in matriculados
+        ],
+    }
+
+
 @router.post("/parse-session")
 async def parse_session(req: HtmlPayload):
     """Confirma que o HTML veio de uma sessao autenticada do SIA."""
