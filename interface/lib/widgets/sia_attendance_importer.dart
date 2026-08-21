@@ -332,13 +332,21 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     }
   }
 
+  /// Busca a chamada do INTARQ. Em caso de falha guarda o motivo em [_error].
   Future<List<Map<String, dynamic>>?> _carregarPresencaIntarq() async {
     if (_presencaIntarq != null) return _presencaIntarq;
 
-    final resposta = await _apiService.get(
-      '/education/sia/lesson/${widget.lessonId}/attendance',
-    );
-    if (!resposta.success) return null;
+    final rota = '/education/sia/lesson/${widget.lessonId}/attendance';
+    final resposta = await _apiService.get(rota);
+
+    if (!resposta.success) {
+      final motivo = resposta.statusCode == 0
+          ? 'o backend do INTARQ não respondeu'
+          : 'HTTP ${resposta.statusCode}';
+      _error = 'Não consegui ler a chamada desta aula ($motivo).\n'
+          '${resposta.error ?? ''}\n\nGET $rota';
+      return null;
+    }
 
     final presentes = (resposta.data['presentes'] as List<dynamic>?) ?? const [];
     _presencaIntarq = [
@@ -358,7 +366,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     try {
       final intarq = await _carregarPresencaIntarq();
       if (intarq == null) {
-        setState(() => _error = 'Não consegui ler a chamada desta aula.');
+        setState(() {}); // _carregarPresencaIntarq ja preencheu _error
         return;
       }
       if (intarq.isEmpty) {

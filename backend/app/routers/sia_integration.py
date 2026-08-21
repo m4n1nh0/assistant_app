@@ -65,10 +65,11 @@ async def lesson_attendance(lesson_id: str):
     """
     from sqlalchemy import select
     from ..core.database import (
-        SessionLocal, AttendanceRecordModel, AttendanceRosterModel, LessonModel
+        AsyncSessionLocal, AttendanceRecordModel, AttendanceRosterModel,
+        LessonModel,
     )
 
-    async with SessionLocal() as session:
+    async with AsyncSessionLocal() as session:
         lesson = (await session.execute(
             select(LessonModel).where(LessonModel.id == lesson_id)
         )).scalars().first()
@@ -290,16 +291,13 @@ async def import_attendance(req: ImportAttendanceRequest):
     students_data = req.students_data
     try:
         from sqlalchemy import select
-        from sqlalchemy.ext.asyncio import AsyncSession
-        from ..core.database import get_session_maker
 
         if not lesson_id:
             raise HTTPException(status_code=400, detail="lesson_id obrigatório")
 
-        # Usa o SessionLocal do banco
-        from ..core.database import SessionLocal
+        from ..core.database import AsyncSessionLocal
 
-        async with SessionLocal() as session:
+        async with AsyncSessionLocal() as session:
             # Busca a aula
             from ..core.database import LessonModel
             stmt = select(LessonModel).where(LessonModel.id == lesson_id)
