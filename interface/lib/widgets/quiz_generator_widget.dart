@@ -21,7 +21,6 @@ class QuizGeneratorWidget extends StatefulWidget {
 }
 
 class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
-  final ApiService _apiService = ApiService();
 
   bool _isGenerating = false;
   String? _error;
@@ -41,7 +40,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
 
     try {
       // Chama endpoint para gerar quiz
-      final response = await _apiService.post(
+      final response = await api.post(
         '/education/quiz/generate',
         body: {
           'lesson_id': widget.lessonId,

@@ -15,11 +15,16 @@ import '../services/api_service.dart';
 /// A leitura e a marcação são feitas pelo DOM da própria tela, não por parsing
 /// de HTML: é o SIA quem diz onde está cada checkbox.
 class SiaAttendanceImporter extends StatefulWidget {
-  final String? lessonId;
+  /// Id de uma chamada (`attendance_sessions`) ou de uma aula (`lessons`).
+  ///
+  /// A presença fica presa à chamada, não à aula: passar o id da aula reúne
+  /// todas as chamadas ligadas a ela — útil quando a aula juntou duas turmas.
+  final String? refId;
+
   final VoidCallback? onImported;
 
   const SiaAttendanceImporter({
-    this.lessonId,
+    this.refId,
     this.onImported,
     super.key,
   });
@@ -87,14 +92,17 @@ class _Comparacao {
 String _soDigitos(String valor) => valor.replaceAll(RegExp(r'\D'), '');
 
 class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
-  final ApiService _apiService = ApiService();
-
   InAppWebViewController? _webView;
   final Map<String, Completer<dynamic>> _pendentes = {};
 
   List<Map<String, dynamic>>? _presencaIntarq;
   _Comparacao? _comparacao;
   Map<String, dynamic>? _fichaSia;
+
+  /// Mensagem que o SIA exibe em `#sessionMsg` (ex.: "Lançamento já
+  /// realizado!"). Não bloqueia — a tela de Acerto de Frequência existe
+  /// justamente para corrigir pauta já lançada — mas pede confirmação.
+  String _avisoSia = '';
 
   bool _loading = false;
   bool _autenticado = false;
@@ -139,6 +147,24 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       return achado ? achado[0] : '';
     };
 
+    // Lancamento e Acerto de Frequencia diferem no layout: num deles a
+    // matricula e o nome ficam em celulas separadas, no outro na mesma. Em vez
+    // de fixar as colunas, procuramos a celula com a matricula entre as que
+    // vem antes do checkbox de presenca.
+    var _siaIdentificar = function (tds, ateIndice) {
+      for (var i = 0; i < ateIndice; i++) {
+        var texto = _siaTexto(tds[i]);
+        var achado = texto.match(/\d{6,}/);
+        if (!achado) continue;
+
+        // Nome na mesma celula (depois da matricula) ou na celula seguinte.
+        var resto = texto.replace(achado[0], ' ').trim();
+        var nome = resto || (i + 1 < ateIndice ? _siaTexto(tds[i + 1]) : '');
+        return { matricula: achado[0], nome: nome };
+      }
+      return null;
+    };
+
     // A pauta numera os campos por linha: ckdPresenca_1, ckdAbono_1, etc.
     var _siaLinhas = function (doc) {
       var linhas = [];
@@ -152,18 +178,24 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         if (!tr) continue;
 
         var tds = [];
+        var colunaPresenca = -1;
         for (var j = 0; j < tr.children.length; j++) {
-          if (tr.children[j].tagName === 'TD') tds.push(tr.children[j]);
+          if (tr.children[j].tagName !== 'TD') continue;
+          if (tr.children[j].contains(chk)) colunaPresenca = tds.length;
+          tds.push(tr.children[j]);
         }
-        if (tds.length < 3) continue;
+        if (colunaPresenca < 1) continue;
+
+        var aluno = _siaIdentificar(tds, colunaPresenca);
+        if (!aluno || !aluno.nome) continue;
 
         var abono = doc.querySelector('[name="ckdAbono_' + idx + '"]');
 
         linhas.push({
           elemento: chk,
           indice: idx,
-          matricula: _siaMatricula(tds[1]),
-          nome: _siaTexto(tds[2]),
+          matricula: aluno.matricula,
+          nome: aluno.nome,
           presente: !!chk.checked,
           // Abono e presenca sao excludentes: validForm() recusa os dois
           // juntos, e fctDesabilita() desativa um quando o outro e marcado.
@@ -216,9 +248,36 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       return melhor;
     };
 
+    // A tela de Acerto de Frequencia nao tem os campos do formulario: mostra
+    // "2026.2 ARA0040 3001" e "AULA: ..." como texto em faixas azuis.
+    var _siaFichaEmTexto = function (doc) {
+      var achado = { periodo: '', disciplina: '', turma: '', dataAula: '' };
+      var tds = doc.getElementsByTagName('td');
+
+      for (var i = 0; i < tds.length; i++) {
+        var texto = _siaTexto(tds[i]);
+
+        var ficha = texto.match(/^(\d{4}\.\d)\s+([A-Z]{2,4}\d{3,5})\s+(\d{3,5})$/);
+        if (ficha) {
+          achado.periodo = ficha[1];
+          achado.disciplina = ficha[2];
+          achado.turma = ficha[3];
+          continue;
+        }
+
+        var aula = texto.match(/^AULA:\s*(.+)$/i);
+        if (aula) achado.dataAula = aula[1].trim();
+      }
+      return achado;
+    };
+
     var _siaFicha = function (doc) {
       var sel = doc.querySelector('[name="numSeqDataTurma"]');
-      return {
+      // O SIA usa #sessionMsg para avisos como "Lançamento já realizado!".
+      var aviso = doc.querySelector('#sessionMsg');
+
+      var ficha = {
+        aviso: aviso ? _siaTexto(aviso) : '',
         disciplina: _siaValor(doc, 'txtDisciplina'),
         turma: _siaValor(doc, 'txtTurma'),
         periodo: _siaValor(doc, 'nom_fantasia'),
@@ -228,6 +287,15 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         // "E" lanca por checkbox; "T" lanca tempo em txtPresenca_N.
         forma: _siaValor(doc, 'indFormaLancamento')
       };
+
+      if (!ficha.disciplina) {
+        var texto = _siaFichaEmTexto(doc);
+        ficha.disciplina = ficha.disciplina || texto.disciplina;
+        ficha.turma = ficha.turma || texto.turma;
+        ficha.periodo = ficha.periodo || texto.periodo;
+        ficha.dataAula = ficha.dataAula || texto.dataAula;
+      }
+      return ficha;
     };
   ''';
 
@@ -336,8 +404,8 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   Future<List<Map<String, dynamic>>?> _carregarPresencaIntarq() async {
     if (_presencaIntarq != null) return _presencaIntarq;
 
-    final rota = '/education/sia/lesson/${widget.lessonId}/attendance';
-    final resposta = await _apiService.get(rota);
+    final rota = '/education/sia/lesson/${widget.refId}/attendance';
+    final resposta = await api.get(rota);
 
     if (!resposta.success) {
       final motivo = resposta.statusCode == 0
@@ -388,6 +456,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       }
 
       final ficha = (pauta?['ficha'] as Map?)?.cast<String, dynamic>();
+
       // Modo "T" lanca tempo em txtPresenca_N; marcar checkbox nao se aplica.
       if (ficha != null && ficha['forma'] != '' && ficha['forma'] != 'E') {
         setState(() => _error =
@@ -430,6 +499,9 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       setState(() {
         _comparacao = comparacao;
         _fichaSia = ficha;
+        // Avisos como "Lançamento já realizado!" nao impedem o acerto de
+        // frequencia, mas exigem uma confirmacao consciente antes de aplicar.
+        _avisoSia = '${ficha?['aviso'] ?? ''}'.trim();
       });
     } catch (e) {
       if (mounted) setState(() => _error = 'Erro ao comparar: $e');
@@ -442,6 +514,8 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   Future<void> _aplicar() async {
     final comparacao = _comparacao;
     if (comparacao == null) return;
+
+    if (_avisoSia.isNotEmpty && !await _confirmarSobrescrita()) return;
 
     setState(() {
       _loading = true;
@@ -487,13 +561,42 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     }
   }
 
+  /// Pede confirmação quando a pauta já tem lançamento gravado.
+  Future<bool> _confirmarSobrescrita() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.warning_amber, color: Colors.orange, size: 36),
+        title: const Text('Esta pauta já foi lançada'),
+        content: Text(
+          'O SIA está exibindo: "$_avisoSia"\n\n'
+          'Aplicar vai alterar marcações que já estão gravadas. '
+          'Só continue se a intenção for corrigir o lançamento.',
+          style: const TextStyle(fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange[800]),
+            child: const Text('Corrigir mesmo assim'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   // ---------------------------------------------------------------------
   // UI
   // ---------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-    if (widget.lessonId == null || widget.lessonId!.isEmpty) {
+    if (widget.refId == null || widget.refId!.isEmpty) {
       return Dialog(
         child: Container(
           constraints: const BoxConstraints(maxWidth: 600, maxHeight: 400),
@@ -608,8 +711,9 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Abra o histórico e use o ícone de sincronizar na aula '
-                    'cuja chamada você quer lançar no SIA.',
+                    'Vá em 5. PRESENÇA e use o ícone de nuvem na chamada '
+                    'que quer lançar. A presença fica na chamada, então é '
+                    'por lá que se escolhe o que vai para o SIA.',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
@@ -728,6 +832,33 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
           Text(
             'Turma ${ficha['turma']} · ${ficha['dataAula']}',
             style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (_avisoSia.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.orange[300]!),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber, size: 18, color: Colors.orange[800]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _avisoSia,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.orange[900],
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
         ],

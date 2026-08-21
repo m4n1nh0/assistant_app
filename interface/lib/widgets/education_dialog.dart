@@ -2719,7 +2719,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
     showDialog(
       context: context,
       // Sem fechar ao aplicar: a gravacao final e feita na tela do SIA.
-      builder: (_) => SiaAttendanceImporter(lessonId: lessonId),
+      builder: (_) => SiaAttendanceImporter(refId: lessonId),
     );
   }
 
@@ -4381,21 +4381,31 @@ class _IntegrationsTab extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Marca na Pauta Eletrônica quem fez check-in no INTARQ. '
-                    'Abra uma aula do histórico para lançar a chamada dela.',
+                    'Marca na Pauta Eletrônica quem fez check-in no INTARQ, '
+                    'respeitando abonos e lançamentos bloqueados. A gravação '
+                    'final continua sendo sua, no botão Confirmar do SIA.',
                     style: TextStyle(fontSize: 12),
                   ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _openSiaImporter(context),
-                      icon: const Icon(Icons.cloud_sync),
-                      label: const Text('Lançar presença no SIA'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.cloud_upload_outlined,
+                            size: 16, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Use o ícone de nuvem na aba 5. PRESENÇA, '
+                            'na chamada que quer lançar.',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -4425,16 +4435,6 @@ class _IntegrationsTab extends StatelessWidget {
     );
   }
 
-  void _openSiaImporter(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => SiaAttendanceImporter(
-        // O dialogo segue aberto: o professor ainda precisa conferir e gravar
-        // a pauta no proprio SIA.
-        onImported: () {},
-      ),
-    );
-  }
 }
 
 class _EmptyState extends StatelessWidget {

@@ -12,6 +12,7 @@ import '../services/api_service.dart';
 import '../services/academic_report_pdf_service.dart';
 import '../services/education_service.dart';
 import '../utils/theme.dart';
+import 'sia_attendance_importer.dart';
 
 /// Turmas validas para abrir a chamada, na ordem em que acontecem no dia.
 List<ClassGroup> attendanceClassesForDay(
@@ -1300,6 +1301,7 @@ class _AttendanceTabState extends State<AttendanceTab> {
                           itemBuilder: (_, index) {
                             final session = _sessions[index];
                             return Row(
+                              key: ValueKey(session.id),
                               children: [
                                 Icon(
                                   session.open
@@ -1341,6 +1343,18 @@ class _AttendanceTabState extends State<AttendanceTab> {
                                     Icons.assignment_outlined,
                                     size: 16,
                                     color: AssistantTheme.c1,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Lancar esta chamada no SIA',
+                                  onPressed: () => showDialog(
+                                    context: context,
+                                    builder: (_) => SiaAttendanceImporter(refId: session.id),
+                                  ),
+                                  icon: const Icon(
+                                    Icons.cloud_upload_outlined,
+                                    size: 16,
+                                    color: AssistantTheme.c2,
                                   ),
                                 ),
                                 IconButton(

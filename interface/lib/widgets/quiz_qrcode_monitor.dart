@@ -24,7 +24,6 @@ class QuizQRCodeMonitor extends StatefulWidget {
 }
 
 class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
-  final ApiService _apiService = ApiService();
   late WebSocketChannel _channel;
 
   String? _qrCodeUrl;
@@ -44,7 +43,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
   Future<void> _loadQRCode() async {
     try {
       // Busca URL do QR Code
-      final response = await _apiService.get(
+      final response = await api.get(
         '/education/quiz/${widget.quizId}/share-info',
       );
 
@@ -65,11 +64,11 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         _channel.sink.close();
       } catch (_) {}
 
-      // Conecta ao WebSocket para monitoramento em tempo real
+      // Conecta ao WebSocket para monitoramento em tempo real. A URL vem do
+      // backend configurado, nao de localhost: o app pode apontar para outra
+      // maquina ou para um deploy remoto.
       _channel = WebSocketChannel.connect(
-        Uri.parse(
-          'ws://localhost:8000/ws/quiz/${widget.quizId}/monitor'
-        ),
+        Uri.parse('${api.wsUrl}/ws/quiz/${widget.quizId}/monitor'),
       );
 
       // Escuta mensagens

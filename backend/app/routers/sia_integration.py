@@ -56,41 +56,57 @@ class HtmlPayload(BaseModel):
     html: str
 
 
-@router.get("/lesson/{lesson_id}/attendance")
-async def lesson_attendance(lesson_id: str):
-    """Presenca registrada no INTARQ para uma aula.
+@router.get("/lesson/{ref_id}/attendance")
+async def lesson_attendance(ref_id: str):
+    """Presenca registrada no INTARQ, pronta para espelhar na pauta do SIA.
 
-    E a fonte da verdade que sera espelhada na pauta do SIA: quem fez check-in
-    (QR code ou chamada) entra como presente.
+    `ref_id` aceita tanto o id de uma chamada (`attendance_sessions.id`) quanto
+    o de uma aula (`lessons.id`): quem faz check-in fica preso a chamada, e uma
+    aula pode ter mais de uma chamada — juntamos todas.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, or_
     from ..core.database import (
         AsyncSessionLocal, AttendanceRecordModel, AttendanceRosterModel,
-        LessonModel,
+        AttendanceSessionModel,
     )
 
-    async with AsyncSessionLocal() as session:
-        lesson = (await session.execute(
-            select(LessonModel).where(LessonModel.id == lesson_id)
-        )).scalars().first()
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Aula nao encontrada")
+    async with AsyncSessionLocal() as db:
+        chamadas = (await db.execute(
+            select(AttendanceSessionModel).where(or_(
+                AttendanceSessionModel.id == ref_id,
+                AttendanceSessionModel.lesson_id == ref_id,
+            ))
+        )).scalars().all()
 
-        presentes = (await session.execute(
+        if not chamadas:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Nenhuma chamada encontrada para este identificador. "
+                    "Abra pela aba PRESENÇA, na chamada que quer lançar."
+                ),
+            )
+
+        ids = [c.id for c in chamadas]
+
+        presentes = (await db.execute(
             select(AttendanceRecordModel)
-            .where(AttendanceRecordModel.session_id == lesson_id)
+            .where(AttendanceRecordModel.session_id.in_(ids))
         )).scalars().all()
 
         # A lista da chamada permite reportar quem faltou, nao so quem veio.
-        matriculados = (await session.execute(
+        matriculados = (await db.execute(
             select(AttendanceRosterModel)
-            .where(AttendanceRosterModel.session_id == lesson_id)
+            .where(AttendanceRosterModel.session_id.in_(ids))
         )).scalars().all()
 
+    principal = chamadas[0]
     return {
-        'lesson_id': lesson_id,
-        'discipline': lesson.discipline,
-        'class_group': lesson.class_group,
+        'ref_id': ref_id,
+        'chamadas': len(chamadas),
+        'discipline': principal.discipline,
+        'class_group': principal.class_label,
+        'data': principal.attendance_date,
         'presentes': [
             {
                 'matricula': r.enrollment,
