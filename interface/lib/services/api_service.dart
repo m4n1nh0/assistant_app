@@ -1241,9 +1241,85 @@ class ApiService {
     _ws = null;
     _wsStream = null;
   }
+
+  // Métodos genéricos de API
+  Future<_GenericApiResponse> post(String endpoint, {required Map<String, dynamic> body}) async {
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$baseUrl$endpoint'),
+            headers: _headers,
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final data = jsonDecode(r.body) as Map<String, dynamic>?;
+      String? error;
+      if (r.statusCode >= 400) {
+        error = (data?['detail'] as String?) ?? r.body;
+      }
+      return _GenericApiResponse(
+        success: r.statusCode < 400,
+        statusCode: r.statusCode,
+        data: data ?? {},
+        error: error,
+      );
+    } catch (e) {
+      return _GenericApiResponse(
+        success: false,
+        statusCode: 0,
+        data: {},
+        error: e.toString(),
+      );
+    }
+  }
+
+  Future<_GenericApiResponse> get(String endpoint) async {
+    try {
+      final r = await http
+          .get(
+            Uri.parse('$baseUrl$endpoint'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final data = jsonDecode(r.body) as Map<String, dynamic>?;
+      String? error;
+      if (r.statusCode >= 400) {
+        error = (data?['detail'] as String?) ?? r.body;
+      }
+      return _GenericApiResponse(
+        success: r.statusCode < 400,
+        statusCode: r.statusCode,
+        data: data ?? {},
+        error: error,
+      );
+    } catch (e) {
+      return _GenericApiResponse(
+        success: false,
+        statusCode: 0,
+        data: {},
+        error: e.toString(),
+      );
+    }
+  }
 }
 
 final api = ApiService();
+
+class _GenericApiResponse {
+  final bool success;
+  final int statusCode;
+  final Map<String, dynamic> data;
+  final String? error;
+
+  const _GenericApiResponse({
+    required this.success,
+    required this.statusCode,
+    required this.data,
+    this.error,
+  });
+}
 
 class NotificationTestResult {
   final bool ok;

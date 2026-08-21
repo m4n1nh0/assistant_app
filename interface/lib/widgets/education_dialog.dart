@@ -24,6 +24,9 @@ import '../branding/intarq_brand.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'education_dashboard.dart';
+import 'quiz_generator_widget.dart';
+import 'quiz_qrcode_monitor.dart';
+import 'sia_attendance_importer.dart';
 
 /// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
 /// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
@@ -33,6 +36,7 @@ const _lessonTab = 2;
 const _pointsTab = 3;
 const _historyTab = 4;
 const _attendanceTab = 5;
+const _integrationsTab = 6;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -111,7 +115,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 6,
+                  length: 7,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -141,6 +145,9 @@ class _EducationDialogState extends State<EducationDialog> {
                             Tab(
                                 icon: Icon(Icons.how_to_reg_outlined, size: 17),
                                 text: '5. PRESENCA'),
+                            Tab(
+                                icon: Icon(Icons.cloud_sync_outlined, size: 17),
+                                text: '6. INTEGRACOES'),
                           ],
                         ),
                         Expanded(
@@ -171,6 +178,7 @@ class _EducationDialogState extends State<EducationDialog> {
                               _PointsTab(classes: _classes),
                               _HistoryTab(classes: _classes),
                               AttendanceTab(classes: _classes),
+                              _IntegrationsTab(classes: _classes),
                             ],
                           ),
                         ),
@@ -1002,6 +1010,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
               itemBuilder: (_, index) {
                 final segment = _segments[index];
                 return Column(
+                  key: ValueKey(segment.id),
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
@@ -1078,6 +1087,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   }
 
   Widget _buildSidePanel() {
+    final lesson = _lesson;
     return Column(
       children: [
         Expanded(
@@ -1095,11 +1105,13 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                     separatorBuilder: (_, __) =>
                         const Divider(height: 14, color: AssistantTheme.border),
                     itemBuilder: (_, index) => _PointTile(
+                      key: ValueKey(_points[index].id),
                       point: _points[index],
                       onDelete: () async {
                         try {
-                          await education.deletePoint(_points[index].id);
-                          setState(() => _points.removeAt(index));
+                          final pointId = _points[index].id;
+                          await education.deletePoint(pointId);
+                          setState(() => _points.removeWhere((p) => p.id == pointId));
                         } catch (e) {
                           _setStatus('Falha ao remover: $e');
                         }
@@ -1109,6 +1121,17 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           ),
         ),
         const SizedBox(height: 10),
+        if (lesson != null) ...[
+          QuizGeneratorWidget(
+            lessonId: lesson.id,
+            lessonTitle: lesson.title,
+            disciplineName: lesson.discipline,
+            onQuizGenerated: () {
+              _setStatus('Quiz gerado com sucesso!');
+            },
+          ),
+          const SizedBox(height: 10),
+        ],
         // Wrap, e nao Row: o painel lateral encolhe junto com a janela, e o
         // seletor de IA desce para a linha de baixo em vez de vazar.
         Wrap(
@@ -2693,6 +2716,24 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
     }
   }
 
+  void _syncSiaPresence(String lessonId, String lessonTitle) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => SiaAttendanceImporter(
+        lessonId: lessonId,
+        onImported: () {
+          Navigator.of(dialogContext).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Presença sincronizada com sucesso!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _editSegment(LessonDetail detail, LessonSegment segment) async {
     final corrected = await _askSegmentCorrection(context, segment);
     if (corrected == null || corrected == segment.text) return;
@@ -3030,6 +3071,13 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
                           color: AssistantTheme.textMuted,
                           onPressed: () => _delete(lesson),
                         ),
+                        if (lesson.isClosed)
+                          IconButton(
+                            tooltip: 'Sincronizar presença do SIA',
+                            icon: const Icon(Icons.cloud_sync_outlined, size: 14),
+                            color: Colors.blue,
+                            onPressed: () => _syncSiaPresence(lesson.id, lesson.title),
+                          ),
                       ],
                     ),
                   ),
@@ -4084,7 +4132,11 @@ class _PointTile extends StatelessWidget {
   final LessonPoint point;
   final VoidCallback onDelete;
 
-  const _PointTile({required this.point, required this.onDelete});
+  const _PointTile({
+    super.key,
+    required this.point,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -4271,6 +4323,132 @@ class _HowItWorks extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Aba de Integrações - sincroniza presença e dados com sistemas acadêmicos
+class _IntegrationsTab extends StatelessWidget {
+  final _Classes classes;
+
+  const _IntegrationsTab({required this.classes});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'SINCRONIZAR PRESENÇA',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Importe dados de presença de sistemas acadêmicos. '
+            'Selecione a aula e o sistema para sincronizar.',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 24),
+
+          // Card SIA Estácio
+          Card(
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.cloud_download, size: 24, color: Colors.blue),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Estácio - SIA',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Text(
+                              'Pauta Eletrônica',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Sincronize a presença registrada no SIA com suas aulas. '
+                    'Acesse uma aula finalizada para importar presença.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _openSiaImporter(context),
+                      icon: const Icon(Icons.cloud_sync),
+                      label: const Text('Importar Presença'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 12),
+          Text(
+            'PRÓXIMAS INTEGRAÇÕES',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '📋 Google Classroom\n'
+            '📊 Canvas LMS\n'
+            '🎓 Blackboard\n'
+            '⚙️ Sua integração aqui...',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openSiaImporter(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => SiaAttendanceImporter(
+        onImported: () {
+          Navigator.of(dialogContext).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Presença importada com sucesso!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
       ),
     );
   }

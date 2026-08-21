@@ -60,6 +60,11 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
 
   void _connectWebSocket() {
     try {
+      // Fecha conexão anterior se existir
+      try {
+        _channel.sink.close();
+      } catch (_) {}
+
       // Conecta ao WebSocket para monitoramento em tempo real
       _channel = WebSocketChannel.connect(
         Uri.parse(
@@ -72,6 +77,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         (message) {
           final data = jsonDecode(message);
           print('WebSocket message: $data');
+
+          if (!mounted) return;
 
           setState(() {
             _isConnecting = false;
@@ -87,6 +94,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         },
         onError: (error) {
           print('WebSocket error: $error');
+          if (!mounted) return;
+
           setState(() {
             _error = 'Erro na conexão: $error';
             _isConnecting = false;
@@ -95,6 +104,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         },
         onDone: () {
           print('WebSocket closed');
+          if (!mounted) return;
           _retryConnection();
         },
       );
@@ -104,6 +114,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
       });
     } catch (e) {
       print('Erro ao conectar WebSocket: $e');
+      if (!mounted) return;
+
       setState(() {
         _error = 'Erro ao conectar: $e';
         _isConnecting = false;

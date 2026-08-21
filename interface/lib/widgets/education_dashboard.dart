@@ -347,6 +347,7 @@ class _EducationDashboardState extends State<EducationDashboard> {
             itemCount: panels.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (_, index) => SizedBox(
+              key: ValueKey(index),
               height: 260,
               child: panels[index],
             ),
@@ -662,6 +663,7 @@ class _RecentLessonsPanel extends StatelessWidget {
               children: [
                 for (final lesson in ordered.take(3))
                   SizedBox(
+                    key: ValueKey(lesson.id),
                     height: 36,
                     child: InkWell(
                       onTap: onOpen,
@@ -1039,6 +1041,7 @@ class _SemestersPanel extends StatelessWidget {
                 final item = semesters[index];
                 final selected = item.code == current;
                 return InkWell(
+                  key: ValueKey(item.code),
                   onTap: onOpen,
                   borderRadius: BorderRadius.circular(6),
                   child: Container(
@@ -1139,6 +1142,7 @@ class _ClassesPanel extends StatelessWidget {
               itemBuilder: (_, index) {
                 final group = ordered[index];
                 return InkWell(
+                  key: ValueKey(group.id),
                   onTap: onOpen,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 7),
@@ -1273,6 +1277,7 @@ class _AgendaDay extends StatelessWidget {
             else
               for (final entry in entries.take(3))
                 Container(
+                  key: ValueKey('${entry.weekday}_${entry.startTime}_${entry.classCode}'),
                   width: double.infinity,
                   margin: const EdgeInsets.only(bottom: 5),
                   padding: const EdgeInsets.symmetric(vertical: 5),
