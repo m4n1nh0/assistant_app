@@ -114,7 +114,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 7,
+                  length: 6,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -144,9 +144,6 @@ class _EducationDialogState extends State<EducationDialog> {
                             Tab(
                                 icon: Icon(Icons.how_to_reg_outlined, size: 17),
                                 text: '5. PRESENCA'),
-                            Tab(
-                                icon: Icon(Icons.cloud_sync_outlined, size: 17),
-                                text: '6. INTEGRACOES'),
                           ],
                         ),
                         Expanded(
@@ -177,7 +174,6 @@ class _EducationDialogState extends State<EducationDialog> {
                               _PointsTab(classes: _classes),
                               _HistoryTab(classes: _classes),
                               AttendanceTab(classes: _classes),
-                              _IntegrationsTab(classes: _classes),
                             ],
                           ),
                         ),
@@ -4315,126 +4311,6 @@ class _HowItWorks extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Aba de Integrações - sincroniza presença e dados com sistemas acadêmicos
-class _IntegrationsTab extends StatelessWidget {
-  final _Classes classes;
-
-  const _IntegrationsTab({required this.classes});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'LANÇAR PRESENÇA',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Leve a chamada feita no INTARQ para o sistema acadêmico, '
-            'sem reconferir aluno por aluno.',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-
-          // Card SIA Estácio
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.cloud_download, size: 24, color: Colors.blue),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Estácio - SIA',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Text(
-                              'Pauta Eletrônica',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Marca na Pauta Eletrônica quem fez check-in no INTARQ, '
-                    'respeitando abonos e lançamentos bloqueados. A gravação '
-                    'final continua sendo sua, no botão Confirmar do SIA.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.cloud_upload_outlined,
-                            size: 16, color: Colors.blue),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Use o ícone de nuvem na aba 5. PRESENÇA, '
-                            'na chamada que quer lançar.',
-                            style: TextStyle(fontSize: 11),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 24),
-          const Divider(),
-          const SizedBox(height: 12),
-          Text(
-            'PRÓXIMAS INTEGRAÇÕES',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            '📋 Google Classroom\n'
-            '📊 Canvas LMS\n'
-            '🎓 Blackboard\n'
-            '⚙️ Sua integração aqui...',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
 }
 
 class _EmptyState extends StatelessWidget {
