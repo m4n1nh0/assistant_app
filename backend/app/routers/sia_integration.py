@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from loguru import logger
@@ -51,16 +51,65 @@ class AttendancePageResponse(BaseModel):
     aulas: list[AulaResponse]
     students: list[StudentAttendanceResponse]
 
-@router.post("/test-session", response_model=dict)
+class HtmlPayload(BaseModel):
+    """HTML de uma tela do SIA, ja buscado pelo WebView autenticado."""
+    html: str
+
+
+@router.post("/parse-session")
+async def parse_session(req: HtmlPayload):
+    """Confirma que o HTML veio de uma sessao autenticada do SIA."""
+    return {'valid': SiaScraperService().parse_session(req.html)}
+
+
+@router.post("/parse-periodos")
+async def parse_periodos(req: HtmlPayload):
+    """Extrai os periodos academicos do HTML."""
+    return SiaScraperService().parse_periodos(req.html)
+
+
+@router.post("/parse-turmas")
+async def parse_turmas(req: HtmlPayload):
+    """Extrai as turmas do professor do HTML."""
+    return [vars(t) for t in SiaScraperService().parse_turmas(req.html)]
+
+
+@router.post("/parse-attendance")
+async def parse_attendance(req: HtmlPayload):
+    """Extrai a pauta (alunos, aulas, turma) do HTML."""
+    page = SiaScraperService().parse_attendance(req.html)
+    turma = page['turma']
+
+    return {
+        'professor': turma.get('professor', ''),
+        'periodo': turma.get('periodo', ''),
+        'campus': turma.get('campus', ''),
+        'disciplina': turma.get('disciplina', ''),
+        'turma': turma.get('turma', ''),
+        'aulas': [vars(a) for a in page['aulas']],
+        'students': [
+            {
+                'numero': s.get('numero'),
+                'matricula': s.get('matricula', ''),
+                'nome': s.get('nome', ''),
+                'presente': s.get('presente', False),
+            }
+            for s in page['students']
+        ],
+    }
+
+
+@router.post("/test-session")
 async def test_sia_session(req: SessionCookies):
+    cookies = req.cookies
     """
     Testa se a sessão do SIA é válida
 
-    Recebe os cookies da sessão após login manual
+    Recebe os cookies da sessão após login automático
     """
     try:
         scraper = SiaScraperService()
-        valid = await scraper.test_session(req.cookies)
+        valid = await scraper.test_session(cookies)
         await scraper.close()
 
         return {'valid': valid}
@@ -68,67 +117,75 @@ async def test_sia_session(req: SessionCookies):
         logger.exception(f"Erro ao testar sessão SIA: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/periodos", response_model=list[PeriodoResponse])
+@router.post("/periodos")
 async def get_periodos(req: SessionCookies):
+    cookies = req.cookies
     """
     Lista períodos acadêmicos disponíveis
     """
     try:
         scraper = SiaScraperService()
-        periodos = await scraper.get_periodos(req.cookies)
+        periodos = await scraper.get_periodos(cookies)
         await scraper.close()
 
-        return [
-            PeriodoResponse(**p) for p in periodos
-        ]
+        return periodos
     except Exception as e:
         logger.exception(f"Erro ao extrair períodos: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/turmas", response_model=list[TurmaResponse])
-async def get_turmas(
-    req: SessionCookies,
+class TurmasRequest(BaseModel):
+    """Requisição para listar turmas"""
+    cookies: dict
     periodo_id: str
-):
+
+@router.post("/turmas")
+async def get_turmas(req: TurmasRequest):
     """
     Lista turmas do professor para um período
     """
+    cookies = req.cookies
+    periodo_id = req.periodo_id
     try:
         scraper = SiaScraperService()
-        turmas = await scraper.get_turmas(req.cookies, periodo_id)
+        turmas = await scraper.get_turmas(cookies, periodo_id)
         await scraper.close()
 
         return [
-            TurmaResponse(
-                num_seq_turma=t.num_seq_turma,
-                campus=t.campus,
-                curso=t.curso,
-                turno=t.turno,
-                codigo=t.codigo,
-                disciplina=t.disciplina,
-                turma=t.turma
-            )
+            {
+                'num_seq_turma': t.num_seq_turma,
+                'campus': t.campus,
+                'curso': t.curso,
+                'turno': t.turno,
+                'codigo': t.codigo,
+                'disciplina': t.disciplina,
+                'turma': t.turma
+            }
             for t in turmas
         ]
     except Exception as e:
         logger.exception(f"Erro ao extrair turmas: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/attendance", response_model=AttendancePageResponse)
-async def get_attendance_page(
-    req: SessionCookies,
-    turma_id: str,
+class AttendanceRequest(BaseModel):
+    """Requisição para extrair página de frequência"""
+    cookies: dict
+    turma_id: str
     periodo_id: str
-):
+
+@router.post("/attendance")
+async def get_attendance_page(req: AttendanceRequest):
     """
     Extrai página de lançamento de frequência
 
     Retorna alunos e suas presenças atuais
     """
+    cookies = req.cookies
+    turma_id = req.turma_id
+    periodo_id = req.periodo_id
     try:
         scraper = SiaScraperService()
         page = await scraper.get_attendance_page(
-            req.cookies,
+            cookies,
             turma_id,
             periodo_id
         )
@@ -139,45 +196,49 @@ async def get_attendance_page(
 
         turma = page['turma']
 
-        return AttendancePageResponse(
-            professor=turma.get('professor', ''),
-            periodo=turma.get('periodo', ''),
-            campus=turma.get('campus', ''),
-            disciplina=turma.get('disciplina', ''),
-            turma=turma.get('turma', ''),
-            aulas=[
-                AulaResponse(
-                    num_seq_data_turma=a.num_seq_data_turma,
-                    data=a.data,
-                    hora_inicio=a.hora_inicio,
-                    hora_fim=a.hora_fim
-                )
+        return {
+            'professor': turma.get('professor', ''),
+            'periodo': turma.get('periodo', ''),
+            'campus': turma.get('campus', ''),
+            'disciplina': turma.get('disciplina', ''),
+            'turma': turma.get('turma', ''),
+            'aulas': [
+                {
+                    'num_seq_data_turma': a.num_seq_data_turma,
+                    'data': a.data,
+                    'hora_inicio': a.hora_inicio,
+                    'hora_fim': a.hora_fim
+                }
                 for a in page['aulas']
             ],
-            students=[
-                StudentAttendanceResponse(
-                    numero=s['numero'],
-                    matricula=s['matricula'],
-                    nome=s['nome'],
-                    presente=s['presente']
-                )
+            'students': [
+                {
+                    'numero': s['numero'],
+                    'matricula': s['matricula'],
+                    'nome': s['nome'],
+                    'presente': s['presente']
+                }
                 for s in page['students']
             ]
-        )
+        }
     except Exception as e:
         logger.exception(f"Erro ao extrair página de presença: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+class ImportAttendanceRequest(BaseModel):
+    """Requisição para importar presença"""
+    lesson_id: str
+    students_data: list[dict]
+
 @router.post("/import-attendance")
-async def import_attendance(
-    lesson_id: str,
-    students_data: list[dict]  # [{'matricula': '...', 'nome': '...', 'presente': True}, ...]
-):
+async def import_attendance(req: ImportAttendanceRequest):
     """
     Importa dados de presença do SIA para a aula
 
     Cria registros de presença para alunos marcados como presentes
     """
+    lesson_id = req.lesson_id
+    students_data = req.students_data
     try:
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession

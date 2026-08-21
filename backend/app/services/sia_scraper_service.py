@@ -2,7 +2,7 @@ import httpx
 import re
 from html.parser import HTMLParser
 from typing import Optional
-from datetime import datetime
+from urllib.parse import quote
 from dataclasses import dataclass
 
 @dataclass
@@ -43,6 +43,14 @@ class SiaParserAttendance(HTMLParser):
         self.in_table = False
         self.cell_count = 0
         self.capturing_name = False
+        self.capturing_select = False
+
+    def close(self):
+        # A ultima linha da tabela nao tem <tr> seguinte pra fecha-la.
+        super().close()
+        if self.current_row and 'numero' in self.current_row:
+            self.students.append(self.current_row)
+            self.current_row = {}
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
@@ -102,7 +110,23 @@ class SiaParserAttendance(HTMLParser):
                 self.current_row['matricula'] = texto
 
 class SiaScraperService:
-    """Serviço para fazer scraping do SIA Estácio"""
+    """Serviço para fazer scraping do SIA Estácio
+
+    O SIA fica atras do Akamai Bot Manager (cookies _abck / bm_sz / ak_bmsc),
+    que valida o fingerprint do navegador. Por isso o caminho suportado e o
+    WebView buscar o HTML e mandar pra ca via `parse_*`; os metodos `fetch_*`
+    ficam como fallback e costumam ser desafiados pelo bot manager.
+
+    As paginas sao servidas em windows-1252 (o SIA urlencoda 'Lançamento' como
+    'Lan%E7amento'), entao toda resposta e decodificada explicitamente.
+    """
+
+    # Mesmo UA do WebView embutido: o _abck do Akamai e emitido pra esse UA.
+    USER_AGENT = (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+    )
+    ENCODING = 'cp1252'
 
     def __init__(self):
         self.base_url = "https://sia.estacio.br"
@@ -110,9 +134,82 @@ class SiaScraperService:
             follow_redirects=True,
             timeout=30.0,
             headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': self.USER_AGENT,
+                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+                # As telas do modulo 11 sao carregadas dentro do frameset.
+                'Referer': 'https://sia.estacio.br/gen/asp/gen0003c.asp',
             }
         )
+
+    def _decode(self, response: httpx.Response) -> str:
+        """Decodifica a resposta como windows-1252 (o SIA nao manda charset)."""
+        return response.content.decode(self.ENCODING, errors='replace')
+
+    # ------------------------------------------------------------------
+    # Parse: recebe o HTML que o WebView ja buscou (caminho principal)
+    # ------------------------------------------------------------------
+
+    def parse_session(self, html: str) -> bool:
+        """Diz se o HTML veio de uma sessao autenticada."""
+        return 'Pauta Eletr' in html or 'numSeqDataTurma' in html
+
+    def parse_periodos(self, html: str) -> list[dict]:
+        """Extrai os períodos acadêmicos do <select> da tela."""
+        pattern = r'<option\s+value="(\d+)"[^>]*>([^<]+)</option>'
+        return [
+            {'value': value, 'label': label.strip()}
+            for value, label in re.findall(pattern, html, re.IGNORECASE)
+        ]
+
+    def parse_turmas(self, html: str) -> list[SiaTurma]:
+        """Extrai as turmas do professor da tabela de seleção."""
+        turmas = []
+
+        # Cada linha traz um radio com o num_seq_turma seguido das colunas
+        # campus / curso / turno / codigo / disciplina / turma.
+        row_pattern = (
+            r'<input[^>]*type="radio"[^>]*value="(\d+)"[^>]*>(.*?)</tr>'
+        )
+        for num_seq_turma, resto in re.findall(
+            row_pattern, html, re.IGNORECASE | re.DOTALL
+        ):
+            colunas = [
+                re.sub(r'<[^>]+>', '', celula).replace('&nbsp;', ' ').strip()
+                for celula in re.findall(
+                    r'<td[^>]*>(.*?)</td>', resto, re.IGNORECASE | re.DOTALL
+                )
+            ]
+            if len(colunas) < 6:
+                continue
+
+            turmas.append(SiaTurma(
+                num_seq_turma=num_seq_turma,
+                campus=colunas[0],
+                curso=colunas[1],
+                turno=colunas[2],
+                codigo=colunas[3],
+                disciplina=colunas[4],
+                turma=colunas[5],
+            ))
+
+        return turmas
+
+    def parse_attendance(self, html: str) -> dict:
+        """Extrai a pauta (alunos, aulas e dados da turma) do HTML."""
+        parser = SiaParserAttendance()
+        parser.feed(html)
+        parser.close()
+
+        return {
+            'turma': self._extract_turma_info(html),
+            'aulas': self._extract_aulas(html),
+            'students': parser.students,
+            'total': len(parser.students),
+        }
+
+    # ------------------------------------------------------------------
+    # Fetch: fallback server-side, sujeito ao bot manager do Akamai
+    # ------------------------------------------------------------------
 
     async def test_session(self, cookies: dict) -> bool:
         """Testa se a sessão é válida"""
@@ -122,7 +219,9 @@ class SiaScraperService:
                 cookies=cookies,
                 follow_redirects=True
             )
-            return response.status_code == 200 and 'Pauta Eletrônica' in response.text
+            return response.status_code == 200 and self.parse_session(
+                self._decode(response)
+            )
         except Exception as e:
             print(f"Erro ao testar sessão: {e}")
             return False
@@ -134,15 +233,7 @@ class SiaScraperService:
                 f"{self.base_url}/doc/default.asp?p1=11",
                 cookies=cookies
             )
-
-            # Regex para extrair opções do select de períodos
-            pattern = r'<option value="(\d+)"[^>]*>([^<]+)</option>'
-            matches = re.findall(pattern, response.text)
-
-            return [
-                {'value': value, 'label': label.strip()}
-                for value, label in matches
-            ]
+            return self.parse_periodos(self._decode(response))
         except Exception as e:
             print(f"Erro ao extrair períodos: {e}")
             return []
@@ -150,45 +241,16 @@ class SiaScraperService:
     async def get_turmas(self, cookies: dict, periodo_id: str) -> list[SiaTurma]:
         """Extrai turmas do professor para um período"""
         try:
-            # Navega para página de seleção de turma
+            # O SIA urlencoda o titulo em windows-1252, nao em UTF-8.
+            titulo = quote('Lançamento$de$Freqüência', encoding=self.ENCODING)
             response = await self.session.post(
-                f"{self.base_url}/gen/asp/gen0020a.asp",
+                f"{self.base_url}/gen/asp/gen0020a.asp"
+                f"?exe=../../doc/doc0032a.asp&funcao=DOC-25-9&modulo=11"
+                f"&titulo={titulo}&nfuncao={titulo}",
                 cookies=cookies,
                 data={'num_seq_periodo_academico': periodo_id},
-                params={
-                    'exe': '../../doc/doc0032a.asp',
-                    'funcao': 'DOC-25-9',
-                    'modulo': '11',
-                    'titulo': 'Lançamento$de$Freqüência',
-                    'nfuncao': 'Lançamento$de$Freqüência'
-                }
             )
-
-            turmas = []
-            # Regex para extrair linhas da tabela de turmas
-            pattern = r'<tr><td><p[^>]*><input type="radio"[^>]*value="(\d+)"[^>]*></p></td>' \
-                     r'<td><p[^>]*><font[^>]*>([^<]+)</font></p></td>' \
-                     r'<td><p[^>]*><font[^>]*>([^<]+)</font></p></td>' \
-                     r'<td><p[^>]*><font[^>]*>([^<]+)</font></p></td>' \
-                     r'<td><p[^>]*><font[^>]*>([^<]+)</font></p></td>' \
-                     r'<td><p[^>]*><font[^>]*>([^<]+)</font></p></td>' \
-                     r'<td><p[^>]*><font[^>]*>([^<]+)</font></p></td></tr>'
-
-            matches = re.findall(pattern, response.text, re.IGNORECASE)
-
-            for match in matches:
-                turma = SiaTurma(
-                    num_seq_turma=match[0],
-                    campus=match[1].strip(),
-                    curso=match[2].strip(),
-                    turno=match[3].strip(),
-                    codigo=match[4].strip(),
-                    disciplina=match[5].strip(),
-                    turma=match[6].strip()
-                )
-                turmas.append(turma)
-
-            return turmas
+            return self.parse_turmas(self._decode(response))
         except Exception as e:
             print(f"Erro ao extrair turmas: {e}")
             return []
@@ -201,7 +263,6 @@ class SiaScraperService:
     ) -> Optional[dict]:
         """Extrai página de lançamento de frequência"""
         try:
-            # POST para selecionar turma e avançar
             response = await self.session.post(
                 f"{self.base_url}/doc/doc0032a.asp",
                 cookies=cookies,
@@ -215,20 +276,7 @@ class SiaScraperService:
             if response.status_code != 200:
                 return None
 
-            # Parse da página de presença
-            parser = SiaParserAttendance()
-            parser.feed(response.text)
-
-            # Extrai informações da turma do formulário
-            turma_info = self._extract_turma_info(response.text)
-            aulas = self._extract_aulas(response.text)
-
-            return {
-                'turma': turma_info,
-                'aulas': aulas,
-                'students': parser.students,
-                'total': len(parser.students)
-            }
+            return self.parse_attendance(self._decode(response))
         except Exception as e:
             print(f"Erro ao extrair página de presença: {e}")
             return None

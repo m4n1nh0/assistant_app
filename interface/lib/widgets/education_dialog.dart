@@ -36,7 +36,6 @@ const _lessonTab = 2;
 const _pointsTab = 3;
 const _historyTab = 4;
 const _attendanceTab = 5;
-const _integrationsTab = 6;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.

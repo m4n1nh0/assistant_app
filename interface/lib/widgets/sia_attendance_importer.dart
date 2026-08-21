@@ -1,9 +1,18 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../services/api_service.dart';
 
-/// Widget para importar presença do SIA Estácio
+/// Importa a presença lançada no SIA da Estácio para uma aula do app.
+///
+/// O SIA fica atrás do Akamai Bot Manager, que valida o fingerprint do
+/// navegador (cookies `_abck` / `bm_sz` / `ak_bmsc`). Por isso quem busca o
+/// HTML é o próprio WebView já autenticado — o backend só recebe o HTML pronto
+/// e faz o parse. Requisições equivalentes feitas server-side são desafiadas.
 class SiaAttendanceImporter extends StatefulWidget {
-  final String? lessonId; // Opcional - se vazio, pergunta qual aula
+  final String? lessonId;
   final VoidCallback? onImported;
 
   const SiaAttendanceImporter({
@@ -16,11 +25,25 @@ class SiaAttendanceImporter extends StatefulWidget {
   State<SiaAttendanceImporter> createState() => _SiaAttendanceImporterState();
 }
 
+/// Cookie de autenticação do SIA. Os ~130 `ASPSESSIONID*` que o IIS cria (um
+/// por diretório virtual) já existem na tela de login e não servem de sinal.
+const _authCookie = 'wrawrsatrsrweasrdxsf';
+
+const _siaOrigin = 'https://sia.estacio.br';
+
+/// Tela de Lançamento de Frequência (módulo 11). O SIA urlencoda o título em
+/// windows-1252, não em UTF-8: `ç` vira `%E7`, `ü` vira `%FC`, `ê` vira `%EA`.
+const _tituloFrequencia = 'Lan%E7amento%24de%24Freq%FC%EAncia';
+const _frequenciaUrl =
+    '$_siaOrigin/doc/doc0032a.asp?funcao=DOC-25-9&modulo=11'
+    '&titulo=$_tituloFrequencia&hlp=';
+
 class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   final ApiService _apiService = ApiService();
-  final _cookiesCtrl = TextEditingController();
 
-  Map<String, String>? _cookies;
+  InAppWebViewController? _webView;
+  final Map<String, Completer<String?>> _pendingFetches = {};
+
   List<dynamic>? _periodos;
   String? _selectedPeriodo;
   List<dynamic>? _turmas;
@@ -29,558 +52,562 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
   List<bool>? _selectedStudents;
 
   bool _loading = false;
+  bool _showWebView = true;
+  bool _authenticated = false;
   String? _error;
+  int _step = 1;
 
   @override
   void dispose() {
-    _cookiesCtrl.dispose();
+    for (final pending in _pendingFetches.values) {
+      if (!pending.isCompleted) pending.complete(null);
+    }
+    _pendingFetches.clear();
     super.dispose();
   }
 
-  Future<void> _testSession() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  // ---------------------------------------------------------------------
+  // Busca dentro do navegador autenticado
+  // ---------------------------------------------------------------------
 
-    try {
-      final cookies = _parseCookies(_cookiesCtrl.text);
-      final response = await _apiService.post(
-        '/education/sia/test-session',
-        body: {'cookies': cookies},
-      );
+  /// Busca uma URL do SIA de dentro do WebView e devolve o HTML.
+  ///
+  /// As páginas vêm em windows-1252 sem `charset` no `Content-Type`, então o
+  /// corpo é lido como bytes e decodificado explicitamente.
+  Future<String?> _fetchViaBrowser(
+    String url, {
+    Map<String, String>? form,
+  }) async {
+    final controller = _webView;
+    if (controller == null) return null;
 
-      if (response.success && response.data['valid'] == true) {
-        setState(() => _cookies = cookies);
-        _loadPeriodos();
-      } else {
-        setState(() => _error = 'Sessão inválida. Tente fazer login novamente.');
-      }
-    } catch (e) {
-      setState(() => _error = 'Erro ao testar sessão: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<String?>();
+    _pendingFetches[id] = completer;
+
+    final init = form == null
+        ? "{credentials: 'include'}"
+        : "{credentials: 'include', method: 'POST', "
+            "headers: {'Content-Type': 'application/x-www-form-urlencoded'}, "
+            "body: new URLSearchParams(${jsonEncode(form)}).toString()}";
+
+    await controller.evaluateJavascript(source: '''
+      (function () {
+        var reply = function (html) {
+          window.flutter_inappwebview.callHandler(
+            'siaFetch', ${jsonEncode(id)}, html);
+        };
+        fetch(${jsonEncode(url)}, $init)
+          .then(function (r) { return r.arrayBuffer(); })
+          .then(function (b) {
+            reply(new TextDecoder('windows-1252').decode(b));
+          })
+          .catch(function () { reply(null); });
+      })();
+    ''');
+
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _pendingFetches.remove(id);
+        return null;
+      },
+    );
   }
 
-  Future<void> _loadPeriodos() async {
-    if (_cookies == null) return;
+  Future<dynamic> _parseOnBackend(String endpoint, String html) async {
+    final response = await _apiService.post(
+      '/education/sia/$endpoint',
+      body: {'html': html},
+    );
+    return response.success ? response.data : null;
+  }
 
-    setState(() => _loading = true);
+  // ---------------------------------------------------------------------
+  // Fluxo
+  // ---------------------------------------------------------------------
+
+  /// Verifica se o login já ocorreu e, em caso positivo, carrega os períodos.
+  Future<void> _checkAuthentication() async {
+    if (_authenticated) return;
 
     try {
-      final response = await _apiService.post(
-        '/education/sia/periodos',
-        body: {'cookies': _cookies},
+      final cookies = await CookieManager.instance().getCookies(
+        url: WebUri(_siaOrigin),
       );
+      final logged = cookies.any(
+        (c) => c.name == _authCookie && c.value.toString().isNotEmpty,
+      );
+      if (!logged || !mounted) return;
 
-      if (response.success) {
-        setState(() {
-          _periodos = (response.data as List<dynamic>?) ?? [];
-          _selectedPeriodo = null;
-        });
-      } else {
-        setState(() => _error = 'Erro ao carregar períodos');
+      setState(() {
+        _authenticated = true;
+        _loading = true;
+      });
+
+      final html = await _fetchViaBrowser(_frequenciaUrl);
+      if (html == null || !mounted) {
+        setState(() => _authenticated = false);
+        return;
       }
+
+      final session = await _parseOnBackend('parse-session', html);
+      if (session == null || session['valid'] != true) {
+        // Cookie existe mas a tela ainda nao e a da pauta: segue no navegador.
+        if (mounted) setState(() => _authenticated = false);
+        return;
+      }
+
+      final periodos = await _parseOnBackend('parse-periodos', html);
+      if (!mounted) return;
+
+      setState(() {
+        _periodos = (periodos as List<dynamic>?) ?? [];
+        _showWebView = false;
+        _step = 2;
+      });
     } catch (e) {
-      setState(() => _error = 'Erro ao carregar períodos: $e');
+      debugPrint('Falha ao validar sessao do SIA: $e');
+      if (mounted) setState(() => _authenticated = false);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _loadTurmas() async {
-    if (_cookies == null || _selectedPeriodo == null) return;
+    if (_selectedPeriodo == null) return;
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
     try {
-      final response = await _apiService.post(
-        '/education/sia/turmas',
-        body: {
-          'cookies': _cookies,
-          'periodo_id': _selectedPeriodo,
-        },
+      final html = await _fetchViaBrowser(
+        _frequenciaUrl,
+        form: {'num_seq_periodo_academico': _selectedPeriodo!},
       );
+      final turmas =
+          html == null ? null : await _parseOnBackend('parse-turmas', html);
 
-      if (response.success) {
-        setState(() {
-          _turmas = (response.data as List<dynamic>?) ?? [];
-          _selectedTurma = null;
-        });
-      } else {
-        setState(() => _error = 'Erro ao carregar turmas');
+      if (!mounted) return;
+      if (turmas == null) {
+        setState(() => _error = 'Nao foi possivel carregar as turmas.');
+        return;
       }
+
+      setState(() {
+        _turmas = turmas as List<dynamic>;
+        _selectedTurma = null;
+        _step = 3;
+      });
     } catch (e) {
-      setState(() => _error = 'Erro ao carregar turmas: $e');
+      if (mounted) setState(() => _error = 'Erro ao carregar turmas: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _loadAttendance() async {
-    if (_cookies == null || _selectedPeriodo == null || _selectedTurma == null) {
-      return;
-    }
+    if (_selectedPeriodo == null || _selectedTurma == null) return;
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
     try {
-      final response = await _apiService.post(
-        '/education/sia/attendance',
-        body: {
-          'cookies': _cookies,
-          'turma_id': _selectedTurma,
-          'periodo_id': _selectedPeriodo,
+      final html = await _fetchViaBrowser(
+        '$_siaOrigin/doc/doc0032a.asp',
+        form: {
+          'selecao': _selectedTurma!,
+          'num_seq_periodo_academico': _selectedPeriodo!,
+          'acao': 'Continuar',
         },
       );
+      final page =
+          html == null ? null : await _parseOnBackend('parse-attendance', html);
 
-      if (response.success) {
-        final page = response.data;
-        setState(() {
-          _attendancePage = page;
-          _selectedStudents = List.filled(page['students']?.length ?? 0, false);
-          // Pré-seleciona alunos que já estão marcados como presentes
-          for (int i = 0; i < (page['students']?.length ?? 0); i++) {
-            _selectedStudents![i] = page['students'][i]['presente'] == true;
-          }
-        });
-      } else {
-        setState(() => _error = 'Erro ao carregar presença');
+      if (!mounted) return;
+      if (page == null) {
+        setState(() => _error = 'Nao foi possivel carregar a pauta.');
+        return;
       }
+
+      final students = (page['students'] as List<dynamic>?) ?? [];
+      setState(() {
+        _attendancePage = page as Map<String, dynamic>;
+        _selectedStudents = [
+          for (final s in students) s['presente'] == true,
+        ];
+        _step = 4;
+      });
     } catch (e) {
-      setState(() => _error = 'Erro ao carregar presença: $e');
+      if (mounted) setState(() => _error = 'Erro ao carregar presenca: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _importAttendance() async {
-    if (_selectedStudents == null || _attendancePage == null) return;
+    final page = _attendancePage;
+    final selected = _selectedStudents;
+    if (page == null || selected == null) return;
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
     try {
-      if (widget.lessonId == null || widget.lessonId!.isEmpty) {
-        setState(() => _error = 'Nenhuma aula selecionada. Por favor, selecione uma aula primeira.');
-        return;
-      }
-
-      final students = _attendancePage!['students'] as List;
-      final toImport = [];
-
-      for (int i = 0; i < students.length; i++) {
-        toImport.add({
-          'matricula': students[i]['matricula'],
-          'nome': students[i]['nome'],
-          'presente': _selectedStudents![i],
-        });
-      }
+      final students = page['students'] as List<dynamic>;
+      final payload = [
+        for (var i = 0; i < students.length; i++)
+          {
+            'matricula': students[i]['matricula'],
+            'nome': students[i]['nome'],
+            'presente': selected[i],
+          },
+      ];
 
       final response = await _apiService.post(
         '/education/sia/import-attendance',
         body: {
           'lesson_id': widget.lessonId!,
-          'students_data': toImport,
+          'students_data': payload,
         },
       );
 
-      if (response.success) {
-        widget.onImported?.call();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${toImport.length} alunos importados!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          Navigator.pop(context);
-        }
-      } else {
-        setState(() => _error = 'Erro ao importar presença');
+      if (!mounted) return;
+      if (!response.success) {
+        setState(() => _error = 'Erro ao importar a presenca.');
+        return;
       }
+
+      widget.onImported?.call();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${response.data['imported']} presentes registrados!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pop(context);
     } catch (e) {
-      setState(() => _error = 'Erro ao importar: $e');
+      if (mounted) setState(() => _error = 'Erro ao importar: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Map<String, String> _parseCookies(String cookieString) {
-    final cookies = <String, String>{};
-    for (final cookie in cookieString.split(';')) {
-      final parts = cookie.trim().split('=');
-      if (parts.length == 2) {
-        cookies[parts[0]] = parts[1];
-      }
-    }
-    return cookies;
-  }
+  // ---------------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-    // Se lessonId é nulo, mostra tela de seleção de aula
     if (widget.lessonId == null || widget.lessonId!.isEmpty) {
-      return Dialog(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 600, maxHeight: 500),
-          child: Column(
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.blue[400]!, Colors.blue[600]!],
-                  ),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    topRight: Radius.circular(8),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cloud_download, color: Colors.white),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Importar Presença do SIA 📚',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.info_outline, size: 48, color: Colors.blue),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Nenhuma aula selecionada',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Para importar presença, você precisa primeiro abrir uma aula na aba "GRAVAR AULA" e depois voltar para importar.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      return _dialogShell(
+        maxWidth: 600,
+        maxHeight: 400,
+        child: _buildNoLesson(),
       );
     }
 
-    // Fluxo normal com lessonId fornecido
-    return Dialog(
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 800),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.blue[400]!, Colors.blue[600]!],
-                  ),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    topRight: Radius.circular(8),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cloud_download, color: Colors.white),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Importar Presença do SIA 📚',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Text(
-                            'Estácio - Pauta Eletrônica',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Passo 1: Cola cookies
-                    if (_cookies == null) ...[
-                      Text(
-                        'Passo 1: Autenticação',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        '1. Faça login em https://sia.estacio.br\n'
-                        '2. Abra DevTools (F12) → Network\n'
-                        '3. Copie o header "Cookie:" completo\n'
-                        '4. Cole abaixo',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _cookiesCtrl,
-                        maxLines: 4,
-                        decoration: InputDecoration(
-                          labelText: 'Cookies da Sessão',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          hintText: 'JSESSIONID=...; Path=...',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _loading ? null : _testSession,
-                          icon: _loading
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.login),
-                          label: const Text('Testar Sessão'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      // Passo 2: Seleciona período
-                      Text(
-                        'Passo 2: Período Acadêmico',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (_periodos == null)
-                        const CircularProgressIndicator()
-                      else
-                        DropdownButtonFormField<String>(
-                          value: _selectedPeriodo,
-                          decoration: InputDecoration(
-                            labelText: 'Período',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                          items: [
-                            for (final p in _periodos!)
-                              DropdownMenuItem(
-                                value: p['value'],
-                                child: Text(p['label']),
-                              ),
-                          ],
-                          onChanged: (value) {
-                            setState(() => _selectedPeriodo = value);
-                            if (value != null) _loadTurmas();
-                          },
-                        ),
-                      const SizedBox(height: 20),
-
-                      // Passo 3: Seleciona turma
-                      if (_selectedPeriodo != null) ...[
-                        Text(
-                          'Passo 3: Turma',
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        if (_turmas == null)
-                          const CircularProgressIndicator()
-                        else
-                          DropdownButtonFormField<String>(
-                            value: _selectedTurma,
-                            decoration: InputDecoration(
-                              labelText: 'Turma',
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            items: [
-                              for (final t in _turmas!)
-                                DropdownMenuItem(
-                                  value: t['num_seq_turma'],
-                                  child: Text(
-                                    '${t['disciplina']} - ${t['turma']} (${t['turno']})',
-                                  ),
-                                ),
-                            ],
-                            onChanged: (value) {
-                              setState(() => _selectedTurma = value);
-                              if (value != null) _loadAttendance();
-                            },
-                          ),
-                        const SizedBox(height: 20),
-                      ],
-
-                      // Passo 4: Presença
-                      if (_attendancePage != null) ...[
-                        Text(
-                          'Passo 4: Alunos Presentes',
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${_attendancePage!['disciplina']} - Turma ${_attendancePage!['turma']}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          height: 300,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey[300]!),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: ListView.separated(
-                            itemCount:
-                                _attendancePage!['students']?.length ?? 0,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (_, index) {
-                              final student =
-                                  _attendancePage!['students'][index];
-                              return CheckboxListTile(
-                                title: Text(student['nome']),
-                                subtitle: Text(student['matricula']),
-                                value: _selectedStudents![index],
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedStudents![index] = value ?? false;
-                                  });
-                                },
-                              );
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _loading ? null : _importAttendance,
-                            icon: _loading
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.cloud_upload),
-                            label: const Text('Importar Presença'),
-                            style: ElevatedButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 12),
-                              backgroundColor: Colors.blue,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-
-                    // Erro
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.red[100],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error, color: Colors.red),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _error!,
-                                style:
-                                    TextStyle(color: Colors.red[900]),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
+    return _dialogShell(
+      maxWidth: _showWebView ? 900 : 600,
+      maxHeight: _showWebView ? 900 : 800,
+      child: Stack(
+        children: [
+          // O WebView fica montado o tempo todo: e ele que faz as buscas.
+          Offstage(
+            offstage: !_showWebView,
+            child: _buildLoginWebView(),
           ),
-        ),
+          if (!_showWebView) _buildSelection(),
+          if (_loading)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0x33000000),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ),
+        ],
       ),
     );
   }
+
+  Widget _dialogShell({
+    required double maxWidth,
+    required double maxHeight,
+    required Widget child,
+  }) {
+    return Dialog(
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _header({required IconData icon, required String title, String? subtitle}) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue[400]!, Colors.blue[600]!],
+        ),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(8),
+          topRight: Radius.circular(8),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (subtitle != null)
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoLesson() {
+    return Column(
+      children: [
+        _header(icon: Icons.cloud_download, title: 'Importar Presença'),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.info_outline, size: 48, color: Colors.blue),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Nenhuma aula selecionada',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Abra o histórico e use o ícone de sincronizar '
+                    'na aula que deseja preencher.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Entendi'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginWebView() {
+    return Column(
+      children: [
+        _header(
+          icon: Icons.login,
+          title: 'Entrar no SIA',
+          subtitle: 'Faça login normalmente — a sessão é lida automaticamente',
+        ),
+        Expanded(
+          child: InAppWebView(
+            initialUrlRequest: URLRequest(url: WebUri(_frequenciaUrl)),
+            onWebViewCreated: (controller) {
+              _webView = controller;
+              controller.addJavaScriptHandler(
+                handlerName: 'siaFetch',
+                callback: (args) {
+                  final id = args.isNotEmpty ? args[0] as String? : null;
+                  final html = args.length > 1 ? args[1] as String? : null;
+                  final pending = _pendingFetches.remove(id);
+                  if (pending != null && !pending.isCompleted) {
+                    pending.complete(html);
+                  }
+                },
+              );
+            },
+            onLoadStop: (controller, url) => _checkAuthentication(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSelection() {
+    final page = _attendancePage;
+    final students = (page?['students'] as List<dynamic>?) ?? const [];
+
+    return Column(
+      children: [
+        _header(
+          icon: Icons.cloud_download,
+          title: 'Importar Presença',
+          subtitle: 'Passo ${_step - 1} de 3',
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sectionTitle('Período acadêmico'),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _selectedPeriodo,
+                  decoration: _fieldDecoration('Período'),
+                  items: [
+                    for (final p in _periodos ?? const [])
+                      DropdownMenuItem(
+                        value: p['value'] as String,
+                        child: Text(p['label'] as String),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    setState(() => _selectedPeriodo = value);
+                    if (value != null) _loadTurmas();
+                  },
+                ),
+
+                if (_step >= 3) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('Turma'),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _selectedTurma,
+                    decoration: _fieldDecoration('Turma'),
+                    items: [
+                      for (final t in _turmas ?? const [])
+                        DropdownMenuItem(
+                          value: t['num_seq_turma'] as String,
+                          child: Text('${t['disciplina']} — ${t['turma']}'),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      setState(() => _selectedTurma = value);
+                      if (value != null) _loadAttendance();
+                    },
+                  ),
+                ],
+
+                if (_step >= 4 && page != null) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('Marcar presentes'),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${page['disciplina']} — ${page['turma']}',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 250,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey[300]!),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ListView.separated(
+                      itemCount: students.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, index) {
+                        final student = students[index];
+                        return CheckboxListTile(
+                          key: ValueKey(student['matricula']),
+                          title: Text('${student['nome']}'),
+                          subtitle: Text('${student['matricula']}'),
+                          value: _selectedStudents![index],
+                          onChanged: (value) => setState(
+                            () => _selectedStudents![index] = value ?? false,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _loading ? null : _importAttendance,
+                      icon: const Icon(Icons.cloud_upload),
+                      label: const Text('Importar presença'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        backgroundColor: Colors.blue,
+                      ),
+                    ),
+                  ),
+                ],
+
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _error!,
+                            style: TextStyle(color: Colors.red[900]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(String text) => Text(
+        text,
+        style: Theme.of(context)
+            .textTheme
+            .titleMedium
+            ?.copyWith(fontWeight: FontWeight.bold),
+      );
+
+  InputDecoration _fieldDecoration(String label) => InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      );
 }
