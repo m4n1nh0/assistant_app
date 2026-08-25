@@ -38,8 +38,8 @@ import 'sia_attendance_importer.dart';
 const _dashboardTab = 0;
 const _rosterTab = 1;
 const _lessonTab = 2;
-const _pointsTab = 3;
-const _historyTab = 4;
+const _historyTab = 3;
+const _pointsTab = 4;
 const _attendanceTab = 5;
 const _quizTab = 6;
 
@@ -149,12 +149,12 @@ class _EducationDialogState extends State<EducationDialog> {
                                 icon: Icon(Icons.mic_none, size: 17),
                                 text: '2. GRAVAR AULA'),
                             Tab(
+                                icon: Icon(Icons.history, size: 17),
+                                text: '3. HISTORICO'),
+                            Tab(
                                 icon:
                                     Icon(Icons.emoji_events_outlined, size: 17),
-                                text: '3. PONTUACOES'),
-                            Tab(
-                                icon: Icon(Icons.history, size: 17),
-                                text: '4. HISTORICO'),
+                                text: '4. PONTUACOES'),
                             Tab(
                                 icon: Icon(Icons.how_to_reg_outlined, size: 17),
                                 text: '5. PRESENCA'),
@@ -195,8 +195,8 @@ class _EducationDialogState extends State<EducationDialog> {
                                       .animateTo(_quizTab);
                                 },
                               ),
-                              _PointsTab(classes: _classes),
                               _HistoryTab(classes: _classes),
+                              _PointsTab(classes: _classes),
                               AttendanceTab(classes: _classes),
                               _QuizTab(selectedLessonId: _quizLessonId),
                             ],

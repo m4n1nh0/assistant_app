@@ -59,6 +59,25 @@ class ApiService {
 
   String? get token => _token;
 
+  String _friendlyNetworkError(Object error) {
+    final message = error.toString();
+    if (message.contains('Failed host lookup') ||
+        message.contains('Este host não é conhecido')) {
+      return 'Backend não encontrado em $baseUrl. Confira o endereço do '
+          'backend nas configurações ou use http://localhost:8000 para o '
+          'ambiente local.';
+    }
+    if (message.contains('Connection refused') ||
+        message.contains('Nenhuma conexão pôde ser feita')) {
+      return 'Backend em $baseUrl recusou a conexão. Verifique se o servidor '
+          'local está iniciado.';
+    }
+    if (error is TimeoutException) {
+      return 'Tempo esgotado ao conectar em $baseUrl.';
+    }
+    return message;
+  }
+
   void setToken(String? token) {
     _token = token;
   }
@@ -1284,7 +1303,7 @@ class ApiService {
         success: false,
         statusCode: 0,
         data: {},
-        error: e.toString(),
+        error: _friendlyNetworkError(e),
       );
     }
   }
@@ -1314,7 +1333,7 @@ class ApiService {
         success: false,
         statusCode: 0,
         data: {},
-        error: e.toString(),
+        error: _friendlyNetworkError(e),
       );
     }
   }

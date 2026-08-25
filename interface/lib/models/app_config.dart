@@ -89,6 +89,16 @@ class AppConfig {
 
   static const defaultBackendUrl = String.fromEnvironment('APP_BACKEND_URL',
       defaultValue: 'http://localhost:8000');
+  static const _retiredBackendHost =
+      'assistantapp-production-cabc.up.railway.app';
+
+  static String _backendUrlOrDefault(String? value) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty || trimmed.contains(_retiredBackendHost)) {
+      return defaultBackendUrl;
+    }
+    return trimmed;
+  }
 
   AppConfig({
     this.assistantName = defaultAssistantName,
@@ -118,9 +128,7 @@ class AppConfig {
     this.ttsRatePercent = 0,
     this.ttsPitchHz = 0,
     String? backendUrl,
-  })  : backendUrl = (backendUrl == null || backendUrl.trim().isEmpty)
-            ? defaultBackendUrl
-            : backendUrl,
+  })  : backendUrl = _backendUrlOrDefault(backendUrl),
         activeLlms =
             activeLlms ?? {for (final id in serviceLabels.keys) id: false},
         llmLabels = {...serviceLabels, ...?llmLabels},
