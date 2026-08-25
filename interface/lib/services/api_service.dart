@@ -1255,7 +1255,10 @@ class ApiService {
   }
 
   // Métodos genéricos de API
-  Future<_GenericApiResponse> post(String endpoint, {required Map<String, dynamic> body}) async {
+  Future<GenericApiResponse> post(
+    String endpoint, {
+    required Map<String, dynamic> body,
+  }) async {
     try {
       final r = await http
           .post(
@@ -1270,14 +1273,14 @@ class ApiService {
       if (r.statusCode >= 400) {
         error = (data?['detail'] as String?) ?? r.body;
       }
-      return _GenericApiResponse(
+      return GenericApiResponse(
         success: r.statusCode < 400,
         statusCode: r.statusCode,
         data: data ?? {},
         error: error,
       );
     } catch (e) {
-      return _GenericApiResponse(
+      return GenericApiResponse(
         success: false,
         statusCode: 0,
         data: {},
@@ -1286,7 +1289,7 @@ class ApiService {
     }
   }
 
-  Future<_GenericApiResponse> get(String endpoint) async {
+  Future<GenericApiResponse> get(String endpoint) async {
     try {
       final r = await http
           .get(
@@ -1300,14 +1303,14 @@ class ApiService {
       if (r.statusCode >= 400) {
         error = (data?['detail'] as String?) ?? r.body;
       }
-      return _GenericApiResponse(
+      return GenericApiResponse(
         success: r.statusCode < 400,
         statusCode: r.statusCode,
         data: data ?? {},
         error: error,
       );
     } catch (e) {
-      return _GenericApiResponse(
+      return GenericApiResponse(
         success: false,
         statusCode: 0,
         data: {},
@@ -1319,13 +1322,13 @@ class ApiService {
 
 final api = ApiService();
 
-class _GenericApiResponse {
+class GenericApiResponse {
   final bool success;
   final int statusCode;
   final Map<String, dynamic> data;
   final String? error;
 
-  const _GenericApiResponse({
+  const GenericApiResponse({
     required this.success,
     required this.statusCode,
     required this.data,
