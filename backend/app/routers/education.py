@@ -2038,7 +2038,7 @@ async def reindex_lessons(
 
 @router.post("/quiz/generate")
 async def generate_quiz_from_lesson(
-    request: LessonSummaryRequest,
+    request: QuizCreateRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2052,38 +2052,30 @@ async def generate_quiz_from_lesson(
     if not lesson or lesson.tutor_id != tutor_id:
         raise HTTPException(status_code=404, detail="Aula não encontrada")
 
-    # Busca o resumo da aula
-    stmt = select(LessonSegmentModel).where(
-        (LessonSegmentModel.lesson_id == lesson_id) &
-        (LessonSegmentModel.summary != "")
-    )
-    segments = (await db.execute(stmt)).scalars().all()
+    if lesson.status != "closed":
+        raise HTTPException(
+            status_code=409,
+            detail="Encerre a gravação da aula antes de criar o quiz.",
+        )
 
-    if not segments:
+    resumo_completo = (lesson.summary or "").strip()
+    if not resumo_completo:
         raise HTTPException(
             status_code=400,
             detail="Aula sem resumo. Gere um resumo antes de criar o quiz."
         )
 
-    # Concatena resumos
-    resumo_completo = "\n".join([s.summary for s in segments if s.summary])
-
-    # Busca disciplina
-    discipline_stmt = select(DisciplineModel).where(
-        DisciplineModel.id == lesson.discipline_id
-    )
-    discipline = (await db.execute(discipline_stmt)).scalar_one_or_none()
-    disciplina_nome = discipline.name if discipline else "Geral"
+    disciplina_nome = lesson.discipline or "Geral"
 
     # Gera quiz via serviço
     quiz_data = await quiz_generator_service.generate_quiz(
         resumo=resumo_completo,
         disciplina=disciplina_nome,
         titulo_aula=lesson.title or "Aula",
-        tipo_quiz=request.style if hasattr(request, 'style') else "pratica",
-        quantidade_questoes=10,
-        tipos_questao=["multipla_escolha", "verdadeiro_falso", "aberta"],
-        dificuldade="mista",
+        tipo_quiz=request.tipo_quiz,
+        quantidade_questoes=request.quantidade_questoes,
+        tipos_questao=list(request.tipos_questao),
+        dificuldade=request.dificuldade,
         llm=request.llm,
     )
 
@@ -2100,7 +2092,7 @@ async def generate_quiz_from_lesson(
         tutor_id=tutor_id,
         lesson_id=lesson_id,
         titulo=f"Quiz: {lesson.title or 'Aula'}",
-        tipo_quiz="pratica",
+        tipo_quiz=request.tipo_quiz,
         total_questoes=len(quiz_data.get("questoes", [])),
         tempo_estimado=quiz_data.get("tempo_estimado", 15),
     )

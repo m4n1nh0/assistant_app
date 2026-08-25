@@ -1,5 +1,22 @@
 # Quiz com WebSocket + QR Code - Guia Completo
 
+## Status de Implementação
+
+**Aplicado em:** 2026-08-25
+**Situação:** QR Code e monitoramento WebSocket funcionais.
+
+- [x] Professor gera quiz e recebe monitor com QR Code.
+- [x] QR Code aponta para `/education/quiz/{quiz_id}/play`.
+- [x] URL pública do QR/share-info é derivada da requisição real, com override opcional por `base_url`.
+- [x] Endpoints PNG e SVG de QR Code disponíveis.
+- [x] Flutter abre `QuizQRCodeMonitor` após gerar quiz na aba `6. QUIZ`.
+- [x] WebSocket `/ws/quiz/{quiz_id}/monitor` envia estatísticas iniciais e atualizações a cada 2 segundos.
+- [x] Contador `total_answers` representa o total real de respostas recebidas.
+- [ ] WebSocket autenticado por JWT e autorização estrita do professor ainda seguem como roadmap.
+- [ ] Fechamento formal de quiz, gráficos e exportação de resultados ainda seguem como roadmap.
+
+---
+
 ## 🎯 Visão Geral
 
 Sistema de quiz onde:

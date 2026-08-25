@@ -4,9 +4,31 @@
 
 Feature que gera automaticamente exercícios e questões baseado nos resumos de aula estruturados, permitindo que professores criem avaliações formativas sem esforço manual.
 
-**Status:** Roadmap - Fase 2  
+**Status:** Parcialmente aplicado - base do fluxo concluída em 2026-08-25
 **Prioridade:** Alta (Modo Educação)  
 **Complexidade:** Média
+
+## Status de Implementação
+
+**Aplicado em 2026-08-25:**
+
+- [x] Geração automática de quiz a partir do resumo salvo da aula.
+- [x] Regra de produto: quiz só em aba própria e somente após encerrar a gravação.
+- [x] Backend com grafo Generate → Validate → Filter.
+- [x] Validação por grounding score e persistência de `grounding_score`.
+- [x] Persistência em `quizzes`, `questions` e `student_answers`.
+- [x] Tipos `multipla_escolha`, `verdadeiro_falso` e `aberta`.
+- [x] Configurações de tipo, quantidade, dificuldade, tipos de questão e LLM respeitadas pela API.
+- [x] Compartilhamento por link e QR Code.
+- [x] Monitoramento em tempo real via WebSocket.
+
+**Ainda roadmap:**
+
+- [ ] Quiz consolidado de múltiplas aulas/período.
+- [ ] Exportação de exercícios para PDF/material impresso.
+- [ ] Preview e edição das questões antes de salvar.
+- [ ] Relatório completo de desempenho por aluno.
+- [ ] Banco de questões reutilizável e regeneração com feedback.
 
 ---
 

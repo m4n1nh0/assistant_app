@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
@@ -15,12 +16,12 @@ class QuizQRCodeMonitor extends StatefulWidget {
   final VoidCallback? onClose;
 
   const QuizQRCodeMonitor({
+    super.key,
     required this.quizId,
     required this.quizTitle,
     required this.totalQuestions,
     this.onClose,
-    Key? key,
-  }) : super(key: key);
+  });
 
   @override
   State<QuizQRCodeMonitor> createState() => _QuizQRCodeMonitorState();
@@ -56,7 +57,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         });
       }
     } catch (e) {
-      print('Erro ao carregar QR Code: $e');
+      debugPrint('Erro ao carregar QR Code: $e');
     }
   }
 
@@ -78,7 +79,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
       _channel.stream.listen(
         (message) {
           final data = jsonDecode(message);
-          print('WebSocket message: $data');
+          debugPrint('WebSocket message: $data');
 
           if (!mounted) return;
 
@@ -88,14 +89,15 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
             _connectRetries = 0;
           });
 
-          if (data['type'] == 'initial_stats' || data['type'] == 'stats_update') {
+          if (data['type'] == 'initial_stats' ||
+              data['type'] == 'stats_update') {
             setState(() {
               _stats = data['data'];
             });
           }
         },
         onError: (error) {
-          print('WebSocket error: $error');
+          debugPrint('WebSocket error: $error');
           if (!mounted) return;
 
           setState(() {
@@ -105,7 +107,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
           _retryConnection();
         },
         onDone: () {
-          print('WebSocket closed');
+          debugPrint('WebSocket closed');
           if (!mounted) return;
           _retryConnection();
         },
@@ -115,7 +117,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         _isConnecting = false;
       });
     } catch (e) {
-      print('Erro ao conectar WebSocket: $e');
+      debugPrint('Erro ao conectar WebSocket: $e');
       if (!mounted) return;
 
       setState(() {
@@ -262,6 +264,10 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
           child: _qrCodeUrl != null
               ? Image.network(
                   _qrCodeUrl!,
+                  headers: {
+                    if (api.token != null)
+                      'Authorization': 'Bearer ${api.token}',
+                  },
                   width: 200,
                   height: 200,
                   fit: BoxFit.contain,
@@ -299,8 +305,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         Text(
           'Desempenho Geral',
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+                fontWeight: FontWeight.bold,
+              ),
         ),
         const SizedBox(height: 12),
         Row(
@@ -344,8 +350,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         Text(
           'Por Questão',
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+                fontWeight: FontWeight.bold,
+              ),
         ),
         const SizedBox(height: 12),
         if (questions.isNotEmpty)
@@ -390,7 +396,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
                           style: const TextStyle(fontSize: 12),
                         ),
                         Text(
-                          '${qPercentage.toInt()}% (${total})',
+                          '${qPercentage.toInt()}% ($total)',
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -402,7 +408,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
                 ),
               ),
             );
-          }).toList()
+          })
         else
           const Text('Aguardando respostas...'),
 
@@ -410,17 +416,20 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         Text(
           'Atualização em tempo real via WebSocket 🚀',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Colors.grey[600],
-          ),
+                color: Colors.grey[600],
+              ),
         ),
       ],
     );
   }
 
-  void _copyQuizLink() {
+  Future<void> _copyQuizLink() async {
+    final link = '${api.baseUrl}/education/quiz/${widget.quizId}/play';
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Link copiado: https://seu-dominio.com/education/quiz/${widget.quizId}/play'),
+        content: Text('Link copiado: $link'),
         duration: const Duration(seconds: 2),
       ),
     );

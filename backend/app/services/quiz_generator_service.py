@@ -102,6 +102,7 @@ class QuizGraphState(dict):
     # Intermediários
     questoes_brutas: Optional[List[Dict[str, Any]]] = None
     validacoes: Optional[Dict[str, Any]] = None
+    tempo_estimado: int = 15
 
     # Saída
     outcome: Optional[Dict[str, Any]] = None
@@ -163,6 +164,7 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
 
         return {
             "questoes_brutas": quiz_data.get("questoes", []),
+            "tempo_estimado": int(quiz_data.get("tempo_estimado") or 15),
             "attempts": [
                 {
                     "llm": llm_name,
@@ -276,6 +278,7 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
             "media_grounding_score": media_score,
             "aprovacao": media_score > 0.7,
             "llm": state.get("requested_llm", "auto"),
+            "tempo_estimado": state.get("tempo_estimado", 15),
         }
     }
 

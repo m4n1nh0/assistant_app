@@ -6,9 +6,9 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -41,6 +41,7 @@ const _lessonTab = 2;
 const _pointsTab = 3;
 const _historyTab = 4;
 const _attendanceTab = 5;
+const _quizTab = 6;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -63,6 +64,7 @@ class _EducationDialogState extends State<EducationDialog> {
   /// Turmas compartilhadas entre as abas: TURMA escreve, AULA e PONTUACOES
   /// leem. Uma fonte so evita as duas pontas divergirem.
   final _Classes _classes = ValueNotifier<List<ClassGroup>?>(null);
+  final ValueNotifier<String?> _quizLessonId = ValueNotifier<String?>(null);
 
   int? _initialTab;
 
@@ -75,6 +77,7 @@ class _EducationDialogState extends State<EducationDialog> {
   @override
   void dispose() {
     _classes.dispose();
+    _quizLessonId.dispose();
     super.dispose();
   }
 
@@ -95,6 +98,8 @@ class _EducationDialogState extends State<EducationDialog> {
         _initialTab = _rosterTab;
       } else if (widget.startAt == 'attendance') {
         _initialTab = _attendanceTab;
+      } else if (widget.startAt == 'quiz') {
+        _initialTab = _quizTab;
       } else if (widget.startAt == 'lesson') {
         _initialTab = _lessonTab;
       } else {
@@ -123,7 +128,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 6,
+                  length: 7,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -153,6 +158,9 @@ class _EducationDialogState extends State<EducationDialog> {
                             Tab(
                                 icon: Icon(Icons.how_to_reg_outlined, size: 17),
                                 text: '5. PRESENCA'),
+                            Tab(
+                                icon: Icon(Icons.quiz_outlined, size: 17),
+                                text: '6. QUIZ'),
                           ],
                         ),
                         Expanded(
@@ -179,10 +187,18 @@ class _EducationDialogState extends State<EducationDialog> {
                                     Navigator.of(tabContext).pop(),
                               ),
                               _RosterTab(classes: _classes),
-                              _LessonTab(classes: _classes),
+                              _LessonTab(
+                                classes: _classes,
+                                onLessonClosedForQuiz: (lesson) {
+                                  _quizLessonId.value = lesson.id;
+                                  DefaultTabController.of(tabContext)
+                                      .animateTo(_quizTab);
+                                },
+                              ),
                               _PointsTab(classes: _classes),
                               _HistoryTab(classes: _classes),
                               AttendanceTab(classes: _classes),
+                              _QuizTab(selectedLessonId: _quizLessonId),
                             ],
                           ),
                         ),
@@ -243,8 +259,12 @@ class _EducationDialogState extends State<EducationDialog> {
 
 class _LessonTab extends ConsumerStatefulWidget {
   final _Classes classes;
+  final ValueChanged<Lesson>? onLessonClosedForQuiz;
 
-  const _LessonTab({required this.classes});
+  const _LessonTab({
+    required this.classes,
+    this.onLessonClosedForQuiz,
+  });
 
   @override
   ConsumerState<_LessonTab> createState() => _LessonTabState();
@@ -282,9 +302,11 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   var _elapsed = Duration.zero;
   var _status = '';
   var _summaryStyle = summaryStyleStandard;
+
   /// Quem escreve o resumo: '' = fila automatica do backend.
   var _summaryEngine = '';
   String? _summary;
+
   /// Formato do resumo exibido no painel, que pode diferir do escolhido para
   /// a proxima geracao.
   String? _summaryShownStyle;
@@ -655,6 +677,9 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         final refreshed =
             await education.getLesson(lesson.id, includeSegments: false);
         if (mounted) setState(() => _lesson = refreshed);
+        if (refreshed.isClosed) {
+          widget.onLessonClosedForQuiz?.call(refreshed);
+        }
       }
     } catch (e) {
       _setStatus('Falha ao gerar resumo: $e');
@@ -1091,7 +1116,6 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   }
 
   Widget _buildSidePanel() {
-    final lesson = _lesson;
     return Column(
       children: [
         Expanded(
@@ -1115,7 +1139,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                         try {
                           final pointId = _points[index].id;
                           await education.deletePoint(pointId);
-                          setState(() => _points.removeWhere((p) => p.id == pointId));
+                          setState(() =>
+                              _points.removeWhere((p) => p.id == pointId));
                         } catch (e) {
                           _setStatus('Falha ao remover: $e');
                         }
@@ -1125,17 +1150,6 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           ),
         ),
         const SizedBox(height: 10),
-        if (lesson != null) ...[
-          QuizGeneratorWidget(
-            lessonId: lesson.id,
-            lessonTitle: lesson.title,
-            disciplineName: lesson.discipline,
-            onQuizGenerated: () {
-              _setStatus('Quiz gerado com sucesso!');
-            },
-          ),
-          const SizedBox(height: 10),
-        ],
         // Wrap, e nao Row: o painel lateral encolhe junto com a janela, e o
         // seletor de IA desce para a linha de baixo em vez de vazar.
         Wrap(
@@ -1509,6 +1523,326 @@ class _PointsTabState extends State<_PointsTab> {
                       );
                     },
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- Quiz -----------------------------------------------------------------
+
+class _QuizTab extends StatefulWidget {
+  final ValueListenable<String?> selectedLessonId;
+
+  const _QuizTab({required this.selectedLessonId});
+
+  @override
+  State<_QuizTab> createState() => _QuizTabState();
+}
+
+class _QuizTabState extends State<_QuizTab> {
+  List<Lesson> _lessons = [];
+  Lesson? _selected;
+  String? _generatedQuizId;
+  String? _generatedQuizTitle;
+  int _generatedQuestionCount = 0;
+  var _loading = false;
+  var _status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    widget.selectedLessonId.addListener(_onSelectedLessonChanged);
+    _load(keepId: widget.selectedLessonId.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant _QuizTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedLessonId == widget.selectedLessonId) return;
+    oldWidget.selectedLessonId.removeListener(_onSelectedLessonChanged);
+    widget.selectedLessonId.addListener(_onSelectedLessonChanged);
+    _load(keepId: widget.selectedLessonId.value);
+  }
+
+  @override
+  void dispose() {
+    widget.selectedLessonId.removeListener(_onSelectedLessonChanged);
+    super.dispose();
+  }
+
+  void _onSelectedLessonChanged() {
+    final lessonId = widget.selectedLessonId.value;
+    if (lessonId == null || lessonId.isEmpty) return;
+    final lesson = _findLesson(lessonId, _lessons);
+    if (lesson != null) {
+      _selectLesson(lesson);
+    } else {
+      unawaited(_load(keepId: lessonId));
+    }
+  }
+
+  Lesson? _findLesson(String lessonId, List<Lesson> lessons) {
+    for (final lesson in lessons) {
+      if (lesson.id == lessonId) return lesson;
+    }
+    return null;
+  }
+
+  Future<void> _load({String? keepId}) async {
+    setState(() {
+      _loading = true;
+      _status = '';
+    });
+    try {
+      final lessons = (await education.listLessons(limit: 200))
+          .where((lesson) => lesson.isClosed)
+          .toList();
+      if (!mounted) return;
+      final wanted = keepId ?? _selected?.id;
+      final selected = wanted == null ? null : _findLesson(wanted, lessons);
+      setState(() {
+        _lessons = lessons;
+        _selected = selected ?? (lessons.isEmpty ? null : lessons.first);
+        _generatedQuizId = null;
+        _generatedQuizTitle = null;
+        _generatedQuestionCount = 0;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao carregar aulas: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _selectLesson(Lesson lesson) {
+    setState(() {
+      _selected = lesson;
+      _generatedQuizId = null;
+      _generatedQuizTitle = null;
+      _generatedQuestionCount = 0;
+    });
+  }
+
+  String _when(Lesson lesson) {
+    final start = lesson.startedAt?.toLocal();
+    if (start == null) return 'sem data';
+    final day = '${start.day.toString().padLeft(2, '0')}/'
+        '${start.month.toString().padLeft(2, '0')}/${start.year}';
+    final hour = '${start.hour.toString().padLeft(2, '0')}:'
+        '${start.minute.toString().padLeft(2, '0')}';
+    return '$day $hour';
+  }
+
+  String _lessonTitle(Lesson lesson) =>
+      lesson.title.isEmpty ? lesson.discipline : lesson.title;
+
+  void _openMonitor() {
+    final quizId = _generatedQuizId;
+    if (quizId == null) return;
+    showDialog(
+      context: context,
+      builder: (_) => QuizQRCodeMonitor(
+        quizId: quizId,
+        quizTitle: _generatedQuizTitle ?? 'Quiz',
+        totalQuestions: _generatedQuestionCount,
+      ),
+    );
+  }
+
+  Widget _buildList() {
+    return _Panel(
+      title: 'AULAS ENCERRADAS',
+      trailing: IconButton(
+        tooltip: 'Atualizar aulas',
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.refresh, size: 15),
+        color: AssistantTheme.textMuted,
+        onPressed: _loading ? null : () => _load(),
+      ),
+      child: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _lessons.isEmpty
+              ? const _EmptyState(
+                  icon: Icons.quiz_outlined,
+                  text: 'Encerre uma gravacao para criar o quiz da aula.',
+                )
+              : ListView.separated(
+                  itemCount: _lessons.length,
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 12, color: AssistantTheme.border),
+                  itemBuilder: (_, index) {
+                    final lesson = _lessons[index];
+                    final selected = lesson.id == _selected?.id;
+                    final hasSummary =
+                        lesson.summary != null && lesson.summary!.isNotEmpty;
+                    final turmas = lesson.classLabels.isEmpty
+                        ? (lesson.classGroup.isEmpty
+                            ? 'sem turma'
+                            : lesson.classGroup)
+                        : lesson.classLabels.join(' + ');
+
+                    return InkWell(
+                      onTap: () => _selectLesson(lesson),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
+                        child: Row(
+                          children: [
+                            Icon(
+                              hasSummary
+                                  ? Icons.quiz_outlined
+                                  : Icons.summarize_outlined,
+                              size: 14,
+                              color: hasSummary
+                                  ? AssistantTheme.c3
+                                  : AssistantTheme.textMuted,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${_when(lesson)}  -  ${lesson.discipline}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: selected
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                      color: AssistantTheme.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '$turmas'
+                                    '${lesson.title.isEmpty ? "" : "  -  ${lesson.title}"}',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: AssistantTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+    );
+  }
+
+  Widget _buildGenerator() {
+    final lesson = _selected;
+    if (lesson == null) {
+      return const _Panel(
+        title: 'QUIZ DA AULA',
+        child: _EmptyState(
+          icon: Icons.quiz_outlined,
+          text: 'Escolha uma aula encerrada para preparar o quiz.',
+        ),
+      );
+    }
+
+    final hasSummary = lesson.summary != null && lesson.summary!.isNotEmpty;
+    if (!hasSummary) {
+      return const _Panel(
+        title: 'QUIZ DA AULA',
+        child: _EmptyState(
+          icon: Icons.summarize_outlined,
+          text: 'Esta aula ja foi encerrada, mas ainda nao tem resumo. '
+              'Gere o resumo no historico antes de criar o quiz.',
+        ),
+      );
+    }
+
+    return _Panel(
+      title: 'QUIZ DA AULA',
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${lesson.discipline}'
+                    '${lesson.title.isEmpty ? "" : "  -  ${lesson.title}"}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AssistantTheme.textPrimary,
+                    ),
+                  ),
+                ),
+                if (_generatedQuizId != null)
+                  OutlinedButton.icon(
+                    onPressed: _openMonitor,
+                    icon: const Icon(Icons.qr_code_2, size: 15),
+                    label: const Text('ABRIR QR'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AssistantTheme.c3,
+                      side: const BorderSide(color: AssistantTheme.border2),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${_when(lesson)}  -  ${lesson.segmentCount} trecho(s), '
+              '${lesson.transcriptChars} caracteres',
+              style: const TextStyle(
+                  fontSize: 11, color: AssistantTheme.textMuted),
+            ),
+            const SizedBox(height: 12),
+            QuizGeneratorWidget(
+              lessonId: lesson.id,
+              lessonTitle: _lessonTitle(lesson),
+              disciplineName: lesson.discipline,
+              showShareDialog: false,
+              onQuizGenerated: (quizId, totalQuestions) {
+                setState(() {
+                  _generatedQuizId = quizId;
+                  _generatedQuizTitle = _lessonTitle(lesson);
+                  _generatedQuestionCount = totalQuestions;
+                  _status = 'Quiz gerado com sucesso.';
+                });
+                _openMonitor();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_status.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _status,
+                style: const TextStyle(
+                    fontSize: 11, color: AssistantTheme.textSecondary),
+              ),
+            ),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(width: 360, child: _buildList()),
+                const SizedBox(width: 14),
+                Expanded(child: _buildGenerator()),
+              ],
+            ),
           ),
         ],
       ),
@@ -3068,9 +3402,11 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
                         if (lesson.isClosed)
                           IconButton(
                             tooltip: 'Sincronizar presença do SIA',
-                            icon: const Icon(Icons.cloud_sync_outlined, size: 14),
+                            icon:
+                                const Icon(Icons.cloud_sync_outlined, size: 14),
                             color: Colors.blue,
-                            onPressed: () => _syncSiaPresence(lesson.id, lesson.title),
+                            onPressed: () =>
+                                _syncSiaPresence(lesson.id, lesson.title),
                           ),
                       ],
                     ),

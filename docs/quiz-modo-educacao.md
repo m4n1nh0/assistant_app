@@ -1,5 +1,22 @@
 # Quiz - Modo Educação
 
+## Status de Implementação
+
+**Aplicado em:** 2026-08-25
+**Situação:** fluxo principal implementado.
+
+- [x] Quiz em aba própria do Modo Educação (`6. QUIZ`).
+- [x] Geração permitida somente para aula encerrada.
+- [x] A aula encerrada pelo botão `ENCERRAR` abre a aba de quiz já selecionada.
+- [x] Backend usa `QuizCreateRequest` e respeita tipo, quantidade, dificuldade, tipos de questão e LLM.
+- [x] Geração baseada no resumo salvo da aula.
+- [x] Link público `/education/quiz/{quiz_id}/play` para alunos.
+- [x] Página HTML responsiva para o aluno responder.
+- [x] Respostas salvas no banco e comparadas com gabarito quando aplicável.
+- [ ] Relatório completo por aluno, exportação em PDF e análise consolidada seguem como roadmap.
+
+---
+
 ## 🎯 Visão Geral
 
 Sistema de geração e aplicação automática de quizzes integrado ao Modo Educação, similar ao QR code de presença. Professor cria quiz de uma aula, compartilha link para alunos responderem via HTML responsivo.

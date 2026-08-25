@@ -2,21 +2,30 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
+
+typedef QuizGeneratedCallback = void Function(
+  String quizId,
+  int totalQuestions,
+);
 
 /// Widget para gerar e compartilhar quizzes no Modo Educação
 class QuizGeneratorWidget extends StatefulWidget {
   final String lessonId;
   final String lessonTitle;
   final String disciplineName;
-  final VoidCallback? onQuizGenerated;
+  final QuizGeneratedCallback? onQuizGenerated;
+  final bool showShareDialog;
 
   const QuizGeneratorWidget({
+    super.key,
     required this.lessonId,
     required this.lessonTitle,
     required this.disciplineName,
     this.onQuizGenerated,
+    this.showShareDialog = true,
   });
 
   @override
@@ -24,7 +33,6 @@ class QuizGeneratorWidget extends StatefulWidget {
 }
 
 class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
-
   bool _isGenerating = false;
   String? _error;
   String? _generatedQuizId;
@@ -59,8 +67,13 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
         throw Exception(response.error ?? 'Erro ao gerar quiz');
       }
 
-      final quizId = response.data['quiz_id'];
-      final totalQuestions = response.data['questoes']?.length ?? _questionCount;
+      final quizId = response.data['quiz_id']?.toString() ?? '';
+      if (quizId.isEmpty) {
+        throw Exception('Resposta sem identificador do quiz');
+      }
+      final questions = response.data['questoes'];
+      final totalQuestions =
+          questions is List ? questions.length : _questionCount;
 
       setState(() {
         _generatedQuizId = quizId;
@@ -68,10 +81,10 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
       });
 
       // Callback para notificar parent
-      widget.onQuizGenerated?.call();
+      widget.onQuizGenerated?.call(quizId, totalQuestions);
 
       // Mostra diálogo com opções
-      if (mounted) {
+      if (mounted && widget.showShareDialog) {
         _showQuizShareDialog(quizId);
       }
     } catch (e) {
@@ -87,6 +100,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   }
 
   void _showQuizShareDialog(String quizId) {
+    final link = _quizLink(quizId);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -111,7 +125,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: SelectableText(
-                'https://seu-dominio.com/education/quiz/$quizId/play',
+                link,
                 style: const TextStyle(
                   fontFamily: 'Courier',
                   fontSize: 12,
@@ -127,9 +141,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
           ),
           ElevatedButton(
             onPressed: () {
-              _copyToClipboard(
-                'https://seu-dominio.com/education/quiz/$quizId/play',
-              );
+              _copyToClipboard(link);
               Navigator.pop(context);
               _showSuccessSnackbar('Link copiado!');
             },
@@ -151,9 +163,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   }
 
   Future<void> _openQuizInBrowser(String quizId) async {
-    final url = Uri.parse(
-      'https://seu-dominio.com/education/quiz/$quizId/play',
-    );
+    final url = Uri.parse(_quizLink(quizId));
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
@@ -161,8 +171,12 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     }
   }
 
-  void _copyToClipboard(String text) {
-    // Implementar cópia para clipboard
+  String _quizLink(String quizId) =>
+      '${api.baseUrl}/education/quiz/$quizId/play';
+
+  Future<void> _copyToClipboard(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Copiado: $text')),
     );
@@ -337,7 +351,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                       ),
                       const SizedBox(height: 4),
                       SelectableText(
-                        'https://seu-dominio.com/education/quiz/$_generatedQuizId/play',
+                        _quizLink(_generatedQuizId!),
                         style: const TextStyle(
                           fontFamily: 'Courier',
                           fontSize: 12,
@@ -349,15 +363,14 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                         children: [
                           ElevatedButton.icon(
                             onPressed: () {
-                              _copyToClipboard(
-                                'https://seu-dominio.com/education/quiz/$_generatedQuizId/play',
-                              );
+                              _copyToClipboard(_quizLink(_generatedQuizId!));
                             },
                             icon: const Icon(Icons.content_copy),
                             label: const Text('Copiar'),
                           ),
                           ElevatedButton.icon(
-                            onPressed: () => _openQuizInBrowser(_generatedQuizId!),
+                            onPressed: () =>
+                                _openQuizInBrowser(_generatedQuizId!),
                             icon: const Icon(Icons.open_in_browser),
                             label: const Text('Abrir'),
                           ),

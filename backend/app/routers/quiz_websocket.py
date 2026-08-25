@@ -73,13 +73,13 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     )
     total_questions = (await db.execute(stmt)).scalar() or 0
 
-    # Total de respostas únicas
-    stmt = select(func.count(func.distinct(StudentAnswerModel.question_id))).where(
+    # Total de respostas recebidas.
+    stmt = select(func.count(StudentAnswerModel.id)).where(
         StudentAnswerModel.question_id.in_(
             select(QuestionModel.id).where(QuestionModel.quiz_id == quiz_id)
         )
     )
-    unique_answers = (await db.execute(stmt)).scalar() or 0
+    total_answers = (await db.execute(stmt)).scalar() or 0
 
     # Respostas corretas
     stmt = select(func.count(StudentAnswerModel.id)).where(
@@ -146,7 +146,7 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
         "quiz_id": quiz_id,
         "total_questions": total_questions,
         "progress": {
-            "total_answers": unique_answers,
+            "total_answers": total_answers,
             "correct": correct_answers,
             "incorrect": incorrect_answers,
             "open": open_answers,

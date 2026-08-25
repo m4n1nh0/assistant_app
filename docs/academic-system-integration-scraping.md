@@ -4,9 +4,34 @@
 
 Integração com sistemas acadêmicos institucionais (SIGAA, Moodle, Blackboard, etc.) via scraping para sincronizar presença, notas e calendários automaticamente.
 
-**Status:** Roadmap - Fase 2  
+**Status:** Parcialmente aplicado para SIA/Estácio - base operacional concluída
 **Prioridade:** Alta (Modo Educação)  
 **Complexidade:** Alta
+
+## Status de Implementação
+
+**Aplicado em:** 2026-08-25
+
+- [x] Integração específica com SIA/Estácio em `/education/sia`.
+- [x] Leitura de telas do SIA por WebView autenticado na interface, contornando o Akamai Bot Manager sem tentar automatizar login server-side.
+- [x] Backend faz parse de sessão, períodos, turmas e pauta a partir do HTML recebido da interface.
+- [x] Fallback server-side com cookies preservado, mas documentado como sujeito a bloqueio do bot manager.
+- [x] Aba/histórico permite abrir `SiaAttendanceImporter` para espelhar a chamada do INTARQ na Pauta Eletrônica.
+- [x] Endpoint `/education/sia/lesson/{ref_id}/attendance` reúne presença por chamada ou por aula.
+- [x] Suporte a aula com múltiplas turmas, filtrando alunos pela turma da pauta aberta.
+- [x] Confirmação de lançamento no SIA marca a chamada como sincronizada (`external_synced_at`, `external_system`, `external_detail`).
+- [x] Importação/parse de pauta do SIA para uso no modo educação.
+
+**Ainda roadmap:**
+
+- [ ] Adapter genérico multi-sistema para SIGAA, Moodle, Blackboard e Canvas.
+- [ ] Configuração persistente de credenciais por sistema acadêmico.
+- [ ] Sync engine batch para presença em período.
+- [ ] Mapeamento persistente `INTARQ -> sistema acadêmico` com aprovação manual.
+- [ ] Sincronização de notas e calendários.
+- [ ] Logs/auditoria genéricos para sync multi-sistema.
+
+> Nota: o fluxo aplicado hoje é SIA/Estácio primeiro, com o navegador embutido operando a pauta real. Os exemplos abaixo de `SIGAAAdapter`, `MoodleAdapter` e `SyncEngine` permanecem como desenho de roadmap para uma camada multi-sistema.
 
 ---
 
@@ -53,6 +78,46 @@ Atualmente, após gerar presença automática via QR code no INTARQ:
 ```
 
 ### Data Flow
+
+**Fluxo aplicado hoje (SIA/Estácio):**
+
+```
+┌──────────────────────────┐
+│  QR Attendance (INTARQ)  │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│ SiaAttendanceImporter    │
+│ WebView autenticado      │
+└────────────┬─────────────┘
+             │ HTML / DOM da pauta
+             ▼
+┌──────────────────────────┐
+│ /education/sia/parse_*   │
+│ Backend extrai dados     │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│ Comparação INTARQ x SIA  │
+│ por matrícula e turma    │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│ Aplicação na pauta SIA   │
+│ via DOM do WebView       │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│ /education/sia/mark-synced │
+│ Marca chamada lançada    │
+└──────────────────────────┘
+```
+
+**Fluxo multi-sistema planejado:**
 
 ```
 ┌──────────────────────────┐

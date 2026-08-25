@@ -1395,9 +1395,12 @@ class QuizCreateRequest(BaseModel):
     """Criacao de um quiz a partir de uma aula ou de perguntas informadas."""
     lesson_id: str
     tipo_quiz: Literal["revisao", "diagnostico", "pratica"] = "pratica"
-    quantidade_questoes: int = 10
-    tipos_questao: List[Literal["multipla_escolha", "verdadeiro_falso", "aberta"]] = ["multipla_escolha", "verdadeiro_falso"]
+    quantidade_questoes: int = Field(default=10, ge=1, le=50)
+    tipos_questao: List[
+        Literal["multipla_escolha", "verdadeiro_falso", "aberta"]
+    ] = Field(default_factory=lambda: ["multipla_escolha", "verdadeiro_falso"])
     dificuldade: Literal["mista", "facil", "medio", "dificil"] = "mista"
+    llm: Optional[str] = None
 
 
 class QuizResponse(BaseModel):

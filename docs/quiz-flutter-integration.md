@@ -1,5 +1,24 @@
 # Integração do Quiz no Flutter - Modo Educação
 
+## Status de Implementação
+
+**Aplicado em:** 2026-08-25
+**Situação:** integração principal implementada com ajuste de fluxo.
+
+- [x] `QuizGeneratorWidget` integrado ao Modo Educação.
+- [x] Widget usado dentro da aba dedicada `6. QUIZ`, não na gravação ao vivo.
+- [x] A aba lista apenas aulas encerradas.
+- [x] A geração fica bloqueada quando a aula não tem resumo.
+- [x] Ao gerar, o monitor de QR Code abre automaticamente.
+- [x] Links copiados usam `api.baseUrl`, não domínio placeholder.
+- [x] QR autenticado carrega com header `Authorization`.
+- [ ] Preview/revisão das questões antes de salvar ainda não foi implementado.
+- [ ] Relatórios de desempenho e exportação seguem como roadmap.
+
+> Nota: exemplos antigos neste documento mostram o widget dentro de uma tela de detalhes da aula. No app atual, a decisão de produto é manter quiz em aba própria e somente após encerrar a gravação.
+
+---
+
 ## 📱 Como Integrar na Interface
 
 ### 1. Adicionar Widget de Quiz na Tela de Aula
