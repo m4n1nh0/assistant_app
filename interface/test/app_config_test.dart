@@ -78,14 +78,6 @@ void main() {
     expect(restored.toJson()['sendMessageOnEnter'], isFalse);
   });
 
-  test('retired Railway backend URL migrates to local default', () {
-    final restored = AppConfig.fromJson({
-      'backendUrl': 'https://assistantapp-production-cabc.up.railway.app',
-    });
-
-    expect(restored.backendUrl, AppConfig.defaultBackendUrl);
-  });
-
   test('calendar reminder minutes survive backend and local payloads', () {
     final fromBackend = NotifConfig.fromJson({
       'notify_15min': true,
