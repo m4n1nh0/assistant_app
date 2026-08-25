@@ -12,8 +12,9 @@
 - [x] Flutter abre `QuizQRCodeMonitor` após gerar quiz na aba `6. QUIZ`.
 - [x] WebSocket `/ws/quiz/{quiz_id}/monitor` envia estatísticas iniciais e atualizações a cada 2 segundos.
 - [x] Contador `total_answers` representa o total real de respostas recebidas.
+- [x] Monitor permite encerrar o quiz; WebSocket informa `status` e `closed_at`.
 - [ ] WebSocket autenticado por JWT e autorização estrita do professor ainda seguem como roadmap.
-- [ ] Fechamento formal de quiz, gráficos e exportação de resultados ainda seguem como roadmap.
+- [ ] Gráficos avançados e exportação de resultados ainda seguem como roadmap.
 
 ---
 
@@ -107,6 +108,8 @@ Flutter recebe e atualiza UI
   "data": {
     "timestamp": "2024-08-20T10:30:45.123456",
     "quiz_id": "quiz-abc123",
+    "status": "open",
+    "closed_at": null,
     "total_questions": 10,
     "progress": {
       "total_answers": 5,
@@ -138,6 +141,8 @@ Flutter recebe e atualiza UI
   "data": {
     "timestamp": "2024-08-20T10:30:47.234567",
     "quiz_id": "quiz-abc123",
+    "status": "open",
+    "closed_at": null,
     "progress": {
       "total_answers": 6,
       "correct": 5,

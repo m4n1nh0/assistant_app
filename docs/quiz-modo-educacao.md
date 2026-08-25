@@ -13,6 +13,7 @@
 - [x] Link público `/education/quiz/{quiz_id}/play` para alunos.
 - [x] Página HTML responsiva para o aluno responder.
 - [x] Respostas salvas no banco e comparadas com gabarito quando aplicável.
+- [x] Professor pode encerrar o quiz no monitor; o link público passa a bloquear novas respostas.
 - [ ] Relatório completo por aluno, exportação em PDF e análise consolidada seguem como roadmap.
 
 ---

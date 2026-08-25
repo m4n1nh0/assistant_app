@@ -43,6 +43,47 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   final List<String> _quizTypes = ['pratica', 'revisao', 'diagnostico'];
   final List<String> _difficulties = ['facil', 'medio', 'dificil', 'mista'];
 
+  String _quizTypeLabel(String value) {
+    switch (value) {
+      case 'pratica':
+        return 'Prática';
+      case 'revisao':
+        return 'Revisão';
+      case 'diagnostico':
+        return 'Diagnóstico';
+      default:
+        return value;
+    }
+  }
+
+  String _quizTypeDescription(String value) {
+    switch (value) {
+      case 'pratica':
+        return 'Prática reforça o conteúdo da aula com questões diretas.';
+      case 'revisao':
+        return 'Revisão retoma os principais pontos para consolidar o resumo.';
+      case 'diagnostico':
+        return 'Diagnóstico identifica lacunas de compreensão depois da aula.';
+      default:
+        return '';
+    }
+  }
+
+  String _difficultyLabel(String value) {
+    switch (value) {
+      case 'facil':
+        return 'Fácil';
+      case 'medio':
+        return 'Médio';
+      case 'dificil':
+        return 'Difícil';
+      case 'mista':
+        return 'Mista';
+      default:
+        return value;
+    }
+  }
+
   Future<void> _generateQuiz() async {
     setState(() {
       _isGenerating = true;
@@ -230,6 +271,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                     label: 'Tipo de Quiz',
                     value: _quizType,
                     items: _quizTypes,
+                    itemLabelBuilder: _quizTypeLabel,
                     onChanged: (value) {
                       setState(() => _quizType = value);
                     },
@@ -241,12 +283,20 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                     label: 'Dificuldade',
                     value: _difficulty,
                     items: _difficulties,
+                    itemLabelBuilder: _difficultyLabel,
                     onChanged: (value) {
                       setState(() => _difficulty = value);
                     },
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _quizTypeDescription(_quizType),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                  ),
             ),
             const SizedBox(height: 12),
 
@@ -390,6 +440,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     required String label,
     required String value,
     required List<String> items,
+    String Function(String value)? itemLabelBuilder,
     required ValueChanged<String> onChanged,
   }) {
     return DropdownButtonFormField<String>(
@@ -404,7 +455,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
       items: items.map((item) {
         return DropdownMenuItem(
           value: item,
-          child: Text(item),
+          child: Text(itemLabelBuilder?.call(item) ?? item),
         );
       }).toList(),
       onChanged: (newValue) {

@@ -36,6 +36,8 @@ _PUBLIC_TEXT = {
         "privacy": "Respostas serão registradas e comparadas com o gabarito.",
         "unavailable_title": "Quiz indisponível",
         "unavailable_message": "Este quiz não existe ou foi removido.",
+        "closed_title": "Quiz encerrado",
+        "closed_message": "O professor encerrou o recebimento de respostas.",
         "completed_title": "Quiz Completado! 🎉",
         "completed_message": "Suas respostas foram registradas com sucesso.",
         "correct": "✅ Correto!",
@@ -58,6 +60,8 @@ _PUBLIC_TEXT = {
         "privacy": "Las respuestas se registrarán y se compararán con la clave de respuestas.",
         "unavailable_title": "Cuestionario no disponible",
         "unavailable_message": "Este cuestionario no existe o ha sido eliminado.",
+        "closed_title": "Cuestionario finalizado",
+        "closed_message": "El profesor cerró la recepción de respuestas.",
         "completed_title": "¡Cuestionario completado! 🎉",
         "completed_message": "Sus respuestas se registraron correctamente.",
         "correct": "✅ ¡Correcto!",
@@ -80,6 +84,8 @@ _PUBLIC_TEXT = {
         "privacy": "Answers will be recorded and compared with the answer key.",
         "unavailable_title": "Quiz unavailable",
         "unavailable_message": "This quiz does not exist or has been removed.",
+        "closed_title": "Quiz closed",
+        "closed_message": "The teacher has closed answer submissions.",
         "completed_title": "Quiz Completed! 🎉",
         "completed_message": "Your answers have been successfully recorded.",
         "correct": "✅ Correct!",
@@ -291,6 +297,37 @@ text-decoration:none;transition:all 0.3s}}
     )
 
 
+def _generate_closed_page(*, language: str = "pt") -> HTMLResponse:
+    """Gera pagina informando que o quiz foi encerrado pelo professor."""
+
+    language = _normalize_public_language(language) or "pt"
+    text = _PUBLIC_TEXT[language]
+
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="{text["html_lang"]}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{text["page_prefix"]}</title>
+<style>
+*{{box-sizing:border-box}}
+body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+min-height:100vh;display:grid;place-items:center;padding:20px}}
+main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
+box-shadow:0 14px 35px #11182740;text-align:center;}}
+h1{{font-size:24px;margin:0 0 10px;color:#1f2937}}
+p{{color:#6b7280;font-size:15px;margin:0}}
+</style></head><body><main>
+<h1>{text["closed_title"]}</h1>
+<p>{text["closed_message"]}</p>
+</main></body></html>""",
+        status_code=410,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Language": language,
+        },
+    )
+
+
 @router.get("/{quiz_token}/play", response_class=HTMLResponse)
 async def quiz_play_page(
     quiz_token: str,
@@ -326,6 +363,9 @@ p{{color:#6b7280;font-size:14px;margin:0}}
 </main></body></html>""",
             status_code=404,
         )
+
+    if quiz.status == "closed":
+        return _generate_closed_page(language=language)
 
     # Busca primeira questão
     stmt = select(QuestionModel).where(
@@ -373,6 +413,8 @@ async def quiz_submit_answer(
 
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status == "closed":
+        return _generate_closed_page(language=language)
 
     # Busca todas as questões
     stmt = select(QuestionModel).where(

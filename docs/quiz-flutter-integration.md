@@ -12,6 +12,7 @@
 - [x] Ao gerar, o monitor de QR Code abre automaticamente.
 - [x] Links copiados usam `api.baseUrl`, não domínio placeholder.
 - [x] QR autenticado carrega com header `Authorization`.
+- [x] Monitor inclui botão `Encerrar Quiz`, com confirmação e bloqueio de novas respostas.
 - [ ] Preview/revisão das questões antes de salvar ainda não foi implementado.
 - [ ] Relatórios de desempenho e exportação seguem como roadmap.
 
@@ -182,7 +183,7 @@ Na interface Flutter:
 │ ├─ Q2: 25 acertos, 5 erros        │
 │ └─ Q3: 23 acertos, 7 erros        │
 │                                    │
-│ [Ver Detalhes] [Fechar Quiz]      │
+│ [Ver Detalhes] [Encerrar Quiz]    │
 └────────────────────────────────────┘
 ```
 

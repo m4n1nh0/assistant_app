@@ -1409,9 +1409,11 @@ class QuizResponse(BaseModel):
     lesson_id: str
     titulo: str
     tipo_quiz: str
+    status: str = "open"
     total_questoes: int
     tempo_estimado: int
     questoes: List[QuestionResponse] = []
+    closed_at: Optional[datetime] = None
     created_at: datetime
 
 

@@ -67,6 +67,9 @@ manager = QuizConnectionManager()
 async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     """Calcula estatísticas do quiz em tempo real."""
 
+    stmt = select(QuizModel).where(QuizModel.id == quiz_id)
+    quiz = (await db.execute(stmt)).scalar_one_or_none()
+
     # Total de questões
     stmt = select(func.count(QuestionModel.id)).where(
         QuestionModel.quiz_id == quiz_id
@@ -144,6 +147,8 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     return {
         "timestamp": datetime.now().isoformat(),
         "quiz_id": quiz_id,
+        "status": (quiz.status if quiz else "not_found") or "open",
+        "closed_at": quiz.closed_at.isoformat() if quiz and quiz.closed_at else None,
         "total_questions": total_questions,
         "progress": {
             "total_answers": total_answers,

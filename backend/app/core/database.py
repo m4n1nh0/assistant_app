@@ -633,8 +633,10 @@ class QuizModel(Base):
     lesson_id        = Column(String(64), nullable=False, index=True)
     titulo           = Column(String(255), nullable=False)
     tipo_quiz        = Column(String(50), default="pratica")
+    status           = Column(String(32), nullable=False, default="open", index=True)
     total_questoes   = Column(Integer, default=0)
     tempo_estimado   = Column(Integer, default=0)
+    closed_at        = Column(DateTime, nullable=True)
     created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -780,6 +782,10 @@ def _add_compatibility_columns(sync_conn) -> None:
             "external_synced_at": "DATETIME NULL",
             "external_system": "VARCHAR(32) NULL",
             "external_detail": "VARCHAR(255) NULL",
+        },
+        "quizzes": {
+            "status": "VARCHAR(32) NOT NULL DEFAULT 'open'",
+            "closed_at": "DATETIME NULL",
         },
     }
     for table_name, columns in additions.items():
@@ -1178,4 +1184,3 @@ async def get_db():
     """
     async with AsyncSessionLocal() as session:
         yield session
-

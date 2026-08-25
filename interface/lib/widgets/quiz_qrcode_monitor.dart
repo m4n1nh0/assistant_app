@@ -33,6 +33,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
   String? _qrCodeUrl;
   Map<String, dynamic>? _stats;
   bool _isConnecting = true;
+  bool _isClosingQuiz = false;
+  bool _quizClosed = false;
   String? _error;
   int _connectRetries = 0;
   final int _maxRetries = 3;
@@ -93,6 +95,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
               data['type'] == 'stats_update') {
             setState(() {
               _stats = data['data'];
+              _quizClosed = data['data']?['status'] == 'closed';
             });
           }
         },
@@ -281,10 +284,57 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
                 ),
         ),
         const SizedBox(height: 12),
-        ElevatedButton.icon(
-          onPressed: () => _copyQuizLink(),
-          icon: const Icon(Icons.content_copy),
-          label: const Text('Copiar Link do Quiz'),
+        if (_quizClosed) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              border: Border.all(color: Colors.orange[200]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lock_clock, color: Colors.orange[800]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Quiz encerrado. Novas respostas foram bloqueadas.',
+                    style: TextStyle(color: Colors.orange[900]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.center,
+          children: [
+            ElevatedButton.icon(
+              onPressed: () => _copyQuizLink(),
+              icon: const Icon(Icons.content_copy),
+              label: const Text('Copiar Link do Quiz'),
+            ),
+            ElevatedButton.icon(
+              onPressed:
+                  _quizClosed || _isClosingQuiz ? null : _confirmCloseQuiz,
+              icon: _isClosingQuiz
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.stop_circle_outlined),
+              label: Text(_quizClosed ? 'Quiz Encerrado' : 'Encerrar Quiz'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[700],
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -433,5 +483,71 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  Future<void> _confirmCloseQuiz() async {
+    final shouldClose = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Encerrar quiz?'),
+        content: const Text(
+          'Depois de encerrado, o link e o QR Code não aceitarão novas '
+          'respostas. As respostas já recebidas permanecem no relatório.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Encerrar'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldClose == true) {
+      await _closeQuiz();
+    }
+  }
+
+  Future<void> _closeQuiz() async {
+    setState(() {
+      _isClosingQuiz = true;
+    });
+
+    try {
+      final response = await api.post(
+        '/education/quiz/${widget.quizId}/close',
+        body: {},
+      );
+
+      if (!response.success) {
+        throw Exception(response.error ?? 'Falha ao encerrar quiz');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _quizClosed = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Quiz encerrado.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao encerrar quiz: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isClosingQuiz = false;
+        });
+      }
+    }
   }
 }

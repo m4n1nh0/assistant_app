@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +31,34 @@ class QuizDb:
     async def commit(self):
         self.commits += 1
 
+
+class EmptyQuestionResult:
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class QuizCloseDb:
+    def __init__(self, quiz):
+        self.quiz = quiz
+        self.commits = 0
+        self.refreshes = 0
+
+    async def get(self, model, item_id):
+        if model is education.QuizModel and item_id == self.quiz.id:
+            return self.quiz
+        return None
+
+    async def execute(self, _stmt):
+        return EmptyQuestionResult()
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _item):
+        self.refreshes += 1
 
 def _lesson(status="closed", summary="Resumo da aula"):
     return SimpleNamespace(
@@ -130,6 +159,37 @@ def test_quiz_generation_requires_summary():
         )
 
     assert error.value.status_code == 400
+
+
+def test_close_quiz_marks_status_and_closed_at():
+    quiz = education.QuizModel(
+        id="quiz-1",
+        tutor_id="tutor-1",
+        lesson_id="lesson-1",
+        titulo="Quiz teste",
+        tipo_quiz="pratica",
+        status="open",
+        total_questoes=0,
+        tempo_estimado=0,
+    )
+    quiz.created_at = datetime.now(timezone.utc)
+
+    db = QuizCloseDb(quiz)
+
+    response = run(
+        education.close_quiz(
+            "quiz-1",
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert quiz.status == "closed"
+    assert quiz.closed_at is not None
+    assert response.status == "closed"
+    assert response.closed_at == quiz.closed_at
+    assert db.commits == 1
+    assert db.refreshes == 1
 
 
 def test_quiz_public_base_url_uses_request_when_no_override():

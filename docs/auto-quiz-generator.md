@@ -21,6 +21,7 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 - [x] Configurações de tipo, quantidade, dificuldade, tipos de questão e LLM respeitadas pela API.
 - [x] Compartilhamento por link e QR Code.
 - [x] Monitoramento em tempo real via WebSocket.
+- [x] Encerramento manual do quiz pelo professor, bloqueando novas respostas.
 
 **Ainda roadmap:**
 

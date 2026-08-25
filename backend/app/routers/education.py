@@ -2093,6 +2093,7 @@ async def generate_quiz_from_lesson(
         lesson_id=lesson_id,
         titulo=f"Quiz: {lesson.title or 'Aula'}",
         tipo_quiz=request.tipo_quiz,
+        status="open",
         total_questoes=len(quiz_data.get("questoes", [])),
         tempo_estimado=quiz_data.get("tempo_estimado", 15),
     )
@@ -2157,6 +2158,56 @@ async def generate_quiz_from_lesson(
     )
 
 
+async def _build_quiz_response(db: AsyncSession, quiz: QuizModel) -> QuizResponse:
+    """Monta um quiz com questoes no contrato consumido pela interface."""
+
+    stmt = select(QuestionModel).where(QuestionModel.quiz_id == quiz.id)
+    questions = (await db.execute(stmt)).scalars().all()
+
+    questoes_responses = []
+    for q in questions:
+        opcoes = []
+        if q.opcoes:
+            try:
+                opcoes = [QuestionOption(**o) for o in json.loads(q.opcoes)]
+            except (TypeError, ValueError):
+                pass
+
+        try:
+            conceitos = json.loads(q.conceitos_relacionados or "[]")
+        except (TypeError, ValueError):
+            conceitos = []
+
+        questoes_responses.append(QuestionResponse(
+            id=q.id,
+            quiz_id=q.quiz_id,
+            tipo=q.tipo,
+            dificuldade=q.dificuldade,
+            enunciado=q.enunciado,
+            opcoes=opcoes,
+            resposta_correta=q.resposta_correta,
+            justificativa=q.justificativa,
+            conceitos_relacionados=conceitos,
+            topico_origem=q.topico_origem,
+            grounding_score=q.grounding_score or 0.0,
+            verificado=bool(q.verificado),
+            created_at=q.created_at,
+        ))
+
+    return QuizResponse(
+        id=quiz.id,
+        lesson_id=quiz.lesson_id,
+        titulo=quiz.titulo,
+        tipo_quiz=quiz.tipo_quiz,
+        status=quiz.status or "open",
+        total_questoes=quiz.total_questoes,
+        tempo_estimado=quiz.tempo_estimado,
+        questoes=questoes_responses,
+        closed_at=quiz.closed_at,
+        created_at=quiz.created_at,
+    )
+
+
 @router.get("/quiz/{quiz_id}")
 async def get_quiz(
     quiz_id: str,
@@ -2172,45 +2223,29 @@ async def get_quiz(
     if not quiz or quiz.tutor_id != tutor_id:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
 
-    # Busca questões
-    stmt = select(QuestionModel).where(
-        QuestionModel.quiz_id == quiz_id
-    )
-    questions = (await db.execute(stmt)).scalars().all()
+    return await _build_quiz_response(db, quiz)
 
-    questoes_responses = []
-    for q in questions:
-        opcoes = []
-        if q.opcoes:
-            try:
-                opcoes = [QuestionOption(**o) for o in json.loads(q.opcoes)]
-            except:
-                pass
 
-        questoes_responses.append(QuestionResponse(
-            id=q.id,
-            quiz_id=q.quiz_id,
-            tipo=q.tipo,
-            dificuldade=q.dificuldade,
-            enunciado=q.enunciado,
-            opcoes=opcoes,
-            resposta_correta=q.resposta_correta,
-            justificativa=q.justificativa,
-            conceitos_relacionados=json.loads(q.conceitos_relacionados or "[]"),
-            topico_origem=q.topico_origem,
-            created_at=q.created_at,
-        ))
+@router.post("/quiz/{quiz_id}/close")
+async def close_quiz(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Encerra o quiz e bloqueia novas respostas pelo link publico."""
 
-    return QuizResponse(
-        id=quiz.id,
-        lesson_id=quiz.lesson_id,
-        titulo=quiz.titulo,
-        tipo_quiz=quiz.tipo_quiz,
-        total_questoes=quiz.total_questoes,
-        tempo_estimado=quiz.tempo_estimado,
-        questoes=questoes_responses,
-        created_at=quiz.created_at,
-    )
+    tutor_id = user["tutor_id"]
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+
+    if quiz.status != "closed":
+        quiz.status = "closed"
+        quiz.closed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(quiz)
+
+    return await _build_quiz_response(db, quiz)
 
 
 @router.post("/quiz/{quiz_id}/answer")
@@ -2228,6 +2263,8 @@ async def submit_quiz_answer(
     quiz = await db.get(QuizModel, quiz_id)
     if not quiz or quiz.tutor_id != tutor_id:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status == "closed":
+        raise HTTPException(status_code=409, detail="Quiz encerrado")
 
     # Valida questão
     question = await db.get(QuestionModel, answer.question_id)

@@ -538,7 +538,8 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     }
 
     _chamadaIntarq = resposta.data;
-    final presentes = (resposta.data['presentes'] as List<dynamic>?) ?? const [];
+    final presentes =
+        (resposta.data['presentes'] as List<dynamic>?) ?? const [];
     _presencaIntarq = [
       for (final p in presentes) Map<String, dynamic>.from(p as Map),
     ];
@@ -571,9 +572,9 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         final vistoria = (pauta?['vistoria'] as List<dynamic>?) ?? const [];
         setState(() => _error =
             'Não achei a lista de alunos nesta tela. Abra Pauta Eletrônica → '
-            'Lançamento de Frequência com a turma e a data escolhidas.'
-            '${vistoria.isEmpty ? '' : '\n\nFrames vistos: '
-                '${vistoria.join(', ')}'}');
+                'Lançamento de Frequência com a turma e a data escolhidas.'
+                '${vistoria.isEmpty ? '' : '\n\nFrames vistos: '
+                    '${vistoria.join(', ')}'}');
         return;
       }
 
@@ -583,7 +584,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       if (ficha != null && ficha['forma'] != '' && ficha['forma'] != 'E') {
         setState(() => _error =
             'Esta turma lança frequência por tempo de aula, não por presença '
-            'marcada. O INTARQ não consegue preencher esse formato.');
+                'marcada. O INTARQ não consegue preencher esse formato.');
         return;
       }
 
@@ -735,10 +736,10 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
       if (!mounted) return;
 
       if (resultado == null || resultado['sucesso'] != true) {
-        setState(() => _error =
-            'Enviei o Confirmar, mas não reconheci a resposta do SIA. '
-            'Verifique na tela se a frequência foi gravada.\n\n'
-            '${resultado?['amostra'] ?? ''}');
+        setState(() =>
+            _error = 'Enviei o Confirmar, mas não reconheci a resposta do SIA. '
+                'Verifique na tela se a frequência foi gravada.\n\n'
+                '${resultado?['amostra'] ?? ''}');
         return;
       }
 
@@ -764,9 +765,9 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
     if (!mounted) return;
 
     if (!resposta.success) {
-      setState(() => _error =
-          'O SIA gravou a frequência, mas não consegui anotar isso no '
-          'INTARQ: ${resposta.error ?? 'HTTP ${resposta.statusCode}'}');
+      setState(() =>
+          _error = 'O SIA gravou a frequência, mas não consegui anotar isso no '
+              'INTARQ: ${resposta.error ?? 'HTTP ${resposta.statusCode}'}');
       return;
     }
 
@@ -780,6 +781,22 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
         duration: Duration(seconds: 5),
       ),
     );
+  }
+
+  /// Mantem o WebView e a chamada carregados, mas libera uma nova rodada para
+  /// a pauta de outra turma da mesma aula/chamada reunida.
+  void _prepararOutraTurma() {
+    setState(() {
+      _comparacao = null;
+      _fichaSia = null;
+      _avisoSia = '';
+      _turmaFiltrada = '';
+      _foraDaTurma = 0;
+      _marcadosNaPauta = 0;
+      _aplicado = false;
+      _confirmado = false;
+      _error = null;
+    });
   }
 
   /// Pede confirmação quando a pauta já tem lançamento gravado.
@@ -838,8 +855,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
                 children: [
                   Expanded(
                     child: InAppWebView(
-                      initialUrlRequest:
-                          URLRequest(url: WebUri(_siaEntrada)),
+                      initialUrlRequest: URLRequest(url: WebUri(_siaEntrada)),
                       onWebViewCreated: (controller) {
                         _webView = controller;
                         controller.addJavaScriptHandler(
@@ -980,7 +996,6 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
             ],
           ),
           const Divider(height: 24),
-
           if (comparacao == null && !_aplicado) ...[
             const Text(
               '1. Abra a pauta da turma e da data desta aula.\n'
@@ -999,7 +1014,6 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
               ),
             ),
           ],
-
           if (_confirmado) ...[
             const Icon(Icons.verified, size: 40, color: Colors.green),
             const SizedBox(height: 12),
@@ -1010,20 +1024,30 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
               style: const TextStyle(fontSize: 12, height: 1.5),
             ),
             const SizedBox(height: 16),
+            if (_foraDaTurma > 0) ...[
+              Text(
+                'Faltam $_foraDaTurma presentes de outra turma. '
+                'Abra a pauta dela ao lado e sincronize sem fechar esta janela.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Colors.orange[900]),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: _loading ? null : _prepararOutraTurma,
+                icon: const Icon(Icons.sync),
+                label: const Text('Ressincronizar outra turma'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             OutlinedButton.icon(
               onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.check),
               label: const Text('Fechar'),
             ),
-            if (_foraDaTurma > 0) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Faltam $_foraDaTurma presentes de outra turma. '
-                'Abra a pauta dela e repita.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: Colors.orange[900]),
-              ),
-            ],
           ] else if (_aplicado) ...[
             const Icon(Icons.task_alt, size: 40, color: Colors.green),
             const SizedBox(height: 12),
@@ -1049,9 +1073,7 @@ class _SiaAttendanceImporterState extends State<SiaAttendanceImporter> {
               label: const Text('Comparar de novo'),
             ),
           ],
-
           if (comparacao != null) Expanded(child: _buildComparacao(comparacao)),
-
           if (_error != null) ...[
             const SizedBox(height: 12),
             Container(
