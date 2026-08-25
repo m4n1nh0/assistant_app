@@ -1,3 +1,12 @@
+"""Configuracao central do backend, carregada do ambiente e do arquivo .env.
+
+Tudo aqui e infraestrutura ou segredo de aplicacao: endereco de banco, chaves de
+provedor, parametros de voz e limites do modo educacao. Preferencia de usuario
+(modelo escolhido, persona, notificacao) mora no banco e nao neste modulo.
+
+`get_settings()` e cacheado, entao o .env e lido uma unica vez por processo.
+"""
+
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,6 +18,13 @@ _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
+    """Todas as variaveis de ambiente reconhecidas pelo backend.
+
+    Herda de `BaseSettings` (pydantic-settings): cada atributo vira uma variavel de
+    ambiente de mesmo nome em maiusculas, e o valor declarado aqui e o padrao usado
+    quando ela nao existe. Campo ausente no ambiente nao quebra o boot - o que falta
+    e tratado como recurso desligado (provedor sem chave, Redis inalcancavel).
+    """
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
@@ -201,19 +217,23 @@ class Settings(BaseSettings):
     @field_validator("ollama_base_url", mode="before")
     @classmethod
     def normalize_ollama_base_url(cls, value: object) -> str:
+        """Completa esquema e porta do endereco do Ollama informado no ambiente."""
         return _normalize_http_base_url(value, default_port=11434)
 
     @field_validator("localai_base_url", mode="before")
     @classmethod
     def normalize_localai_base_url(cls, value: object) -> str:
+        """Completa esquema e porta do endereco do LocalAI informado no ambiente."""
         return _normalize_http_base_url(value, default_port=8080)
 
     @property
     def cors_origins_list(self) -> List[str]:
+        """As origens de CORS ja separadas em lista."""
         return [o.strip() for o in self.cors_origins.split(",")]
 
     @property
     def localai_v1_base_url(self) -> str:
+        """Base do LocalAI com o sufixo `/v1`, como a API da OpenAI espera."""
         base_url = self.localai_base_url.rstrip("/")
         if not base_url or base_url.endswith("/v1"):
             return base_url
@@ -221,6 +241,7 @@ class Settings(BaseSettings):
 
     @property
     def active_llms(self) -> List[str]:
+        """Provedores com credencial ou endereco configurados, na ordem de preferencia."""
         active = []
         if self.claude_api_key:                             active.append("claude")
         if self.openai_api_key:                            active.append("gpt")
@@ -236,10 +257,12 @@ class Settings(BaseSettings):
 
     @property
     def uses_groq_cloud(self) -> bool:
+        """Diz se a chave configurada e da Groq, e nao do Grok da xAI."""
         return self.grok_api_key.strip().startswith("gsk_")
 
     @property
     def grok_chat_base_url(self) -> str:
+        """Endpoint de chat do provedor efetivamente em uso (Grok ou Groq)."""
         return (
             "https://api.groq.com/openai/v1"
             if self.uses_groq_cloud
@@ -248,10 +271,12 @@ class Settings(BaseSettings):
 
     @property
     def active_grok_model(self) -> str:
+        """Modelo efetivo, conforme a chave seja da Groq ou do Grok."""
         return self.groq_model if self.uses_groq_cloud else self.grok_model
 
     @property
     def llm_labels(self) -> Dict[str, str]:
+        """Rotulo de exibicao de cada provedor, ja com o modelo entre parenteses."""
         grok_label = (
             f"Groq ({self.groq_model})"
             if self.uses_groq_cloud
@@ -273,6 +298,14 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Devolve a instancia unica de `Settings` do processo.
+
+    O `lru_cache` garante que o .env seja lido uma vez so; use esta funcao em vez de
+    instanciar `Settings()` diretamente para nao reprocessar o arquivo a cada chamada.
+
+    Returns:
+        A configuracao ja validada pelo pydantic.
+    """
     return Settings()
 
 

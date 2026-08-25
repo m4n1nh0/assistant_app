@@ -1,3 +1,14 @@
+"""Interpreta pergunta sobre agenda em linguagem natural e responde com eventos.
+
+O caminho e: reconhecer que a mensagem e sobre agenda, virar um
+`CalendarQueryPlan` (periodo, provedor, filtro), executar contra os calendarios
+conectados e formatar a resposta em texto.
+
+A interpretacao tenta o LLM primeiro e cai para regras quando nao ha modelo
+disponivel ou a saida nao valida - por isso existe `build_fallback_calendar_query`.
+Perguntar a agenda e coisa que precisa funcionar mesmo com todo provedor fora.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +30,11 @@ from .microsoft_identity_service import hydrate_microsoft_account
 
 
 class CalendarQueryPlan(BaseModel):
+    """O que o usuario quer saber da agenda, ja estruturado.
+
+    Carrega o periodo consultado, o provedor (`google`, `microsoft` ou `all`) e os
+    filtros extraidos da pergunta.
+    """
     type: Literal["calendar_query"] = "calendar_query"
     start_time: datetime
     end_time: datetime
@@ -30,6 +46,11 @@ class CalendarQueryPlan(BaseModel):
 
 
 class CalendarQueryResult(BaseModel):
+    """Resultado da consulta: eventos encontrados e quantas contas responderam.
+
+    `connected_accounts` igual a zero distingue "nao ha calendario conectado" de
+    "nao ha evento no periodo" - as duas situacoes pedem resposta diferente.
+    """
     events: list[CalendarEvent] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     connected_accounts: int = 0
@@ -91,6 +112,10 @@ def _local_now(timezone_name: str, now: datetime | None = None) -> datetime:
 
 
 def is_calendar_query_candidate(message: str) -> bool:
+    """Diz se a mensagem parece uma pergunta sobre agenda.
+
+    Filtro barato aplicado antes de gastar chamada de LLM na interpretacao.
+    """
     normalized = _normalize(message).strip()
     if not normalized or _CREATE_RE.search(normalized):
         return False
@@ -168,6 +193,12 @@ def build_fallback_calendar_query(
     timezone_name: str = "America/Sao_Paulo",
     now: datetime | None = None,
 ) -> CalendarQueryPlan | None:
+    """Monta o plano por regras, quando o LLM nao esta disponivel ou falhou.
+
+    Returns:
+        Um `CalendarQueryPlan` aproximado, ou `None` se nem as regras reconhecerem
+        a pergunta.
+    """
     if not is_calendar_query_candidate(message):
         return None
 
@@ -330,6 +361,14 @@ async def interpret_calendar_query(
     active_llms: list[str],
     now: datetime | None = None,
 ) -> CalendarQueryPlan | None:
+    """Transforma a mensagem em um plano de consulta a agenda.
+
+    Considera tambem o historico, para entender pergunta de continuidade do tipo
+    "e amanha?" que sozinha nao parece ser sobre calendario.
+
+    Returns:
+        O plano, ou `None` quando a mensagem nao e sobre agenda.
+    """
     direct_candidate = is_calendar_query_candidate(message)
     contextual_candidate = _is_calendar_follow_up(message, history)
     if not direct_candidate and not contextual_candidate:
@@ -464,6 +503,15 @@ async def execute_calendar_query(
     user_id: str,
     plan: CalendarQueryPlan,
 ) -> CalendarQueryResult:
+    """Executa o plano contra os calendarios conectados do usuario.
+
+    Args:
+        user_id: dono das contas de calendario.
+        plan: plano devolvido pela interpretacao.
+
+    Returns:
+        Os eventos do periodo e quantas contas foram efetivamente consultadas.
+    """
     google, microsoft = await _load_user_accounts(user_id)
     if plan.provider == "google":
         microsoft = []
@@ -534,6 +582,11 @@ def format_calendar_query_response(
     plan: CalendarQueryPlan,
     result: CalendarQueryResult,
 ) -> str:
+    """Escreve a resposta em texto a partir do plano e do resultado.
+
+    Trata explicitamente os casos vazios: sem conta conectada e sem evento no
+    periodo produzem mensagens diferentes.
+    """
     period = _period_label(plan)
     if result.connected_accounts == 0:
         provider = {

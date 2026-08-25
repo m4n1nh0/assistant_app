@@ -20,16 +20,23 @@ router = APIRouter(prefix="/ws", tags=["websocket"])
 
 # Gerencia conexões WebSocket ativas por quiz
 class QuizConnectionManager:
+    """Conexoes de um quiz em andamento, separadas por sala.
+
+    Professor e alunos ficam no mesmo agrupamento, o que permite propagar a questao
+    atual e as respostas em tempo real.
+    """
     def __init__(self):
         self.active_connections: dict[str, Set[WebSocket]] = {}
 
     async def connect(self, quiz_id: str, websocket: WebSocket):
+        """Aceita e registra a conexao na sala do quiz."""
         await websocket.accept()
         if quiz_id not in self.active_connections:
             self.active_connections[quiz_id] = set()
         self.active_connections[quiz_id].add(websocket)
 
     def disconnect(self, quiz_id: str, websocket: WebSocket):
+        """Remove a conexao da sala do quiz."""
         if quiz_id in self.active_connections:
             self.active_connections[quiz_id].discard(websocket)
             if not self.active_connections[quiz_id]:
@@ -50,6 +57,7 @@ class QuizConnectionManager:
                 self.disconnect(quiz_id, ws)
 
     def get_connection_count(self, quiz_id: str) -> int:
+        """Quantas conexoes estao abertas na sala."""
         return len(self.active_connections.get(quiz_id, set()))
 
 

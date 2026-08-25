@@ -1,3 +1,8 @@
+/// Execucao local das acoes de computador propostas pelo backend.
+///
+/// O backend monta e valida a acao; executar e sempre daqui, apos confirmacao.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,6 +11,7 @@ import '../models/app_config.dart';
 import 'api_service.dart';
 import 'local_script_service.dart';
 
+/// Falha ao executar uma acao de computador na maquina.
 class LocalComputerActionException implements Exception {
   final String message;
 
@@ -15,6 +21,10 @@ class LocalComputerActionException implements Exception {
   String toString() => message;
 }
 
+/// Executa na maquina do usuario as acoes que o backend propos.
+///
+/// O backend deliberadamente nao executa nada disso: ele monta e valida a acao, e a
+/// execucao acontece aqui, depois da confirmacao do usuario.
 class LocalComputerActionService {
   static Future<ComputerActionResult> runAction(ComputerAction action) async {
     switch (action.actionId) {

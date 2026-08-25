@@ -1,3 +1,8 @@
+/// Tela de configuracao da assistente e das integracoes.
+///
+/// Persona, provedores de LLM, calendarios conectados, notificacao e voz.
+library;
+
 import 'dart:async';
 import 'dart:io';
 
@@ -19,6 +24,7 @@ import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
 
+/// Tela de configuracao: persona, provedores, calendario e notificacao.
 class ConfigScreen extends ConsumerStatefulWidget {
   const ConfigScreen({super.key});
 

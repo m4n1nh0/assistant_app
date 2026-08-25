@@ -1,5 +1,9 @@
+/// Descoberta de projetos de codigo no disco por marcadores conhecidos.
+library;
+
 import 'dart:io';
 
+/// Um projeto encontrado no disco, com a pontuacao de relevancia.
 class ProjectCandidate {
   final String name;
   final String path;
@@ -12,6 +16,10 @@ class ProjectCandidate {
   });
 }
 
+/// Encontra projetos de codigo na maquina a partir de marcadores conhecidos.
+///
+/// Procura por `.git`, `.idea` e afins e pontua os candidatos, para "abre o projeto
+/// X" achar a pasta certa sem o usuario informar o caminho.
 class ProjectDiscoveryService {
   static const _projectMarkers = [
     '.idea',

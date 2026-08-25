@@ -1,3 +1,18 @@
+"""Camada de persistencia: engine assincrona, modelos ORM e migracao de boot.
+
+Concentra o schema inteiro do backend (SQLAlchemy 2.x sobre MySQL via aiomysql)
+e a rotina `init_db`, que roda a cada boot criando tabelas novas e aplicando as
+migracoes idempotentes que o projeto carrega no lugar do Alembic.
+
+Duas convencoes atravessam quase todas as tabelas:
+
+- **`tutor_id`** e a chave de isolamento multiusuario. Cada conta (`UserModel`)
+  aponta para um `TutorModel`, e praticamente todo dado de negocio pendura nesse
+  perfil - consultar sem filtrar por ele vaza dado entre usuarios.
+- **`metadata_`** mapeia a coluna `metadata`, porque `metadata` e atributo
+  reservado do `DeclarativeBase`.
+"""
+
 import os
 import json
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -56,10 +71,16 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 class Base(DeclarativeBase):
+    """Base declarativa de todos os modelos do backend."""
     pass
 
 
 class ConversationModel(Base):
+    """Uma mensagem do historico de chat, do usuario ou do assistente.
+
+    `session` agrupa a conversa e `llm` guarda qual provedor respondeu, o que
+    permite reconstruir a thread e auditar qual modelo gerou cada resposta.
+    """
     __tablename__ = "conversations"
     id        = Column(String(64), primary_key=True)
     role      = Column(String(32), nullable=False)
@@ -72,6 +93,12 @@ class ConversationModel(Base):
 
 
 class CalendarEventModel(Base):
+    """Evento de calendario ja normalizado, vindo de qualquer provedor.
+
+    `source` diz de onde veio (Google, Microsoft, local) e `raw` preserva o payload
+    original. `notified_15` e `notified_0` marcam os avisos ja enviados para o
+    scheduler nao notificar o mesmo evento duas vezes.
+    """
     __tablename__ = "calendar_events"
     id           = Column(String(255), primary_key=True)
     user_id      = Column(String(64), nullable=True, index=True)
@@ -87,12 +114,23 @@ class CalendarEventModel(Base):
 
 
 class ConfigModel(Base):
+    """Configuracao chave-valor da instalacao, com valor serializado em texto.
+
+    Chave de usuario usa o prefixo montado por `scoped_config_key`, o que mantem a
+    tabela unica servindo tanto config global quanto config por conta.
+    """
     __tablename__ = "config"
     key   = Column("config_key", String(180), primary_key=True)
     value = Column(Text, nullable=False)
 
 
 class UserModel(Base):
+    """Conta de acesso: credencial, papel e vinculo com o perfil de dados.
+
+    `auth_version` e o contador que invalida sessoes: incrementa-lo faz todo JWT
+    emitido antes deixar de valer. `tutor_id` liga a conta ao `TutorModel` que
+    carrega os dados de negocio.
+    """
     __tablename__ = "users"
     id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     username      = Column(String(120), nullable=False, unique=True, index=True)
@@ -106,6 +144,10 @@ class UserModel(Base):
 
 
 class RegistrationInviteModel(Base):
+    """Convite de cadastro de uso unico, guardado como hash do token.
+
+    So o hash e persistido - o token em claro existe apenas no email enviado.
+    """
     __tablename__ = "registration_invites"
     id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     token_hash      = Column(String(64), nullable=False, unique=True, index=True)
@@ -124,6 +166,11 @@ class RegistrationInviteModel(Base):
 
 
 class PasswordResetTokenModel(Base):
+    """Token de recuperacao de senha, tambem guardado apenas como hash.
+
+    `revoked_at` permite invalidar um token antes do vencimento, por exemplo quando
+    outro pedido de recuperacao e emitido para a mesma conta.
+    """
     __tablename__ = "password_reset_tokens"
     id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id    = Column(String(64), nullable=False, index=True)
@@ -140,6 +187,11 @@ class PasswordResetTokenModel(Base):
 
 
 class TutorModel(Base):
+    """Perfil de dados de um usuario: fuso, idioma e identificacao.
+
+    E o dono de tudo que tem `tutor_id`. A separacao em relacao a `UserModel`
+    mantem credencial de acesso e dado de negocio em tabelas distintas.
+    """
     __tablename__ = "tutors"
     id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     display_name = Column(String(180), nullable=False)
@@ -152,6 +204,12 @@ class TutorModel(Base):
 
 
 class AssistantProfileModel(Base):
+    """Persona da assistente configurada por um usuario.
+
+    Guarda nome, genero, personalidade, idioma, modo de resposta e se o TTS esta
+    ligado. E o que diferencia a assistente de cada conta sem alterar a marca do
+    produto.
+    """
     __tablename__ = "assistant_profiles"
     id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id       = Column(String(64), nullable=False, index=True)
@@ -167,6 +225,11 @@ class AssistantProfileModel(Base):
 
 
 class TutorSettingModel(Base):
+    """Preferencia de usuario em JSON, agrupada por `scope`.
+
+    E aqui que mora a configuracao que deliberadamente nao esta no .env: modelo
+    preferido, ajustes de notificacao, opcoes do modo educacao.
+    """
     __tablename__ = "tutor_settings"
     id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id   = Column(String(64), nullable=False, index=True)
@@ -177,6 +240,11 @@ class TutorSettingModel(Base):
 
 
 class CredentialModel(Base):
+    """Referencia a credencial externa de um usuario (OAuth, API key).
+
+    `secret_ref` guarda o segredo ja cifrado com `CREDENTIAL_ENCRYPTION_KEY` - a
+    tabela nunca ve o valor em claro, e o segredo tambem nunca vai para a interface.
+    """
     __tablename__ = "credential_refs"
     id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id   = Column(String(64), nullable=False, index=True)
@@ -188,6 +256,11 @@ class CredentialModel(Base):
 
 
 class MemoryReviewModel(Base):
+    """Fato candidato a virar memoria de longo prazo, aguardando revisao.
+
+    Cada linha e uma afirmacao que o assistente extraiu da conversa. Depois de
+    aprovada, `qdrant_point_id` aponta para o vetor correspondente no Qdrant.
+    """
     __tablename__ = "memory_review_queue"
     id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id        = Column(String(64), nullable=False, index=True)
@@ -204,6 +277,11 @@ class MemoryReviewModel(Base):
 
 
 class ApprovedAutomationModel(Base):
+    """Automacao que o usuario autorizou o assistente a executar.
+
+    `trigger` e `schedule` definem quando roda e `risk_level` classifica o impacto.
+    Nada e executado sem um registro aprovado aqui.
+    """
     __tablename__ = "approved_automations"
     id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id     = Column(String(64), nullable=False, index=True)
@@ -220,6 +298,11 @@ class ApprovedAutomationModel(Base):
 
 
 class ActionAuditLogModel(Base):
+    """Registro de auditoria de toda acao executada pelo assistente.
+
+    Guarda pedido e resultado em JSON. E a trilha que responde o que a assistente
+    fez na maquina e com qual efeito.
+    """
     __tablename__ = "action_audit_log"
     id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id      = Column(String(64), nullable=False, index=True)
@@ -232,6 +315,11 @@ class ActionAuditLogModel(Base):
 
 
 class ShortcutModel(Base):
+    """Atalho nomeado para app, URL ou comando, com apelidos de voz.
+
+    `aliases` sao as formas alternativas de pedir o mesmo atalho; `use_count` e
+    `last_used_at` alimentam o ranking de sugestao.
+    """
     __tablename__ = "shortcuts"
     id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id     = Column(String(64), nullable=False, index=True)
@@ -246,6 +334,11 @@ class ShortcutModel(Base):
 
 
 class ScriptSnippetModel(Base):
+    """Script salvo pelo usuario para reexecucao.
+
+    `allow_high_risk` e o consentimento explicito para comandos que o verificador
+    classifica como perigosos; sem ele o script e recusado na execucao.
+    """
     __tablename__ = "script_snippets"
     id                = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id          = Column(String(64), nullable=False, index=True)
@@ -261,6 +354,11 @@ class ScriptSnippetModel(Base):
 
 
 class ShortcutLaunchLogModel(Base):
+    """Historico de execucao de atalhos, com status, plataforma e erro.
+
+    Separado de `ActionAuditLogModel` porque atalho tambem dispara pela interface,
+    sem passar pelo ciclo de acao do assistente.
+    """
     __tablename__ = "shortcut_launch_logs"
     id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id      = Column(String(64), nullable=False, index=True)
@@ -360,6 +458,11 @@ class LessonClassGroupModel(Base):
 
 
 class StudentModel(Base):
+    """Aluno de uma turma, com matricula externa e apelidos de reconhecimento.
+
+    Os apelidos existem porque o reconhecimento de voz erra nome proprio: guardar as
+    variacoes ouvidas em aula melhora o casamento feito por `match_student`.
+    """
     __tablename__ = "students"
     id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id    = Column(String(64), nullable=False, index=True)
@@ -455,6 +558,11 @@ class AttendanceRosterModel(Base):
 
 
 class LessonModel(Base):
+    """Uma aula gravada: disciplina, turmas, estado e transcricao acumulada.
+
+    `transcript_chars` evita ter que medir o texto inteiro so para decidir como
+    fatiar o resumo.
+    """
     __tablename__ = "lessons"
     id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id       = Column(String(64), nullable=False, index=True)
@@ -477,6 +585,11 @@ class LessonModel(Base):
 
 
 class LessonSegmentModel(Base):
+    """Um bloco transcrito da aula, na ordem da gravacao.
+
+    `qdrant_point_id` e `embedding_model` ligam o trecho ao vetor: quando o modelo
+    muda, e por eles que se sabe o que precisa ser reindexado.
+    """
     __tablename__ = "lesson_segments"
     id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     lesson_id       = Column(String(64), nullable=False, index=True)
@@ -494,6 +607,7 @@ class LessonSegmentModel(Base):
 
 
 class LessonPointModel(Base):
+    """Ponto extra creditado a um aluno durante a aula, com a citacao de origem."""
     __tablename__ = "lesson_points"
     id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id     = Column(String(64), nullable=False, index=True)
@@ -512,6 +626,7 @@ class LessonPointModel(Base):
 
 
 class QuizModel(Base):
+    """Um quiz gerado ou montado a partir de uma aula."""
     __tablename__ = "quizzes"
     id               = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id         = Column(String(64), nullable=False, index=True)
@@ -524,6 +639,7 @@ class QuizModel(Base):
 
 
 class QuestionModel(Base):
+    """Questao de um quiz, com alternativas, gabarito e justificativa."""
     __tablename__ = "questions"
     id                   = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     quiz_id              = Column(String(64), nullable=False, index=True)
@@ -541,6 +657,7 @@ class QuestionModel(Base):
 
 
 class StudentAnswerModel(Base):
+    """Resposta de um aluno a uma questao, com acerto e tempo."""
     __tablename__ = "student_answers"
     id               = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     question_id      = Column(String(64), nullable=False, index=True)
@@ -552,6 +669,16 @@ class StudentAnswerModel(Base):
 
 
 async def init_db():
+    """Prepara o banco no boot: migracoes, criacao de tabelas e backfills.
+
+    A ordem importa. O rename de `subject` para `discipline` roda **antes** do
+    `create_all`, senao o create cria as tabelas novas vazias ao lado das antigas e
+    o rename nao encontra mais o que renomear. Depois vem as migracoes idempotentes
+    de coluna e, por fim, os backfills que preenchem dado derivado (dono da conta,
+    turmas, disciplinas e semestres) para instalacoes que vem de versao anterior.
+
+    Todas as etapas sao seguras de repetir - a funcao roda a cada inicializacao.
+    """
     async with engine.begin() as conn:
         # Antes do create_all: senao ele cria as tabelas novas vazias ao lado
         # das antigas e o rename nao acha mais o que renomear.
@@ -739,6 +866,15 @@ def _widen_credential_secret_ref(sync_conn) -> None:
                 raise
 
 def scoped_config_key(user_id: str, key: str) -> str:
+    """Monta a chave de `ConfigModel` isolada por usuario.
+
+    Args:
+        user_id: dono da configuracao.
+        key: nome logico da configuracao (`notif`, por exemplo).
+
+    Returns:
+        A chave no formato `user:<id>:<key>`.
+    """
     return f"user:{user_id}:{key}"
 
 
@@ -1035,6 +1171,11 @@ async def _backfill_account_ownership() -> None:
 
 
 async def get_db():
+    """Dependencia do FastAPI que abre e fecha uma sessao por requisicao.
+
+    Yields:
+        A sessao assincrona, encerrada automaticamente ao fim da requisicao.
+    """
     async with AsyncSessionLocal() as session:
         yield session
 

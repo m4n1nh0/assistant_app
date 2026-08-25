@@ -46,6 +46,12 @@ def _default_model(provider: str) -> str:
 
 @dataclass(frozen=True)
 class UserLLMRuntime:
+    """Contexto de provedores de um usuario, valido durante uma requisicao.
+
+    Carrega as chaves ja decifradas e os modelos preferidos daquele usuario. Vive em
+    `ContextVar`, entao codigo assincrono concorrente de contas diferentes nao
+    mistura credencial.
+    """
     scope: str
     providers: dict[str, dict[str, Any]]
 
@@ -56,15 +62,25 @@ _runtime: ContextVar[UserLLMRuntime | None] = ContextVar(
 
 
 def runtime_scope() -> str:
+    """Chave de escopo do usuario ativo, usada para separar caches por conta."""
     current = _runtime.get()
     return current.scope if current else "local"
 
 
 def activate_user_llms(runtime: UserLLMRuntime) -> Token:
+    """Ativa o contexto de provedores de um usuario.
+
+    Args:
+        runtime: contexto carregado por `load_user_llm_runtime`.
+
+    Returns:
+        O token que `reset_user_llms` usa para restaurar o contexto anterior.
+    """
     return _runtime.set(runtime)
 
 
 def reset_user_llms(token: Token) -> None:
+    """Restaura o contexto de provedores anterior ao `activate_user_llms`."""
     _runtime.reset(token)
 
 
@@ -97,6 +113,7 @@ class RuntimeSettingsProxy:
 
     @property
     def active_llms(self) -> list[str]:
+        """Provedores disponiveis para o usuario ativo."""
         base = get_settings()
         current = _runtime.get()
         cloud = [] if current is None else [
@@ -111,18 +128,22 @@ class RuntimeSettingsProxy:
 
     @property
     def uses_groq_cloud(self) -> bool:
+        """Diz se a chave do usuario ativo e da Groq, e nao do Grok."""
         return self.grok_api_key.strip().startswith("gsk_")
 
     @property
     def grok_chat_base_url(self) -> str:
+        """Endpoint de chat do provedor efetivo do usuario ativo."""
         return "https://api.groq.com/openai/v1" if self.uses_groq_cloud else "https://api.x.ai/v1"
 
     @property
     def active_grok_model(self) -> str:
+        """Modelo efetivo conforme a chave do usuario ativo."""
         return self.grok_model
 
     @property
     def llm_labels(self) -> dict[str, str]:
+        """Rotulos de exibicao dos provedores do usuario ativo."""
         labels = {
             provider: f"{spec['label']} ({getattr(self, _model_property(provider))})"
             for provider, spec in PROVIDER_SPECS.items()
@@ -144,6 +165,17 @@ runtime_settings = RuntimeSettingsProxy()
 
 
 async def load_user_llm_runtime(tutor_id: str) -> UserLLMRuntime:
+    """Monta o contexto de provedores de um usuario a partir do banco.
+
+    Decifra as credenciais do usuario e junta com a infraestrutura local (LocalAI e
+    Ollama), que pertence a instalacao e nao a conta.
+
+    Args:
+        tutor_id: perfil de dados dono das credenciais.
+
+    Returns:
+        O contexto pronto para ser ativado.
+    """
     providers: dict[str, dict[str, Any]] = {}
     async with AsyncSessionLocal() as db:
         rows = (
@@ -169,6 +201,11 @@ async def load_user_llm_runtime(tutor_id: str) -> UserLLMRuntime:
 async def user_llm_context(
     user: dict = Depends(get_current_user),
 ) -> AsyncIterator[None]:
+    """Dependencia de rota que ativa o contexto do usuario e o desfaz no fim.
+
+    Yields:
+        O `UserLLMRuntime` ativo durante a requisicao.
+    """
     await migrate_legacy_environment_for_user(user)
     token = activate_user_llms(await load_user_llm_runtime(user["tutor_id"]))
     try:
@@ -178,6 +215,11 @@ async def user_llm_context(
 
 
 async def list_provider_config(tutor_id: str) -> list[dict[str, Any]]:
+    """Lista a configuracao de provedores de um usuario para a interface.
+
+    Returns:
+        Um item por provedor, com modelo e se ha chave salva - nunca a chave em si.
+    """
     runtime = await load_user_llm_runtime(tutor_id)
     result = []
     for provider in PROVIDER_ORDER:
@@ -201,6 +243,11 @@ async def list_provider_config(tutor_id: str) -> list[dict[str, Any]]:
 async def save_provider_config(
     tutor_id: str, providers: list[dict[str, Any]], db: AsyncSession
 ) -> None:
+    """Grava a configuracao de provedores de um usuario.
+
+    Chave nova e cifrada antes de persistir; pedido de limpeza remove a credencial.
+    O valor em claro nao volta para a interface em nenhuma hipotese.
+    """
     for update in providers:
         provider = str(update.get("id") or "").strip().lower()
         if provider not in PROVIDER_SPECS:

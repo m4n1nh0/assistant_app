@@ -1,3 +1,15 @@
+"""Saude dos provedores de LLM: quem esta configurado, online e utilizavel.
+
+Consultar todos os provedores a cada requisicao seria lento e caro, entao o
+resultado e cacheado em duas camadas: memoria do processo (por escopo de
+usuario) e Redis compartilhado, com TTL curto para falha e longo para sucesso.
+
+O modulo separa deliberadamente tres estados que costumam ser tratados como um
+so: **configurado** (existe chave), **online** (a API respondeu) e **disponivel**
+(da para mandar uma geracao agora). Provedor com chave valida mas sem saldo e
+configurado e online, e mesmo assim indisponivel.
+"""
+
 import asyncio
 import json
 import re
@@ -43,6 +55,14 @@ _PROVIDER_ORDER = [
 
 
 async def get_llm_statuses(force: bool = False) -> dict[str, LLMStatus]:
+    """Devolve o status de cada provedor, usando cache quando ainda esta fresco.
+
+    Args:
+        force: ignora o cache e reconsulta todos os provedores.
+
+    Returns:
+        Mapa de provedor para `LLMStatus`.
+    """
     global _cache, _cache_at
     scope = runtime_scope()
     now = time.monotonic()
@@ -117,6 +137,14 @@ async def _write_shared_cache(cache: dict[str, LLMStatus]) -> None:
 
 
 async def get_available_llms(force: bool = False) -> list[str]:
+    """Lista os provedores utilizaveis agora, na ordem de preferencia do projeto.
+
+    Args:
+        force: forca a reconsulta antes de filtrar.
+
+    Returns:
+        Chaves dos provedores com `available` verdadeiro.
+    """
     statuses = await get_llm_statuses(force=force)
     return [
         provider

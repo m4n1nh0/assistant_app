@@ -1,3 +1,6 @@
+/// Exibe o diff proposto para o usuario aprovar ou recusar.
+library;
+
 import 'package:flutter/material.dart';
 
 import '../services/workspace_diff_service.dart';

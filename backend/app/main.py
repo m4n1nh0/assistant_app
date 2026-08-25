@@ -1,3 +1,13 @@
+"""Monta a aplicacao FastAPI: ciclo de vida, middlewares e registro de rotas.
+
+O `lifespan` sobe as dependencias externas em cascata tolerante: banco, Qdrant,
+embeddings do modo educacao, Redis e scheduler. Com excecao do seed explicito de
+banco, **nenhuma falha aqui impede o boot** - cada servico indisponivel apenas
+desliga a funcionalidade que depende dele e registra um warning. Isso e
+proposital: o backend roda na maquina do usuario, onde e normal um container
+estar parado.
+"""
+
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -77,6 +87,15 @@ logging.getLogger("uvicorn.access").addFilter(_HealthAccessLogFilter())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Ciclo de vida da aplicacao: inicializa dependencias e encerra no shutdown.
+
+    Na subida: `init_db`, seed opcional (`DATABASE_SEED`), colecoes do Qdrant,
+    provedor de embeddings, rate limiter no Redis e o scheduler de calendario.
+    Falha em qualquer uma vira warning, exceto quando um seed foi pedido
+    explicitamente - ai a excecao sobe, porque seed pela metade e pior que nenhum.
+
+    No encerramento: para o scheduler e fecha as conexoes do limitador e do Redis.
+    """
     logger.info("Backend starting...")
     seed_requested = database_seed_requested(settings.database_seed)
     try:
@@ -160,6 +179,12 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    """Middleware que registra metodo, rota, status e duracao de cada requisicao.
+
+    Os healthchecks (`/health`, `/health/live`) sao omitidos para nao inundar o log,
+    e a rota passa por `_safe_request_path` antes de ser escrita, para nao vazar
+    token que venha embutido no caminho.
+    """
     started = time.perf_counter()
     request_path = _safe_request_path(request.url.path)
     try:

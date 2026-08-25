@@ -1,3 +1,6 @@
+/// Vozes neurais para a fala da assistente.
+library;
+
 import 'dart:typed_data';
 
 import 'package:edge_tts/edge_tts.dart';

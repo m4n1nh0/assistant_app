@@ -1,3 +1,8 @@
+/// Casamento entre o que o usuario falou e os atalhos cadastrados.
+///
+/// Normaliza a frase para tolerar acento, plural e variacao de nome.
+library;
+
 import 'dart:convert';
 
 import '../models/app_config.dart';

@@ -1,3 +1,6 @@
+/// Editor do arquivo do workspace antes de aplicar a alteracao.
+library;
+
 import 'dart:convert';
 import 'dart:io';
 

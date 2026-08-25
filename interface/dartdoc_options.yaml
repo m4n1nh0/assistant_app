@@ -1,0 +1,15 @@
+# Configuracao do `dart doc` para a referencia da interface Flutter.
+# Gere com ../scripts/build_docs.ps1 (ou .sh), que joga a saida dentro do site
+# do mkdocs em site/referencia/interface/api.
+dartdoc:
+  # Nao ha pacote publicado: o link "codigo-fonte" nao leva a lugar nenhum.
+  showUndocumentedCategories: false
+  errors:
+    - unresolved-doc-reference
+  warnings:
+    - ambiguous-doc-reference
+    - broken-link
+  ignore:
+    # A maior parte dos widgets internos e privada ao arquivo e nao entra no site;
+    # avisar sobre eles so gera ruido no build.
+    - missing-from-search-index

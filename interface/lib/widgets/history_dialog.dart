@@ -1,3 +1,6 @@
+/// Historico de conversas, com busca e retomada de sessao.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -9,6 +12,7 @@ import '../models/hive_adapters.dart';
 import '../services/api_service.dart';
 import '../utils/theme.dart';
 
+/// Historico de conversas, com busca e retomada de sessao.
 class HistoryDialog extends StatefulWidget {
   const HistoryDialog({super.key});
 

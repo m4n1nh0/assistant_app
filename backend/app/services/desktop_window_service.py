@@ -1,3 +1,11 @@
+"""Leitura das janelas abertas para dar contexto de tela ao assistente.
+
+Permite perguntar sobre o que esta na tela sem colar o conteudo na conversa: o
+texto da janela vira contexto do prompt. Depende de plataforma - onde nao ha
+suporte, `is_supported_platform` devolve falso e o recurso fica desligado em vez
+de quebrar.
+"""
+
 from __future__ import annotations
 
 import json
@@ -10,11 +18,13 @@ from typing import Any
 
 
 class WindowNotFoundError(ValueError):
+    """A janela pedida nao existe mais ou nao esta acessivel."""
     pass
 
 
 @dataclass(frozen=True)
 class DesktopWindow:
+    """Uma janela aberta: id, titulo, processo e estado."""
     id: str
     handle: int
     title: str
@@ -26,16 +36,23 @@ class DesktopWindow:
     bounds: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serializa a janela no formato devolvido pela API."""
         data = asdict(self)
         data["bounds"] = data["bounds"] or {}
         return data
 
 
 def is_supported_platform() -> bool:
+    """Diz se a plataforma atual suporta ler janelas."""
     return sys.platform == "win32"
 
 
 def list_windows(limit: int = 120) -> list[DesktopWindow]:
+    """Lista as janelas abertas, da mais recente para a mais antiga.
+
+    Args:
+        limit: maximo de janelas devolvidas.
+    """
     if not is_supported_platform():
         return []
 
@@ -85,6 +102,11 @@ def list_windows(limit: int = 120) -> list[DesktopWindow]:
 
 
 def get_window(window_id: str) -> DesktopWindow:
+    """Busca uma janela pelo id.
+
+    Raises:
+        WindowNotFoundError: quando a janela sumiu ou nao esta acessivel.
+    """
     if not is_supported_platform():
         raise WindowNotFoundError("Desktop window capture is only available on Windows.")
 
@@ -121,6 +143,11 @@ def get_window(window_id: str) -> DesktopWindow:
 
 
 def extract_window_context(window_id: str, max_chars: int = 12000) -> dict[str, Any]:
+    """Extrai o texto visivel de uma janela, truncado por `max_chars`.
+
+    Returns:
+        O conteudo e os metadados da janela, prontos para virar contexto de prompt.
+    """
     window = get_window(window_id)
     text = ""
     truncated = False
@@ -161,6 +188,7 @@ def build_context_prompt(
     warning: str | None = None,
     max_chars: int = 12000,
 ) -> str:
+    """Escreve o trecho de prompt que descreve a janela ao modelo."""
     title = window.title.strip() or "(sem titulo)"
     process = window.process_name.strip() or "processo desconhecido"
     executable = window.executable_path.strip()
@@ -185,6 +213,7 @@ def build_context_prompt(
 
 
 def normalize_context_text(text: str, max_chars: int = 12000) -> str:
+    """Limpa e trunca o texto capturado para caber no prompt."""
     lines = []
     seen = set()
     for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):

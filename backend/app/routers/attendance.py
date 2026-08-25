@@ -358,6 +358,11 @@ async def create_attendance_session(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Abre uma chamada e gera o token do QR Code.
+
+    A sessao pode cobrir mais de uma turma ao mesmo tempo. Do token so o digest fica
+    no banco - o valor em claro existe apenas no QR Code projetado em sala.
+    """
     requested_ids = [*body.class_ids]
     if body.class_id:
         requested_ids.insert(0, body.class_id)
@@ -477,6 +482,7 @@ async def list_attendance_sessions(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as chamadas, filtradas por turma, aula ou periodo."""
     query = select(AttendanceSessionModel).where(
         AttendanceSessionModel.tutor_id == user["tutor_id"]
     )
@@ -520,6 +526,7 @@ async def get_attendance_session(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Devolve uma chamada com alunos presentes e totais por turma."""
     session = await _owned_session(session_id, user["tutor_id"], db)
     return await _session_response(session, db)
 
@@ -530,6 +537,7 @@ async def close_attendance_session(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Encerra a chamada, parando de aceitar novos check-ins."""
     session = await _owned_session(session_id, user["tutor_id"], db)
     if session.closed_at is None:
         session.closed_at = _now()
@@ -635,6 +643,7 @@ async def add_manual_attendance(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Marca presenca manualmente, para o aluno sem celular em sala."""
     session = await _owned_session(session_id, user["tutor_id"], db)
     await _register_attendance(session, body.enrollment, "manual", db)
     return await _session_response(session, db)
@@ -647,6 +656,7 @@ async def delete_attendance_record(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove um registro de presenca da chamada."""
     await _owned_session(session_id, user["tutor_id"], db)
     record = await db.get(AttendanceRecordModel, record_id)
     if record is None or record.session_id != session_id:
@@ -664,6 +674,7 @@ async def attendance_report(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Consolida a presenca por aluno em um intervalo de datas."""
     sessions = await list_attendance_sessions(
         class_id=class_id,
         date_from=date_from,
@@ -762,6 +773,11 @@ async def attendance_check_in_page(
     lang: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
+    """Serve a pagina de check-in que o aluno abre pelo QR Code.
+
+    Rota publica e em HTML: quem acessa e o celular do aluno, sem conta no sistema.
+    O token da URL e a unica credencial, e vale so enquanto a chamada esta aberta.
+    """
     language = _public_language(request, lang)
     text = _PUBLIC_TEXT[language]
     try:
@@ -802,6 +818,10 @@ async def submit_attendance_check_in(
     enrollment: str = Form(..., min_length=1, max_length=80),
     db: AsyncSession = Depends(get_db),
 ):
+    """Registra a presenca enviada pela pagina do QR Code.
+
+    Tambem publica. Check-in repetido do mesmo aluno nao duplica o registro.
+    """
     language = _public_language(request, lang)
     text = _PUBLIC_TEXT[language]
     try:

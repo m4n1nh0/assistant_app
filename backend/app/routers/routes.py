@@ -1,3 +1,22 @@
+"""Rotas de autenticacao, calendario, notificacao, voz e health.
+
+Sao cinco routers em um arquivo so, na ordem em que aparecem:
+
+| Router | Prefixo | O que cobre |
+| --- | --- | --- |
+| `router_auth` | `/auth` | login, cadastro por convite, recuperacao de senha, contas |
+| `router_calendar` | `/calendar` | contas conectadas, eventos e o fluxo OAuth de cada provedor |
+| `router_calendar_public` | `/calendar` | apenas os callbacks de OAuth, que o provedor chama sem token |
+| `router_notif` | `/notifications` | preferencias, envio e teste de canal |
+| `router_voice` | `/voice` | transcricao e sintese de fala |
+| `router_health` | - | `/health`, `/health/live` e a raiz |
+
+Duas regras atravessam o bloco de autenticacao: as rotas publicas tem rate limit
+por IP, e as respostas nao revelam se uma conta existe - pedido de recuperacao
+responde a mesma coisa para email cadastrado ou nao, senao o endpoint vira um
+verificador de quais emails tem conta.
+"""
+
 import hmac
 from datetime import datetime, timedelta, timezone
 
@@ -59,6 +78,11 @@ _public_auth_rate_limit = [
 
 @router_auth.get("/status", response_model=AuthStatusResponse)
 async def auth_status(db: _AuthAsyncSession = Depends(_get_auth_db)):
+    """Diz se ja existe conta, se o cadastro exige convite e como e a entrega.
+
+    E o que a interface consulta na primeira execucao para escolher entre a tela de
+    criacao do primeiro administrador e a tela de login.
+    """
     count = (await db.execute(select(func.count()).select_from(UserModel))).scalar_one()
     needs_setup = count == 0
     requires_token = needs_setup and settings.registration_invite_required
@@ -93,6 +117,11 @@ async def smtp_check(secret: str = ""):
 async def request_registration_token(
     db: _AuthAsyncSession = Depends(_get_auth_db),
 ):
+    """Emite o token do primeiro cadastro e envia ao email administrativo.
+
+    So funciona enquanto nao existe nenhuma conta e o cadastro por convite esta
+    habilitado.
+    """
     if not settings.registration_invite_required:
         raise HTTPException(400, "Cadastro por convite nao esta habilitado.")
 
@@ -207,6 +236,11 @@ async def register(body: RegisterRequest, db: _AuthAsyncSession = Depends(_get_a
     dependencies=_public_auth_rate_limit,
 )
 async def login(body: LoginRequest, db: _AuthAsyncSession = Depends(_get_auth_db)):
+    """Autentica por usuario ou email e devolve o token de sessao.
+
+    A resposta de credencial errada e a mesma para usuario inexistente, senha errada
+    ou conta desativada.
+    """
     identifier = body.username.strip()
     result = await db.execute(
         select(UserModel).where(
@@ -239,6 +273,10 @@ async def request_password_recovery(
 ):
     # The public response deliberately does not reveal whether the account,
     # email delivery or cooldown exists.
+    """Inicia a recuperacao de senha enviando token ao email da conta.
+
+    A resposta e sempre a mesma exista ou nao a conta - de proposito.
+    """
     await issue_password_reset_token(db, body.identifier[:255])
     return PublicMessageResponse(
         message=(
@@ -257,6 +295,10 @@ async def confirm_password_recovery(
     body: PasswordRecoveryConfirmRequest,
     db: _AuthAsyncSession = Depends(_get_auth_db),
 ):
+    """Troca a senha usando o token recebido por email.
+
+    O token e queimado no uso e as sessoes abertas da conta caem junto.
+    """
     if len(body.new_password) < 6:
         raise HTTPException(400, "Nova senha precisa ter pelo menos 6 caracteres.")
     consumed = await consume_password_reset_token(
@@ -291,6 +333,7 @@ async def refresh(
 
 @router_auth.get("/me")
 async def me(user: dict = Depends(get_current_user)):
+    """Devolve a identidade da conta autenticada."""
     return {
         "id": user.get("uid"),
         "username": user.get("sub"),
@@ -310,6 +353,7 @@ async def create_user_invitation(
     admin: dict = Depends(require_admin),
     db: _AuthAsyncSession = Depends(_get_auth_db),
 ):
+    """Convida um novo usuario por email. Restrito a administrador."""
     email = body.email.strip().lower()
     local, separator, domain = email.partition("@")
     if not separator or not local or "." not in domain:
@@ -348,6 +392,7 @@ async def list_users(
     _admin: dict = Depends(require_admin),
     db: _AuthAsyncSession = Depends(_get_auth_db),
 ):
+    """Lista as contas da instalacao. Restrito a administrador."""
     users = (
         (
             await db.execute(
@@ -377,6 +422,7 @@ async def change_password(
     user: dict = Depends(get_current_user),
     db: _AuthAsyncSession = Depends(_get_auth_db),
 ):
+    """Troca a senha da conta autenticada, exigindo a senha atual."""
     result = await db.execute(select(UserModel).where(UserModel.username == user.get("sub")))
     account = result.scalar_one_or_none()
     if not account or not verify_secret(body.current_password, account.password_hash):
@@ -1210,6 +1256,7 @@ async def calendar_accounts(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as contas de calendario conectadas do usuario."""
     google_accounts = await _load_google_accounts(
         db, user["uid"], include_pending=True
     )
@@ -1245,6 +1292,7 @@ async def calendar_accounts(
 # ── Google ────────────────────────────────────────────────────────────────────
 
 class GoogleConnectRequest(_BM):
+    """Codigo de autorizacao devolvido pelo consentimento do Google."""
     client_id: str
     client_secret: str
     label: _Opt[str] = None
@@ -1252,6 +1300,7 @@ class GoogleConnectRequest(_BM):
 
 
 class GoogleOAuthAppRequest(_BM):
+    """Credenciais da aplicacao OAuth do Google usada na conexao."""
     client_id: str
     client_secret: str
 
@@ -1262,6 +1311,7 @@ async def google_oauth_app(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Grava as credenciais da aplicacao OAuth do Google usada na conexao."""
     if not body.client_id or not body.client_secret:
         raise HTTPException(400, "client_id e client_secret do Google sao obrigatorios.")
     await _save_google_oauth_app(
@@ -1351,6 +1401,7 @@ async def google_connect(
 
 
 class CalendarCallbackRequest(_BM):
+    """Retorno de OAuth repassado pela interface ao backend."""
     code: str
     account_id: _Opt[str] = None
 
@@ -1410,6 +1461,10 @@ async def google_oauth_callback(
     error: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
+    """Recebe o retorno do consentimento do Google.
+
+    Rota publica por necessidade: quem chama e o provedor, sem token de sessao.
+    """
     if error:
         return _oauth_result_page(
             "Autorizacao Google cancelada",
@@ -1450,6 +1505,7 @@ async def google_disconnect(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Desconecta todas as contas Google do usuario."""
     await _delete_config(db, _KEY_GOOGLE_ACCOUNTS, user["uid"])
     await _delete_config(db, _KEY_GOOGLE, user["uid"])
     return {"ok": True, "message": "Google Calendar desconectado."}
@@ -1461,6 +1517,7 @@ async def google_disconnect_account(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Desconecta uma conta Google especifica."""
     deleted = await _delete_account(
         db, _KEY_GOOGLE_ACCOUNTS, account_id, user["uid"]
     )
@@ -1477,6 +1534,7 @@ async def google_auth_url(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Devolve a URL de consentimento do Google para a interface abrir."""
     account = _find_account(
         await _load_google_accounts(db, user["uid"], include_pending=True),
         None,
@@ -1500,6 +1558,7 @@ async def google_auth_url(
 async def microsoft_oauth_app(
     user: dict = Depends(get_current_user),
 ):
+    """Grava as credenciais da aplicacao OAuth Microsoft usada na conexao."""
     raise HTTPException(
         410,
         "A configuracao Microsoft agora pertence ao backend. O administrador "
@@ -1575,6 +1634,7 @@ async def ms_start(
 async def ms_connect(
     user: dict = Depends(get_current_user),
 ):
+    """Conclui a conexao de uma conta Microsoft a partir do codigo recebido."""
     raise HTTPException(
         410,
         "Use Conectar Microsoft. Credenciais do aplicativo nao sao aceitas pela API.",
@@ -1585,6 +1645,7 @@ async def ms_connect(
 async def ms_callback(
     user: dict = Depends(get_current_user),
 ):
+    """Processa o retorno do consentimento Microsoft enviado pela interface."""
     raise HTTPException(
         410,
         "O codigo de autorizacao Microsoft e processado somente pelo callback do backend.",
@@ -1655,6 +1716,10 @@ async def microsoft_oauth_callback(
     error_description: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
+    """Recebe o retorno do consentimento da Microsoft.
+
+    Rota publica por necessidade: quem chama e o provedor, sem token de sessao.
+    """
     if error:
         detail = microsoft_auth_error_message(error, error_description or "")
         if state:
@@ -1736,6 +1801,7 @@ async def ms_disconnect(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Desconecta todas as contas Microsoft do usuario."""
     await _delete_config(db, _KEY_MS_ACCOUNTS, user["uid"])
     await _delete_config(db, _KEY_MS, user["uid"])
     await _delete_config(db, _KEY_MS_APP, user["uid"])
@@ -1748,6 +1814,7 @@ async def ms_disconnect_account(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Desconecta uma conta Microsoft especifica."""
     deleted = await _delete_account(
         db, _KEY_MS_ACCOUNTS, account_id, user["uid"]
     )
@@ -1764,6 +1831,7 @@ async def ms_auth_url(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Devolve a URL de consentimento da Microsoft para a interface abrir."""
     raise HTTPException(410, "Use /calendar/microsoft/start para iniciar o login seguro.")
 
 
@@ -1786,6 +1854,7 @@ async def get_notif_config(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Devolve as preferencias de notificacao do usuario."""
     return await _notif_cfg(db, user["uid"])
 
 
@@ -1795,6 +1864,7 @@ async def put_notif_config(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Salva as preferencias de notificacao do usuario."""
     return await save_notif_config(db, body, user_id=user["uid"])
 
 
@@ -1804,6 +1874,7 @@ async def send_notif(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Envia uma notificacao agora pelos canais configurados."""
     cfg = await _notif_cfg(db, user["uid"])
     return await send_notification(body.message, cfg, body.channels)
 
@@ -1814,6 +1885,7 @@ async def test_telegram(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Testa a configuracao do Telegram e devolve o erro traduzido, se houver."""
     from ..services.notification_service import test_telegram_connection
 
     cfg = body or await _notif_cfg(db, user["uid"])
@@ -1826,6 +1898,7 @@ async def test_whatsapp(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Testa a configuracao do WhatsApp e devolve o erro traduzido, se houver."""
     from ..services.notification_service import send_whatsapp
     cfg = await _notif_cfg(db, user["uid"])
     ok = await send_whatsapp("✅ Assistente conectado via WhatsApp!", cfg)
@@ -1850,6 +1923,7 @@ async def transcribe(
     assistant_name: str = Form(""),
     _llm_context: None = Depends(user_llm_context),
 ):
+    """Transcreve o audio enviado pela interface."""
     audio_bytes = await file.read()
     return await transcribe_audio(
         audio_bytes,
@@ -1863,6 +1937,7 @@ async def tts(
     body: TTSRequest,
     _llm_context: None = Depends(user_llm_context),
 ):
+    """Sintetiza a fala do texto e devolve o audio."""
     audio = await text_to_speech(body.text, body.language, body.speed)
     return Response(content=audio, media_type="audio/mpeg")
 
@@ -1880,6 +1955,10 @@ _start = time.time()
 
 @router_health.get("/health", response_model=HealthResponse)
 async def health():
+    """Diagnostico completo: provedores, calendarios, notificacao e uptime.
+
+    E o que alimenta os indicadores de status da interface.
+    """
     s = _gs3()
     llm_status = await get_llm_statuses()
     available_llms = [
@@ -1914,6 +1993,11 @@ async def health():
 
 @router_health.get("/health/live", include_in_schema=False)
 async def health_live():
+    """Checagem rasa de vida, usada pelo healthcheck do container.
+
+    Nao toca em banco nem em servico externo de proposito: precisa responder mesmo
+    com as dependencias fora do ar.
+    """
     return {
         "status": "ok",
         "version": "1.0.0",
@@ -1923,4 +2007,5 @@ async def health_live():
 
 @router_health.get("/")
 async def root():
+    """Identificacao da API na raiz."""
     return {"name": "assistant-backend", "version": "1.0.0", "docs": "/docs"}

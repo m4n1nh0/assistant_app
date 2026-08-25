@@ -1,3 +1,6 @@
+/// Cadastro e gerenciamento dos atalhos.
+library;
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,6 +9,7 @@ import '../services/api_service.dart';
 import '../services/installed_apps_service.dart';
 import '../utils/theme.dart';
 
+/// Cadastro e gerenciamento dos atalhos de app, URL e comando.
 class ShortcutsDialog extends StatefulWidget {
   final bool embedded;
 

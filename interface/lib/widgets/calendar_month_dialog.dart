@@ -1,3 +1,6 @@
+/// Visao mensal do calendario com os eventos das contas conectadas.
+library;
+
 import 'package:flutter/material.dart';
 
 import '../models/app_config.dart';

@@ -1,9 +1,13 @@
+/// Lista as acoes locais disponiveis para execucao manual.
+library;
+
 import 'package:flutter/material.dart';
 
 import '../utils/theme.dart';
 import 'script_runner_dialog.dart';
 import 'shortcuts_dialog.dart';
 
+/// Lista as acoes locais disponiveis para execucao manual.
 class LocalActionsDialog extends StatelessWidget {
   const LocalActionsDialog({super.key});
 

@@ -1,3 +1,10 @@
+"""Endpoints do perfil de dados do usuario e das preferencias dele.
+
+Todas as rotas ignoram o `tutor_id` da URL a favor do perfil do token: pedir o
+perfil de outro usuario responde 404, e nao 403, para nao confirmar que ele
+existe.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +53,7 @@ async def upsert_tutor(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Cria ou atualiza o perfil de dados do usuario autenticado."""
     tutor = await db.get(TutorModel, user["tutor_id"])
 
     if tutor is None:
@@ -94,6 +102,11 @@ async def get_tutor(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Devolve o perfil de dados do usuario.
+
+    O `tutor_id` da URL precisa ser o do proprio usuario; qualquer outro responde
+    404, e nao 403, para nao confirmar a existencia de perfis alheios.
+    """
     if tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Tutor nao encontrado")
     tutor = await db.get(TutorModel, user["tutor_id"])
@@ -121,6 +134,7 @@ async def upsert_setting(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Grava uma preferencia do usuario pela chave."""
     if tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Tutor nao encontrado")
     tutor_id = user["tutor_id"]
@@ -154,6 +168,7 @@ async def list_settings(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as preferencias do usuario."""
     if tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Tutor nao encontrado")
     tutor_id = user["tutor_id"]

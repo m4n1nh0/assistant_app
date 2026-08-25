@@ -1,3 +1,15 @@
+"""Leitura do SIA (sistema academico Estacio) para importar turmas e presenca.
+
+O SIA fica atras do Akamai Bot Manager, que valida fingerprint de navegador.
+Por isso o caminho suportado inverte o normal: **a interface busca o HTML** com
+o WebView autenticado e manda para ca, e o backend so faz o parse (`parse_*`).
+Os `get_*`/`fetch_*` continuam existindo como fallback, mas costumam ser
+barrados pelo bot manager.
+
+As paginas vem em windows-1252, entao toda resposta e decodificada
+explicitamente - decodificar como UTF-8 corrompe acento em nome de aluno.
+"""
+
 import httpx
 import re
 from html import unescape

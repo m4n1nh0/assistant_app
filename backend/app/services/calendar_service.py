@@ -1,3 +1,15 @@
+"""Integracao com Google Calendar e Microsoft Graph: OAuth, leitura e escrita.
+
+Cada provedor entra por tres caminhos: montar a URL de consentimento, trocar o
+codigo por tokens e usar o access token para ler ou criar evento. O que sai
+daqui ja e `CalendarEvent`, entao o resto do backend nao sabe de qual provedor o
+evento veio.
+
+Uma conta pode ter varios calendarios conectados ao mesmo tempo - dai a
+existencia das funcoes `..._account_events`, que trabalham sobre a lista de
+contas do usuario em vez de uma configuracao unica.
+"""
+
 import asyncio
 from urllib.parse import urlencode
 
@@ -22,6 +34,15 @@ class MicrosoftAuthenticationError(RuntimeError):
 
 
 def microsoft_auth_error_message(error: str, description: str = "") -> str:
+    """Traduz o erro da Microsoft em uma mensagem util para o usuario.
+
+    Args:
+        error: codigo devolvido pela API.
+        description: descricao longa, quando vier.
+
+    Returns:
+        Texto em portugues explicando o que fazer, sem expor token ou URL interna.
+    """
     combined = f"{error} {description}".lower()
     if "aadsts53003" in combined or "conditional access" in combined:
         return (
@@ -48,6 +69,7 @@ def get_google_auth_url(
     state: str | None = None,
     redirect_uri: str = "urn:ietf:wg:oauth:2.0:oob",
 ) -> str:
+    """Monta a URL de consentimento do Google Calendar."""
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -68,6 +90,7 @@ async def exchange_google_code(
     client_secret: str,
     redirect_uri: str = "urn:ietf:wg:oauth:2.0:oob",
 ) -> str:
+    """Troca o codigo de autorizacao do Google pelos tokens de acesso e refresh."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -130,6 +153,7 @@ async def fetch_google_events(
     max_results: int = 25,
     raise_on_error: bool = False,
 ) -> List[CalendarEvent]:
+    """Busca eventos de uma conta Google e devolve ja normalizados."""
     if not config.google_enabled or not config.google_refresh_token:
         return []
     try:
@@ -190,6 +214,7 @@ def get_microsoft_auth_url(
     redirect_uri: str = "https://login.microsoftonline.com/common/oauth2/nativeclient",
     code_challenge: str | None = None,
 ) -> str:
+    """Monta a URL de consentimento da Microsoft (App Registration multitenant)."""
     params = {
         "client_id": client_id,
         "response_type": "code",
@@ -215,6 +240,7 @@ async def exchange_microsoft_code(
     redirect_uri: str = "https://login.microsoftonline.com/common/oauth2/nativeclient",
     code_verifier: str | None = None,
 ) -> dict:
+    """Troca o codigo de autorizacao da Microsoft pelos tokens."""
     payload = {
         "code": code,
         "client_id": client_id,
@@ -243,6 +269,7 @@ async def exchange_microsoft_code(
 
 
 async def fetch_microsoft_profile(access_token: str) -> dict:
+    """Le o perfil da conta Microsoft, usado para rotular o calendario conectado."""
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(
             "https://graph.microsoft.com/v1.0/me",
@@ -301,6 +328,7 @@ async def fetch_microsoft_events(
     max_results: int = 25,
     raise_on_error: bool = False,
 ) -> List[CalendarEvent]:
+    """Busca eventos de uma conta Microsoft e devolve ja normalizados."""
     if not config.ms_enabled or not config.ms_refresh_token:
         return []
     try:
@@ -349,6 +377,7 @@ async def fetch_microsoft_events(
 
 
 async def fetch_all_events(config: CalendarConfig) -> List[CalendarEvent]:
+    """Le os eventos das duas fontes a partir da configuracao legada."""
     google_events, ms_events = await asyncio.gather(
         fetch_google_events(config),
         fetch_microsoft_events(config),
@@ -529,6 +558,12 @@ async def fetch_all_account_events(
     end_time: datetime | None = None,
     max_results: int = 25,
 ) -> List[CalendarEvent]:
+    """Le, em paralelo, os eventos de todas as contas de calendario do usuario.
+
+    Returns:
+        A lista unificada de eventos. Conta que falhou e simplesmente omitida - use
+        `fetch_account_events_with_errors` quando o erro precisar chegar na tela.
+    """
     events, errors = await fetch_account_events_with_errors(
         google_accounts,
         microsoft_accounts,
@@ -549,6 +584,12 @@ async def fetch_account_events_with_errors(
     end_time: datetime | None = None,
     max_results: int = 25,
 ) -> tuple[List[CalendarEvent], List[str]]:
+    """Igual a `fetch_all_account_events`, mas devolve tambem as falhas por conta.
+
+    Returns:
+        Uma tupla `(eventos, erros)`, para a interface poder dizer qual calendario
+        nao respondeu em vez de mostrar uma agenda silenciosamente incompleta.
+    """
     tasks: list[tuple[str, object]] = []
 
     for account in google_accounts:

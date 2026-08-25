@@ -1,6 +1,12 @@
+/// Descoberta dos aplicativos instalados, para sugerir atalhos.
+///
+/// Combina regras de aplicativos conhecidos com a varredura do sistema.
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
+/// Um aplicativo encontrado na maquina, candidato a virar atalho.
 class InstalledAppCandidate {
   final String name;
   final String target;
@@ -31,6 +37,7 @@ class InstalledAppCandidate {
   String get displayTarget => sourceTarget.isEmpty ? target : sourceTarget;
 }
 
+/// Ajusta o candidato para o formato de comando que a plataforma aceita.
 class LaunchCommandAgent {
   static InstalledAppCandidate prepare(InstalledAppCandidate candidate) {
     if (!Platform.isWindows || candidate.isUrl) return candidate;
@@ -70,6 +77,7 @@ class LaunchCommandAgent {
   }
 }
 
+/// Comando de abertura pronto, com a previa mostrada ao usuario.
 class LaunchCommandSpec {
   final String payload;
   final String preview;
@@ -105,6 +113,10 @@ class _ShortcutRule {
   }
 }
 
+/// Descobre os aplicativos instalados para sugerir atalhos.
+///
+/// Combina regras conhecidas de aplicativos comuns com a varredura do sistema, o
+/// que evita depender so da varredura - lenta e cheia de falso positivo.
 class InstalledAppsService {
   static const _developerRules = [
     _ShortcutRule(

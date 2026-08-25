@@ -1,8 +1,12 @@
+/// Tema visual do app, derivado da paleta da marca.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../branding/intarq_brand.dart';
 
+/// Tema visual do app: paleta, tipografia e estilos compartilhados.
 class AssistantTheme {
   static const bg = IntarqBrand.navy;
   static const bg2 = Color(0xFF0C1728);

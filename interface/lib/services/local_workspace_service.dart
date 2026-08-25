@@ -1,3 +1,9 @@
+/// Leitura e escrita do workspace de codigo na maquina.
+///
+/// Monta o contexto que vai ao modelo respeitando tetos de arquivos e caracteres, e
+/// aplica as alteracoes aprovadas pelo usuario.
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 
 import 'project_discovery_service.dart';
 
+/// Falha ao inspecionar ou alterar o workspace local.
 class WorkspaceInspectionException implements Exception {
   final String message;
 
@@ -14,6 +21,7 @@ class WorkspaceInspectionException implements Exception {
   String toString() => message;
 }
 
+/// Um workspace detectado, com caminho e marcadores que o identificaram.
 class WorkspaceSnapshot {
   final String name;
   final String path;
@@ -98,6 +106,7 @@ class WorkspaceSnapshot {
   }
 }
 
+/// Trecho de um arquivo do workspace, possivelmente truncado.
 class WorkspaceFileSnippet {
   final String relativePath;
   final String content;
@@ -110,6 +119,7 @@ class WorkspaceFileSnippet {
   });
 }
 
+/// Alteracao proposta a um arquivo do workspace.
 class WorkspaceFileEdit {
   final String relativePath;
 
@@ -132,6 +142,7 @@ class WorkspaceFileEdit {
   bool get isPartial => find != null && find!.isNotEmpty;
 }
 
+/// Resultado da escrita de um arquivo, com o que foi efetivamente gravado.
 class WorkspaceEditResult {
   final String relativePath;
   final int bytesWritten;
@@ -144,6 +155,10 @@ class WorkspaceEditResult {
   });
 }
 
+/// Le e altera o workspace de codigo na maquina do usuario.
+///
+/// Os limites de arquivos, caracteres por arquivo e total existem para o contexto
+/// enviado ao modelo continuar util: workspace inteiro nao cabe em prompt nenhum.
 class LocalWorkspaceService {
   static const _maxTreeFiles = 320;
   static const _maxFileChars = 8000;

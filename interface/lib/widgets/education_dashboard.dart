@@ -1,3 +1,6 @@
+/// Painel inicial do modo educacao: semestres, agenda e proximas aulas.
+library;
+
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +12,7 @@ import '../utils/theme.dart';
 typedef EducationDisciplinesLoader = Future<List<Discipline>> Function();
 typedef EducationLessonsLoader = Future<List<Lesson>> Function();
 
+/// Resumo de um semestre no painel do modo educacao.
 class EducationSemesterSummary {
   final String code;
   final bool active;
@@ -25,6 +29,7 @@ class EducationSemesterSummary {
   });
 }
 
+/// Um horario semanal de turma exibido na agenda.
 class EducationAgendaEntry {
   final int weekday;
   final String startTime;
@@ -41,6 +46,7 @@ class EducationAgendaEntry {
   });
 }
 
+/// Um compromisso proximo (aula ou avaliacao) destacado no painel.
 class EducationCommitment {
   final DateTime startsAt;
   final String classCode;
@@ -183,6 +189,7 @@ class _MutableSemester {
   int studentCount = 0;
 }
 
+/// Painel inicial do modo educacao: semestres, agenda e proximas aulas.
 class EducationDashboard extends StatefulWidget {
   final ValueListenable<List<ClassGroup>?> classes;
   final VoidCallback onOpenClasses;

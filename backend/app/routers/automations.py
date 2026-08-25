@@ -1,3 +1,10 @@
+"""Endpoints das automacoes aprovadas e do log de auditoria.
+
+Automacao so roda depois de aprovada explicitamente, e toda execucao vira linha
+de auditoria - as duas coisas juntas sao o que torna aceitavel dar acao com
+efeito colateral a um assistente.
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -60,6 +67,10 @@ async def approve_automation(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Registra a autorizacao do usuario para uma automacao.
+
+    Sem um registro aprovado aqui, nada e executado automaticamente.
+    """
     item = ApprovedAutomationModel(
         tutor_id=user["tutor_id"],
         title=body.title,
@@ -96,6 +107,7 @@ async def list_automations(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as automacoes aprovadas do usuario."""
     tutor_id = user["tutor_id"]
     result = await db.execute(
         select(ApprovedAutomationModel)
@@ -112,6 +124,7 @@ async def update_automation(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera uma automacao aprovada (habilitar, reagendar, editar)."""
     item = await db.get(ApprovedAutomationModel, automation_id)
     if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Automação não encontrada")
@@ -134,6 +147,7 @@ async def write_audit(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Grava no log de auditoria uma acao executada pela interface."""
     item = ActionAuditLogModel(
         tutor_id=user["tutor_id"],
         automation_id=body.automation_id,
@@ -163,6 +177,7 @@ async def list_audit(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista o log de auditoria, opcionalmente filtrado por automacao."""
     tutor_id = user["tutor_id"]
     query = select(ActionAuditLogModel).where(ActionAuditLogModel.tutor_id == tutor_id)
     if automation_id:

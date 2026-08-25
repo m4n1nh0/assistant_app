@@ -1,3 +1,8 @@
+/// Tela principal, que compoe os tres paineis do app.
+///
+/// Tambem cuida do estado da janela (foco, minimizar, restaurar) via `WindowListener`.
+library;
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +22,7 @@ import '../widgets/chat_panel.dart';
 import '../widgets/right_panel.dart';
 import '../widgets/auth_dialog.dart';
 
+/// Tela principal, com os paineis lateral, central e direito.
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key});
 

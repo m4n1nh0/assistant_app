@@ -1,3 +1,9 @@
+"""Endpoints de leitura das janelas abertas na maquina do usuario.
+
+Servem para dar contexto de tela ao assistente. Como em `computer`, so aceitam
+cliente local.
+"""
+
 import asyncio
 import sys
 
@@ -26,6 +32,7 @@ async def list_desktop_windows(
     request: Request,
     limit: int = Query(default=120, ge=1, le=300),
 ):
+    """Lista as janelas abertas na maquina do usuario."""
     _require_local_client(request)
     windows = await asyncio.to_thread(desktop_window_service.list_windows, limit)
     return {
@@ -42,6 +49,10 @@ async def get_desktop_window_context(
     request: Request,
     max_chars: int = Query(default=12000, ge=1000, le=30000),
 ):
+    """Extrai o texto de uma janela para usar como contexto do assistente.
+
+    Permite perguntar sobre o que esta na tela sem colar o conteudo na conversa.
+    """
     _require_local_client(request)
     try:
         return await asyncio.to_thread(

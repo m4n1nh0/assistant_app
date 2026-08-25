@@ -1,3 +1,8 @@
+/// Cliente do modo educacao: aulas, turmas, alunos, presenca e quiz.
+///
+/// Trabalha sobre [ApiService] e concentra os modelos do dominio academico.
+library;
+
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -744,6 +749,7 @@ class EducationService {
   }
 }
 
+/// Erro de negocio do modo educacao, com mensagem pronta para exibir.
 class EducationException implements Exception {
   final String message;
 
@@ -795,6 +801,7 @@ class Discipline {
       );
 }
 
+/// Semestre letivo, com a contagem de disciplinas e turmas.
 class Semester {
   final String code;
   final bool active;
@@ -898,6 +905,7 @@ class ClassGroup {
   }
 }
 
+/// Uma aula gravada: disciplina, turmas, estado e horarios.
 class Lesson {
   final String id;
   final String discipline;
@@ -963,6 +971,7 @@ class Lesson {
       );
 }
 
+/// A aula com o conteudo pesado junto: trechos transcritos e pontos.
 class LessonDetail extends Lesson {
   final List<LessonSegment> segments;
   final List<LessonPoint> points;
@@ -1017,6 +1026,7 @@ class LessonDetail extends Lesson {
   }
 }
 
+/// Um bloco transcrito da aula, na ordem em que foi gravado.
 class LessonSegment {
   final String id;
   final int sequence;
@@ -1044,6 +1054,7 @@ class LessonSegment {
       );
 }
 
+/// Ponto extra creditado a um aluno durante a aula, com o motivo.
 class LessonPoint {
   final String id;
   final String lessonId;
@@ -1089,6 +1100,10 @@ class LessonPoint {
       );
 }
 
+/// Resultado do envio de um bloco de aula ao backend.
+///
+/// Diz se o trecho foi indexado e, quando nao, por que; traz tambem os pontos
+/// extras detectados naquele bloco.
 class SegmentIngestResult {
   final LessonSegment? segment;
   final bool indexed;
@@ -1148,6 +1163,7 @@ class LessonSummaryPrompt {
       );
 }
 
+/// Resumo gerado da aula, com o provedor usado e o estilo aplicado.
 class LessonSummary {
   final String lessonId;
   final String summary;
@@ -1180,6 +1196,7 @@ class LessonSummary {
       );
 }
 
+/// Aluno de uma turma, com matricula e apelidos de reconhecimento.
 class Student {
   final String id;
   final String name;
@@ -1215,6 +1232,7 @@ class Student {
       );
 }
 
+/// Resultado da importacao de alunos: criados, atualizados e total.
 class StudentImportResult {
   final int created;
   final int updated;
@@ -1234,6 +1252,7 @@ class StudentImportResult {
       );
 }
 
+/// Quantos alunos foram pedidos e quantos foram removidos.
 class StudentBulkDeleteResult {
   final int requested;
   final int deleted;
@@ -1250,6 +1269,7 @@ class StudentBulkDeleteResult {
       );
 }
 
+/// Aluno dentro do resultado de uma chamada.
 class AttendanceStudent {
   final String studentId;
   final String enrollment;
@@ -1278,6 +1298,7 @@ class AttendanceStudent {
       );
 }
 
+/// Presenca registrada, com a origem do check-in e o horario.
 class AttendanceRecord extends AttendanceStudent {
   final String id;
   final String source;
@@ -1309,6 +1330,7 @@ class AttendanceRecord extends AttendanceStudent {
       );
 }
 
+/// Turma dentro de uma chamada, com o total esperado de alunos.
 class AttendanceClass {
   final String classId;
   final String classLabel;
@@ -1334,6 +1356,10 @@ class AttendanceClass {
       );
 }
 
+/// Uma chamada aberta ou encerrada.
+///
+/// Pode cobrir mais de uma turma ao mesmo tempo, por isso carrega uma lista de
+/// [AttendanceClass] em vez de uma turma unica.
 class AttendanceSession {
   final String id;
   final String classId;
@@ -1427,6 +1453,7 @@ class AttendanceSession {
   }
 }
 
+/// Consolidado de presenca por aluno em um intervalo de datas.
 class AttendanceReport {
   final String? dateFrom;
   final String? dateTo;
@@ -1464,6 +1491,7 @@ class AttendanceReport {
       );
 }
 
+/// Uma linha do relatorio de pontos: aluno, total e origem.
 class PointsReportEntry {
   final String studentName;
   final String? studentId;
@@ -1500,6 +1528,7 @@ class PointsReportEntry {
       );
 }
 
+/// Relatorio de pontos do periodo, usado no PDF academico.
 class PointsReport {
   final double totalPoints;
   final List<PointsReportEntry> students;
@@ -1515,6 +1544,7 @@ class PointsReport {
       );
 }
 
+/// Trecho de aula encontrado na busca, com aula de origem e score.
 class TranscriptHit {
   final String id;
   final double score;
@@ -1545,6 +1575,10 @@ class TranscriptHit {
       );
 }
 
+/// Provedor de embedding em uso e se a busca esta semantica.
+///
+/// Quando cai no hash offline a busca casa apenas palavra exata, e a interface
+/// avisa o usuario disso.
 class EmbeddingStatus {
   final bool ok;
   final String provider;

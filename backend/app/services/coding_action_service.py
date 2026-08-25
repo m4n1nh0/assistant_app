@@ -1,3 +1,10 @@
+"""Reconhece pedido de mexer em codigo e monta a acao para a interface.
+
+O backend nao le nem escreve arquivo do usuario: quem tem o workspace e a
+interface. Aqui so se identifica a intencao e o alvo, e a acao volta para ser
+confirmada e executada na maquina.
+"""
+
 from __future__ import annotations
 
 import re
@@ -14,6 +21,15 @@ _LOCAL_CONTEXT_MARKERS = (
 
 
 def build_coding_action(message: str) -> dict[str, Any] | None:
+    """Monta a acao de codigo a partir da mensagem.
+
+    Args:
+        message: pedido do usuario, ja com o contexto de workspace que a interface
+            anexou quando havia.
+
+    Returns:
+        A acao proposta, ou `None` quando a mensagem nao pede alteracao de codigo.
+    """
     text = _normalize(message)
     if not text or any(marker in text for marker in _LOCAL_CONTEXT_MARKERS):
         return None

@@ -1,3 +1,6 @@
+/// Painel de agenda, status dos provedores e memoria.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_provider.dart';
@@ -7,6 +10,7 @@ import '../models/app_config.dart';
 import '../utils/theme.dart';
 import 'calendar_month_dialog.dart';
 
+/// Painel direito: agenda, status dos provedores e memoria.
 class RightPanel extends ConsumerWidget {
   const RightPanel({super.key});
 

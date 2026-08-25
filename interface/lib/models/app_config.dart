@@ -1,3 +1,14 @@
+/// Modelos de estado e DTOs da interface.
+///
+/// Reune a configuracao persistida ([AppConfig]) e os objetos trocados com o
+/// backend: mensagens, respostas, eventos, atalhos e as acoes que o assistente
+/// propoe para a interface executar.
+library;
+
+/// Configuracao completa da interface, persistida localmente no Hive.
+///
+/// Reune persona da assistente, provedores de LLM, notificacao, calendario e
+/// preferencias de janela. E o estado que o [configProvider] expoe ao app inteiro.
 class AppConfig {
   static const defaultAssistantName = 'Assistant';
   static const serviceLabels = {
@@ -272,6 +283,10 @@ class AppConfig {
   }
 }
 
+/// Estado de um provedor de LLM como a interface o exibe.
+///
+/// Separa `configured` (ha chave), `online` (respondeu) e `available` (da para usar
+/// agora) - os tres podem divergir, por exemplo em provedor sem saldo.
 class LlmStatus {
   final String id;
   final String label;
@@ -342,6 +357,7 @@ class LlmStatus {
   }
 }
 
+/// Preferencias de notificacao: canais, credenciais e antecedencia.
 class NotifConfig {
   String tgToken;
   String tgChatId;
@@ -411,6 +427,7 @@ class NotifConfig {
       );
 }
 
+/// Credenciais e estado de conexao dos calendarios Google e Microsoft.
 class CalendarConfig {
   String gcalClientId;
   String gcalClientSecret;
@@ -465,6 +482,7 @@ class CalendarConfig {
       );
 }
 
+/// Uma mensagem do chat, do usuario ou da assistente.
 class ChatMessage {
   final String id;
   final String role;
@@ -492,6 +510,7 @@ class ChatMessage {
   }) : timestamp = timestamp ?? DateTime.now();
 }
 
+/// Resposta de um provedor, com o texto e se veio como erro.
 class LlmResponse {
   final String llm;
   final String content;
@@ -510,6 +529,10 @@ class LlmResponse {
   });
 }
 
+/// Resultado de uma rodada de chat: respostas mais a acao proposta.
+///
+/// Quando o backend reconhece um pedido de acao, ela vem aqui para a interface
+/// confirmar com o usuario antes de executar.
 class ChatResult {
   final List<LlmResponse> responses;
   final LaunchAction? action;
@@ -534,6 +557,7 @@ class ChatResult {
       : responses.first;
 }
 
+/// Pedido do assistente para abrir o modo educacao em um contexto.
 class EducationOpenAction {
   final String destination;
   final String reason;
@@ -554,6 +578,7 @@ class EducationOpenAction {
       );
 }
 
+/// Pedido de abertura de app, URL ou comando ja cadastrado como atalho.
 class LaunchAction {
   final String type;
   final String shortcutId;
@@ -587,6 +612,7 @@ class LaunchAction {
       );
 }
 
+/// Pedido do assistente para cadastrar um novo atalho.
 class ShortcutRegistrationAction {
   final String type;
   final String name;
@@ -630,6 +656,7 @@ class ShortcutRegistrationAction {
       );
 }
 
+/// Acao no computador proposta pelo assistente, a executar localmente.
 class ComputerAction {
   final String type;
   final String actionId;
@@ -662,6 +689,7 @@ class ComputerAction {
       );
 }
 
+/// Alteracao de codigo proposta pelo assistente para um workspace local.
 class CodingAction {
   final String type;
   final String actionId;
@@ -694,6 +722,7 @@ class CodingAction {
       );
 }
 
+/// Criacao de evento proposta a partir da conversa.
 class CalendarCreateAction {
   final String type;
   final String title;
@@ -734,6 +763,7 @@ class CalendarCreateAction {
       );
 }
 
+/// Um atalho cadastrado, com alvo, apelidos e contadores de uso.
 class ShortcutEntry {
   final String id;
   final String tutorId;
@@ -826,6 +856,7 @@ class ShortcutEntry {
       .trim();
 }
 
+/// Uma execucao de atalho registrada no historico.
 class ShortcutLaunchEntry {
   final String id;
   final String tutorId;
@@ -880,6 +911,7 @@ class ShortcutLaunchEntry {
       );
 }
 
+/// Evento de calendario normalizado, independente do provedor de origem.
 class CalendarEvent {
   final String id;
   final String title;

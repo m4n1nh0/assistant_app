@@ -31,6 +31,7 @@ HANDOFF_TOOL_NAME = "transfer_to_agent"
 
 @dataclass(frozen=True)
 class Specialist:
+    """Um agente especialista: papel, instrucoes proprias e ferramentas permitidas."""
     id: str
     label: str
     description: str
@@ -109,12 +110,14 @@ _TASK_TO_SPECIALIST = {
 
 
 class HandoffInput(BaseModel):
+    """Pedido de transferencia feito pelo modelo, ainda por validar."""
     agent: str = Field(description="id do agente que deve assumir")
     reason: str = Field(default="", description="por que a transferencia")
 
 
 @dataclass
 class AgentOutcome:
+    """Resultado de uma rodada de agentes: resposta, rastro e transferencias feitas."""
     response: LLMResponse
     agent_id: str
     provider: str
@@ -123,6 +126,14 @@ class AgentOutcome:
 
 
 def select_specialist(task: str) -> Specialist:
+    """Escolhe o especialista que atende a tarefa.
+
+    Args:
+        task: tipo de tarefa detectado na mensagem.
+
+    Returns:
+        O especialista escolhido, com instrucoes e ferramentas dele.
+    """
     return SPECIALISTS[_TASK_TO_SPECIALIST.get(task, DEFAULT_SPECIALIST)]
 
 
@@ -150,6 +161,11 @@ async def build_tools(
     *,
     allow_handoff: bool,
 ) -> list[BaseTool]:
+    """Monta as ferramentas disponiveis para um especialista.
+
+    Junta as ferramentas de acao locais com as ferramentas MCP configuradas, quando
+    os servidores respondem.
+    """
     tools: list[BaseTool] = []
 
     if specialist.tool_names:

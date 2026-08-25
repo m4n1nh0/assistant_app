@@ -63,6 +63,7 @@ def _parse_servers() -> dict[str, dict[str, Any]]:
 
 
 def configured() -> bool:
+    """Diz se ha servidor MCP declarado em `MCP_SERVERS`."""
     return bool(_parse_servers())
 
 
@@ -105,6 +106,7 @@ async def get_tools(*, force: bool = False) -> list[BaseTool]:
 
 
 async def status() -> dict[str, Any]:
+    """Estado de cada servidor MCP configurado, para diagnostico na interface."""
     servers = _parse_servers()
     if not servers:
         return {"configured": False, "servers": [], "tools": 0}
@@ -120,6 +122,7 @@ async def status() -> dict[str, Any]:
 
 
 def reset_cache() -> None:
+    """Descarta o cache de ferramentas, forcando reconexao na proxima chamada."""
     global _cache, _last_error
     _cache = None
     _last_error = ""

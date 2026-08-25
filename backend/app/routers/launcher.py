@@ -1,3 +1,8 @@
+"""Endpoints dos atalhos: cadastro, listagem, uso e sugestao de comando.
+
+O backend guarda e sugere; abrir o alvo e sempre da interface.
+"""
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -69,6 +74,7 @@ async def create_shortcut(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Cadastra um atalho de app, URL ou comando."""
     name = body.name.strip()
     target = body.target.strip()
     aliases = [item.strip() for item in body.aliases if item.strip()]
@@ -101,6 +107,7 @@ async def list_launches(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista o historico de execucoes de atalhos do usuario."""
     tutor_id = user["tutor_id"]
     query = select(ShortcutLaunchLogModel).where(
         ShortcutLaunchLogModel.tutor_id == tutor_id
@@ -126,6 +133,7 @@ async def list_shortcuts(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista os atalhos do usuario, dos mais usados para os menos."""
     tutor_id = user["tutor_id"]
     result = await db.execute(
         select(ShortcutModel)
@@ -142,6 +150,7 @@ async def update_shortcut(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera nome, alvo, apelidos ou descricao de um atalho."""
     sc = await db.get(ShortcutModel, shortcut_id)
     if sc is None or sc.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Atalho não encontrado")
@@ -173,6 +182,7 @@ async def delete_shortcut(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove um atalho do usuario."""
     sc = await db.get(ShortcutModel, shortcut_id)
     if sc is None or sc.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Atalho não encontrado")

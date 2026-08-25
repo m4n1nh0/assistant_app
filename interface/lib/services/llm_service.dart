@@ -1,3 +1,6 @@
+/// Envia mensagens ao chat do backend a partir da configuracao local.
+library;
+
 import 'dart:async';
 
 import '../models/app_config.dart';
@@ -8,6 +11,7 @@ String _friendlyTimeout(String operation, Duration timeout) =>
     'Tempo limite excedido em $operation (${timeout.inSeconds}s). '
     'Tente novamente, use outro agente ou reduza o pedido.';
 
+/// Conversa com o backend de chat a partir da configuracao local.
 class LlmService {
   final AppConfig? config;
   final String workingDirectory;

@@ -1,3 +1,13 @@
+"""Endpoints das acoes de computador e dos scripts salvos.
+
+O backend cataloga, valida e persiste; a execucao e sempre da interface desktop.
+Por isso `POST /computer/actions/{id}/run` e `POST /computer/scripts/run`
+respondem 501 de proposito, em vez de tentar rodar no servidor.
+
+Todas as rotas exigem cliente local (`_require_local_client`): sao recursos da
+maquina do usuario e nao fazem sentido vindos da rede.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from ipaddress import ip_address, ip_network
 from sqlalchemy import select
@@ -74,6 +84,7 @@ def _require_local_client(request: Request) -> None:
 
 @router.get("/actions", response_model=list[ComputerActionInfo])
 async def list_computer_actions(request: Request):
+    """Lista as acoes de computador suportadas na plataforma atual."""
     _require_local_client(request)
     return [action.to_dict() for action in computer_action_service.list_actions()]
 
@@ -87,6 +98,11 @@ async def run_computer_action(
     body: ComputerActionRunRequest,
     request: Request,
 ):
+    """Recusa executar a acao no backend (HTTP 501), por design.
+
+    Quem executa e a interface desktop, que roda na maquina do usuario e pede
+    confirmacao. A rota existe para tornar a fronteira explicita.
+    """
     _require_local_client(request)
     computer_action_service.get_action(action_id)
     raise HTTPException(
@@ -97,6 +113,7 @@ async def run_computer_action(
 
 @router.get("/scripts/shells", response_model=ScriptShellsResponse)
 async def list_script_shells(request: Request):
+    """Lista os shells aceitos e qual e o padrao da plataforma."""
     _require_local_client(request)
     return {
         "default_shell": "powershell",
@@ -111,6 +128,7 @@ async def list_saved_scripts(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista os scripts salvos do usuario."""
     _require_local_client(request)
     tutor_id = user["tutor_id"]
     result = await db.execute(
@@ -128,6 +146,7 @@ async def create_saved_script(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Salva um script para reexecucao posterior."""
     _require_local_client(request)
     name, script, cwd, description = _clean_script_fields(
         name=body.name,
@@ -157,6 +176,10 @@ async def create_saved_script(
 
 @router.post("/scripts/run")
 async def run_script(request: Request):
+    """Recusa executar script no backend (HTTP 501), por design.
+
+    Assim como as acoes de computador, a execucao pertence a interface desktop.
+    """
     _require_local_client(request)
     raise HTTPException(
         status_code=501,
@@ -172,6 +195,7 @@ async def update_saved_script(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera um script salvo do usuario."""
     _require_local_client(request)
     item = await db.get(ScriptSnippetModel, script_id)
     if item is None or item.tutor_id != user["tutor_id"]:
@@ -212,6 +236,7 @@ async def delete_saved_script(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove um script salvo do usuario."""
     _require_local_client(request)
     item = await db.get(ScriptSnippetModel, script_id)
     if item is None or item.tutor_id != user["tutor_id"]:

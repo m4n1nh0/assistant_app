@@ -1,3 +1,24 @@
+"""Chamada aos provedores de LLM e normalizacao das respostas.
+
+Cada provedor tem um `call_<nome>` (resposta completa) e, quando suporta, um
+`stream_<nome>` (resposta incremental). Os dois mapas no fim do modulo,
+`LLM_CALLERS` e `LLM_STREAMERS`, sao a tabela de despacho que o resto do backend
+usa - por isso adicionar provedor novo e escrever a funcao e registra-la la, sem
+tocar em quem chama.
+
+Provedores compativeis com a API da OpenAI (Together, OpenRouter, DeepSeek,
+Grok/Groq, LocalAI) passam todos por `call_openai_compatible`, mudando so URL,
+chave e modelo.
+
+Duas garantias valem para qualquer provedor:
+
+- **Erro nunca explode na cara do usuario.** A falha volta como `LLMResponse`
+  com `is_error=True`, o que deixa o modo `multi` e o `chain` seguirem com os
+  provedores que responderam.
+- **Falha real realimenta o health.** Toda falha chama `mark_llm_failure`, entao
+  um provedor sem saldo sai das proximas selecoes automaticas.
+"""
+
 import asyncio
 import json
 import re
@@ -111,6 +132,7 @@ async def call_claude(
     stream: bool = False,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o Claude (Anthropic) e devolve a resposta normalizada."""
     api_key = _claude_api_key()
     if not api_key:
         return LLMResponse(llm="claude", content="Credencial não configurada", is_error=True)
@@ -141,6 +163,7 @@ async def call_claude(
 async def stream_claude(
     message: str, history: List[Message], system_prompt: str
 ) -> AsyncIterator[str]:
+    """Streaming do Claude, pedaco a pedaco."""
     import anthropic
     client = anthropic.AsyncAnthropic(api_key=_claude_api_key())
     messages = _format_history(history) + [{"role": "user", "content": message}]
@@ -160,6 +183,7 @@ async def call_gpt(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o GPT (OpenAI) e devolve a resposta normalizada."""
     if not settings.openai_api_key:
         return LLMResponse(llm="gpt", content="Credencial não configurada", is_error=True)
     try:
@@ -197,6 +221,27 @@ async def call_openai_compatible(
     require_api_key: bool = True,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama qualquer provedor que fale o dialeto `/v1/chat/completions` da OpenAI.
+
+    E o caminho unico de Together, OpenRouter, DeepSeek, Grok/Groq e LocalAI: o que
+    muda entre eles e so a URL base, a chave e o nome do modelo.
+
+    Args:
+        service_id: identificador do provedor, usado no log e na resposta.
+        api_key: chave de acesso; ignorada quando `require_api_key` e falso.
+        url: endpoint completo de chat completions.
+        model: nome do modelo no provedor.
+        message: pergunta atual.
+        history: historico ja no formato `Message`.
+        system_prompt: instrucao de sistema com persona e contexto.
+        extra_headers: cabecalhos adicionais exigidos por alguns provedores.
+        require_api_key: `False` para provedor local que aceita chamada sem chave.
+        max_tokens: teto de tokens da resposta.
+
+    Returns:
+        A resposta normalizada; em falha, `LLMResponse` com `is_error=True` e a
+        mensagem de erro ja higienizada.
+    """
     if require_api_key and not api_key:
         return LLMResponse(llm=service_id, content="Credencial não configurada", is_error=True)
     try:
@@ -246,6 +291,7 @@ async def call_together(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama a Together, pelo caminho compativel com a OpenAI."""
     return await call_openai_compatible(
         "together",
         settings.together_api_key,
@@ -264,6 +310,7 @@ async def call_openrouter(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o OpenRouter, pelo caminho compativel com a OpenAI."""
     return await call_openai_compatible(
         "openrouter",
         settings.openrouter_api_key,
@@ -283,6 +330,7 @@ async def call_deepseek(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o DeepSeek, pelo caminho compativel com a OpenAI."""
     return await call_openai_compatible(
         "deepseek",
         settings.deepseek_api_key,
@@ -298,6 +346,7 @@ async def call_deepseek(
 async def stream_gpt(
     message: str, history: List[Message], system_prompt: str
 ) -> AsyncIterator[str]:
+    """Streaming do GPT."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     messages = [{"role": "system", "content": system_prompt}] + \
@@ -317,6 +366,7 @@ async def call_gemini(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o Gemini (Google) e normaliza a resposta."""
     if not settings.gemini_api_key:
         return LLMResponse(llm="gemini", content="Credencial não configurada", is_error=True)
     try:
@@ -363,6 +413,7 @@ async def call_grok(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o Grok (xAI) ou a Groq, conforme a chave configurada."""
     if not settings.grok_api_key:
         return LLMResponse(llm="grok", content="Credencial não configurada", is_error=True)
     try:
@@ -434,6 +485,7 @@ async def call_localai(
     max_tokens: int = 2000,
     reasoning_effort: Optional[str] = None,
 ) -> LLMResponse:
+    """Chama o LocalAI, servidor local compativel com a OpenAI."""
     if not settings.localai_base_url:
         return LLMResponse(
             llm="localai",
@@ -504,6 +556,7 @@ async def stream_localai(
     max_tokens: int = 2000,
     reasoning_effort: Optional[str] = None,
 ) -> AsyncIterator[str]:
+    """Streaming do LocalAI."""
     if not settings.localai_base_url:
         raise Exception("LOCALAI_BASE_URL nao configurada")
 
@@ -554,6 +607,7 @@ async def call_llama(
     *,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama o Ollama local."""
     try:
         start = time.monotonic()
         messages = [{"role": "system", "content": system_prompt}] + \
@@ -591,6 +645,7 @@ async def call_llama(
 async def stream_llama(
     message: str, history: List[Message], system_prompt: str
 ) -> AsyncIterator[str]:
+    """Streaming do Ollama."""
     import json
     messages = [{"role": "system", "content": system_prompt}] + \
                _format_history(history) + [{"role": "user", "content": message}]
@@ -616,6 +671,7 @@ async def call_hf(
     system_prompt: str,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
+    """Chama a Inference API do Hugging Face."""
     if not settings.huggingface_api_key:
         return LLMResponse(llm="hf", content="Credencial não configurada", is_error=True)
     try:
@@ -688,6 +744,19 @@ async def dispatch_single(
     max_tokens: Optional[int] = None,
     reasoning_effort: Optional[str] = None,
 ) -> LLMResponse:
+    """Envia a pergunta a um unico provedor (modo `single`).
+
+    Args:
+        llm: chave do provedor em `LLM_CALLERS`.
+        message: pergunta atual.
+        history: historico da conversa.
+        system_prompt: instrucao de sistema.
+        max_tokens: teto de tokens da resposta.
+        reasoning_effort: esforco de raciocinio, nos provedores que aceitam.
+
+    Returns:
+        A resposta do provedor, ja normalizada.
+    """
     if llm == "localai":
         response = await call_localai(
             message,
@@ -729,6 +798,18 @@ async def dispatch_multi(
     history: List[Message],
     system_prompt: str,
 ) -> List[LLMResponse]:
+    """Pergunta a varios provedores em paralelo (modo `multi`).
+
+    Args:
+        llms: provedores a consultar.
+        message: pergunta atual.
+        history: historico da conversa.
+        system_prompt: instrucao de sistema.
+
+    Returns:
+        Uma resposta por provedor, na ordem pedida. Provedor que falhou entra na
+        lista com `is_error=True` em vez de derrubar a rodada.
+    """
     tasks = [dispatch_single(llm, message, history, system_prompt) for llm in llms]
     return await asyncio.gather(*tasks)
 
@@ -739,6 +820,21 @@ async def dispatch_chain(
     history: List[Message],
     system_prompt: str,
 ) -> LLMResponse:
+    """Encadeia provedores, cada um refinando a resposta do anterior (modo `chain`).
+
+    A saida de um provedor vira contexto do proximo, junto com a pergunta original.
+    Provedor que falha e pulado sem interromper a cadeia.
+
+    Args:
+        llms: provedores na ordem do encadeamento.
+        message: pergunta original, repetida a cada etapa.
+        history: historico da conversa.
+        system_prompt: instrucao de sistema.
+
+    Returns:
+        A ultima resposta bem-sucedida, prefixada como resposta em etapas; se
+        nenhum provedor respondeu, um `LLMResponse` de erro.
+    """
     current = message
     last_success: Optional[LLMResponse] = None
     for i, llm in enumerate(llms):
@@ -763,4 +859,13 @@ async def dispatch_chain(
 
 
 async def get_streamer(llm: str):
+    """Devolve a funcao de streaming de um provedor, se ele suportar.
+
+    Args:
+        llm: chave do provedor.
+
+    Returns:
+        A corrotina de streaming, ou `None` quando o provedor so responde inteiro -
+        o chamador deve entao cair para `dispatch_single`.
+    """
     return LLM_STREAMERS.get(llm)

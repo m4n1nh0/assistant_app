@@ -105,6 +105,15 @@ def _task_tier(provider: str, balance_ok: bool | None, task: str) -> int:
 
 
 async def pick_auto_llm(candidates: list[str], task: str = "general") -> str:
+    """Escolhe o provedor padrao entre os candidatos.
+
+    Args:
+        candidates: provedores disponiveis no momento.
+        task: tipo de tarefa devolvido por `detect_task`.
+
+    Returns:
+        A chave do provedor escolhido.
+    """
     ranked = await rank_auto_llms(candidates, task)
     return ranked[0] if ranked else ""
 

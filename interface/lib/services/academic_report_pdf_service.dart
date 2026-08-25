@@ -1,3 +1,6 @@
+/// Geracao dos PDFs academicos: presenca, agenda e lista de alunos.
+library;
+
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -13,6 +16,7 @@ const _ink = PdfColor.fromInt(0xFF111827);
 const _muted = PdfColor.fromInt(0xFF526277);
 const _rule = PdfColor.fromInt(0xFFD8E0EA);
 
+/// Tipo de relatorio academico gerado em PDF.
 enum AcademicReportKind {
   attendance,
   schedule,

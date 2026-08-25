@@ -694,6 +694,7 @@ async def list_disciplines(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as disciplinas do usuario."""
     query = select(DisciplineModel).where(DisciplineModel.tutor_id == user["tutor_id"])
     if active_only:
         query = query.where(DisciplineModel.active.is_(True))
@@ -726,6 +727,7 @@ async def create_discipline(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Cadastra uma disciplina."""
     code = body.code.strip()
     name = body.name.strip()
     semester = _semester_code(body.semester)
@@ -764,6 +766,7 @@ async def update_discipline(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera codigo, nome ou cor de uma disciplina."""
     discipline = await db.get(DisciplineModel, discipline_id)
     if discipline is None or discipline.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Disciplina nao encontrada")
@@ -805,6 +808,7 @@ async def list_semesters(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista os semestres letivos com dados registrados."""
     disciplines = list(
         (
             await db.execute(
@@ -847,6 +851,7 @@ async def update_semester(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera o rotulo ou as datas de um semestre."""
     code = _semester_code(semester)
     disciplines = list(
         (
@@ -885,6 +890,7 @@ async def delete_discipline(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove uma disciplina e desvincula o que dependia dela."""
     discipline = await db.get(DisciplineModel, discipline_id)
     if discipline is None or discipline.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Disciplina nao encontrada")
@@ -917,6 +923,7 @@ async def list_classes(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as turmas, opcionalmente filtradas por disciplina e semestre."""
     query = select(ClassGroupModel).where(
         ClassGroupModel.tutor_id == user["tutor_id"]
     )
@@ -970,6 +977,7 @@ async def create_class(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Cadastra uma turma, com horarios semanais quando informados."""
     discipline_row = await _resolve_discipline(body.discipline_id, user["tutor_id"], db)
     code = body.code.strip()
     discipline = _discipline_label(discipline_row) if discipline_row else body.discipline.strip()
@@ -1014,6 +1022,7 @@ async def update_class(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera dados e horarios de uma turma."""
     group = await db.get(ClassGroupModel, class_id)
     if group is None or group.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Turma nao encontrada")
@@ -1059,6 +1068,7 @@ async def delete_class(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove uma turma e os vinculos dela com aulas e alunos."""
     group = await db.get(ClassGroupModel, class_id)
     if group is None or group.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Turma nao encontrada")
@@ -1103,6 +1113,7 @@ async def list_students(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista os alunos, opcionalmente filtrados por turma."""
     query = select(StudentModel).where(StudentModel.tutor_id == user["tutor_id"])
     if class_id:
         query = query.where(StudentModel.class_id == class_id)
@@ -1122,6 +1133,7 @@ async def create_student(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Cadastra um aluno em uma turma."""
     name = body.name.strip()
     if not name:
         raise HTTPException(422, "Nome do aluno e obrigatorio")
@@ -1161,6 +1173,10 @@ async def import_students(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Importa alunos em lote, normalmente de uma planilha ou do SIA.
+
+    Aluno ja existente na turma e atualizado em vez de duplicado.
+    """
     group = None
     if body.class_id:
         group = (await _resolve_classes([body.class_id], user["tutor_id"], db))[0]
@@ -1243,6 +1259,7 @@ async def update_student(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera dados de um aluno."""
     student = await db.get(StudentModel, student_id)
     if student is None or student.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Aluno nao encontrado")
@@ -1303,6 +1320,7 @@ async def delete_student(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove um aluno."""
     student = await db.get(StudentModel, student_id)
     if student is None or student.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Aluno nao encontrado")
@@ -1320,6 +1338,11 @@ async def create_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Abre uma aula e passa a aceitar os blocos de gravacao.
+
+    A aula nasce aberta: os trechos chegam por `POST /education/lessons/{id}/segments`
+    enquanto a aula acontece, e nao em um upload unico no fim.
+    """
     classes = await _resolve_classes(body.class_ids, user["tutor_id"], db)
     semesters = {group.semester for group in classes if group.semester}
     if len(semesters) > 1:
@@ -1360,6 +1383,7 @@ async def list_lessons(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista as aulas, filtradas por disciplina, turma ou periodo."""
     query = select(LessonModel).where(LessonModel.tutor_id == user["tutor_id"])
     if discipline:
         query = query.where(LessonModel.discipline == discipline)
@@ -1387,6 +1411,7 @@ async def get_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Devolve a aula com transcricao, trechos e pontos."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
 
     segments: List[LessonSegmentResponse] = []
@@ -1420,6 +1445,7 @@ async def update_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Altera titulo, disciplina, turmas ou anotacoes de uma aula."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
     for field in ("discipline", "title", "class_group", "teacher"):
         value = getattr(body, field)
@@ -1446,6 +1472,7 @@ async def delete_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove a aula e os trechos dela, inclusive do indice vetorial."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
     await db.execute(
         sql_delete(LessonSegmentModel).where(LessonSegmentModel.lesson_id == lesson_id)
@@ -1728,6 +1755,11 @@ async def summarize_lesson(
     db: AsyncSession = Depends(get_db),
     _llm_context: None = Depends(user_llm_context),
 ):
+    """Gera o resumo da aula a partir da transcricao.
+
+    Prefere provedor local ou gratuito e fatia a transcricao conforme a janela do
+    modelo, encadeando resumos parciais quando a aula nao cabe em uma rodada.
+    """
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
 
     segments = await _lesson_transcript(lesson_id, db)
@@ -1766,6 +1798,7 @@ async def close_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Encerra a aula, marcando o fim da gravacao."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
     if lesson.status != "closed":
         lesson.status = "closed"
@@ -1785,6 +1818,7 @@ async def add_lesson_point(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Credita manualmente um ponto extra a um aluno na aula."""
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
     name = body.student_name.strip()
     if not name:
@@ -1822,6 +1856,7 @@ async def delete_point(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Remove um ponto creditado."""
     point = await db.get(LessonPointModel, point_id)
     if point is None or point.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Pontuacao nao encontrada")
@@ -1938,6 +1973,11 @@ async def search_transcripts(
     limit: int = Query(8, ge=1, le=50),
     user: dict = Depends(get_current_user),
 ):
+    """Busca semantica nas transcricoes de aula do usuario.
+
+    Devolve trechos com a aula de origem e o instante, para o professor voltar ao
+    ponto exato da gravacao.
+    """
     start = _parse_date(date_from)
     end = _parse_date(date_to, end_of_day=True)
     results = await qdrant_service.search_lesson_transcripts(
@@ -1954,6 +1994,10 @@ async def search_transcripts(
 
 @router.get("/embedding-status", response_model=EmbeddingStatusResponse)
 async def embedding_status():
+    """Provedor de embedding em uso e se a busca esta semantica.
+
+    Quando cai no hash offline, a interface avisa que a busca so casa palavra exata.
+    """
     return EmbeddingStatusResponse(**await embedding_service.describe())
 
 

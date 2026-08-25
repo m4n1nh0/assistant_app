@@ -1,3 +1,12 @@
+"""Convite de cadastro: emissao, entrega por email e consumo do token.
+
+A entrega usa a HTTP API da Brevo em vez de SMTP - muitos ambientes de hospedagem
+bloqueiam a porta de saida de SMTP, e a API contorna isso por completo.
+
+Como na recuperacao de senha, o banco guarda so o digest do token e ha intervalo
+minimo entre pedidos.
+"""
+
 import asyncio
 import hashlib
 import hmac
@@ -20,10 +29,12 @@ BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
 
 
 class RegistrationDeliveryError(Exception):
+    """Falha ao entregar o email de convite."""
     pass
 
 
 class RegistrationTokenCooldownError(Exception):
+    """Pedido feito antes do intervalo minimo entre emissoes."""
     def __init__(self, retry_after_seconds: int):
         self.retry_after_seconds = retry_after_seconds
         super().__init__(
@@ -32,16 +43,19 @@ class RegistrationTokenCooldownError(Exception):
 
 
 def utc_now() -> datetime:
+    """Instante atual em UTC."""
     return datetime.now(timezone.utc)
 
 
 def as_utc(value: datetime) -> datetime:
+    """Converte um datetime para UTC, assumindo UTC quando vier sem fuso."""
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
 def registration_token_digest(token: str) -> str:
+    """Digest do token de convite, unica forma dele guardada."""
     return hmac.new(
         settings.jwt_secret.encode("utf-8"),
         token.encode("utf-8"),
@@ -50,6 +64,7 @@ def registration_token_digest(token: str) -> str:
 
 
 def mask_email(email: str) -> str:
+    """Mascara o email para exibicao, preservando so o suficiente para reconhecer."""
     local, separator, domain = email.strip().partition("@")
     if not separator or not local or not domain:
         return ""
@@ -58,6 +73,7 @@ def mask_email(email: str) -> str:
 
 
 def registration_delivery_configured(recipient_email: str | None = None) -> bool:
+    """Diz se ha canal de email configurado para entregar o convite."""
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
     recipient = (
         recipient_email
@@ -148,6 +164,12 @@ async def issue_registration_token(
     invited_by: str | None = None,
     role: str | None = None,
 ) -> tuple[str, datetime]:
+    """Emite o convite e envia por email ao destinatario.
+
+    Raises:
+        RegistrationTokenCooldownError: quando o pedido veio cedo demais.
+        RegistrationDeliveryError: quando o email nao pode ser entregue.
+    """
     async with _issue_lock:
         return await _issue_registration_token(
             db,
@@ -237,6 +259,7 @@ async def lock_registration_invite(
     db: AsyncSession,
     token: str,
 ) -> RegistrationInviteModel | None:
+    """Marca o convite como usado, impedindo reaproveitamento."""
     clean_token = token.strip()
     if not clean_token:
         return None

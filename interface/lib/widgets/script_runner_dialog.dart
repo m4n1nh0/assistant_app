@@ -1,3 +1,6 @@
+/// Editor e executor dos scripts salvos.
+library;
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +10,7 @@ import '../services/api_service.dart';
 import '../services/local_script_service.dart';
 import '../utils/theme.dart';
 
+/// Editor e executor dos scripts salvos, com a saida em tempo real.
 class ScriptRunnerDialog extends StatefulWidget {
   final bool embedded;
 

@@ -1,3 +1,7 @@
+/// Leitura da planilha de alunos para a importacao em lote.
+library;
+
+/// Uma linha de aluno lida da planilha de importacao.
 class StudentCsvRow {
   final String enrollment;
   final String name;

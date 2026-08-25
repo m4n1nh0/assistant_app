@@ -74,6 +74,10 @@ async def pending_count(
     signature: str,
     lesson_id: Optional[str] = None,
 ) -> int:
+    """Quantos trechos ainda faltam indexar no Qdrant.
+
+    Conta o que existe no MySQL e nao tem vetor correspondente na assinatura atual.
+    """
     query = select(func.count(LessonSegmentModel.id)).where(
         LessonSegmentModel.tutor_id == tutor_id,
         _stale_condition(signature),
@@ -284,6 +288,7 @@ def reset_cooldown() -> None:
 
 
 async def status(db: AsyncSession, *, tutor_id: str) -> Dict[str, Any]:
+    """Estado do indice: assinatura, pendentes e ultima reindexacao."""
     signature = embedding_service.active_signature()
     total = int((await db.execute(
         select(func.count(LessonSegmentModel.id))

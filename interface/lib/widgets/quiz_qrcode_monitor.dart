@@ -1,3 +1,6 @@
+/// Acompanha, em tempo real, os alunos que entraram no quiz pelo QR Code.
+library;
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';

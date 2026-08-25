@@ -1,3 +1,10 @@
+"""Endpoints da memoria de longo prazo: revisao, decisao e busca.
+
+Nada vira memoria sem passar por revisao. O assistente propoe o fato, o usuario
+aprova ou rejeita (pela tela ou por voz), e so entao o vetor e gravado no
+Qdrant.
+"""
+
 from datetime import datetime, timezone
 import unicodedata
 
@@ -154,6 +161,7 @@ async def propose_memory(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Registra um fato candidato a memoria, aguardando revisao do usuario."""
     item = MemoryReviewModel(
         tutor_id=user["tutor_id"],
         category=body.category,
@@ -175,6 +183,7 @@ async def list_memory_reviews(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Lista os fatos pendentes de revisao do usuario."""
     tutor_id = user["tutor_id"]
     result = await db.execute(
         select(MemoryReviewModel)
@@ -194,6 +203,7 @@ async def approve_memory(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Aprova o fato e o grava como memoria vetorial no Qdrant."""
     item = await db.get(MemoryReviewModel, memory_id)
     if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Memória não encontrada")
@@ -208,6 +218,7 @@ async def reject_memory(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Rejeita o fato, que deixa de ser candidato a memoria."""
     item = await db.get(MemoryReviewModel, memory_id)
     if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Memória não encontrada")
@@ -222,6 +233,11 @@ async def decide_memory_by_voice(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Aprova ou rejeita o fato interpretando a resposta falada do usuario.
+
+    Existe para o fluxo de voz: durante a conversa falada, o usuario responde "pode
+    guardar" ou "esquece isso" em vez de abrir a tela de revisao.
+    """
     item = await db.get(MemoryReviewModel, memory_id)
     if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Memória não encontrada")
@@ -258,6 +274,7 @@ async def search_memory(
     limit: int = Query(5, ge=1, le=25),
     user: dict = Depends(get_current_user),
 ):
+    """Busca semantica nas memorias aprovadas do usuario."""
     tutor_id = user["tutor_id"]
     return qdrant_service.search_memory(
         tutor_id=tutor_id,

@@ -1,8 +1,18 @@
+/// Identidade visual da marca INTARQ: nome, cores, simbolo e assinatura.
+///
+/// Separado da persona da assistente de proposito: a marca e do produto e nao muda
+/// por usuario; o nome da assistente e configuravel por conta.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+/// Constantes da marca INTARQ: nome, cores e textos institucionais.
+///
+/// Concentra o que nao muda por usuario. O nome da assistente, esse sim
+/// configuravel, vive em [AppConfig].
 class IntarqBrand {
   static const name = 'INTARQ';
   // Descritor do produto: acompanha a assinatura apenas no splash, na tela de
@@ -103,6 +113,7 @@ class IntarqBrand {
   }
 }
 
+/// Assinatura da marca, com simbolo e nome lado a lado.
 class IntarqLockup extends StatelessWidget {
   final double width;
   final double height;
@@ -190,6 +201,7 @@ class IntarqLockup extends StatelessWidget {
       );
 }
 
+/// Apenas o simbolo da marca, para espacos reduzidos.
 class IntarqMark extends StatelessWidget {
   final double size;
 

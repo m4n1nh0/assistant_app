@@ -1,3 +1,9 @@
+/// Importacao da chamada a partir do SIA.
+///
+/// O WebView autentica e busca o HTML; o backend so faz o parse - o SIA bloqueia
+/// requisicao que nao venha de um navegador real.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 

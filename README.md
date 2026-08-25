@@ -1144,6 +1144,29 @@ educacionais, de pesquisa ou internos sem finalidade comercial.
 
 Uso comercial exige permissao previa por escrito. Consulte [LICENSE](LICENSE).
 
+## Documentacao Do Codigo-Fonte
+
+A referencia modulo a modulo do codigo e **gerada do proprio codigo**: as
+paginas do backend saem das docstrings dos modulos Python (mkdocstrings) e as da
+interface saem dos comentarios `///` do Dart (`dart doc`). Documentar, portanto,
+e escrever docstring no modulo - nao ha um segundo lugar para manter em dia.
+
+```bash
+pip install -r backend/requirements-docs.txt   # toolchain da documentacao
+mkdocs serve                                   # preview em http://127.0.0.1:8000
+./scripts/build_docs.ps1                       # site completo em site/ (Windows)
+./scripts/build_docs.sh                        # idem em Linux/macOS
+```
+
+O `mkdocs serve` cobre o backend e as paginas escritas a mao; os scripts de build
+acrescentam a referencia Dart em `site/referencia/interface/api`. A convencao de
+docstring (estilo Google, em portugues) esta em
+[docs/referencia/index.md](docs/referencia/index.md), e a documentacao de
+infraestrutura - a unica escrita a mao - em
+[docs/referencia/infra.md](docs/referencia/infra.md).
+
+O diretorio `site/` e artefato de build e nao e versionado.
+
 ## Documentacao Complementar
 
 - [docs/CONFIGURACAO_CALENDARIOS.md](docs/CONFIGURACAO_CALENDARIOS.md): configuração
@@ -1153,3 +1176,5 @@ Uso comercial exige permissao previa por escrito. Consulte [LICENSE](LICENSE).
   Railway, WebSocket e detalhes do servidor.
 - [interface/README.md](interface/README.md): execucao, status dos provedores e
   estrutura da aplicacao Flutter.
+- [docs/referencia/](docs/referencia/): referencia do codigo-fonte gerada do
+  codigo (backend, interface e infraestrutura).

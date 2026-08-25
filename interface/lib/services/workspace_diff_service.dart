@@ -1,8 +1,13 @@
+/// Diff do workspace, para o usuario ver o que sera alterado antes de aprovar.
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
+/// Papel de uma linha dentro do diff.
 enum DiffLineType { context, addition, deletion, hunk, meta }
 
+/// Uma linha do diff, com o tipo que define como ela e pintada.
 class DiffLine {
   final DiffLineType type;
   final String text;
@@ -21,6 +26,7 @@ class DiffLine {
   });
 }
 
+/// Diff de um arquivo, com as linhas e os totais de adicao e remocao.
 class FileDiff {
   final String relativePath;
   final List<DiffLine> lines;

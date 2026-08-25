@@ -1,3 +1,6 @@
+/// Captura de audio do microfone para transcricao e wake word.
+library;
+
 import 'package:record/record.dart';
 
 /// Resolve a entrada salva pelo identificador e, depois, pelo nome. O segundo

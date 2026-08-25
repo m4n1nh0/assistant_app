@@ -1,3 +1,6 @@
+/// Geracao de quiz a partir da aula, com revisao das questoes.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';

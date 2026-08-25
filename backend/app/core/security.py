@@ -1,3 +1,10 @@
+"""Autenticacao: hash de senha, emissao/validacao de JWT e dependencias de rota.
+
+O token carrega `uid`, `sub` (username), `role`, `tutor_id` e `ver`. O `ver` e
+comparado com `auth_version` da conta a cada requisicao, o que permite invalidar
+todas as sessoes de um usuario incrementando um contador no banco.
+"""
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -17,14 +24,40 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def hash_secret(secret: str) -> str:
+    """Gera o hash bcrypt de uma senha ou token de uso unico.
+
+    Args:
+        secret: valor em texto puro.
+
+    Returns:
+        Hash no formato do passlib, pronto para persistir.
+    """
     return pwd_context.hash(secret)
 
 
 def verify_secret(plain: str, hashed: str) -> bool:
+    """Confere um valor em texto puro contra o hash guardado.
+
+    Args:
+        plain: valor informado pelo usuario.
+        hashed: hash lido do banco.
+
+    Returns:
+        `True` quando conferem.
+    """
     return pwd_context.verify(plain, hashed)
 
 
 def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Assina um JWT com os dados informados e uma expiracao.
+
+    Args:
+        data: claims a incluir no token (`sub`, `uid`, `role`, `tutor_id`, `ver`).
+        expires_delta: validade customizada; sem ela vale `jwt_expire_minutes`.
+
+    Returns:
+        O token assinado.
+    """
     payload = data.copy()
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.jwt_expire_minutes)
@@ -34,6 +67,17 @@ def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
 
 
 def decode_token(token: str) -> dict:
+    """Decodifica e valida a assinatura de um JWT.
+
+    Args:
+        token: token recebido no cabecalho `Authorization`.
+
+    Returns:
+        As claims do token.
+
+    Raises:
+        HTTPException: 401 quando o token e invalido ou expirou.
+    """
     try:
         return jwt.decode(
             token,
@@ -49,6 +93,24 @@ def decode_token(token: str) -> dict:
 
 
 async def resolve_token_user(token: str, db: AsyncSession) -> dict:
+    """Resolve o token em uma conta ativa e devolve o contexto do usuario.
+
+    Alem de validar a assinatura, confere no banco que a conta existe, esta ativa,
+    que a versao de autenticacao do token ainda vale e que ha perfil de dados
+    vinculado - checagens que o JWT sozinho nao garante.
+
+    Args:
+        token: JWT recebido na requisicao.
+        db: sessao do banco.
+
+    Returns:
+        As claims enriquecidas com `sub`, `uid`, `email`, `role` e `tutor_id` lidos
+        da conta.
+
+    Raises:
+        HTTPException: 401 para token invalido, conta inexistente/desativada ou
+            sessao invalidada; 409 quando a conta nao tem perfil de dados.
+    """
     payload = decode_token(token)
     user_id = str(payload.get("uid") or "").strip()
     username = str(payload.get("sub") or "").strip()
@@ -94,6 +156,15 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Dependencia de rota que exige autenticacao.
+
+    Returns:
+        O contexto do usuario autenticado.
+
+    Raises:
+        HTTPException: 401 quando nao ha cabecalho `Authorization` ou o token nao
+            resolve em conta valida.
+    """
     if not credentials:
         raise HTTPException(status_code=401, detail="Nao autenticado")
     return await resolve_token_user(credentials.credentials, db)
@@ -103,6 +174,12 @@ async def get_user_optional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> Optional[dict]:
+    """Dependencia de rota que aceita requisicao anonima.
+
+    Returns:
+        O contexto do usuario, ou `None` quando nao ha token ou ele nao vale. Nunca
+        levanta - use em rota que muda de comportamento, e nao bloqueia, sem login.
+    """
     if not credentials:
         return None
     try:
@@ -112,6 +189,14 @@ async def get_user_optional(
 
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Dependencia de rota restrita a administradores.
+
+    Returns:
+        O contexto do usuario administrador.
+
+    Raises:
+        HTTPException: 403 quando a conta autenticada nao tem `role` admin.
+    """
     if user.get("role") != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -121,6 +206,15 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 
 def account_token(account: UserModel) -> str:
+    """Emite o JWT de sessao de uma conta ja autenticada.
+
+    Args:
+        account: registro da conta no banco.
+
+    Returns:
+        Token com as claims de identidade, papel, perfil de dados e a versao de
+        autenticacao corrente.
+    """
     return create_token(
         {
             "sub": account.username,

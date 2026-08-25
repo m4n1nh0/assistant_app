@@ -1,4 +1,10 @@
-﻿import 'package:flutter/material.dart';
+﻿/// Ponto de entrada do app desktop.
+///
+/// Inicializa a janela sem barra nativa (`window_manager`), o cache local (`Hive`) e
+/// o atalho global (`hotkey_manager`) antes de montar [AssistantApp].
+library;
+
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -41,6 +47,7 @@ void main() async {
   runApp(const ProviderScope(child: AssistantApp()));
 }
 
+/// Raiz do app: tema, rota inicial e escopo do Riverpod.
 class AssistantApp extends ConsumerWidget {
   const AssistantApp({super.key});
 

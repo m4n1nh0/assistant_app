@@ -1,3 +1,15 @@
+"""Voz: transcricao (STT) e sintese de fala (TTS).
+
+A transcricao padrao roda local, com faster-whisper, e so vai para provedor
+externo quando configurado - audio de aula nao precisa sair da maquina. As
+funcoes assincronas empurram o trabalho pesado para um executor, porque o modelo
+e sincrono e bloquearia o event loop.
+
+`clean_transcript_repetitions` e `trim_transcript_overlap` existem por causa do
+modo educacao: a aula chega em blocos com sobreposicao proposital, e sem
+limpeza o mesmo trecho apareceria duas vezes na transcricao final.
+"""
+
 import io
 import math
 import os
@@ -69,6 +81,17 @@ async def transcribe_audio(
     context: str = "",
     assistant_name: str = "",
 ) -> STTResponse:
+    """Transcreve o audio recebido.
+
+    Args:
+        audio_bytes: audio bruto enviado pela interface.
+        language: idioma esperado.
+        context: texto anterior, usado como dica para nomes e termos.
+        assistant_name: nome da persona, que o modelo costuma ouvir errado.
+
+    Returns:
+        A transcricao e os metadados do reconhecimento.
+    """
     import asyncio
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
@@ -160,6 +183,16 @@ async def text_to_speech(
     language: str = "pt-BR",
     speed: float | None = None,
 ) -> bytes:
+    """Sintetiza a fala do texto.
+
+    Args:
+        text: texto a falar, ja limpo de marcacao.
+        language: idioma da voz.
+        speed: velocidade; `None` usa a configurada.
+
+    Returns:
+        O audio em bytes; vazio quando nao ha nada pronunciavel no texto.
+    """
     import asyncio
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _sync_tts, text, language, speed)

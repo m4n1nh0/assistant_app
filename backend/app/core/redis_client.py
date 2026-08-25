@@ -9,9 +9,20 @@ _client = None
 
 
 def set_client(client) -> None:
+    """Guarda a conexao Redis criada no `lifespan` da aplicacao.
+
+    Args:
+        client: conexao pronta, ou `None` para limpar no shutdown.
+    """
     global _client
     _client = client
 
 
 def get_client():
+    """Devolve a conexao Redis compartilhada.
+
+    Returns:
+        A conexao, ou `None` quando o Redis nao foi configurado ou nao respondeu -
+        quem chama deve tratar isso como "sem cache", nunca como erro.
+    """
     return _client

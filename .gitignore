@@ -70,3 +70,7 @@ temp/
 *.tmp
 *.bak
 *.orig
+
+# Documentacao gerada (mkdocs + dart doc). Versione as docstrings, nao o site.
+site/
+.cache/

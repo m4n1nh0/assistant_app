@@ -1,3 +1,9 @@
+"""Endpoints da configuracao de provedores de LLM por usuario.
+
+A chave de API entra cifrada e nunca volta na resposta - a interface so ve se
+existe chave salva e qual o modelo escolhido.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +47,10 @@ async def _response(user: dict, *, force: bool = False) -> dict:
 
 @router.get("/config")
 async def get_llm_config(user: dict = Depends(get_current_user)):
+    """Devolve os provedores de LLM do usuario e o status de cada um.
+
+    Nunca inclui a chave de API - so a informacao de que existe uma salva.
+    """
     return await _response(user)
 
 
@@ -50,6 +60,7 @@ async def update_llm_config(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Salva os provedores do usuario, cifrando as chaves novas."""
     await migrate_legacy_environment_for_user(user)
     try:
         await save_provider_config(
@@ -64,4 +75,5 @@ async def update_llm_config(
 
 @router.post("/status/refresh")
 async def refresh_llm_status(user: dict = Depends(get_current_user)):
+    """Reconsulta a saude dos provedores ignorando o cache."""
     return await _response(user, force=True)

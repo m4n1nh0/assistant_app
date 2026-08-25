@@ -5,6 +5,11 @@ from .credential_storage_service import CredentialDecryptionError, decrypt_crede
 
 
 def microsoft_application_config() -> dict[str, str]:
+    """Credenciais do App Registration Microsoft, que pertencem ao deploy.
+
+    E uma aplicacao multitenant unica do produto, nao uma por organizacao de usuario.
+    O segredo fica no ambiente do backend e nunca vai para a interface.
+    """
     settings = get_settings()
     return {
         "client_id": settings.microsoft_oauth_client_id,

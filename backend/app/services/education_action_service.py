@@ -29,6 +29,14 @@ _ATTENDANCE_PATTERN = re.compile(
 
 
 def build_education_open_action(message: str) -> EducationOpenAction | None:
+    """Reconhece pedido de abrir o modo educacao e monta a acao correspondente.
+
+    Args:
+        message: mensagem do usuario.
+
+    Returns:
+        A acao para a interface abrir a tela, ou `None` quando nao ha esse pedido.
+    """
     text = _normalize(message)
     if not text:
         return None

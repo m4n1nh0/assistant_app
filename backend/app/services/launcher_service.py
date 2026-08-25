@@ -1,3 +1,11 @@
+"""Atalhos: reconhecer pedido de abrir algo, cadastrar e registrar o uso.
+
+O backend nunca abre nada. Ele reconhece o pedido, encontra o atalho no banco e
+devolve uma `LaunchAction` para a interface executar - so ela tem acesso ao
+desktop do usuario. Quando o alvo pedido nao tem atalho cadastrado, o modulo
+propoe o cadastro em vez de falhar em silencio.
+"""
+
 import asyncio
 import json
 import os
@@ -175,6 +183,7 @@ _COMMON_WINDOWS_PATHS: dict[str, list[str]] = {
 
 
 def detect_launch_keywords(message: str) -> bool:
+    """Diz se a mensagem parece um pedido de abrir app, site ou projeto."""
     return bool(_LAUNCH_RE.search(_fold(message)))
 
 
@@ -592,6 +601,7 @@ async def record_launch(
 
 
 def build_launch_action(sc: ShortcutModel) -> LaunchAction:
+    """Converte um atalho do banco na acao que a interface executa."""
     return LaunchAction(
         shortcut_id=sc.id,
         name=sc.name,

@@ -1,8 +1,12 @@
+/// Dialogo de login, primeiro cadastro e recuperacao de senha.
+library;
+
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../utils/theme.dart';
 import '../branding/intarq_brand.dart';
 
+/// Dialogo de login, primeiro cadastro e recuperacao de senha.
 class AuthDialog extends StatefulWidget {
   final String assistantName;
   final bool needsSetup;

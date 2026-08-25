@@ -1,3 +1,11 @@
+"""Catalogo de acoes de computador que o assistente pode propor.
+
+Cada acao tem um `ComputerActionSpec` declarando id, rotulo, argumentos e
+plataformas onde vale. O backend monta e valida a proposta; a execucao acontece
+na interface - `run_action` existe so para recusar explicitamente a execucao no
+servidor, deixando claro de quem e a responsabilidade.
+"""
+
 from __future__ import annotations
 
 import platform
@@ -8,11 +16,13 @@ from typing import Any
 
 
 class ComputerActionError(ValueError):
+    """Acao invalida, desconhecida ou nao executavel neste contexto."""
     pass
 
 
 @dataclass(frozen=True)
 class ComputerActionSpec:
+    """Declaracao de uma acao de computador: id, rotulo, argumentos e plataformas."""
     id: str
     name: str
     description: str
@@ -20,6 +30,7 @@ class ComputerActionSpec:
     requires_confirmation: bool = False
 
     def to_dict(self) -> dict[str, Any]:
+        """Serializa a especificacao no formato devolvido pela API."""
         return asdict(self)
 
 
@@ -68,10 +79,16 @@ _HIGH_RISK_PATTERNS = (
 
 
 def list_actions() -> list[ComputerActionSpec]:
+    """Lista as acoes suportadas na plataforma atual."""
     return list(SAFE_ACTIONS.values())
 
 
 def get_action(action_id: str) -> ComputerActionSpec:
+    """Busca a especificacao de uma acao pelo id.
+
+    Raises:
+        ComputerActionError: quando o id nao existe.
+    """
     action = SAFE_ACTIONS.get(action_id)
     if action is None:
         raise ComputerActionError(f"Acao local nao permitida: {action_id}")
@@ -79,6 +96,11 @@ def get_action(action_id: str) -> ComputerActionSpec:
 
 
 def build_computer_action(message: str) -> dict[str, Any] | None:
+    """Reconhece na mensagem uma acao de computador e a monta.
+
+    Returns:
+        A acao proposta, ou `None` quando a mensagem nao pede acao no computador.
+    """
     text = _normalize(message)
     if not text or any(marker in text for marker in _ANALYSIS_MARKERS):
         return None
@@ -165,6 +187,15 @@ def build_computer_action(message: str) -> dict[str, Any] | None:
 
 
 async def run_action(action_id: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Recusa executar a acao no backend, por design.
+
+    A execucao pertence a interface desktop, que roda na maquina do usuario e pede
+    confirmacao. Manter o metodo aqui torna a fronteira explicita em vez de
+    implicita.
+
+    Raises:
+        ComputerActionError: sempre, com a explicacao de onde a acao deve rodar.
+    """
     get_action(action_id)
     raise ComputerActionError(
         "Execucao local desativada no backend. A interface desktop deve executar esta acao."

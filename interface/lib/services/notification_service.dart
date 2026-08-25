@@ -1,8 +1,15 @@
+/// Envio de notificacao e agendamento dos lembretes de evento.
+///
+/// O agendador local complementa o do backend: com a interface aberta, o lembrete
+/// aparece mesmo se o canal externo falhar.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/app_config.dart';
 
+/// Resultado do envio, com o canal usado ou o motivo da falha.
 class SendResult {
   final bool ok;
 
@@ -17,6 +24,7 @@ class SendResult {
       : '❌ Não enviada — ${detail.isEmpty ? 'verifique as configurações' : detail}';
 }
 
+/// Envia notificacoes pelos canais configurados, atraves do backend.
 class NotificationService {
   final NotifConfig config;
   final String assistantName;

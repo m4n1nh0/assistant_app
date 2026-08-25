@@ -47,12 +47,21 @@ _QUOTE_MATCH_THRESHOLD = 0.75
 
 
 def normalize_name(value: str) -> str:
+    """Normaliza nome de aluno para comparacao (sem acento, minusculo, espaco unico)."""
     decomposed = unicodedata.normalize("NFKD", (value or "").lower())
     stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
     return " ".join(re.sub(r"[^a-z0-9\s]", " ", stripped).split())
 
 
 async def resolve_llm(preferred: Optional[str] = None) -> str:
+    """Escolhe o provedor que vai processar a tarefa do modo educacao.
+
+    Args:
+        preferred: provedor pedido explicitamente.
+
+    Returns:
+        O provedor efetivamente usado, ja checado como disponivel.
+    """
     if preferred and preferred not in {"auto", ""}:
         return preferred
     return await pick_auto_llm(settings.active_llms) or "llama"
@@ -921,6 +930,7 @@ async def _summary_provider_candidates(preferred: Optional[str]) -> List[str]:
 
 
 class SummaryGraphState(TypedDict, total=False):
+    """Estado do grafo de resumo: transcricao, lotes, provedor e parciais."""
     discipline: str
     title: str
     texts: List[str]

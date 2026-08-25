@@ -1,3 +1,9 @@
+/// Tela de abertura.
+///
+/// Verifica se o backend responde e se ha sessao valida, e decide entre a tela de
+/// configuracao inicial e a principal.
+library;
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +13,7 @@ import '../providers/app_provider.dart';
 import '../utils/theme.dart';
 import '../branding/intarq_brand.dart';
 
+/// Tela de abertura, que verifica o backend e decide para onde ir.
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 

@@ -1,3 +1,6 @@
+/// Geracao do PDF do resumo da aula, com a assinatura da marca.
+library;
+
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -25,8 +28,10 @@ const _panel = PdfColor.fromInt(0xFFF3F6FA);
 const _header = PdfColor.fromInt(0xFFF4F8FC);
 const _headerBadge = PdfColor.fromInt(0xFFFFFFFF);
 
+/// Tipo de bloco do resumo na montagem do PDF.
 enum SummaryBlockKind { heading, bullet, paragraph }
 
+/// Um bloco do resumo ja classificado para a diagramacao do PDF.
 class SummaryBlock {
   final SummaryBlockKind kind;
   final String text;

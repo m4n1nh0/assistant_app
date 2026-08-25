@@ -1,3 +1,15 @@
+"""Endpoints da integracao com o SIA (sistema academico Estacio).
+
+O fluxo suportado inverte o normal por causa do Akamai Bot Manager que protege o
+SIA: **a interface** abre o WebView autenticado, busca o HTML e envia para as
+rotas `parse_*`, que so fazem a extracao. As rotas que buscam direto no SIA
+(`/periodos`, `/turmas`, `/attendance`) continuam existindo como fallback e
+costumam ser barradas.
+
+`/import-attendance` fecha o ciclo: converte o diario extraido em turmas, alunos
+e chamada dentro do modo educacao.
+"""
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -253,6 +265,7 @@ async def parse_attendance(req: HtmlPayload):
 
 @router.post("/test-session")
 async def test_sia_session(req: SessionCookies):
+    """Confere se os cookies enviados pela interface ainda valem uma sessao no SIA."""
     cookies = req.cookies
     """
     Testa se a sessão do SIA é válida
@@ -271,6 +284,7 @@ async def test_sia_session(req: SessionCookies):
 
 @router.post("/periodos")
 async def get_periodos(req: SessionCookies):
+    """Busca os periodos letivos direto no SIA. Sujeito ao bloqueio do bot manager."""
     cookies = req.cookies
     """
     Lista períodos acadêmicos disponíveis

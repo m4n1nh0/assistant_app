@@ -1,3 +1,11 @@
+"""Scheduler de calendario: sincroniza eventos e dispara notificacoes.
+
+Roda em APScheduler sobre o proprio event loop. A cada rodada, percorre as
+contas ativas, busca os eventos dos calendarios conectados de cada uma e envia
+aviso 15 minutos antes e no horario do evento. As flags `notified_15` e
+`notified_0` no banco, mais um cache em memoria, evitam aviso repetido.
+"""
+
 import json
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -185,6 +193,10 @@ async def _sync_and_notify():
 
 
 def start_scheduler():
+    """Registra a rotina de sincronizacao e liga o scheduler.
+
+    Chamado pelo `lifespan` da aplicacao. Repetir a chamada nao duplica o job.
+    """
     scheduler.add_job(
         _sync_and_notify,
         trigger=IntervalTrigger(minutes=5),
@@ -197,4 +209,5 @@ def start_scheduler():
 
 
 def stop_scheduler():
+    """Para o scheduler no encerramento da aplicacao."""
     scheduler.shutdown(wait=False)

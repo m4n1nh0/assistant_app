@@ -1,3 +1,14 @@
+"""Ponte entre os provedores do projeto e o mundo LangChain.
+
+`ProviderChatModel` embrulha `app.services.llm_service` em um `BaseChatModel`,
+o que permite usar qualquer provedor configurado dentro de cadeias, agentes e
+ferramentas do LangChain sem duplicar a logica de chamada.
+
+Os `dispatch_*` daqui espelham os de `llm_service`, mas passando pelo caminho com
+ferramentas, e sao o que o grafo do chat usa quando a resposta pode precisar de
+tool call.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +40,7 @@ settings = runtime_settings
 
 
 class StructuredModelResponse(BaseModel):
+    """Resposta do modelo ja separada em texto e chamadas de ferramenta."""
     provider: str
     content: str
     is_error: bool = False
@@ -36,6 +48,7 @@ class StructuredModelResponse(BaseModel):
     tokens_used: int | None = None
 
     def to_llm_response(self) -> LLMResponse:
+        """Converte a saida do LangChain no `LLMResponse` usado pelo resto do backend."""
         return LLMResponse(
             llm=self.provider,
             content=self.content,
@@ -174,6 +187,11 @@ class ProviderChatModel(BaseChatModel):
         tools: Sequence[Any],
         **kwargs: Any,
     ) -> "ProviderChatModel":
+        """Associa ferramentas ao modelo, como o LangChain espera de um `BaseChatModel`.
+
+        Provedor que nao suporta tool call nativo recebe as ferramentas descritas no
+        proprio prompt.
+        """
         return self.model_copy(update={"bound_tools": list(tools)})
 
     def _generate(
@@ -271,6 +289,7 @@ async def dispatch_single(
     history: list[Message],
     system_prompt: str,
 ) -> LLMResponse:
+    """Resposta de um provedor pelo caminho LangChain, com ferramentas disponiveis."""
     model = ProviderChatModel(provider=provider)
     chain = model | RunnableLambda(_structured_response)
     structured = await chain.ainvoke(
@@ -365,6 +384,7 @@ async def dispatch_multi(
     history: list[Message],
     system_prompt: str,
 ) -> list[LLMResponse]:
+    """Versao com ferramentas do modo `multi`: varios provedores em paralelo."""
     tasks = [
         dispatch_single(provider, message, history, system_prompt)
         for provider in providers
@@ -378,6 +398,7 @@ async def dispatch_chain(
     history: list[Message],
     system_prompt: str,
 ) -> LLMResponse:
+    """Versao com ferramentas do modo `chain`: provedores encadeados."""
     current = message
     last_success: LLMResponse | None = None
     for index, provider in enumerate(providers):

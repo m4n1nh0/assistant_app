@@ -1,9 +1,15 @@
+/// Leitura das janelas abertas e do texto delas.
+///
+/// Da ao assistente contexto do que esta na tela sem o usuario colar nada.
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
 import 'api_service.dart';
 import 'project_discovery_service.dart';
 
+/// Falha ao ler as janelas ou extrair o conteudo de uma delas.
 class LocalDesktopContextException implements Exception {
   final String message;
 
@@ -13,6 +19,9 @@ class LocalDesktopContextException implements Exception {
   String toString() => message;
 }
 
+/// Le as janelas abertas e extrai o texto delas para contexto do assistente.
+///
+/// Permite perguntar sobre o que esta na tela sem colar o conteudo na conversa.
 class LocalDesktopContextService {
   static const int maxContextChars = 12000;
 

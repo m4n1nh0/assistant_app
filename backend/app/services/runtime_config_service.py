@@ -1,3 +1,11 @@
+"""Le e grava, no banco, a configuracao que pertence ao usuario.
+
+Complementa `app.core.config`: la fica infraestrutura vinda do ambiente, aqui
+fica preferencia de conta. Sem `user_id`, as funcoes caem para a configuracao
+global e para os valores do ambiente, caminho que existe para a instalacao de
+usuario unico anterior ao multiusuario.
+"""
+
 from __future__ import annotations
 
 import json
@@ -57,6 +65,15 @@ async def load_notif_config(
     db: AsyncSession | None = None,
     user_id: str | None = None,
 ) -> NotifConfig:
+    """Carrega as preferencias de notificacao de um usuario.
+
+    Args:
+        db: sessao do banco; `None` abre uma propria.
+        user_id: dono da configuracao; `None` le a global com padroes do ambiente.
+
+    Returns:
+        A configuracao pronta para uso pelo envio de notificacao.
+    """
     if db is None:
         async with AsyncSessionLocal() as session:
             return await load_notif_config(session, user_id=user_id)
@@ -178,6 +195,11 @@ async def save_notif_config(
     config: NotifConfig,
     user_id: str | None = None,
 ) -> NotifConfig:
+    """Grava as preferencias de notificacao de um usuario.
+
+    Normaliza antes de persistir: canal sem credencial e salvo como desligado, para
+    nao existir configuracao que se diz habilitada e nao consegue enviar.
+    """
     payload = config.model_dump()
     payload["telegram_enabled"] = config.telegram_enabled and bool(
         config.telegram_token

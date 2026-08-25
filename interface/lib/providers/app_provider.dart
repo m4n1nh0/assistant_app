@@ -1,3 +1,9 @@
+/// Estado global da interface em Riverpod.
+///
+/// Concentra a configuracao, as mensagens do chat, os eventos de calendario e os
+/// flags de UI (carregando, gravando, falando, aba ativa) que varios widgets leem.
+library;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
@@ -7,6 +13,7 @@ final configProvider = StateNotifierProvider<ConfigNotifier, AppConfig>((ref) {
   return ConfigNotifier();
 });
 
+/// Comando enfileirado para o chat executar assim que estiver pronto.
 class QueuedChatCommand {
   final String id;
   final String text;
@@ -19,6 +26,7 @@ final queuedChatCommandProvider = StateProvider<QueuedChatCommand?>((ref) {
   return null;
 });
 
+/// Estado da configuracao do app, carregado do Hive na inicializacao.
 class ConfigNotifier extends StateNotifier<AppConfig> {
   ConfigNotifier() : super(AppConfig()) {
     _load();
@@ -104,6 +112,7 @@ final chatProvider =
   return ChatNotifier();
 });
 
+/// Estado das mensagens da conversa em andamento.
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   ChatNotifier() : super([]);
 
@@ -145,6 +154,7 @@ final eventsProvider =
   return EventsNotifier();
 });
 
+/// Estado dos eventos de calendario exibidos na interface.
 class EventsNotifier extends StateNotifier<List<CalendarEvent>> {
   EventsNotifier() : super([]);
 

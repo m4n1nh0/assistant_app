@@ -1,3 +1,6 @@
+/// Painel de navegacao entre chat, educacao e atalhos.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/app_config.dart';
@@ -7,6 +10,7 @@ import 'education_dialog.dart';
 import 'history_dialog.dart';
 import 'local_actions_dialog.dart';
 
+/// Painel lateral: navegacao entre chat, educacao e atalhos.
 class LeftPanel extends ConsumerStatefulWidget {
   const LeftPanel({super.key});
 

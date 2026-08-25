@@ -1,8 +1,18 @@
+/// Acesso ao armazenamento local em Hive, isolado por conta.
+///
+/// O escopo em [HiveScope] e o que impede uma conta de ler o cache de outra na
+/// mesma maquina.
+library;
+
 import 'package:hive/hive.dart';
 
 void registerHiveAdapters() {
 }
 
+/// Escopo do armazenamento local, isolando os dados por conta.
+///
+/// Sem isso, trocar de usuario na mesma maquina faria uma conta ler o cache da
+/// outra.
 class HiveScope {
   static String current = 'legacy';
 
@@ -35,6 +45,7 @@ class HiveScope {
   }
 }
 
+/// Leitura e escrita da configuracao no Hive.
 class HiveConfig {
   static const _box = 'config';
   static const _key = 'app_config';
@@ -65,6 +76,7 @@ class HiveConfig {
   }
 }
 
+/// Cache local das conversas.
 class HiveConversations {
   static const _box = 'conversations';
 
@@ -96,6 +108,7 @@ class HiveConversations {
   }
 }
 
+/// Cache local dos eventos de calendario.
 class HiveEvents {
   static const _box = 'events';
 

@@ -1,3 +1,6 @@
+/// Avisos sobrepostos a janela, sem depender do sistema operacional.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -9,6 +12,7 @@ import 'education_service.dart';
 /// dialogo que iniciou uma operacao longa.
 final appNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Exibe avisos sobrepostos a janela, sem depender do sistema operacional.
 class InAppNotificationService {
   static OverlayEntry? _entry;
   static Timer? _timer;

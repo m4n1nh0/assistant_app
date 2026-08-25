@@ -1,3 +1,9 @@
+/// Painel do chat: conversa, voz e confirmacao das acoes propostas.
+///
+/// E o maior widget do app e o centro da interacao - toda acao com efeito na
+/// maquina passa por uma confirmacao daqui.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -33,6 +39,10 @@ import 'education_dialog.dart';
 import 'workspace_diff_dialog.dart';
 import 'workspace_editor_dialog.dart';
 
+/// Painel central do chat: conversa, voz e confirmacao de acoes.
+///
+/// E onde a acao proposta pelo backend vira uma confirmacao para o usuario - nada
+/// que o assistente propoe e executado sem passar por aqui.
 class ChatPanel extends ConsumerStatefulWidget {
   const ChatPanel({super.key});
 

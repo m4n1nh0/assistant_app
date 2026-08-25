@@ -302,6 +302,11 @@ async def embed_texts(texts: Sequence[str]) -> List[List[float]]:
 
 
 async def embed_text(text: str) -> List[float]:
+    """Gera o vetor de um texto.
+
+    Raises:
+        EmbeddingError: quando nenhum provedor da cadeia respondeu.
+    """
     vectors = await embed_texts([text])
     return vectors[0]
 

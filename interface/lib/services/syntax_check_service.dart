@@ -1,7 +1,16 @@
+/// Verificacao de sintaxe do arquivo alterado, quando ha validador na maquina.
+///
+/// Serve de rede de seguranca antes de gravar alteracao proposta pelo assistente.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// Resultado da verificacao de sintaxe de um arquivo.
+///
+/// `ok` falso com validador ausente nao e erro de codigo: significa que nao ha
+/// validador para aquela linguagem na maquina.
 class SyntaxCheckResult {
   final bool ok;
 

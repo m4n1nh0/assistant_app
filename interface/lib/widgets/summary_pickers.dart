@@ -1,3 +1,6 @@
+/// Seletores de estilo e foco usados na geracao do resumo da aula.
+library;
+
 import 'package:flutter/material.dart';
 
 import '../models/app_config.dart';

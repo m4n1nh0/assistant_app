@@ -1,3 +1,13 @@
+"""Ferramentas LangChain que traduzem pedido do usuario em acao proposta.
+
+Cada `propose_*` embrulha um construtor de acao (computador, codigo, projeto,
+atalho, calendario) como ferramenta que o modelo pode chamar.
+
+O nome importa: a ferramenta **propoe**, nunca executa. O backend so monta a
+acao; quem executa e a interface, depois da confirmacao do usuario. Ferramenta
+que nao reconhece o pedido devolve resultado vazio em vez de inventar acao.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -16,6 +26,7 @@ from .launcher_service import (
 
 
 class ActionToolInput(BaseModel):
+    """Entrada padrao das ferramentas de acao: o pedido em linguagem natural."""
     request: str = Field(
         min_length=1,
         description="Pedido original do usuario que pode exigir uma acao local.",
@@ -23,11 +34,13 @@ class ActionToolInput(BaseModel):
 
 
 class StructuredActionResult(BaseModel):
+    """Saida padrao: a acao montada, ou vazio quando o pedido nao foi reconhecido."""
     matched: bool
     action: dict[str, Any] | None = None
 
 
 class CalendarActionToolInput(ActionToolInput):
+    """Entrada da ferramenta de calendario, com o fuso necessario para datar o evento."""
     timezone: str = Field(
         default="America/Sao_Paulo",
         description="Fuso IANA usado para interpretar datas e horas locais.",
@@ -94,6 +107,15 @@ ACTION_TOOLS: dict[str, BaseTool] = {
 
 
 def invoke_action_tool(kind: str, request: str) -> dict[str, Any] | None:
+    """Chama diretamente o construtor de acao de um tipo, sem passar pelo modelo.
+
+    Args:
+        kind: tipo de acao (`computer`, `coding`, `project`, `registration`).
+        request: pedido em linguagem natural.
+
+    Returns:
+        A acao montada, ou `None` quando o pedido nao corresponde aquele tipo.
+    """
     tool_instance = ACTION_TOOLS[kind]
     result = tool_instance.invoke({"request": request})
     if isinstance(result, StructuredActionResult):
@@ -106,6 +128,11 @@ def invoke_calendar_action_tool(
     request: str,
     timezone: str,
 ) -> dict[str, Any] | None:
+    """Chama o construtor de acao de calendario informando o fuso do usuario.
+
+    Returns:
+        A acao de criacao de evento, ou `None` quando nao ha pedido de agendamento.
+    """
     result = propose_calendar_event.invoke(
         {"request": request, "timezone": timezone}
     )

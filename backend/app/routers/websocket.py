@@ -1,3 +1,13 @@
+"""Canal WebSocket: chat em tempo real, lembretes e progresso do modo educacao.
+
+Mantem o registro das conexoes por usuario, o que permite empurrar evento do
+servidor para o cliente - lembrete de agenda vindo do scheduler, por exemplo -
+sem a interface ficar consultando a API.
+
+A autenticacao acontece no handshake, com o token vindo pela query string: o
+navegador nao manda cabecalho de autorizacao ao abrir WebSocket.
+"""
+
 import json
 import asyncio
 import uuid
@@ -104,23 +114,31 @@ async def _load_calendar_accounts(
 
 
 class ConnectionManager:
+    """Registro das conexoes WebSocket abertas, agrupadas por usuario.
+
+    Guardar por usuario e o que permite empurrar evento do servidor - lembrete de
+    agenda, progresso do modo educacao - para todas as janelas daquela conta.
+    """
     def __init__(self):
         self.active: Dict[str, WebSocket] = {}
         self.groups: Dict[str, Set[str]] = {}
         self.connection_users: Dict[str, str] = {}
 
     async def connect(self, ws: WebSocket, session_id: str, user_id: str):
+        """Aceita a conexao e a registra no usuario."""
         await ws.accept()
         self.active[session_id] = ws
         self.connection_users[session_id] = user_id
         logger.info(f"WS connected: {session_id}")
 
     def disconnect(self, session_id: str):
+        """Remove a conexao encerrada do registro."""
         self.active.pop(session_id, None)
         self.connection_users.pop(session_id, None)
         logger.info(f"WS disconnected: {session_id}")
 
     async def send(self, session_id: str, data: dict):
+        """Envia uma mensagem para uma conexao especifica."""
         ws = self.active.get(session_id)
         if ws:
             try:
@@ -130,6 +148,7 @@ class ConnectionManager:
                 self.disconnect(session_id)
 
     async def broadcast(self, data: dict):
+        """Envia uma mensagem para todas as conexoes abertas."""
         dead = []
         for sid, ws in self.active.items():
             try:
@@ -140,6 +159,7 @@ class ConnectionManager:
             self.disconnect(sid)
 
     async def broadcast_user(self, user_id: str, data: dict):
+        """Envia uma mensagem para todas as conexoes de um usuario."""
         dead = []
         for sid, ws in self.active.items():
             if self.connection_users.get(sid) != user_id:
@@ -159,6 +179,13 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
+    """Canal WebSocket da sessao: chat em tempo real e eventos do servidor.
+
+    O token vem na query string, ja que o navegador nao envia cabecalho de
+    autorizacao no handshake; conexao sem token valido e recusada antes de qualquer
+    mensagem. Alem das respostas do chat, o canal entrega lembrete de evento e
+    avisos de progresso do modo educacao.
+    """
     try:
         async with AsyncSessionLocal() as db:
             user = await resolve_token_user(token, db)
@@ -438,6 +465,10 @@ async def broadcast_event_reminder(
     event_title: str,
     minutes_left: int,
 ):
+    """Envia lembrete de evento a todas as conexoes abertas de um usuario.
+
+    Chamado pelo scheduler, nao por requisicao HTTP.
+    """
     await manager.broadcast_user(user_id, {
         "type": "event_reminder",
         "payload": {"title": event_title, "minutes_left": minutes_left},

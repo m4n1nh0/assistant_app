@@ -1,3 +1,14 @@
+"""Detecta pedido de criar evento na conversa e monta a acao de calendario.
+
+Trabalha so com regras, sem LLM: verbos de agendamento, data e hora em portugues.
+Isso mantem o custo em zero e, principalmente, torna o comportamento previsivel -
+criar evento e acao com efeito colateral, entao interpretar errado incomoda mais
+do que nao interpretar.
+
+Negacao explicita ("nao me agende...") e pergunta ("quando e...") sao descartadas
+antes de qualquer coisa.
+"""
+
 from __future__ import annotations
 
 import re
@@ -291,6 +302,17 @@ def build_calendar_create_action(
     timezone_name: str = "America/Sao_Paulo",
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
+    """Monta a acao de criacao de evento a partir do texto do usuario.
+
+    Args:
+        request: mensagem do usuario.
+        timezone_name: fuso usado para resolver "amanha", "as 14h" e afins.
+        now: instante de referencia; util em teste.
+
+    Returns:
+        O dicionario da acao pronto para a interface confirmar, ou `None` quando a
+        mensagem nao e um pedido de agendamento.
+    """
     normalized = _normalize(request).strip()
     if not normalized or normalized.startswith(("como ", "quando ", "qual ")):
         return None

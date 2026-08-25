@@ -52,6 +52,7 @@ async def _insert_config(db: AsyncSession, key: str, value: dict) -> None:
 # ── Seeder functions ──────────────────────────────────────────────────────────
 
 async def seed_tutor(db: AsyncSession) -> None:
+    """Cria o perfil de dados da demonstracao, se ainda nao existir."""
     existing = await db.get(TutorModel, TUTOR_ID)
     if not existing:
         db.add(TutorModel(
@@ -68,6 +69,7 @@ async def seed_tutor(db: AsyncSession) -> None:
 
 
 async def seed_assistant_profile(db: AsyncSession) -> None:
+    """Cria a persona da assistente usada na demonstracao."""
     result = await db.execute(
         select(AssistantProfileModel).where(
             AssistantProfileModel.tutor_id == TUTOR_ID
@@ -96,6 +98,7 @@ async def seed_assistant_profile(db: AsyncSession) -> None:
 
 
 async def seed_tutor_settings(db: AsyncSession) -> None:
+    """Grava preferencias de exemplo (tema, atalhos, notificacao)."""
     settings_data = [
         {"key": "ui_theme",       "scope": "general", "value": {"theme": "dark", "accent": "#7c3aed"}},
         {"key": "hotkeys",        "scope": "general", "value": {"toggle_listen": "ctrl+space", "send_message": "enter"}},
@@ -120,6 +123,7 @@ async def seed_tutor_settings(db: AsyncSession) -> None:
 
 
 async def seed_config(db: AsyncSession) -> None:
+    """Grava a configuracao de exemplo da instalacao."""
     await _insert_config(db, "assistant", {
         "_seed": SEED_NAME,
         "tutor_id": TUTOR_ID,
@@ -147,6 +151,7 @@ async def seed_config(db: AsyncSession) -> None:
 
 
 async def seed_conversations(db: AsyncSession) -> None:
+    """Cria uma conversa de exemplo no historico."""
     stmt = select(ConversationModel).where(ConversationModel.session == SESSION_ID)
     existing = (await db.execute(stmt)).scalars().all()
     if existing:
@@ -178,6 +183,7 @@ async def seed_conversations(db: AsyncSession) -> None:
 
 
 async def seed_calendar_events(db: AsyncSession) -> None:
+    """Cria eventos de calendario de exemplo."""
     events = [
         {
             "id": "dev-evt-0001",
@@ -234,6 +240,7 @@ async def seed_calendar_events(db: AsyncSession) -> None:
 
 
 async def seed_memory_reviews(db: AsyncSession) -> None:
+    """Cria fatos de exemplo na fila de revisao da memoria."""
     reviews = [
         {
             "id": "dev-mem-0001",
@@ -286,6 +293,7 @@ async def seed_memory_reviews(db: AsyncSession) -> None:
 
 
 async def seed_automations(db: AsyncSession) -> None:
+    """Cria automacoes aprovadas de exemplo."""
     automations = [
         {
             "id": AUTOMATION_IDS[0],
@@ -334,6 +342,7 @@ async def seed_automations(db: AsyncSession) -> None:
 
 
 async def seed_audit_log(db: AsyncSession) -> None:
+    """Cria linhas de auditoria de exemplo."""
     logs = [
         {
             "id": "dev-audit-0001",
@@ -386,6 +395,7 @@ async def seed_audit_log(db: AsyncSession) -> None:
 
 
 async def seed_shortcuts(db: AsyncSession) -> None:
+    """Cria atalhos de exemplo."""
     shortcuts = [
         {
             "id": "dev-sc-0001",
@@ -445,6 +455,11 @@ async def seed_shortcuts(db: AsyncSession) -> None:
 # ── Limpeza segura dos dados de demonstração ──────────────────────────────────
 
 async def reset_demo_data(db: AsyncSession) -> None:
+    """Apaga apenas os registros criados pelo seed, pelos ids fixos.
+
+    Os ids sao constantes justamente para a limpeza nao tocar em dado real do
+    usuario que porventura conviva com a demonstracao.
+    """
     print("  ⚠ Apagando somente os dados de demonstração...")
     await db.execute(delete(ActionAuditLogModel).where(ActionAuditLogModel.id.in_(AUDIT_IDS)))
     await db.execute(delete(ApprovedAutomationModel).where(ApprovedAutomationModel.id.in_(AUTOMATION_IDS)))

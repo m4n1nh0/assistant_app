@@ -1,3 +1,6 @@
+/// Barra superior propria da janela, ja que a nativa fica oculta.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
@@ -5,6 +8,7 @@ import '../branding/intarq_brand.dart';
 import '../providers/app_provider.dart';
 import '../utils/theme.dart';
 
+/// Barra superior propria da janela, ja que a nativa fica oculta.
 class AssistantTitleBar extends ConsumerWidget {
   const AssistantTitleBar({super.key});
 

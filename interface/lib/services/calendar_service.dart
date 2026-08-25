@@ -1,6 +1,10 @@
+/// Consulta os calendarios conectados atraves do backend.
+library;
+
 import '../models/app_config.dart';
 import 'api_service.dart';
 
+/// Consulta os calendarios conectados atraves do backend.
 class CalendarService {
   final CalendarConfig config;
 

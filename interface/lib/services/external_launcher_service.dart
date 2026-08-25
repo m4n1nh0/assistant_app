@@ -1,9 +1,17 @@
+/// Abre URL, aplicativo ou comando na maquina.
+///
+/// E o executor final dos atalhos: o backend propoe o alvo, este servico abre.
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:url_launcher/url_launcher.dart';
 import 'project_discovery_service.dart';
 
+/// Abre URL, aplicativo ou comando na maquina do usuario.
+///
+/// E o executor final dos atalhos: o backend propoe o alvo, este servico abre.
 class ExternalLauncherService {
   static Future<void> openUrl(String rawUrl, {String browser = ''}) async {
     final url = rawUrl.trim();

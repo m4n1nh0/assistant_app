@@ -1,3 +1,6 @@
+/// Prepara o texto da resposta para ser falado (limpa marcacao e simbolos).
+library;
+
 const _monthsPt = <String>[
   'janeiro',
   'fevereiro',

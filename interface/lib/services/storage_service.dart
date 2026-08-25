@@ -1,7 +1,16 @@
+/// Guarda token e dados sensiveis no cofre do sistema operacional.
+///
+/// Preferencia comum vai para o Hive; o que e segredo fica aqui.
+library;
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
 
+/// Guarda token e dados sensiveis no cofre do sistema operacional.
+///
+/// Usa `flutter_secure_storage` justamente para o token nao ficar em arquivo de
+/// preferencia legivel.
 class StorageService {
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),

@@ -1,3 +1,18 @@
+"""Cliente do Qdrant: memoria de longo prazo e indice das transcricoes de aula.
+
+Sao duas colecoes com naturezas diferentes:
+
+- **Memoria** (`upsert_memory` / `search_memory`) usa o `_embed` local, um hash
+  de palavras. Casa termo identico e nao entende sinonimo, o que basta para
+  fato curto e evita depender de provedor externo.
+- **Aulas** (`index_lesson_segments` / `search_lesson_transcripts`) usa embedding
+  semantico de verdade, via `app.services.embedding_service` - transcricao longa
+  so e pesquisavel com vetor que entenda parafrase.
+
+Todas as consultas filtram por `tutor_id`: a colecao e compartilhada e o
+isolamento entre usuarios e feito no filtro.
+"""
+
 import asyncio
 import hashlib
 import math
@@ -41,6 +56,7 @@ def _client() -> QdrantClient:
 
 
 def collection_name(category: str) -> str:
+    """Nome da colecao de memoria de uma categoria, com o prefixo configurado."""
     if category not in MEMORY_CATEGORIES:
         raise ValueError(f"Categoria inválida: {category}")
     return f"{settings.qdrant_collection_prefix}_{category}"
@@ -60,6 +76,7 @@ def _embed(text: str) -> List[float]:
 
 
 def ensure_collections() -> None:
+    """Cria as colecoes de memoria que ainda nao existem. Seguro repetir."""
     client = _client()
     for category in MEMORY_CATEGORIES:
         name = collection_name(category)
@@ -78,6 +95,12 @@ def ensure_collections() -> None:
 
 
 def status(*, force: bool = False, ttl_seconds: float = _STATUS_TTL_SECONDS) -> Dict[str, Any]:
+    """Diagnostico do Qdrant: alcancavel, colecoes e contagem de pontos.
+
+    Args:
+        force: ignora o cache de status.
+        ttl_seconds: validade do cache.
+    """
     global _STATUS_CACHE
     now = time.monotonic()
     if (
@@ -117,6 +140,18 @@ def upsert_memory(
     content: str,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
+    """Grava (ou substitui) um ponto de memoria de um usuario.
+
+    Args:
+        point_id: identificador estavel do ponto, para reescrita idempotente.
+        tutor_id: dono da memoria.
+        category: categoria da memoria, que define a colecao.
+        content: texto do fato.
+        metadata: dados extras guardados junto do vetor.
+
+    Returns:
+        O id do ponto gravado.
+    """
     ensure_collections()
     payload = {
         "id": point_id,
@@ -145,6 +180,17 @@ def search_memory(
     category: Optional[str] = None,
     limit: int = 5,
 ) -> List[Dict[str, Any]]:
+    """Busca memorias de um usuario por similaridade.
+
+    Args:
+        tutor_id: dono da memoria; sempre aplicado como filtro.
+        query: texto da busca.
+        category: restringe a uma categoria; sem ela, varre todas.
+        limit: maximo de resultados.
+
+    Returns:
+        Os pontos encontrados, com conteudo, metadados e score.
+    """
     ensure_collections()
     categories = [category] if category else sorted(MEMORY_CATEGORIES)
     query_vector = _embed(query)
@@ -195,6 +241,7 @@ LESSON_CATEGORY = "lesson_transcripts"
 
 
 def lesson_collection_name() -> str:
+    """Nome da colecao que guarda os trechos de aula."""
     return f"{settings.qdrant_collection_prefix}_{LESSON_CATEGORY}"
 
 
@@ -253,6 +300,14 @@ def _sync_ensure_lesson_collection(dimensions: int) -> None:
 
 
 async def ensure_lesson_collection() -> int:
+    """Garante a colecao de aulas com a dimensao do modelo em uso.
+
+    Returns:
+        A dimensao efetiva do vetor.
+
+    Raises:
+        LessonCollectionMismatch: quando a colecao existente usa outra dimensao.
+    """
     dimensions = await embedding_service.resolve_dimensions()
     await asyncio.to_thread(_sync_ensure_lesson_collection, dimensions)
     return dimensions
@@ -369,6 +424,20 @@ async def search_lesson_transcripts(
     ts_to: Optional[int] = None,
     limit: int = 8,
 ) -> List[Dict[str, Any]]:
+    """Busca semantica nos trechos de aula de um usuario.
+
+    Args:
+        tutor_id: dono das aulas.
+        query: pergunta em linguagem natural.
+        discipline: restringe a uma disciplina.
+        lesson_id: restringe a uma aula.
+        ts_from: inicio da janela de tempo dentro da aula, em segundos.
+        ts_to: fim da janela de tempo dentro da aula, em segundos.
+        limit: maximo de trechos devolvidos.
+
+    Returns:
+        Os trechos mais proximos, com aula de origem, instante e score.
+    """
     await ensure_lesson_collection()
     vector = await embedding_service.embed_text(query)
     query_filter = _lesson_filter(tutor_id, discipline, lesson_id, ts_from, ts_to)
@@ -407,6 +476,7 @@ async def search_lesson_transcripts(
 
 
 async def delete_lesson_points(*, lesson_id: str) -> None:
+    """Remove do indice todos os trechos de uma aula."""
     try:
         await asyncio.to_thread(
             lambda: _client().delete(

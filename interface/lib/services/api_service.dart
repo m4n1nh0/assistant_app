@@ -1,3 +1,9 @@
+/// Cliente HTTP central do backend.
+///
+/// Todas as chamadas REST da interface passam por [ApiService], que guarda o token
+/// da sessao e traduz as respostas para os modelos desta camada.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -5,6 +11,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/app_config.dart';
 import 'storage_service.dart';
 
+/// Cliente HTTP central do backend, compartilhado por toda a interface.
+///
+/// Guarda o token JWT obtido no login e o injeta nas chamadas seguintes, monta as
+/// URLs a partir de [baseUrl] e [wsUrl] e traduz cada resposta para os modelos
+/// desta camada. Erro de negocio vindo do backend vira excecao com a mensagem ja
+/// pronta para exibir.
 class ApiService {
   String baseUrl;
   String wsUrl;
@@ -1321,6 +1333,7 @@ class _GenericApiResponse {
   });
 }
 
+/// Resultado do teste de um canal de notificacao, com a mensagem a exibir.
 class NotificationTestResult {
   final bool ok;
   final String message;
@@ -1334,6 +1347,7 @@ class NotificationTestResult {
       );
 }
 
+/// URL de consentimento e conta criada no inicio da conexao de calendario.
 class CalendarConnectResult {
   final String authUrl;
   final String accountId;
@@ -1350,6 +1364,7 @@ class CalendarConnectResult {
       );
 }
 
+/// Uma conta de calendario conectada, com provedor e rotulo.
 class CalendarAccount {
   final String id;
   final String provider;
@@ -1388,6 +1403,7 @@ class CalendarAccount {
       );
 }
 
+/// Resultado do login ou cadastro, com o token quando bem-sucedido.
 class AuthResult {
   final bool success;
   final String message;
@@ -1400,6 +1416,9 @@ class AuthResult {
   });
 }
 
+/// Estado do cadastro da instalacao, consultado antes da tela de login.
+///
+/// Diz se ainda falta criar o primeiro administrador e se o cadastro exige convite.
 class AuthSetupStatus {
   final bool needsSetup;
   final bool inviteRegistrationEnabled;
@@ -1426,6 +1445,7 @@ class AuthSetupStatus {
       );
 }
 
+/// Um provedor de LLM do usuario: modelo escolhido e se ha chave salva.
 class LlmProviderConfig {
   final String id;
   final String label;
@@ -1483,6 +1503,7 @@ class LlmProviderConfig {
       };
 }
 
+/// Configuracao de provedores devolvida pelo backend.
 class LlmConfigResponse {
   final List<LlmProviderConfig> providers;
   final Map<String, dynamic> raw;
@@ -1499,6 +1520,7 @@ class LlmConfigResponse {
       );
 }
 
+/// Identidade da conta autenticada.
 class CurrentAccount {
   final String id;
   final String username;
@@ -1525,6 +1547,7 @@ class CurrentAccount {
       );
 }
 
+/// Conta listada no painel do administrador.
 class AdminUser {
   final String id;
   final String username;
@@ -1549,6 +1572,7 @@ class AdminUser {
       );
 }
 
+/// Uma janela aberta na maquina, com titulo e processo dono.
 class DesktopWindowInfo {
   final String id;
   final String title;
@@ -1590,6 +1614,7 @@ class DesktopWindowInfo {
       );
 }
 
+/// Texto extraido de uma janela, pronto para virar contexto do assistente.
 class DesktopWindowContext {
   final DesktopWindowInfo window;
   final String text;
@@ -1636,6 +1661,7 @@ int _intValue(Object? value) {
   return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+/// Uma linha do log de auditoria de acoes.
 class ActionAuditEntry {
   final String id;
   final String tutorId;
@@ -1686,6 +1712,7 @@ DateTime? _dateValue(Object? value) {
   return DateTime.tryParse(text)?.toLocal();
 }
 
+/// Resultado de uma acao de computador executada localmente.
 class ComputerActionResult {
   final String actionId;
   final String actionName;
@@ -1771,6 +1798,7 @@ class ComputerActionResult {
   }
 }
 
+/// Saida de um comando: codigo de retorno, stdout, stderr e duracao.
 class ComputerCommandOutput {
   final String label;
   final String command;
@@ -1799,6 +1827,7 @@ class ComputerCommandOutput {
       );
 }
 
+/// Shells aceitos e qual e o padrao da plataforma.
 class ScriptShellsInfo {
   final String defaultShell;
   final List<String> availableShells;
@@ -1821,6 +1850,7 @@ class ScriptShellsInfo {
       );
 }
 
+/// Um script salvo pelo usuario.
 class SavedScriptEntry {
   final String id;
   final String tutorId;
@@ -1871,6 +1901,7 @@ class SavedScriptEntry {
       );
 }
 
+/// Resultado da execucao de um script local.
 class ScriptRunResult {
   final String shell;
   final String command;

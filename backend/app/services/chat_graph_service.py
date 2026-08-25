@@ -1,3 +1,18 @@
+"""Grafo do chat (LangGraph): decide o que fazer com a mensagem do usuario.
+
+E o orquestrador do backend. Cada mensagem entra no grafo e sai por uma de cinco
+rotas: propor uma **acao** local (computador, codigo, projeto, atalho, evento,
+educacao), responder uma **consulta de agenda**, ou gerar resposta em modo
+`single`, `multi` ou `chain`.
+
+A ordem da decisao importa: acao vem antes de resposta em texto, porque pedido
+como "abre o VS Code" deve virar acao para a interface executar, e nao virar
+paragrafo explicando como abrir o VS Code.
+
+O estado que atravessa o grafo esta em `ChatGraphState`; a entrada publica e
+`run_chat_graph`.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -49,6 +64,12 @@ GraphRoute = Literal["action", "calendar_query", "single", "multi", "chain"]
 
 
 class ChatGraphState(TypedDict, total=False):
+    """Estado que atravessa o grafo do chat, no formato do LangGraph.
+
+    Entra com a pergunta, o historico, o modo e o contexto do usuario; sai
+    acrescentando a rota escolhida (`action_kind`), a acao proposta, as respostas
+    dos provedores e o rastro de ferramentas e transferencias entre agentes.
+    """
     message: str
     history: list[Message]
     mode: ResponseModeEnum
@@ -505,6 +526,22 @@ async def run_chat_graph(
     user_id: str = "",
     timezone: str = "America/Sao_Paulo",
 ) -> ChatGraphState:
+    """Roda o grafo para uma mensagem e devolve o estado final.
+
+    Args:
+        message: pergunta do usuario.
+        history: historico da conversa.
+        mode: `single`, `multi` ou `chain`.
+        requested_llm: provedor pedido explicitamente; `None` deixa o roteamento decidir.
+        active_llms: provedores disponiveis nesta requisicao.
+        system_prompt: instrucao de sistema com persona e contexto.
+        tutor_id: perfil de dados dono da conversa.
+        user_id: conta autenticada.
+        timezone: fuso do usuario, usado nas datas.
+
+    Returns:
+        O estado final, com as respostas geradas ou a acao proposta a interface.
+    """
     try:
         result = await chat_graph.ainvoke(
             {

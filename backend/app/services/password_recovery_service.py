@@ -1,3 +1,11 @@
+"""Recuperacao de senha por token de uso unico enviado ao email da conta.
+
+Tres decisoes de seguranca atravessam o modulo: o banco guarda apenas o digest
+do token, o pedido tem intervalo minimo entre tentativas, e a resposta e sempre
+a mesma exista ou nao a conta - senao o proprio endpoint vira um verificador de
+quais emails estao cadastrados.
+"""
+
 import asyncio
 import hashlib
 import hmac
@@ -22,10 +30,12 @@ _issue_lock = asyncio.Lock()
 
 
 def utc_now() -> datetime:
+    """Instante atual em UTC, ponto unico de tempo do modulo."""
     return datetime.now(timezone.utc)
 
 
 def password_reset_token_digest(token: str) -> str:
+    """Digest do token, unica forma dele guardada no banco."""
     return hmac.new(
         settings.jwt_secret.encode("utf-8"),
         token.encode("utf-8"),
@@ -148,6 +158,11 @@ async def consume_password_reset_token(
     token: str,
     password_hash: str,
 ) -> bool:
+    """Valida o token e troca a senha, invalidando as sessoes abertas.
+
+    O token e queimado no uso e a versao de autenticacao da conta e incrementada,
+    o que derruba qualquer JWT emitido antes.
+    """
     clean = token.strip()
     if not clean:
         return False

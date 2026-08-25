@@ -1,7 +1,14 @@
+/// Ponte com agentes de IA instalados na maquina (Codex, Claude Code).
+///
+/// Aproveita a janela de contexto enorme desses agentes para tarefas que nao cabem
+/// nos provedores locais - resumo de aula inteira, por exemplo.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// Estado de um agente conectado: se esta instalado e pronto para uso.
 class ConnectedAiStatus {
   final String id;
   final String label;
@@ -24,6 +31,7 @@ class ConnectedAiStatus {
   });
 }
 
+/// Resposta de um agente conectado, com o texto e se houve erro.
 class ConnectedAiResult {
   final String agentId;
   final String content;

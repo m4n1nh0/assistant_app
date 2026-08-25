@@ -1,3 +1,10 @@
+/// Escuta continua pela palavra de ativacao.
+///
+/// Separa o que veio depois do gatilho do que foi apenas ruido de fundo, para o
+/// assistente nao responder a conversa alheia.
+library;
+
+/// Comando reconhecido por voz, dizendo se veio apos a palavra de ativacao.
 class WakeWordCommand {
   final String text;
   final bool usedWakeWord;

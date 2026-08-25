@@ -1,3 +1,11 @@
+"""Endpoints do chat: conversa, streaming e historico por sessao.
+
+As rotas montam o prompt de sistema com a persona do usuario, chamam o grafo em
+`app.services.chat_graph_service` e persistem o par pergunta/resposta. Tudo aqui
+exige autenticacao e trabalha sempre no escopo da conta - historico de sessao
+nunca cruza usuarios.
+"""
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -139,6 +147,11 @@ async def chat(
     user: dict = Depends(get_current_user),
     _llm_context: None = Depends(user_llm_context),
 ):
+    """Responde uma mensagem e grava a conversa.
+
+    Monta o prompt com a persona do usuario, roda o grafo do chat e devolve a
+    resposta - ou a acao que a interface deve confirmar e executar.
+    """
     cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
@@ -221,6 +234,11 @@ async def chat_stream(
     user: dict = Depends(get_current_user),
     _llm_context: None = Depends(user_llm_context),
 ):
+    """Igual a `chat`, mas devolve a resposta em streaming (SSE).
+
+    Cai automaticamente para a resposta inteira quando o provedor escolhido nao
+    suporta streaming.
+    """
     cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
@@ -264,6 +282,7 @@ async def get_history(
     session_id: str,
     user: dict = Depends(get_current_user),
 ):
+    """Devolve o historico de uma sessao de conversa."""
     try:
         async with AsyncSessionLocal() as s:
             result = await s.execute(
@@ -289,6 +308,7 @@ async def clear_history(
     session_id: str,
     user: dict = Depends(get_current_user),
 ):
+    """Apaga o historico de uma sessao de conversa."""
     from sqlalchemy import delete
     try:
         async with AsyncSessionLocal() as s:

@@ -1,3 +1,9 @@
+"""Endpoints de diagnostico: armazenamento, agentes e servidores MCP.
+
+Alimentam a tela de status da interface. Servico externo fora do ar aparece como
+indisponivel na resposta, e nao como erro da rota.
+"""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +19,7 @@ settings = get_settings()
 
 @router.get("/storage/status")
 async def storage_status(db: AsyncSession = Depends(get_db)):
+    """Diagnostico de armazenamento: banco, Qdrant e provedor de embedding."""
     database = {
         "ok": False,
         "url": settings.database_url.split("@")[-1],

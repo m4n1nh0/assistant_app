@@ -1,3 +1,9 @@
+/// Reproducao do audio sintetizado, com implementacao propria no Windows.
+///
+/// O player padrao engasga com os trechos curtos e encadeados do TTS, entao no
+/// Windows usa-se um caminho dedicado.
+library;
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';

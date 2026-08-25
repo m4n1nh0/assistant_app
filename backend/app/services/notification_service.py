@@ -1,3 +1,9 @@
+"""Envio de notificacao por Telegram e WhatsApp, com fallback entre canais.
+
+O erro de cada canal e traduzido para uma frase acionavel antes de subir - a
+mensagem original costuma trazer token ou URL, que nao podem aparecer na tela.
+"""
+
 import httpx
 from html import escape
 from loguru import logger
@@ -88,6 +94,7 @@ async def send_telegram(
     event: Optional[CalendarEvent] = None,
     assistant_name: str = "Assistant",
 ) -> bool:
+    """Envia a mensagem pelo bot do Telegram configurado."""
     ok, message_or_error = await _deliver_telegram(
         message,
         config,
@@ -102,6 +109,11 @@ async def send_telegram(
 
 
 async def test_telegram_connection(config: NotifConfig) -> tuple[bool, str]:
+    """Testa token e chat id do Telegram sem enviar lembrete de verdade.
+
+    Returns:
+        Uma tupla `(ok, mensagem)` para exibir direto na tela de configuracao.
+    """
     return await _deliver_telegram(
         "✅ Assistente conectado! Notificações ativas.",
         config,
@@ -109,6 +121,7 @@ async def test_telegram_connection(config: NotifConfig) -> tuple[bool, str]:
 
 
 async def send_whatsapp(message: str, config: NotifConfig) -> bool:
+    """Envia a mensagem pelo provedor de WhatsApp configurado."""
     if not config.wa_number:
         return False
     try:
@@ -172,6 +185,22 @@ async def send_notification(
     event: Optional[CalendarEvent] = None,
     assistant_name: str = "Assistant",
 ) -> NotifResult:
+    """Envia por todos os canais pedidos, respeitando a regra de fallback.
+
+    Com `fallback_enabled`, o WhatsApp so e acionado quando o Telegram falhou; sem
+    ele, os dois canais recebem. Falha de canal nao levanta excecao: volta dentro do
+    `NotifResult`, para um canal quebrado nao impedir o outro.
+
+    Args:
+        message: texto ja formatado.
+        config: preferencias de notificacao do usuario.
+        channels: canais a tentar.
+        event: evento de origem, quando o aviso vem da agenda.
+        assistant_name: nome da persona, usado na assinatura da mensagem.
+
+    Returns:
+        O resultado por canal, com o erro de cada um quando houver.
+    """
     result = NotifResult()
 
     if "telegram" in channels and config.telegram_enabled:
@@ -199,6 +228,16 @@ def build_event_message(
     is_15min: bool,
     reminder_minutes: int = 15,
 ) -> str:
+    """Escreve o texto do lembrete de um evento.
+
+    Args:
+        event: evento que gerou o aviso.
+        is_15min: se e o aviso antecipado ou o do horario.
+        reminder_minutes: antecedencia configurada, citada no texto.
+
+    Returns:
+        A mensagem pronta para envio.
+    """
     time_str = event.start_time.strftime("%H:%M")
     src_map = {"google": "📗 Google Calendar", "teams": "📘 Teams", "outlook": "📙 Outlook"}
     src = src_map.get(event.source, event.source)

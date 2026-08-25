@@ -1,3 +1,8 @@
+/// Janela do modo educacao, da gravacao ao relatorio.
+///
+/// Cobre gravacao em blocos, transcricao, resumo, turmas, alunos, presenca e quiz.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -41,6 +46,10 @@ const _attendanceTab = 5;
 /// lista ainda nao chegou.
 typedef _Classes = ValueNotifier<List<ClassGroup>?>;
 
+/// Janela do modo educacao: gravacao, aulas, turmas, alunos e quiz.
+///
+/// Concentra o fluxo completo da aula, da gravacao em blocos ao resumo e ao
+/// relatorio de pontos.
 class EducationDialog extends StatefulWidget {
   final String startAt;
 

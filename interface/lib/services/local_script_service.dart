@@ -1,9 +1,15 @@
+/// Execucao dos scripts salvos, com limites de tamanho, tempo e saida.
+///
+/// Os limites existem para script nenhum travar a interface ou encher a memoria.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'api_service.dart';
 
+/// Falha na execucao de um script local.
 class LocalScriptException implements Exception {
   final String message;
 
@@ -13,6 +19,10 @@ class LocalScriptException implements Exception {
   String toString() => message;
 }
 
+/// Executa scripts salvos na maquina do usuario, com limites rigidos.
+///
+/// Tamanho do script, tempo de execucao e volume de saida sao limitados: script e o
+/// caminho mais direto para travar a interface ou encher a memoria.
 class LocalScriptService {
   static const int maxScriptChars = 20000;
   static const int maxTimeoutSeconds = 180;

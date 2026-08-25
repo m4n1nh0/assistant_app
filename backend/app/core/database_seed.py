@@ -13,10 +13,12 @@ _DISABLED_VALUES = {"", "0", "false", "none", "off"}
 
 
 def normalize_seed_name(requested_seed: str | None) -> str:
+    """Normaliza o nome do seed pedido, tratando os valores que significam desligado."""
     return (requested_seed or "").strip().lower()
 
 
 def database_seed_requested(requested_seed: str | None) -> bool:
+    """Diz se `DATABASE_SEED` pede de fato a aplicacao de um seed."""
     return normalize_seed_name(requested_seed) not in _DISABLED_VALUES
 
 

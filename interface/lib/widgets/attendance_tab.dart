@@ -1,3 +1,6 @@
+/// Aba de chamada: sessao, QR Code e acompanhamento dos presentes.
+library;
+
 import 'dart:async';
 import 'dart:io';
 
@@ -129,6 +132,7 @@ String attendanceSessionPdfFilename(AttendanceSession session) {
   return 'relatorio-presenca-$date${reference.isEmpty ? '' : '-$reference'}.pdf';
 }
 
+/// Aba de chamada: abre a sessao, mostra o QR Code e acompanha os presentes.
 class AttendanceTab extends StatefulWidget {
   final ValueNotifier<List<ClassGroup>?> classes;
 
