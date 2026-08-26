@@ -472,9 +472,10 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
     for llm_name in await _candidate_llms_for_quiz(state.get("requested_llm")):
         try:
             response = await dispatch_single(
-                prompt=prompt,
-                llm=llm_name,
-                temperature=0.7,
+                llm_name,
+                prompt,
+                [],
+                "Responda somente com JSON válido para geração de quiz.",
             )
         except Exception as e:
             last_error = f"Erro ao chamar LLM {llm_name}: {e}"
@@ -487,19 +488,19 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
             })
             continue
 
-        if response.get("is_error"):
-            last_error = f"Falha ao gerar questões: {response.get('content')}"
-            logger.error(f"LLM error: {response.get('content')}")
+        if response.is_error:
+            last_error = f"Falha ao gerar questões: {response.content}"
+            logger.error(f"LLM error: {response.content}")
             attempts.append({
                 "llm": llm_name,
                 "success": False,
-                "error": response.get("content"),
+                "error": response.content,
                 "question_count": 0,
             })
             continue
 
         # Parse JSON da resposta
-        content = response.get("content", "")
+        content = response.content
         try:
             quiz_data = _json_from_content(content)
         except Exception as e:
@@ -581,12 +582,16 @@ async def _quiz_validate_node(state: QuizGraphState) -> Dict[str, Any]:
 
     try:
         response = await dispatch_single(
-            prompt=prompt,
-            llm=llm_name,
-            temperature=0.3,  # Validação precisa de maior rigidez
+            llm_name,
+            prompt,
+            [],
+            "Valide as questões e responda somente com JSON válido.",
         )
 
-        content = response.get("content", "")
+        if response.is_error:
+            raise RuntimeError(response.content)
+
+        content = response.content
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
 
         if json_match:

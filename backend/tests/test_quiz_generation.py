@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from app.routers import education
 from app.routers import quiz_play
 from app.routers import quiz_qrcode
+from app.models.schemas import LLMResponse
 from app.services import quiz_generator_service
 
 
@@ -375,6 +376,17 @@ def test_quiz_speed_score_rewards_faster_correct_answers():
     assert quiz_play._score_answer(correta=False, elapsed_ms=1_000) == 0
 
 
+def test_quiz_attempt_id_fits_database_column_and_migrates_legacy_cookie():
+    quiz_id = "f2103ef0-95a0-4fdd-8dec-70d217c9bc54"
+    legacy = f"{quiz_id}:17957f1234567890abcdef1234567890"
+    request = SimpleNamespace(cookies={quiz_play._attempt_cookie_name(quiz_id): legacy})
+
+    attempt_id = quiz_play._attempt_id(request, quiz_id)
+
+    assert attempt_id == "17957f1234567890abcdef1234567890"
+    assert len(attempt_id) <= 64
+
+
 def test_quiz_ranking_orders_by_score_and_keeps_positions():
     answers = [
         education.StudentAnswerModel(
@@ -439,11 +451,11 @@ def test_quiz_service_preserves_estimated_time(monkeypatch):
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
-    async def fake_dispatch_single(**kwargs):
-        prompt = kwargs["prompt"]
+    async def fake_dispatch_single(_llm, prompt, _history, _system_prompt):
         if "Formato de resposta" in prompt:
-            return {
-                "content": """
+            return LLMResponse(
+                llm="fake-llm",
+                content="""
                 {
                   "questoes": [
                     {
@@ -460,9 +472,10 @@ def test_quiz_service_preserves_estimated_time(monkeypatch):
                   "tempo_estimado": 9
                 }
                 """
-            }
-        return {
-            "content": """
+            )
+        return LLMResponse(
+            llm="fake-llm",
+            content="""
             {
               "validacoes": [
                 {
@@ -477,7 +490,7 @@ def test_quiz_service_preserves_estimated_time(monkeypatch):
               "aprovacao_geral": true
             }
             """
-        }
+        )
 
     monkeypatch.setattr(
         quiz_generator_service,
@@ -515,11 +528,11 @@ def test_quiz_service_normalizes_alternate_llm_question_shape(monkeypatch):
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
-    async def fake_dispatch_single(**kwargs):
-        prompt = kwargs["prompt"]
+    async def fake_dispatch_single(_llm, prompt, _history, _system_prompt):
         if "Formato de resposta" in prompt:
-            return {
-                "content": """
+            return LLMResponse(
+                llm="fake-llm",
+                content="""
                 {
                   "questions": [
                     {
@@ -535,9 +548,10 @@ def test_quiz_service_normalizes_alternate_llm_question_shape(monkeypatch):
                   "tempo_estimado": 6
                 }
                 """
-            }
-        return {
-            "content": """
+            )
+        return LLMResponse(
+            llm="fake-llm",
+            content="""
             {
               "validacoes": [
                 {
@@ -549,7 +563,7 @@ def test_quiz_service_normalizes_alternate_llm_question_shape(monkeypatch):
               ]
             }
             """
-        }
+        )
 
     monkeypatch.setattr(
         quiz_generator_service,
@@ -590,11 +604,11 @@ def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
-    async def fake_dispatch_single(**kwargs):
-        prompt = kwargs["prompt"]
+    async def fake_dispatch_single(_llm, prompt, _history, _system_prompt):
         if "Formato de resposta" in prompt:
-            return {
-                "content": """
+            return LLMResponse(
+                llm="fake-llm",
+                content="""
                 {
                   "questoes": [
                     {
@@ -608,9 +622,10 @@ def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
                   ]
                 }
                 """
-            }
-        return {
-            "content": """
+            )
+        return LLMResponse(
+            llm="fake-llm",
+            content="""
             {
               "validacoes": [
                 {
@@ -622,7 +637,7 @@ def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
               ]
             }
             """
-        }
+        )
 
     monkeypatch.setattr(
         quiz_generator_service,
@@ -660,8 +675,8 @@ def test_quiz_service_builds_reviewable_fallback_when_llm_returns_no_json(monkey
     async def fake_resolve(_preferred=None):
         return "bad-llm"
 
-    async def fake_dispatch_single(**_kwargs):
-        return {"content": "Nao consegui montar o JSON solicitado."}
+    async def fake_dispatch_single(_llm, _prompt, _history, _system_prompt):
+        return LLMResponse(llm="bad-llm", content="Nao consegui montar o JSON solicitado.")
 
     monkeypatch.setattr(
         quiz_generator_service,

@@ -1,6 +1,7 @@
 """Interface web para responder quizzes - Integrada ao Modo Educação."""
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from html import escape
@@ -326,9 +327,13 @@ def _attempt_cookie_name(quiz_id: str) -> str:
 def _attempt_id(request: Request, quiz_id: str) -> str:
     cookie_name = _attempt_cookie_name(quiz_id)
     existing = request.cookies.get(cookie_name, "")
-    if existing.startswith(f"{quiz_id}:"):
+    if re.fullmatch(r"[0-9a-f]{32}", existing):
         return existing
-    return f"{quiz_id}:{uuid.uuid4().hex}"
+    if existing.startswith(f"{quiz_id}:"):
+        legacy = existing.split(":", 1)[1]
+        if re.fullmatch(r"[0-9a-f]{32}", legacy):
+            return legacy
+    return uuid.uuid4().hex
 
 
 def _attach_attempt_cookie(
