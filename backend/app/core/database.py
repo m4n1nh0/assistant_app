@@ -636,6 +636,9 @@ class QuizModel(Base):
     status           = Column(String(32), nullable=False, default="open", index=True)
     total_questoes   = Column(Integer, default=0)
     tempo_estimado   = Column(Integer, default=0)
+    live_phase        = Column(String(32), nullable=False, default="lobby", index=True)
+    current_question_id = Column(String(64), nullable=True, index=True)
+    question_started_at = Column(DateTime, nullable=True)
     closed_at        = Column(DateTime, nullable=True)
     created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
@@ -664,9 +667,11 @@ class StudentAnswerModel(Base):
     id               = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     question_id      = Column(String(64), nullable=False, index=True)
     student_id       = Column(String(64), nullable=True, index=True)
+    student_name     = Column(String(180), nullable=True)
     resposta         = Column(Text, nullable=True)
     correta          = Column(Boolean, nullable=True)
     tempo_resposta   = Column(Integer, nullable=True)
+    pontuacao        = Column(Integer, nullable=False, default=0)
     respondido_em    = Column(DateTime, nullable=False, index=True, default=lambda: datetime.now(timezone.utc))
 
 
@@ -785,7 +790,14 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "quizzes": {
             "status": "VARCHAR(32) NOT NULL DEFAULT 'open'",
+            "live_phase": "VARCHAR(32) NOT NULL DEFAULT 'lobby'",
+            "current_question_id": "VARCHAR(64) NULL",
+            "question_started_at": "DATETIME NULL",
             "closed_at": "DATETIME NULL",
+        },
+        "student_answers": {
+            "student_name": "VARCHAR(180) NULL",
+            "pontuacao": "INTEGER NOT NULL DEFAULT 0",
         },
     }
     for table_name, columns in additions.items():

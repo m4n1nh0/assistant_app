@@ -1398,7 +1398,7 @@ class QuizCreateRequest(BaseModel):
     quantidade_questoes: int = Field(default=10, ge=1, le=50)
     tipos_questao: List[
         Literal["multipla_escolha", "verdadeiro_falso", "aberta"]
-    ] = Field(default_factory=lambda: ["multipla_escolha", "verdadeiro_falso"])
+    ] = Field(default_factory=lambda: ["multipla_escolha"])
     dificuldade: Literal["mista", "facil", "medio", "dificil"] = "mista"
     llm: Optional[str] = None
 
@@ -1413,6 +1413,9 @@ class QuizResponse(BaseModel):
     total_questoes: int
     tempo_estimado: int
     questoes: List[QuestionResponse] = []
+    live_phase: str = "lobby"
+    current_question_id: Optional[str] = None
+    question_started_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     created_at: datetime
 
@@ -1441,4 +1444,5 @@ class StudentAnswerResponse(BaseModel):
     resposta: Optional[str]
     correta: Optional[bool]
     tempo_resposta: Optional[int]
+    pontuacao: int = 0
     respondido_em: datetime

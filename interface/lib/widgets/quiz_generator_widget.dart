@@ -101,7 +101,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
           'lesson_id': widget.lessonId,
           'tipo_quiz': _quizType,
           'quantidade_questoes': _questionCount,
-          'tipos_questao': ['multipla_escolha', 'verdadeiro_falso', 'aberta'],
+          'tipos_questao': ['multipla_escolha'],
           'dificuldade': _difficulty,
           'llm': 'auto', // Usa melhor LLM disponível
         },

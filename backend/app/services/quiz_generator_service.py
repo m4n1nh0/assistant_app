@@ -23,25 +23,25 @@ Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de for
 
 **Disciplina:** {disciplina}
 **Tipo de Quiz:** {tipo_quiz}
-**Tipos de Questão:** {tipos_questao}
+**Tipos de Questão:** multipla_escolha
 **Dificuldade:** {dificuldade}
 
 **Instruções:**
 1. Cada questão deve derivar diretamente do conteúdo da aula (não invente conteúdo)
 2. Inclua justificativas que citam a fonte no conteúdo da aula
-3. Varie entre os tipos de questão solicitados
+3. Gere somente questões objetivas de múltipla escolha
 4. Distribua dificuldade equitativamente
 5. Inclua todos os tópicos principais encontrados no conteúdo
 6. Para "multipla_escolha", gere exatamente 4 opções com labels A, B, C e D
-7. Para "verdadeiro_falso", deixe "opcoes" como [] e "resposta_correta" como "verdadeiro" ou "falso"
-8. Para "aberta", deixe "opcoes" como [] e escreva uma resposta esperada objetiva
+7. Marque exatamente uma opção como correta
+8. Use "resposta_correta" com o label da alternativa correta
 9. Responda somente com JSON válido, sem markdown e sem comentários fora do JSON
 
 **Formato de resposta (JSON):**
 {{
   "questoes": [
     {{
-      "tipo": "multipla_escolha|verdadeiro_falso|aberta",
+      "tipo": "multipla_escolha",
       "dificuldade": "facil|medio|dificil",
       "enunciado": "Texto da questão",
       "opcoes": [

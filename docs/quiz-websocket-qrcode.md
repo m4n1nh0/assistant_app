@@ -13,6 +13,10 @@
 - [x] WebSocket `/ws/quiz/{quiz_id}/monitor` envia estatísticas iniciais e atualizações a cada 2 segundos.
 - [x] Contador `total_answers` representa o total real de respostas recebidas.
 - [x] Monitor permite encerrar o quiz; WebSocket informa `status` e `closed_at`.
+- [x] Monitor exibe somente a pergunta atual durante a rodada.
+- [x] Professor controla `Iniciar Quiz`, `Encerrar Pergunta` e `Próxima Pergunta`.
+- [x] Ranking top 10 por rodada e ranking geral/final enviados pelo WebSocket.
+- [x] Player público consulta `/education/quiz/{quiz_id}/state` para sair da pergunta quando a rodada encerra.
 - [ ] WebSocket autenticado por JWT e autorização estrita do professor ainda seguem como roadmap.
 - [ ] Gráficos avançados e exportação de resultados ainda seguem como roadmap.
 
@@ -22,8 +26,8 @@
 
 Sistema de quiz onde:
 1. **Professor** prepara e publica quiz para compartilhar via **QR Code**
-2. **Alunos** escanean o QR Code e respondem questões
-3. **Professor** monitora em tempo real via **WebSocket** (sem polling)
+2. **Alunos** escaneiam o QR Code, entram pelo nome e aguardam a pergunta atual
+3. **Professor** controla a rodada e monitora ranking em tempo real via **WebSocket**
 
 ---
 
@@ -49,11 +53,11 @@ Sistema de quiz onde:
 │ 7. Compartilha/Exibe QR Code        │
 │    (WebSocket conectado)            │
 │                                     │
-│ 📊 Monitoramento em Tempo Real:     │
-│ ├─ Respondidas: 15/30 (50%)        │
-│ ├─ Q1: 28✅ 2❌                    │
-│ ├─ Q2: 25✅ 5❌                    │
-│ └─ Q3: 23✅ 7❌                    │
+│ Controle ao Vivo:                   │
+│ ├─ Iniciar Quiz                     │
+│ ├─ Pergunta Atual                   │
+│ ├─ Encerrar Pergunta                │
+│ └─ Top 10 da Rodada                 │
 │ (Atualiza a cada 2s via WebSocket)  │
 └─────────────────────────────────────┘
                  ↓
@@ -63,12 +67,12 @@ Sistema de quiz onde:
 │ 1. Escaneia QR Code                 │
 │ 2. Browser abre                     │
 │    /education/quiz/quiz-id/play     │
-│ 3. Vê primeira questão              │
+│ 3. Informa o nome                   │
 │ 4. Seleciona resposta               │
 │ 5. Clica "CONFIRMAR"                │
-│ 6. Próxima questão aparece          │
-│ 7. Repete até terminar              │
-│ 8. "Quiz Completado! 🎉"            │
+│ 6. Aguarda encerramento da rodada   │
+│ 7. Vê ranking e sua colocação       │
+│ 8. Aguarda a próxima pergunta       │
 │                                     │
 │ (Respostas salvas em banco)         │
 └─────────────────────────────────────┘

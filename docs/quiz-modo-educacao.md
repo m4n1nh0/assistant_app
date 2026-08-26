@@ -12,8 +12,12 @@
 - [x] Geração baseada no resumo salvo e, quando disponível, na transcrição da aula.
 - [x] Quiz nasce como `draft`; QR Code/link só são liberados depois da publicação pelo professor.
 - [x] Link público `/education/quiz/{quiz_id}/play` para alunos.
-- [x] Página HTML responsiva para o aluno responder.
-- [x] Respostas salvas no banco e comparadas com gabarito quando aplicável.
+- [x] Página HTML responsiva para aluno entrar pelo nome e responder a pergunta atual.
+- [x] Perguntas objetivas por escolha de opção, com pontuação por velocidade.
+- [x] Professor controla pergunta atual, encerramento da rodada e próxima pergunta.
+- [x] Ranking top 10 exibido ao professor após encerrar cada pergunta.
+- [x] Aluno vê ranking da rodada e sua própria colocação.
+- [x] Respostas salvas no banco com acerto, tempo e pontuação.
 - [x] Professor pode encerrar o quiz no monitor; o link público passa a bloquear novas respostas.
 - [ ] Relatório completo por aluno, exportação em PDF e análise consolidada seguem como roadmap.
 
@@ -21,7 +25,7 @@
 
 ## 🎯 Visão Geral
 
-Sistema de geração e aplicação automática de quizzes integrado ao Modo Educação, similar ao QR code de presença. Professor cria quiz de uma aula, compartilha link para alunos responderem via HTML responsivo.
+Sistema de geração e aplicação automática de quizzes integrado ao Modo Educação, similar ao QR code de presença. Professor cria quiz de uma aula, compartilha link e controla o avanço das perguntas em tempo real.
 
 ---
 
@@ -39,10 +43,11 @@ Professor (Flutter Desktop)
 
 Aluno (Browser - Mobile/Desktop)
     ├─ Acessa link compartilhado
-    ├─ Responde questões (HTML)
-    ├─ Próxima questão após responder
-    ├─ Feedback com justificativa
-    └─ Conclusão + compartilha resultado
+    ├─ Informa o nome
+    ├─ Aguarda professor iniciar a pergunta
+    ├─ Escolhe uma opção objetiva
+    ├─ Recebe pontuação por velocidade
+    └─ Vê ranking da rodada e sua colocação
 ```
 
 ---
@@ -67,7 +72,7 @@ curl -X POST http://localhost:8000/education/quiz/generate \
   "quiz_id": "quiz-abc123",
   "titulo": "Quiz: Normalização de BD",
   "questoes": [...],
-  "status": "success"
+  "status": "draft"
 }
 ```
 

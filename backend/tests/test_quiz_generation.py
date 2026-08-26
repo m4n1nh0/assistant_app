@@ -44,6 +44,17 @@ class EmptyQuestionResult:
         return []
 
 
+class QuestionResult:
+    def __init__(self, questions):
+        self.questions = questions
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.questions
+
+
 class QuizCloseDb:
     def __init__(self, quiz):
         self.quiz = quiz
@@ -63,6 +74,15 @@ class QuizCloseDb:
 
     async def refresh(self, _item):
         self.refreshes += 1
+
+
+class QuizLiveDb(QuizCloseDb):
+    def __init__(self, quiz, questions):
+        super().__init__(quiz)
+        self.questions = questions
+
+    async def execute(self, _stmt):
+        return QuestionResult(self.questions)
 
 
 def _lesson(status="closed", summary="Resumo da aula"):
@@ -100,11 +120,14 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
             "tempo_estimado": 7,
             "questoes": [
                 {
-                    "tipo": "verdadeiro_falso",
+                    "tipo": "multipla_escolha",
                     "dificuldade": "dificil",
                     "enunciado": "A normalizacao reduz anomalias?",
-                    "opcoes": [],
-                    "resposta_correta": "verdadeiro",
+                    "opcoes": [
+                        {"label": "A", "texto": "Sim", "correta": True},
+                        {"label": "B", "texto": "Não", "correta": False},
+                    ],
+                    "resposta_correta": "A",
                     "justificativa": "O resumo cita reducao de anomalias.",
                     "conceitos": ["normalizacao"],
                     "topico_origem": "Resumo",
@@ -138,7 +161,7 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
 
     assert captured["tipo_quiz"] == "diagnostico"
     assert captured["quantidade_questoes"] == 3
-    assert captured["tipos_questao"] == ["verdadeiro_falso"]
+    assert captured["tipos_questao"] == ["multipla_escolha"]
     assert captured["dificuldade"] == "dificil"
     assert captured["llm"] == "gpt-4.1"
     assert captured["resumo"] == "Resumo da aula"
@@ -247,9 +270,71 @@ def test_publish_quiz_marks_status_open():
     )
 
     assert quiz.status == "open"
+    assert quiz.live_phase == "lobby"
+    assert quiz.current_question_id is None
     assert response.status == "open"
     assert db.commits == 1
     assert db.refreshes == 1
+
+
+def test_live_quiz_opens_and_closes_current_question():
+    quiz = education.QuizModel(
+        id="quiz-1",
+        tutor_id="tutor-1",
+        lesson_id="lesson-1",
+        titulo="Quiz",
+        tipo_quiz="pratica",
+        status="open",
+        total_questoes=2,
+    )
+    quiz.created_at = datetime.now(timezone.utc)
+    questions = [
+        education.QuestionModel(
+            id="q1",
+            quiz_id="quiz-1",
+            tipo="multipla_escolha",
+            dificuldade="facil",
+            enunciado="Pergunta 1?",
+            opcoes='[{"label":"A","texto":"Sim","correta":true}]',
+            resposta_correta="A",
+        ),
+        education.QuestionModel(
+            id="q2",
+            quiz_id="quiz-1",
+            tipo="multipla_escolha",
+            dificuldade="facil",
+            enunciado="Pergunta 2?",
+            opcoes='[{"label":"A","texto":"Não","correta":true}]',
+            resposta_correta="A",
+        ),
+    ]
+    for question in questions:
+        question.created_at = datetime.now(timezone.utc)
+    db = QuizLiveDb(quiz, questions)
+
+    response = run(
+        education.next_quiz_question(
+            "quiz-1",
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert quiz.live_phase == "question"
+    assert quiz.current_question_id == "q1"
+    assert quiz.question_started_at is not None
+    assert response.current_question_id == "q1"
+
+    response = run(
+        education.close_quiz_question(
+            "quiz-1",
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert quiz.live_phase == "results"
+    assert response.live_phase == "results"
 
 
 def test_public_quiz_attempt_progress_is_scoped_per_browser():
@@ -279,6 +364,54 @@ def test_public_quiz_attempt_progress_is_scoped_per_browser():
     assert question is q2
     assert quiz_play._is_correct_answer(q1, "verdadeiro") is True
     assert quiz_play._is_correct_answer(q2, "verdadeiro") is False
+
+
+def test_quiz_speed_score_rewards_faster_correct_answers():
+    fast = quiz_play._score_answer(correta=True, elapsed_ms=2_000)
+    slow = quiz_play._score_answer(correta=True, elapsed_ms=20_000)
+
+    assert fast > slow
+    assert slow >= 100
+    assert quiz_play._score_answer(correta=False, elapsed_ms=1_000) == 0
+
+
+def test_quiz_ranking_orders_by_score_and_keeps_positions():
+    answers = [
+        education.StudentAnswerModel(
+            id="a1",
+            question_id="q1",
+            student_id="s1",
+            student_name="Ana",
+            resposta="A",
+            correta=True,
+            pontuacao=600,
+        ),
+        education.StudentAnswerModel(
+            id="a2",
+            question_id="q1",
+            student_id="s2",
+            student_name="Bia",
+            resposta="A",
+            correta=True,
+            pontuacao=900,
+        ),
+        education.StudentAnswerModel(
+            id="a3",
+            question_id="q2",
+            student_id="s1",
+            student_name="Ana",
+            resposta="B",
+            correta=False,
+            pontuacao=0,
+        ),
+    ]
+
+    rows = quiz_play._ranking_rows(answers)
+
+    assert rows[0]["student_name"] == "Bia"
+    assert rows[0]["position"] == 1
+    assert rows[1]["student_name"] == "Ana"
+    assert rows[1]["position"] == 2
 
 
 def test_quiz_public_base_url_uses_request_when_no_override():

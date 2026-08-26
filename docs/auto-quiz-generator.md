@@ -18,11 +18,13 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 - [x] Backend com grafo Generate → Validate → Filter.
 - [x] Validação por grounding score e persistência de `grounding_score`.
 - [x] Persistência em `quizzes`, `questions` e `student_answers`.
-- [x] Tipos `multipla_escolha`, `verdadeiro_falso` e `aberta`.
-- [x] Configurações de tipo, quantidade, dificuldade, tipos de questão e LLM respeitadas pela API.
+- [x] Perguntas aplicadas ao aluno são objetivas, por escolha de opção.
+- [x] Configurações de tipo de quiz, quantidade, dificuldade e LLM respeitadas pela API.
 - [x] Compartilhamento por link e QR Code.
 - [x] Publicação em duas etapas: preparar perguntas revisáveis e só depois liberar QR Code.
 - [x] Monitoramento em tempo real via WebSocket.
+- [x] Fluxo ao vivo com pergunta atual controlada pelo professor.
+- [x] Pontuação por velocidade e ranking top 10 por rodada.
 - [x] Encerramento manual do quiz pelo professor, bloqueando novas respostas.
 
 **Ainda roadmap:**

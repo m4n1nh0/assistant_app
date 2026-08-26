@@ -34,6 +34,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
   Map<String, dynamic>? _stats;
   bool _isConnecting = true;
   bool _isClosingQuiz = false;
+  bool _isChangingQuestion = false;
   bool _quizClosed = false;
   String? _error;
   int _connectRetries = 0;
@@ -174,7 +175,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Quiz ao Vivo 📊',
+                            'Quiz ao Vivo',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -214,7 +215,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
 
                     const SizedBox(height: 24),
 
-                    // Stats Section
+                    // Live Quiz Section
                     if (_stats != null)
                       _buildStatsSection()
                     else if (_isConnecting)
@@ -342,149 +343,234 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
 
   Widget _buildStatsSection() {
     final progress = _stats!['progress'] as Map<String, dynamic>;
-    final questions = _stats!['questions'] as List<dynamic>? ?? [];
+    final currentQuestion =
+        _stats!['current_question'] as Map<String, dynamic>?;
+    final livePhase = _stats!['live_phase']?.toString() ?? 'lobby';
+    final ranking = (livePhase == 'results'
+            ? _stats!['current_ranking_top10']
+            : _stats!['ranking_top10']) as List<dynamic>? ??
+        [];
     final totalAnswers = progress['total_answers'] as int? ?? 0;
     final correct = progress['correct'] as int? ?? 0;
     final incorrect = progress['incorrect'] as int? ?? 0;
-    final percentage = _stats!['overall_percentage'] as num? ?? 0;
+    final participants = _stats!['participants'] as int? ?? 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Progresso Geral
         Text(
-          'Desempenho Geral',
+          _phaseTitle(livePhase),
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Respondidas: $totalAnswers'),
-                  Text('✅ Acertos: $correct'),
-                  Text('❌ Erros: $incorrect'),
-                ],
-              ),
+        if (currentQuestion != null) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.purple[50],
+              border: Border.all(color: Colors.purple[200]!),
+              borderRadius: BorderRadius.circular(8),
             ),
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.purple,
-                  width: 3,
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  '${percentage.toInt()}%',
-                  style: const TextStyle(
-                    fontSize: 24,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Pergunta ${(currentQuestion['index'] as int? ?? 0) + 1}',
+                  style: TextStyle(
+                    color: Colors.purple[800],
                     fontWeight: FontWeight.bold,
-                    color: Colors.purple,
                   ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                Text(
+                  currentQuestion['question_text']?.toString() ?? '',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Respostas nesta pergunta: ${currentQuestion['total_answers'] ?? 0}',
+                ),
+              ],
             ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Row(
+          children: [
+            Expanded(child: Text('Participantes: $participants')),
+            Text('Total: $totalAnswers | $correct acertos | $incorrect erros'),
           ],
         ),
-        const SizedBox(height: 24),
-
-        // Taxa de Acerto por Questão
-        Text(
-          'Por Questão',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-        ),
-        const SizedBox(height: 12),
-        if (questions.isNotEmpty)
-          ...questions.map<Widget>((q) {
-            final qData = q as Map<String, dynamic>;
-            final qPercentage = qData['percentage'] as num? ?? 0;
-            final correct = qData['correct'] as int? ?? 0;
-            final incorrect = qData['incorrect'] as int? ?? 0;
-            final total = qData['total_answers'] as int? ?? 0;
-            final questionText =
-                qData['question_text']?.toString().trim() ?? '';
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  border: Border.all(color: Colors.grey[200]!),
-                  borderRadius: BorderRadius.circular(8),
+        const SizedBox(height: 16),
+        _buildLiveAction(livePhase),
+        const SizedBox(height: 20),
+        if (livePhase == 'results' ||
+            livePhase == 'finished' ||
+            _quizClosed) ...[
+          Text(
+            livePhase == 'results' ? 'Top 10 da Pergunta' : 'Top 10 Geral',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Q${questions.indexOf(q) + 1}',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    if (questionText.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        questionText,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    LinearProgressIndicator(
-                      value: qPercentage > 0 ? qPercentage / 100 : 0,
-                      minHeight: 6,
-                      backgroundColor: Colors.grey[300],
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        qPercentage >= 50 ? Colors.green : Colors.orange,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '✅ $correct ❌ $incorrect',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        Text(
-                          '${qPercentage.toInt()}% ($total)',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          })
-        else
-          const Text('Aguardando respostas...'),
-
+          ),
+          const SizedBox(height: 10),
+          _buildRanking(ranking),
+        ] else if (livePhase == 'question') ...[
+          const Text('Ranking será exibido ao encerrar a pergunta.'),
+        ] else ...[
+          const Text('Aguardando iniciar a primeira pergunta.'),
+        ],
         const SizedBox(height: 12),
         Text(
-          'Atualização em tempo real via WebSocket 🚀',
+          'Atualização em tempo real via WebSocket',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Colors.grey[600],
               ),
         ),
       ],
     );
+  }
+
+  String _phaseTitle(String phase) {
+    if (_quizClosed || phase == 'finished') return 'Ranking Final';
+    if (phase == 'question') return 'Pergunta Atual';
+    if (phase == 'results') return 'Ranking da Rodada';
+    return 'Lobby do Quiz';
+  }
+
+  Widget _buildLiveAction(String phase) {
+    if (_quizClosed || phase == 'finished') {
+      return const SizedBox.shrink();
+    }
+    if (phase == 'question') {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _isChangingQuestion ? null : _closeCurrentQuestion,
+          icon: _isChangingQuestion
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.stop_circle_outlined),
+          label: const Text('Encerrar Pergunta'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange[700],
+            foregroundColor: Colors.white,
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: _isChangingQuestion ? null : _openNextQuestion,
+        icon: _isChangingQuestion
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.navigate_next),
+        label: Text(phase == 'results' ? 'Próxima Pergunta' : 'Iniciar Quiz'),
+      ),
+    );
+  }
+
+  Widget _buildRanking(List<dynamic> ranking) {
+    if (ranking.isEmpty) {
+      return const Text('Aguardando respostas...');
+    }
+    return Column(
+      children: ranking.map<Widget>((item) {
+        final row = item as Map<String, dynamic>;
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            border: Border.all(color: Colors.grey[200]!),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 44,
+                child: Text(
+                  '#${row['position'] ?? '-'}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  row['student_name']?.toString() ?? 'Aluno',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                '${row['score'] ?? 0} pts',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Future<void> _openNextQuestion() async {
+    await _runLiveCommand(
+      '/education/quiz/${widget.quizId}/next-question',
+      'Pergunta liberada.',
+    );
+  }
+
+  Future<void> _closeCurrentQuestion() async {
+    await _runLiveCommand(
+      '/education/quiz/${widget.quizId}/close-question',
+      'Pergunta encerrada.',
+    );
+  }
+
+  Future<void> _runLiveCommand(String endpoint, String successMessage) async {
+    setState(() {
+      _isChangingQuestion = true;
+    });
+
+    try {
+      final response = await api.post(endpoint, body: {});
+      if (!response.success) {
+        throw Exception(response.error ?? 'Falha ao atualizar quiz');
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(successMessage)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro no quiz: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isChangingQuestion = false;
+        });
+      }
+    }
   }
 
   Future<void> _copyQuizLink() async {

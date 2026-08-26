@@ -2096,7 +2096,7 @@ async def generate_quiz_from_lesson(
         titulo_aula=lesson.title or "Aula",
         tipo_quiz=request.tipo_quiz,
         quantidade_questoes=request.quantidade_questoes,
-        tipos_questao=list(request.tipos_questao),
+        tipos_questao=["multipla_escolha"],
         dificuldade=request.dificuldade,
         llm=request.llm,
     )
@@ -2110,10 +2110,8 @@ async def generate_quiz_from_lesson(
     questoes_geradas = [
         item for item in quiz_data.get("questoes", [])
         if (item.get("enunciado") or "").strip()
-        and (
-            item.get("tipo") != "multipla_escolha"
-            or bool(item.get("opcoes"))
-        )
+        and item.get("tipo") in {"multipla_escolha", "verdadeiro_falso"}
+        and (item.get("tipo") != "multipla_escolha" or bool(item.get("opcoes")))
     ]
     if not questoes_geradas:
         raise HTTPException(
@@ -2230,7 +2228,7 @@ async def _build_quiz_response(db: AsyncSession, quiz: QuizModel) -> QuizRespons
             enunciado=q.enunciado,
             opcoes=opcoes,
             resposta_correta=q.resposta_correta,
-            justificativa=q.justificativa,
+            justificativa=q.justificativa or "",
             conceitos_relacionados=conceitos,
             topico_origem=q.topico_origem,
             grounding_score=q.grounding_score or 0.0,
@@ -2245,11 +2243,71 @@ async def _build_quiz_response(db: AsyncSession, quiz: QuizModel) -> QuizRespons
         tipo_quiz=quiz.tipo_quiz,
         status=quiz.status or "open",
         total_questoes=quiz.total_questoes,
-        tempo_estimado=quiz.tempo_estimado,
+        tempo_estimado=quiz.tempo_estimado or 0,
         questoes=questoes_responses,
+        live_phase=quiz.live_phase or "lobby",
+        current_question_id=quiz.current_question_id,
+        question_started_at=quiz.question_started_at,
         closed_at=quiz.closed_at,
         created_at=quiz.created_at,
     )
+
+
+async def _quiz_questions(db: AsyncSession, quiz_id: str) -> list[QuestionModel]:
+    stmt = (
+        select(QuestionModel)
+        .where(QuestionModel.quiz_id == quiz_id)
+        .order_by(QuestionModel.created_at, QuestionModel.id)
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+def _quiz_question_options(question: QuestionModel) -> list[dict]:
+    if question.tipo != "multipla_escolha" or not question.opcoes:
+        return []
+    try:
+        decoded = json.loads(question.opcoes)
+        return decoded if isinstance(decoded, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def _is_quiz_answer_correct(question: QuestionModel, resposta: Optional[str]) -> Optional[bool]:
+    if resposta is None:
+        return None
+    expected = (question.resposta_correta or "").strip().lower()
+    received = resposta.strip()
+    if question.tipo == "verdadeiro_falso":
+        truthy = {"verdadeiro", "v", "true", "sim", "s", "yes"}
+        falsy = {"falso", "f", "false", "nao", "não", "n", "no"}
+        expected_bool = expected in truthy
+        if received.lower() in truthy:
+            return expected_bool
+        if received.lower() in falsy:
+            return not expected_bool
+        return False
+    if question.tipo == "multipla_escolha":
+        for option in _quiz_question_options(question):
+            if option.get("correta") is True:
+                return received == str(option.get("label", "")).strip()
+    return received.lower() == expected
+
+
+def _quiz_response_time_ms(started_at: Optional[datetime]) -> Optional[int]:
+    if started_at is None:
+        return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    elapsed = datetime.now(timezone.utc) - started_at.astimezone(timezone.utc)
+    return max(0, int(elapsed.total_seconds() * 1000))
+
+
+def _quiz_answer_score(correta: Optional[bool], elapsed_ms: Optional[int]) -> int:
+    if correta is not True:
+        return 0
+    elapsed_seconds = (elapsed_ms or 0) / 1000
+    speed_factor = max(0.0, 1.0 - min(elapsed_seconds, 30) / 30)
+    return max(100, int(round(1000 * speed_factor)))
 
 
 @router.get("/quiz/{quiz_id}")
@@ -2289,9 +2347,82 @@ async def publish_quiz(
 
     if quiz.status != "open":
         quiz.status = "open"
+        quiz.live_phase = "lobby"
+        quiz.current_question_id = None
+        quiz.question_started_at = None
         await db.commit()
         await db.refresh(quiz)
 
+    return await _build_quiz_response(db, quiz)
+
+
+@router.post("/quiz/{quiz_id}/next-question")
+async def next_quiz_question(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Abre a proxima pergunta do quiz ao vivo para todos os alunos."""
+
+    tutor_id = user["tutor_id"]
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status == "closed":
+        raise HTTPException(status_code=409, detail="Quiz já encerrado")
+    if quiz.status != "open":
+        raise HTTPException(status_code=409, detail="Libere o quiz primeiro")
+
+    questions = await _quiz_questions(db, quiz_id)
+    if not questions:
+        raise HTTPException(status_code=409, detail="Quiz sem perguntas")
+
+    current_index = -1
+    if quiz.current_question_id:
+        current_index = next(
+            (
+                index
+                for index, question in enumerate(questions)
+                if question.id == quiz.current_question_id
+            ),
+            -1,
+        )
+
+    next_index = current_index + 1
+    if next_index >= len(questions):
+        quiz.live_phase = "finished"
+        quiz.current_question_id = None
+        quiz.question_started_at = None
+    else:
+        quiz.live_phase = "question"
+        quiz.current_question_id = questions[next_index].id
+        quiz.question_started_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(quiz)
+    return await _build_quiz_response(db, quiz)
+
+
+@router.post("/quiz/{quiz_id}/close-question")
+async def close_quiz_question(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Encerra a pergunta atual e exibe ranking da rodada."""
+
+    tutor_id = user["tutor_id"]
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status == "closed":
+        raise HTTPException(status_code=409, detail="Quiz já encerrado")
+    if quiz.live_phase != "question" or not quiz.current_question_id:
+        raise HTTPException(status_code=409, detail="Nenhuma pergunta aberta")
+
+    quiz.live_phase = "results"
+    await db.commit()
+    await db.refresh(quiz)
     return await _build_quiz_response(db, quiz)
 
 
@@ -2310,6 +2441,9 @@ async def close_quiz(
 
     if quiz.status != "closed":
         quiz.status = "closed"
+        quiz.live_phase = "finished"
+        quiz.current_question_id = None
+        quiz.question_started_at = None
         quiz.closed_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(quiz)
@@ -2334,23 +2468,19 @@ async def submit_quiz_answer(
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
     if quiz.status == "closed":
         raise HTTPException(status_code=409, detail="Quiz encerrado")
+    if quiz.live_phase != "question" or quiz.current_question_id != answer.question_id:
+        raise HTTPException(status_code=409, detail="Pergunta não está aberta")
 
     # Valida questão
     question = await db.get(QuestionModel, answer.question_id)
     if not question or question.quiz_id != quiz_id:
         raise HTTPException(status_code=404, detail="Questão não encontrada")
 
-    # Valida resposta
-    resposta_correta = None
-    if question.tipo == "verdadeiro_falso":
-        # Normaliza resposta V/F
-        if answer.resposta.lower() in ["verdadeiro", "v", "true", "sim"]:
-            resposta_correta = question.resposta_correta.lower() in ["verdadeiro", "v", "true"]
-        else:
-            resposta_correta = question.resposta_correta.lower() not in ["verdadeiro", "v", "true"]
-    elif question.tipo == "multipla_escolha":
-        resposta_correta = answer.resposta == question.resposta_correta
-    # Para aberta, não validamos automaticamente
+    resposta_correta = _is_quiz_answer_correct(question, answer.resposta)
+    elapsed_ms = answer.tempo_resposta
+    if elapsed_ms is None:
+        elapsed_ms = _quiz_response_time_ms(quiz.question_started_at)
+    pontuacao = _quiz_answer_score(resposta_correta, elapsed_ms)
 
     # Registra resposta
     student_answer = StudentAnswerModel(
@@ -2359,7 +2489,8 @@ async def submit_quiz_answer(
         student_id=user.get("id"),
         resposta=answer.resposta,
         correta=resposta_correta,
-        tempo_resposta=answer.tempo_resposta,
+        tempo_resposta=elapsed_ms,
+        pontuacao=pontuacao,
     )
     db.add(student_answer)
     await db.commit()
@@ -2370,5 +2501,6 @@ async def submit_quiz_answer(
         resposta=student_answer.resposta,
         correta=student_answer.correta,
         tempo_resposta=student_answer.tempo_resposta,
+        pontuacao=student_answer.pontuacao,
         respondido_em=student_answer.respondido_em,
     )

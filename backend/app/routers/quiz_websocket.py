@@ -64,6 +64,31 @@ class QuizConnectionManager:
 manager = QuizConnectionManager()
 
 
+def _ranking_rows(answers: list[StudentAnswerModel]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for answer in answers:
+        student_id = answer.student_id or "anon"
+        row = grouped.setdefault(
+            student_id,
+            {
+                "student_id": student_id,
+                "student_name": answer.student_name or "Aluno",
+                "score": 0,
+                "correct": 0,
+                "answers": 0,
+            },
+        )
+        row["student_name"] = answer.student_name or row["student_name"]
+        row["score"] += int(answer.pontuacao or 0)
+        row["correct"] += 1 if answer.correta is True else 0
+        row["answers"] += 1
+    rows = list(grouped.values())
+    rows.sort(key=lambda item: (-item["score"], -item["correct"], item["student_name"]))
+    for index, row in enumerate(rows, start=1):
+        row["position"] = index
+    return rows
+
+
 async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     """Calcula estatísticas do quiz em tempo real."""
 
@@ -116,8 +141,14 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     stmt = select(QuestionModel).where(QuestionModel.quiz_id == quiz_id)
     questions = (await db.execute(stmt)).scalars().all()
 
+    question_ids = [q.id for q in questions]
+    current_question = next(
+        (q for q in questions if quiz and q.id == quiz.current_question_id),
+        None,
+    )
+
     questions_stats = []
-    for q in questions:
+    for index, q in enumerate(questions):
         stmt = select(func.count(StudentAnswerModel.id)).where(
             StudentAnswerModel.question_id == q.id
         )
@@ -137,6 +168,8 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
 
         questions_stats.append({
             "question_id": q.id,
+            "index": index,
+            "is_current": bool(quiz and q.id == quiz.current_question_id),
             "question_text": (
                 q.enunciado[:160] + "..."
                 if len(q.enunciado) > 160
@@ -148,12 +181,49 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
             "percentage": round((q_correct / q_total * 100) if q_total > 0 else 0, 1),
         })
 
+    all_answers = []
+    current_answers = []
+    if question_ids:
+        all_answers = list((await db.execute(
+            select(StudentAnswerModel).where(
+                StudentAnswerModel.question_id.in_(question_ids)
+            )
+        )).scalars().all())
+    if quiz and quiz.current_question_id:
+        current_answers = [
+            answer for answer in all_answers
+            if answer.question_id == quiz.current_question_id
+        ]
+    overall_ranking = _ranking_rows(all_answers)
+    current_ranking = _ranking_rows(current_answers)
+
     return {
         "timestamp": datetime.now().isoformat(),
         "quiz_id": quiz_id,
         "status": (quiz.status if quiz else "not_found") or "open",
+        "live_phase": (quiz.live_phase if quiz else "not_found") or "lobby",
+        "current_question_id": quiz.current_question_id if quiz else None,
+        "question_started_at": (
+            quiz.question_started_at.isoformat()
+            if quiz and quiz.question_started_at else None
+        ),
         "closed_at": quiz.closed_at.isoformat() if quiz and quiz.closed_at else None,
         "total_questions": total_questions,
+        "current_question": (
+            {
+                "question_id": current_question.id,
+                "index": next(
+                    (
+                        index for index, item in enumerate(questions)
+                        if item.id == current_question.id
+                    ),
+                    0,
+                ),
+                "question_text": current_question.enunciado,
+                "total_answers": len(current_answers),
+            }
+            if current_question else None
+        ),
         "progress": {
             "total_answers": total_answers,
             "correct": correct_answers,
@@ -167,6 +237,9 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
             1
         ),
         "questions": questions_stats,
+        "ranking_top10": overall_ranking[:10],
+        "current_ranking_top10": current_ranking[:10],
+        "participants": len(overall_ranking),
         "active_connections": manager.get_connection_count(quiz_id),
     }
 
