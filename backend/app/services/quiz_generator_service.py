@@ -305,6 +305,156 @@ def _normalize_questions(data: Dict[str, Any], tipos_questao: Sequence[str]) -> 
     return normalized
 
 
+_QUIZ_STOPWORDS = {
+    "aula", "sobre", "para", "como", "com", "uma", "por", "dos", "das",
+    "que", "foi", "sao", "são", "mais", "entre", "quando", "onde", "esse",
+    "essa", "isso", "este", "esta", "tambem", "também", "conceito",
+    "conceitos", "exemplo", "exemplos", "professor", "aluno", "alunos",
+    "banco", "dados",
+}
+
+
+def _compact_text(text: str, *, limit: int = 220) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip(" -")
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3].rstrip()}..."
+
+
+def _content_sentences(content: str) -> List[str]:
+    cleaned = re.sub(
+        r"RESUMO VALIDADO DA AULA:|TRANSCRIÇÃO DA AULA:",
+        "\n",
+        content or "",
+        flags=re.IGNORECASE,
+    )
+    parts = re.split(r"(?<=[.!?])\s+|\n+", cleaned)
+    sentences = []
+    seen = set()
+    for part in parts:
+        sentence = _compact_text(part, limit=220)
+        if len(sentence) < 45:
+            continue
+        key = sentence.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        sentences.append(sentence)
+    return sentences[:80]
+
+
+def _topic_from_sentence(sentence: str, fallback: str) -> str:
+    words = re.findall(r"[A-Za-zÀ-ÿ0-9_]{4,}", sentence.lower())
+    keywords = [
+        word for word in words
+        if word not in _QUIZ_STOPWORDS and not word.isdigit()
+    ]
+    topic = " ".join(keywords[:3]).strip()
+    return topic.title() if topic else fallback
+
+
+def _fallback_options(
+    correct_sentence: str,
+    sentences: Sequence[str],
+    index: int,
+) -> List[Dict[str, Any]]:
+    distractors = [
+        sentence for sentence in sentences
+        if sentence != correct_sentence
+    ][:3]
+    generic = [
+        "Um ponto não abordado diretamente no trecho selecionado.",
+        "Uma afirmação incompatível com a explicação da aula.",
+        "Uma conclusão que não aparece no resumo nem na transcrição.",
+    ]
+    while len(distractors) < 3:
+        distractors.append(generic[len(distractors)])
+
+    options = [_compact_text(correct_sentence, limit=160)] + [
+        _compact_text(item, limit=160) for item in distractors
+    ]
+    rotation = index % 4
+    rotated = options[rotation:] + options[:rotation]
+    labels = ["A", "B", "C", "D"]
+    return [
+        {
+            "label": label,
+            "texto": text,
+            "correta": text == options[0],
+        }
+        for label, text in zip(labels, rotated)
+    ]
+
+
+def _fallback_quiz_questions(
+    content: str,
+    quantidade_questoes: int,
+    tipos_questao: Sequence[str],
+    dificuldade: str,
+) -> List[Dict[str, Any]]:
+    """Monta perguntas revisaveis quando o LLM falha em estruturar JSON."""
+    sentences = _content_sentences(content)
+    if not sentences:
+        return []
+
+    requested_types = [
+        _normalize_question_type(tipo)
+        for tipo in (tipos_questao or ["multipla_escolha"])
+    ]
+    question_count = min(max(quantidade_questoes, 1), len(sentences), 10)
+    questions = []
+
+    for index, sentence in enumerate(sentences[:question_count]):
+        tipo = requested_types[index % len(requested_types)]
+        topic = _topic_from_sentence(sentence, f"Tópico {index + 1}")
+        base = {
+            "dificuldade": (
+                _normalize_difficulty(dificuldade)
+                if dificuldade != "mista"
+                else "medio"
+            ),
+            "justificativa": (
+                "Pergunta preparada automaticamente a partir de trecho da aula; "
+                "revise antes de liberar."
+            ),
+            "conceitos": [topic],
+            "topico_origem": topic,
+            "grounding_score": 0.55,
+            "verificado": False,
+            "fallback": True,
+        }
+
+        if tipo == "verdadeiro_falso":
+            questions.append({
+                **base,
+                "tipo": "verdadeiro_falso",
+                "enunciado": f"Verdadeiro ou falso: {sentence}",
+                "opcoes": [],
+                "resposta_correta": "verdadeiro",
+            })
+        elif tipo == "aberta":
+            questions.append({
+                **base,
+                "tipo": "aberta",
+                "enunciado": f"Explique, com base na aula, o ponto principal sobre {topic}.",
+                "opcoes": [],
+                "resposta_correta": sentence,
+            })
+        else:
+            questions.append({
+                **base,
+                "tipo": "multipla_escolha",
+                "enunciado": (
+                    "De acordo com a aula, qual afirmação está diretamente "
+                    f"relacionada a {topic}?"
+                ),
+                "opcoes": _fallback_options(sentence, sentences, index),
+                "resposta_correta": "Alternativa correta marcada nas opções.",
+            })
+
+    return questions
+
+
 async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
     """Nó que gera questões usando LLM."""
 
@@ -377,6 +527,25 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         return {
             "questoes_brutas": questoes,
             "tempo_estimado": int(quiz_data.get("tempo_estimado") or 15),
+            "attempts": attempts,
+        }
+
+    fallback_questions = _fallback_quiz_questions(
+        state["resumo"],
+        state["quantidade_questoes"],
+        state["tipos_questao"],
+        state["dificuldade"],
+    )
+    if fallback_questions:
+        attempts.append({
+            "llm": "content-fallback",
+            "success": True,
+            "question_count": len(fallback_questions),
+            "warning": last_error,
+        })
+        return {
+            "questoes_brutas": fallback_questions,
+            "tempo_estimado": 15,
             "attempts": attempts,
         }
 
@@ -476,16 +645,23 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
             val = validacoes_por_idx.get(idx, {})
             score = val.get("grounding_score", 0.7)
             scores.append(score)
+            is_fallback = questao.get("fallback") is True
 
             if not (questao.get("enunciado") or "").strip():
                 continue
-            if val.get("risco_alucinacao", False) is True:
+            if val.get("risco_alucinacao", False) is True and not is_fallback:
                 continue
-            if val.get("bem_formulada", True) is False and score < 0.65:
+            if (
+                val.get("bem_formulada", True) is False
+                and score < 0.65
+                and not is_fallback
+            ):
                 continue
 
             questao["grounding_score"] = score
             questao["verificado"] = (
+                not is_fallback
+                and
                 score >= 0.65 and val.get("bem_formulada", True) is not False
             )
             questoes_filtradas.append(questao)

@@ -291,6 +291,11 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     );
   }
 
+  bool get _hasReviewWarnings => _generatedQuestions.any(
+        (question) =>
+            question['verificado'] == false || question['fallback'] == true,
+      );
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -451,6 +456,34 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const SizedBox(height: 8),
+                        if (_hasReviewWarnings) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.orange[50],
+                              border: Border.all(color: Colors.orange),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Colors.orange,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Há perguntas geradas com baixa confiança. Revise antes de liberar.',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         ..._generatedQuestions
                             .take(8)
                             .toList()

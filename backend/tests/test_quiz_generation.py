@@ -150,6 +150,8 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
     assert response.status == "draft"
     assert response.tempo_estimado_resposta == 7
     assert response.questoes[0].dificuldade == "dificil"
+    assert response.questoes[0].grounding_score == 0.91
+    assert response.questoes[0].verificado is True
     assert db.commits == 1
 
 
@@ -515,4 +517,49 @@ def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
     )
 
     assert len(result["questoes"]) == 1
+    assert result["questoes"][0]["verificado"] is False
+
+
+def test_quiz_service_builds_reviewable_fallback_when_llm_returns_no_json(monkeypatch):
+    async def fake_candidates(_preferred=None):
+        return ["bad-llm"]
+
+    async def fake_resolve(_preferred=None):
+        return "bad-llm"
+
+    async def fake_dispatch_single(**_kwargs):
+        return {"content": "Nao consegui montar o JSON solicitado."}
+
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "_candidate_llms_for_quiz",
+        fake_candidates,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "_resolve_llm_for_quiz",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "dispatch_single",
+        fake_dispatch_single,
+    )
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo=(
+                "O modelo entidade relacionamento organiza dados em entidades, "
+                "atributos e relacionamentos para apoiar o planejamento do banco. "
+                "A aula destacou que atributos descrevem características das "
+                "entidades e que relacionamentos representam associações."
+            ),
+            disciplina="Banco de Dados",
+            titulo_aula="DER",
+            quantidade_questoes=3,
+        )
+    )
+
+    assert len(result["questoes"]) >= 1
+    assert result["questoes"][0]["fallback"] is True
     assert result["questoes"][0]["verificado"] is False
