@@ -38,7 +38,7 @@ Sistema de quiz onde:
 │ 3. Clica "Preparar Perguntas"       │
 │    (LangGraph: Generate → Validate →│
 │     Filter)                         │
-│ 4. Confere perguntas validadas      │
+│ 4. Confere perguntas preparadas     │
 │ 5. Clica "Liberar QR Code"          │
 │ 6. Recebe: Quiz ID + QR Code        │
 │    ┌──────────────────────────┐    │
@@ -430,7 +430,7 @@ Cache-Control: public, max-age=3600
 1. Clica "Preparar Perguntas"
 2. Seleciona: Prática, 10 questões, Mista
 3. Backend executa LangGraph usando resumo + transcrição
-4. Questões validadas com grounding_score >= 0.65
+4. Questões recebem score de confiança e sinalização de revisão
 5. Quiz salvo como draft com quiz_id="quiz-abc123"
 ```
 

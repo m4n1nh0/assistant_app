@@ -2,14 +2,12 @@
 
 import json
 import re
-import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
-from .llm_routing_service import pick_auto_llm, rank_auto_llms, FREE_LOCAL_LLMS
+from .llm_routing_service import pick_auto_llm, rank_auto_llms
 from .llm_service import dispatch_single
 from .user_llm_config_service import runtime_settings
 
@@ -113,17 +111,202 @@ class QuizGraphState(dict):
     attempts: List[Dict[str, Any]] = []
 
 
+async def _candidate_llms_for_quiz(preferred: Optional[str] = None) -> List[str]:
+    """Resolve candidatos para quiz, priorizando modelos melhores em JSON."""
+    if preferred and preferred not in {"auto", ""}:
+        return [preferred]
+
+    ranked = await rank_auto_llms(
+        settings.active_llms,
+        task="code",
+        available_only=True,
+    )
+    if not ranked:
+        ranked = await rank_auto_llms(settings.active_llms, task="code")
+    fallback = [await pick_auto_llm(settings.active_llms) or "llama"]
+    return (ranked or fallback)[:3]
+
+
 async def _resolve_llm_for_quiz(preferred: Optional[str] = None) -> str:
     """Resolve qual LLM usar para geração de quiz."""
-    if preferred and preferred not in {"auto", ""}:
-        return preferred
-    return await pick_auto_llm(settings.active_llms) or "llama"
+    return (await _candidate_llms_for_quiz(preferred))[0]
+
+
+def _json_from_content(content: str) -> Dict[str, Any]:
+    """Extrai JSON mesmo quando o modelo envolve a resposta em texto."""
+    json_match = re.search(r'\{.*\}', content or "", re.DOTALL)
+    if json_match:
+        parsed = json.loads(json_match.group())
+        return parsed if isinstance(parsed, dict) else {}
+
+    list_match = re.search(r'\[.*\]', content or "", re.DOTALL)
+    if list_match:
+        parsed = json.loads(list_match.group())
+        return {"questoes": parsed} if isinstance(parsed, list) else {}
+
+    return {}
+
+
+def _normalize_question_type(value: Any, fallback: str = "multipla_escolha") -> str:
+    raw = str(value or fallback).strip().lower()
+    raw = raw.replace("-", "_").replace(" ", "_")
+    aliases = {
+        "multiple_choice": "multipla_escolha",
+        "multipla": "multipla_escolha",
+        "múltipla_escolha": "multipla_escolha",
+        "verdadeiro/falso": "verdadeiro_falso",
+        "true_false": "verdadeiro_falso",
+        "vf": "verdadeiro_falso",
+        "dissertativa": "aberta",
+        "open": "aberta",
+        "open_ended": "aberta",
+    }
+    return aliases.get(raw, raw if raw in {"multipla_escolha", "verdadeiro_falso", "aberta"} else fallback)
+
+
+def _normalize_difficulty(value: Any) -> str:
+    raw = str(value or "medio").strip().lower()
+    aliases = {
+        "fácil": "facil",
+        "easy": "facil",
+        "media": "medio",
+        "média": "medio",
+        "intermediaria": "medio",
+        "intermediária": "medio",
+        "medium": "medio",
+        "difícil": "dificil",
+        "hard": "dificil",
+    }
+    return aliases.get(raw, raw if raw in {"facil", "medio", "dificil"} else "medio")
+
+
+def _question_text(item: Dict[str, Any]) -> str:
+    for key in ("enunciado", "pergunta", "question", "texto", "statement"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _correct_answer(item: Dict[str, Any]) -> str:
+    for key in ("resposta_correta", "correct_answer", "gabarito", "answer", "resposta"):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _raw_options(item: Dict[str, Any]) -> Any:
+    for key in ("opcoes", "alternativas", "options", "choices"):
+        if key in item:
+            return item.get(key)
+    return []
+
+
+def _normalize_options(raw_options: Any, correct_answer: str) -> List[Dict[str, Any]]:
+    if isinstance(raw_options, dict):
+        iterable = [
+            {"label": str(label), "texto": text}
+            for label, text in raw_options.items()
+        ]
+    elif isinstance(raw_options, list):
+        iterable = raw_options
+    else:
+        iterable = []
+
+    normalized = []
+    correct_norm = correct_answer.strip().lower()
+    for index, option in enumerate(iterable):
+        label = chr(ord("A") + index)
+        texto = ""
+        correta = False
+
+        if isinstance(option, dict):
+            label = str(option.get("label") or option.get("letra") or label).strip().upper()
+            texto = str(option.get("texto") or option.get("text") or option.get("value") or "").strip()
+            correta = bool(option.get("correta") or option.get("correct") or option.get("is_correct"))
+        else:
+            texto = str(option).strip()
+
+        if not texto:
+            continue
+
+        if correct_norm and (
+            label.lower() == correct_norm
+            or texto.lower() == correct_norm
+            or correct_norm in {f"{label.lower()})", f"{label.lower()}."}
+        ):
+            correta = True
+
+        normalized.append({
+            "label": label or chr(ord("A") + len(normalized)),
+            "texto": texto,
+            "correta": correta,
+        })
+
+    if normalized and not any(option["correta"] for option in normalized):
+        normalized[0]["correta"] = True
+
+    return normalized
+
+
+def _normalize_question(item: Any, tipos_questao: Sequence[str]) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+
+    enunciado = _question_text(item)
+    if not enunciado:
+        return None
+
+    fallback_type = tipos_questao[0] if tipos_questao else "multipla_escolha"
+    tipo = _normalize_question_type(item.get("tipo") or item.get("type"), fallback_type)
+    resposta_correta = _correct_answer(item)
+    opcoes = _normalize_options(_raw_options(item), resposta_correta)
+
+    if tipo == "verdadeiro_falso":
+        opcoes = []
+        answer_norm = resposta_correta.strip().lower()
+        if answer_norm in {"true", "verdade", "v", "sim"}:
+            resposta_correta = "verdadeiro"
+        elif answer_norm in {"false", "falso", "f", "não", "nao"}:
+            resposta_correta = "falso"
+    elif tipo == "multipla_escolha" and len(opcoes) < 2:
+        tipo = "aberta"
+        opcoes = []
+
+    return {
+        "tipo": tipo,
+        "dificuldade": _normalize_difficulty(item.get("dificuldade") or item.get("difficulty")),
+        "enunciado": enunciado,
+        "opcoes": opcoes,
+        "resposta_correta": resposta_correta,
+        "justificativa": str(item.get("justificativa") or item.get("feedback") or item.get("explanation") or "").strip(),
+        "conceitos": item.get("conceitos") or item.get("conceitos_relacionados") or item.get("concepts") or [],
+        "topico_origem": item.get("topico_origem") or item.get("source_topic") or item.get("topico"),
+    }
+
+
+def _normalize_questions(data: Dict[str, Any], tipos_questao: Sequence[str]) -> List[Dict[str, Any]]:
+    raw_questions = (
+        data.get("questoes")
+        or data.get("perguntas")
+        or data.get("questions")
+        or data.get("items")
+        or []
+    )
+    if not isinstance(raw_questions, list):
+        return []
+
+    normalized = []
+    for item in raw_questions:
+        question = _normalize_question(item, tipos_questao)
+        if question:
+            normalized.append(question)
+    return normalized
 
 
 async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
     """Nó que gera questões usando LLM."""
-
-    llm_name = await _resolve_llm_for_quiz(state.get("requested_llm"))
 
     prompt = QUIZ_GENERATION_PROMPT.format(
         quantidade_questoes=state["quantidade_questoes"],
@@ -134,58 +317,76 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         dificuldade=state["dificuldade"],
     )
 
-    try:
-        response = await dispatch_single(
-            prompt=prompt,
-            llm=llm_name,
-            temperature=0.7,
-        )
+    attempts = []
+    last_error = "A IA não gerou perguntas aproveitáveis."
+    for llm_name in await _candidate_llms_for_quiz(state.get("requested_llm")):
+        try:
+            response = await dispatch_single(
+                prompt=prompt,
+                llm=llm_name,
+                temperature=0.7,
+            )
+        except Exception as e:
+            last_error = f"Erro ao chamar LLM {llm_name}: {e}"
+            logger.warning(last_error)
+            attempts.append({
+                "llm": llm_name,
+                "success": False,
+                "error": str(e),
+                "question_count": 0,
+            })
+            continue
 
         if response.get("is_error"):
+            last_error = f"Falha ao gerar questões: {response.get('content')}"
             logger.error(f"LLM error: {response.get('content')}")
-            return {
-                "outcome": {
-                    "error": f"Falha ao gerar questões: {response.get('content')}",
-                    "questoes": [],
-                }
-            }
+            attempts.append({
+                "llm": llm_name,
+                "success": False,
+                "error": response.get("content"),
+                "question_count": 0,
+            })
+            continue
 
         # Parse JSON da resposta
         content = response.get("content", "")
-
-        # Tenta extrair JSON do conteúdo
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if not json_match:
+        try:
+            quiz_data = _json_from_content(content)
+        except Exception as e:
+            last_error = f"Resposta do LLM sem JSON válido: {e}"
             logger.error(f"No JSON found in response: {content[:200]}")
-            return {
-                "outcome": {
-                    "error": "Resposta do LLM sem formato JSON válido",
-                    "questoes": [],
-                }
-            }
+            attempts.append({
+                "llm": llm_name,
+                "success": False,
+                "error": str(e),
+                "question_count": 0,
+            })
+            continue
 
-        quiz_data = json.loads(json_match.group())
+        questoes = _normalize_questions(quiz_data, state["tipos_questao"])
+        attempts.append({
+            "llm": llm_name,
+            "success": bool(questoes),
+            "question_count": len(questoes),
+        })
+        if not questoes:
+            last_error = "Resposta do LLM sem perguntas estruturadas."
+            logger.warning(f"Quiz generation returned no questions from {llm_name}")
+            continue
 
         return {
-            "questoes_brutas": quiz_data.get("questoes", []),
+            "questoes_brutas": questoes,
             "tempo_estimado": int(quiz_data.get("tempo_estimado") or 15),
-            "attempts": [
-                {
-                    "llm": llm_name,
-                    "success": True,
-                    "question_count": len(quiz_data.get("questoes", [])),
-                }
-            ]
+            "attempts": attempts,
         }
 
-    except Exception as e:
-        logger.error(f"Quiz generation error: {e}")
-        return {
-            "outcome": {
-                "error": f"Erro ao processar geração de quiz: {str(e)}",
-                "questoes": [],
-            }
+    return {
+        "outcome": {
+            "error": last_error,
+            "questoes": [],
+            "attempts": attempts,
         }
+    }
 
 
 async def _quiz_validate_node(state: QuizGraphState) -> Dict[str, Any]:
@@ -260,8 +461,13 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
         ]
         media_score = 0.8
     else:
-        # Filtra apenas questões com grounding_score > 0.7
-        validacoes_por_idx = {v["indice"]: v for v in validacoes.get("validacoes", [])}
+        # A validacao anota confianca. Como o professor revisa antes de publicar,
+        # descartamos apenas item malformado ou sinalizado como alucinacao.
+        validacoes_por_idx = {
+            int(v.get("indice", idx)): v
+            for idx, v in enumerate(validacoes.get("validacoes", []))
+            if isinstance(v, dict)
+        }
 
         questoes_filtradas = []
         scores = []
@@ -271,14 +477,18 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
             score = val.get("grounding_score", 0.7)
             scores.append(score)
 
-            if (
-                score >= 0.65
-                and val.get("bem_formulada", True) is not False
-                and val.get("risco_alucinacao", False) is not True
-            ):
-                questao["grounding_score"] = score
-                questao["verificado"] = val.get("bem_formulada", True)
-                questoes_filtradas.append(questao)
+            if not (questao.get("enunciado") or "").strip():
+                continue
+            if val.get("risco_alucinacao", False) is True:
+                continue
+            if val.get("bem_formulada", True) is False and score < 0.65:
+                continue
+
+            questao["grounding_score"] = score
+            questao["verificado"] = (
+                score >= 0.65 and val.get("bem_formulada", True) is not False
+            )
+            questoes_filtradas.append(questao)
 
         media_score = sum(scores) / len(scores) if scores else 0.0
 

@@ -21,7 +21,7 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 - [x] Tipos `multipla_escolha`, `verdadeiro_falso` e `aberta`.
 - [x] Configurações de tipo, quantidade, dificuldade, tipos de questão e LLM respeitadas pela API.
 - [x] Compartilhamento por link e QR Code.
-- [x] Publicação em duas etapas: preparar perguntas validadas e só depois liberar QR Code.
+- [x] Publicação em duas etapas: preparar perguntas revisáveis e só depois liberar QR Code.
 - [x] Monitoramento em tempo real via WebSocket.
 - [x] Encerramento manual do quiz pelo professor, bloqueando novas respostas.
 

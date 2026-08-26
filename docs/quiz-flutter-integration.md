@@ -9,7 +9,7 @@
 - [x] Widget usado dentro da aba dedicada `6. QUIZ`, não na gravação ao vivo.
 - [x] A aba lista apenas aulas encerradas.
 - [x] A geração fica bloqueada quando a aula não tem resumo.
-- [x] Ao gerar, a interface mostra as perguntas validadas antes de liberar o QR Code.
+- [x] Ao gerar, a interface mostra as perguntas preparadas antes de liberar o QR Code.
 - [x] O monitor de QR Code abre somente após clicar em `Liberar QR Code`.
 - [x] Links copiados usam `api.baseUrl`, não domínio placeholder.
 - [x] QR autenticado carrega com header `Authorization`.
@@ -130,7 +130,7 @@ Backend:
 
 ### Passo 3: Perguntas Preparadas com Sucesso
 
-O Flutter lista as perguntas validadas para conferência do professor.
+O Flutter lista as perguntas preparadas para conferência do professor.
 O QR Code ainda não é exibido nesta etapa.
 
 ### Passo 4: Professor Clica "Liberar QR Code"

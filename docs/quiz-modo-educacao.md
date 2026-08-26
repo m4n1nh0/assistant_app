@@ -33,7 +33,7 @@ Professor (Flutter Desktop)
     ├─ Seleciona aula com resumo
     ├─ Clica "Preparar Perguntas"
     │   └─ Backend: LangGraph (Generate → Validate → Filter)
-    ├─ Confere as perguntas validadas
+    ├─ Confere as perguntas preparadas
     ├─ Clica "Liberar QR Code"
     └─ Compartilha link: /education/quiz/{quiz_id}/play
 

@@ -64,6 +64,7 @@ class QuizCloseDb:
     async def refresh(self, _item):
         self.refreshes += 1
 
+
 def _lesson(status="closed", summary="Resumo da aula"):
     return SimpleNamespace(
         id="lesson-1",
@@ -297,6 +298,9 @@ def test_quiz_qrcode_svg_generation_produces_svg_content():
 
 
 def test_quiz_service_preserves_estimated_time(monkeypatch):
+    async def fake_candidates(_preferred=None):
+        return ["fake-llm"]
+
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
@@ -342,6 +346,11 @@ def test_quiz_service_preserves_estimated_time(monkeypatch):
 
     monkeypatch.setattr(
         quiz_generator_service,
+        "_candidate_llms_for_quiz",
+        fake_candidates,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
         "_resolve_llm_for_quiz",
         fake_resolve,
     )
@@ -362,3 +371,148 @@ def test_quiz_service_preserves_estimated_time(monkeypatch):
 
     assert result["tempo_estimado"] == 9
     assert result["questoes"][0]["grounding_score"] == 0.92
+
+
+def test_quiz_service_normalizes_alternate_llm_question_shape(monkeypatch):
+    async def fake_candidates(_preferred=None):
+        return ["fake-llm"]
+
+    async def fake_resolve(_preferred=None):
+        return "fake-llm"
+
+    async def fake_dispatch_single(**kwargs):
+        prompt = kwargs["prompt"]
+        if "Formato de resposta" in prompt:
+            return {
+                "content": """
+                {
+                  "questions": [
+                    {
+                      "type": "multiple_choice",
+                      "difficulty": "medium",
+                      "question": "Qual atributo identifica a entidade?",
+                      "choices": ["Nome", "CPF", "Cor", "Altura"],
+                      "correct_answer": "B",
+                      "explanation": "A transcrição cita CPF como identificador.",
+                      "concepts": ["entidade", "atributo"]
+                    }
+                  ],
+                  "tempo_estimado": 6
+                }
+                """
+            }
+        return {
+            "content": """
+            {
+              "validacoes": [
+                {
+                  "indice": 0,
+                  "grounding_score": 0.66,
+                  "bem_formulada": true,
+                  "risco_alucinacao": false
+                }
+              ]
+            }
+            """
+        }
+
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "_candidate_llms_for_quiz",
+        fake_candidates,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "_resolve_llm_for_quiz",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "dispatch_single",
+        fake_dispatch_single,
+    )
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo sobre entidades e atributos.",
+            disciplina="Banco de Dados",
+            titulo_aula="DER",
+            quantidade_questoes=1,
+        )
+    )
+
+    question = result["questoes"][0]
+    assert question["tipo"] == "multipla_escolha"
+    assert question["dificuldade"] == "medio"
+    assert question["enunciado"] == "Qual atributo identifica a entidade?"
+    assert question["opcoes"][1]["correta"] is True
+
+
+def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
+    async def fake_candidates(_preferred=None):
+        return ["fake-llm"]
+
+    async def fake_resolve(_preferred=None):
+        return "fake-llm"
+
+    async def fake_dispatch_single(**kwargs):
+        prompt = kwargs["prompt"]
+        if "Formato de resposta" in prompt:
+            return {
+                "content": """
+                {
+                  "questoes": [
+                    {
+                      "tipo": "verdadeiro_falso",
+                      "dificuldade": "facil",
+                      "enunciado": "O DER usa entidades e atributos?",
+                      "opcoes": [],
+                      "resposta_correta": "verdadeiro",
+                      "justificativa": "Baseado no conteúdo da aula."
+                    }
+                  ]
+                }
+                """
+            }
+        return {
+            "content": """
+            {
+              "validacoes": [
+                {
+                  "indice": 0,
+                  "grounding_score": 0.52,
+                  "bem_formulada": true,
+                  "risco_alucinacao": false
+                }
+              ]
+            }
+            """
+        }
+
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "_candidate_llms_for_quiz",
+        fake_candidates,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "_resolve_llm_for_quiz",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        quiz_generator_service,
+        "dispatch_single",
+        fake_dispatch_single,
+    )
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo sobre DER, entidades e atributos.",
+            disciplina="Banco de Dados",
+            titulo_aula="DER",
+            quantidade_questoes=1,
+        )
+    )
+
+    assert len(result["questoes"]) == 1
+    assert result["questoes"][0]["verificado"] is False

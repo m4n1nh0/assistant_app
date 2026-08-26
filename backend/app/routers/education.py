@@ -2194,7 +2194,7 @@ async def generate_quiz_from_lesson(
         tempo_estimado_resposta=quiz_data.get("tempo_estimado", 15),
         status="draft",
         message=(
-            f"{len(questoes_responses)} questões geradas e validadas. "
+            f"{len(questoes_responses)} questões preparadas para revisão. "
             "Libere o QR Code quando estiver pronto para aplicar."
         )
     )
