@@ -25,9 +25,11 @@ class ApiService {
   WebSocketChannel? _ws;
   StreamController<Map<String, dynamic>>? _wsStream;
 
-  ApiService({String backendUrl = AppConfig.defaultBackendUrl})
-      : baseUrl = _normalizeHttpUrl(backendUrl),
-        wsUrl = _toWsUrl(_normalizeHttpUrl(backendUrl));
+  ApiService({String? backendUrl})
+      : baseUrl = _normalizeHttpUrl(backendUrl ?? AppConfig.defaultBackendUrl),
+        wsUrl = _toWsUrl(
+          _normalizeHttpUrl(backendUrl ?? AppConfig.defaultBackendUrl),
+        );
 
   /// Reponta o cliente para outro backend em runtime (chamado ao carregar ou
   /// salvar as configurações). Sobrescreve [baseUrl] e [wsUrl].
@@ -59,18 +61,17 @@ class ApiService {
 
   String? get token => _token;
 
-  String _friendlyNetworkError(Object error) {
+  String friendlyNetworkError(Object error) {
     final message = error.toString();
     if (message.contains('Failed host lookup') ||
         message.contains('Este host não é conhecido')) {
       return 'Backend não encontrado em $baseUrl. Confira o endereço do '
-          'backend nas configurações ou use http://localhost:8000 para o '
-          'ambiente local.';
+          'backend nas configurações.';
     }
     if (message.contains('Connection refused') ||
         message.contains('Nenhuma conexão pôde ser feita')) {
       return 'Backend em $baseUrl recusou a conexão. Verifique se o servidor '
-          'local está iniciado.';
+          'está iniciado ou se este endereço é o ambiente correto.';
     }
     if (error is TimeoutException) {
       return 'Tempo esgotado ao conectar em $baseUrl.';
@@ -1303,7 +1304,7 @@ class ApiService {
         success: false,
         statusCode: 0,
         data: {},
-        error: _friendlyNetworkError(e),
+        error: friendlyNetworkError(e),
       );
     }
   }
@@ -1333,7 +1334,7 @@ class ApiService {
         success: false,
         statusCode: 0,
         data: {},
-        error: _friendlyNetworkError(e),
+        error: friendlyNetworkError(e),
       );
     }
   }

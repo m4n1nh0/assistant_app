@@ -78,6 +78,38 @@ void main() {
     expect(restored.toJson()['sendMessageOnEnter'], isFalse);
   });
 
+  test('distribution default backend can be configured at runtime', () {
+    final previous = AppConfig.defaultBackendUrl;
+    addTearDown(() => AppConfig.setDefaultBackendUrl(previous));
+
+    AppConfig.setDefaultBackendUrl('https://api.intarq.app');
+
+    expect(AppConfig.defaultBackendUrl, 'https://api.intarq.app');
+    expect(AppConfig().backendUrl, 'https://api.intarq.app');
+    expect(AppConfig.fromJson({}).backendUrl, 'https://api.intarq.app');
+  });
+
+  test('legacy local backend follows distribution default unless overridden',
+      () {
+    final previous = AppConfig.defaultBackendUrl;
+    addTearDown(() => AppConfig.setDefaultBackendUrl(previous));
+
+    AppConfig.setDefaultBackendUrl('https://api.intarq.app');
+
+    final legacy = AppConfig.fromJson({
+      'backendUrl': AppConfig.developmentBackendUrl,
+    });
+    expect(legacy.backendUrl, 'https://api.intarq.app');
+    expect(legacy.backendUrlOverride, isFalse);
+
+    final manualLocal = AppConfig.fromJson({
+      'backendUrl': AppConfig.developmentBackendUrl,
+      'backendUrlOverride': true,
+    });
+    expect(manualLocal.backendUrl, AppConfig.developmentBackendUrl);
+    expect(manualLocal.backendUrlOverride, isTrue);
+  });
+
   test('calendar reminder minutes survive backend and local payloads', () {
     final fromBackend = NotifConfig.fromJson({
       'notify_15min': true,

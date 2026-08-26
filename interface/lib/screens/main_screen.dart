@@ -48,8 +48,6 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   }
 
   Future<void> _initScreen() async {
-    await _syncBackendStatus();
-    _startBackendStatusSync();
     unawaited(_syncConnectedAgents());
 
     if (!ref.read(isAuthenticatedProvider)) {
@@ -66,6 +64,9 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
         await _showAuth();
       }
     }
+
+    unawaited(_syncBackendStatus(attempts: 1));
+    _startBackendStatusSync();
 
     if (ref.read(isAuthenticatedProvider)) {
       _startWelcome();
@@ -213,7 +214,14 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   Future<void> _showAuth() async {
     final config = ref.read(configProvider);
-    final authStatus = await api.authStatus();
+    AuthSetupStatus authStatus;
+    String backendWarning = '';
+    try {
+      authStatus = await api.authStatus();
+    } catch (e) {
+      authStatus = const AuthSetupStatus(needsSetup: false);
+      backendWarning = api.friendlyNetworkError(e);
+    }
     final storedUsername = await StorageService.loadAuthUsername() ?? '';
     if (!mounted) return;
     final username = await showDialog<String>(
@@ -228,6 +236,8 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
             authStatus.registrationDeliveryConfigured,
         adminEmailHint: authStatus.adminEmailHint,
         initialUsername: storedUsername,
+        backendUrl: api.baseUrl,
+        backendWarning: backendWarning,
       ),
     );
     if (username != null) {

@@ -76,7 +76,8 @@ class AppConfig {
   bool startMinimized;
   bool autoLaunch;
   String hotkey;
-  String backendUrl;
+  late String backendUrl;
+  late bool backendUrlOverride;
   String audioInputDeviceId;
   String audioInputDeviceLabel;
 
@@ -87,8 +88,34 @@ class AppConfig {
   int ttsRatePercent;
   int ttsPitchHz;
 
-  static const defaultBackendUrl = String.fromEnvironment('APP_BACKEND_URL',
-      defaultValue: 'http://localhost:8000');
+  static const developmentBackendUrl = 'http://localhost:8000';
+  static String defaultBackendUrl = developmentBackendUrl;
+
+  static void setDefaultBackendUrl(String value) {
+    final normalized = value.trim();
+    defaultBackendUrl = normalized.isEmpty ? developmentBackendUrl : normalized;
+  }
+
+  static ({String url, bool override}) _resolveBackendUrl(
+    String? value,
+    bool? explicitOverride,
+  ) {
+    final stored = value?.trim() ?? '';
+    if (stored.isEmpty) {
+      return (url: defaultBackendUrl, override: false);
+    }
+    if (explicitOverride != null) {
+      return (
+        url: explicitOverride ? stored : defaultBackendUrl,
+        override: explicitOverride,
+      );
+    }
+    if (stored == developmentBackendUrl &&
+        defaultBackendUrl != developmentBackendUrl) {
+      return (url: defaultBackendUrl, override: false);
+    }
+    return (url: stored, override: stored != defaultBackendUrl);
+  }
 
   AppConfig({
     this.assistantName = defaultAssistantName,
@@ -118,16 +145,18 @@ class AppConfig {
     this.ttsRatePercent = 0,
     this.ttsPitchHz = 0,
     String? backendUrl,
-  })  : backendUrl = (backendUrl == null || backendUrl.trim().isEmpty)
-            ? defaultBackendUrl
-            : backendUrl,
-        activeLlms =
+    bool? backendUrlOverride,
+  })  : activeLlms =
             activeLlms ?? {for (final id in serviceLabels.keys) id: false},
         llmLabels = {...serviceLabels, ...?llmLabels},
         llmStatuses = llmStatuses ?? {},
         connectedAgents = connectedAgents ?? {},
         notif = notif ?? NotifConfig(),
-        calendar = calendar ?? CalendarConfig();
+        calendar = calendar ?? CalendarConfig() {
+    final resolved = _resolveBackendUrl(backendUrl, backendUrlOverride);
+    this.backendUrl = resolved.url;
+    this.backendUrlOverride = resolved.override;
+  }
 
   List<String> get activeList =>
       activeLlms.entries.where((e) => e.value).map((e) => e.key).toList();
@@ -178,6 +207,7 @@ class AppConfig {
         'autoLaunch': autoLaunch,
         'hotkey': hotkey,
         'backendUrl': backendUrl,
+        'backendUrlOverride': backendUrlOverride,
         'audioInputDeviceId': audioInputDeviceId,
         'audioInputDeviceLabel': audioInputDeviceLabel,
         'ttsVoice': ttsVoice,
@@ -220,6 +250,11 @@ class AppConfig {
       autoLaunch: j['autoLaunch'] ?? false,
       hotkey: j['hotkey'] ?? 'ctrl+shift+space',
       backendUrl: j['backendUrl']?.toString(),
+      backendUrlOverride: j['backendUrlOverride'] == true
+          ? true
+          : j['backendUrlOverride'] == false
+              ? false
+              : null,
       audioInputDeviceId: j['audioInputDeviceId']?.toString() ?? '',
       audioInputDeviceLabel: j['audioInputDeviceLabel']?.toString() ?? '',
       ttsVoice: j['ttsVoice']?.toString() ?? '',

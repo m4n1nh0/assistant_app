@@ -27,6 +27,17 @@ void main() {
     expect(svc.baseUrl, AppConfig.defaultBackendUrl);
   });
 
+  test('construtor usa o backend padrao carregado em runtime', () {
+    final previous = AppConfig.defaultBackendUrl;
+    addTearDown(() => AppConfig.setDefaultBackendUrl(previous));
+
+    AppConfig.setDefaultBackendUrl('https://api.intarq.app');
+
+    final svc = ApiService();
+    expect(svc.baseUrl, 'https://api.intarq.app');
+    expect(svc.wsUrl, 'wss://api.intarq.app');
+  });
+
   test('agentes externos sao salvos por usuario e locais nao sao enviados',
       () async {
     final svc = ApiService(backendUrl: 'https://backend.test');

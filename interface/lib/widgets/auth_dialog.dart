@@ -15,6 +15,8 @@ class AuthDialog extends StatefulWidget {
   final bool registrationDeliveryConfigured;
   final String adminEmailHint;
   final String initialUsername;
+  final String backendUrl;
+  final String backendWarning;
   final ApiService? apiService;
 
   const AuthDialog({
@@ -26,6 +28,8 @@ class AuthDialog extends StatefulWidget {
     this.registrationDeliveryConfigured = false,
     this.adminEmailHint = '',
     this.initialUsername = '',
+    this.backendUrl = '',
+    this.backendWarning = '',
     this.apiService,
   });
 
@@ -271,6 +275,13 @@ class _AuthDialogState extends State<AuthDialog> {
                             color: AssistantTheme.textMuted),
                         textAlign: TextAlign.center,
                       ),
+                      if (widget.backendWarning.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        _BackendWarning(
+                          backendUrl: widget.backendUrl,
+                          message: widget.backendWarning,
+                        ),
+                      ],
                       const SizedBox(height: 24),
                       TextField(
                         key: const Key('auth-identifier'),
@@ -522,6 +533,74 @@ class _AuthDialogState extends State<AuthDialog> {
       ),
     );
   }
+}
+
+class _BackendWarning extends StatelessWidget {
+  final String backendUrl;
+  final String message;
+
+  const _BackendWarning({
+    required this.backendUrl,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AssistantTheme.danger.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: AssistantTheme.danger.withOpacity(0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'BACKEND INDISPONÍVEL',
+              style: TextStyle(
+                fontFamily: 'Rajdhani',
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2.5,
+                color: AssistantTheme.danger,
+              ),
+            ),
+            if (backendUrl.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              SelectableText(
+                backendUrl,
+                style: const TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 10,
+                  color: AssistantTheme.textSecondary,
+                ),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              message,
+              style: const TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 10,
+                color: AssistantTheme.textSecondary,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Para produção, configure o app com a URL pública do backend; '
+              'localhost deve ficar restrito ao desenvolvimento.',
+              style: TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 10,
+                color: AssistantTheme.textMuted,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _AuthBtn extends StatefulWidget {

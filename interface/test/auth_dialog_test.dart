@@ -23,4 +23,24 @@ void main() {
     expect(find.text('VOLTAR AO ACESSO'), findsOneWidget);
     expect(find.byKey(const Key('auth-identifier')), findsOneWidget);
   });
+
+  testWidgets('tela de acesso mostra aviso quando o backend esta indisponivel',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: AuthDialog(
+            assistantName: 'Assistant',
+            needsSetup: false,
+            backendUrl: 'https://api.intarq.app',
+            backendWarning: 'Backend não encontrado em https://api.intarq.app.',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('BACKEND INDISPONÍVEL'), findsOneWidget);
+    expect(find.text('https://api.intarq.app'), findsOneWidget);
+    expect(find.byKey(const Key('auth-identifier')), findsOneWidget);
+  });
 }

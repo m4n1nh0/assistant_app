@@ -452,6 +452,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     setState(() => _backendTestBusy = true);
     api.configure(typed);
     _draft.backendUrl = api.baseUrl;
+    _draft.backendUrlOverride = true;
     _backendUrlCtrl.text = api.baseUrl;
     await StorageService.saveConfig(_draft);
     ref.read(configProvider.notifier).replaceInMemory(_draft);
@@ -460,6 +461,26 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       _showSnack('Conectado em ${api.baseUrl}');
     } catch (e) {
       _showSnack('Backend salvo, mas não respondeu em ${api.baseUrl}: $e');
+    } finally {
+      if (mounted) setState(() => _backendTestBusy = false);
+    }
+  }
+
+  Future<void> _restoreDefaultBackendUrl() async {
+    _backendUrlCtrl.text = AppConfig.defaultBackendUrl;
+    setState(() => _backendTestBusy = true);
+    api.configure(AppConfig.defaultBackendUrl);
+    _draft.backendUrl = api.baseUrl;
+    _draft.backendUrlOverride = false;
+    _backendUrlCtrl.text = api.baseUrl;
+    await StorageService.saveConfig(_draft);
+    ref.read(configProvider.notifier).replaceInMemory(_draft);
+    try {
+      await api.health().timeout(const Duration(seconds: 8));
+      _showSnack('Conectado em ${api.baseUrl}');
+    } catch (e) {
+      _showSnack(
+          'Backend padrão salvo, mas não respondeu em ${api.baseUrl}: $e');
     } finally {
       if (mounted) setState(() => _backendTestBusy = false);
     }
@@ -1239,11 +1260,21 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 
   Widget _buildSystem() => _TabContent(title: 'SISTEMA', children: [
         _SectionCard(title: '🌐 CONEXÃO COM O BACKEND', children: [
+          _InfoBox(
+            'Padrão da distribuição: ${AppConfig.defaultBackendUrl}. '
+            'Em produção, esse valor vem de assets/config/app_defaults.json '
+            'ou de intarq_config.json ao lado do executável. Use localhost '
+            'apenas para desenvolvimento.',
+          ),
           _Field('ENDEREÇO DO BACKEND', _backendUrlCtrl,
               hint: 'http://localhost:8000 ou https://seu-app.up.railway.app'),
           _ActionBtn(
             label: _backendTestBusy ? 'TESTANDO...' : 'APLICAR E TESTAR',
             onTap: _backendTestBusy ? () {} : _applyBackendUrl,
+          ),
+          _ActionBtn(
+            label: 'RESTAURAR PADRÃO DO APP',
+            onTap: _backendTestBusy ? () {} : _restoreDefaultBackendUrl,
           ),
         ]),
         _SectionCard(title: '🔊 VOZ DA ASSISTENTE', children: [

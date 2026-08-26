@@ -16,6 +16,7 @@ import 'screens/config_screen.dart';
 import 'screens/main_screen.dart';
 import 'utils/theme.dart';
 import 'models/hive_adapters.dart';
+import 'services/app_defaults_service.dart';
 import 'services/in_app_notification_service.dart';
 
 void main() async {
@@ -41,6 +42,8 @@ void main() async {
   await Hive.openBox('config');
   await Hive.openBox('conversations');
   await Hive.openBox('events');
+
+  await AppDefaultsService.load();
 
   await hotKeyManager.unregisterAll();
 
