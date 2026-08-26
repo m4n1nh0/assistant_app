@@ -18,9 +18,9 @@ settings = runtime_settings
 # Templates de prompts para diferentes tipos de quiz
 QUIZ_GENERATION_PROMPT = """Você é um especialista em geração de questões educacionais.
 
-Baseado no resumo da aula abaixo, gere {quantidade_questoes} questões de forma estruturada.
+Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de forma estruturada.
 
-**Resumo da Aula:**
+**Conteúdo da Aula (resumo e/ou transcrição):**
 {resumo}
 
 **Disciplina:** {disciplina}
@@ -29,11 +29,15 @@ Baseado no resumo da aula abaixo, gere {quantidade_questoes} questões de forma 
 **Dificuldade:** {dificuldade}
 
 **Instruções:**
-1. Cada questão deve derivar diretamente do resumo (não invente conteúdo)
-2. Inclua justificativas que citam a fonte no resumo
+1. Cada questão deve derivar diretamente do conteúdo da aula (não invente conteúdo)
+2. Inclua justificativas que citam a fonte no conteúdo da aula
 3. Varie entre os tipos de questão solicitados
 4. Distribua dificuldade equitativamente
-5. Inclua todos os tópicos principais do resumo
+5. Inclua todos os tópicos principais encontrados no conteúdo
+6. Para "multipla_escolha", gere exatamente 4 opções com labels A, B, C e D
+7. Para "verdadeiro_falso", deixe "opcoes" como [] e "resposta_correta" como "verdadeiro" ou "falso"
+8. Para "aberta", deixe "opcoes" como [] e escreva uma resposta esperada objetiva
+9. Responda somente com JSON válido, sem markdown e sem comentários fora do JSON
 
 **Formato de resposta (JSON):**
 {{
@@ -56,16 +60,16 @@ Baseado no resumo da aula abaixo, gere {quantidade_questoes} questões de forma 
 }}
 """
 
-VALIDATION_PROMPT = """Valide as seguintes questões geradas com base no resumo da aula.
+VALIDATION_PROMPT = """Valide as seguintes questões geradas com base no conteúdo da aula.
 
-**Resumo Original:**
+**Conteúdo Original:**
 {resumo}
 
 **Questões para Validar:**
 {questoes_json}
 
 Para cada questão, verifique:
-1. A questão derivou do resumo (grounding score 0-1)?
+1. A questão derivou do conteúdo da aula (grounding score 0-1)?
 2. A questão está bem formulada?
 3. A resposta correta está clara?
 4. Há risco de alucinação?
@@ -247,8 +251,13 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
     validacoes = state.get("validacoes", {})
 
     if not questoes_brutas or not validacoes.get("validacoes"):
-        # Se não houver validação, retorna tudo
-        questoes_filtradas = questoes_brutas
+        # Se nao houver validacao completa, segue com as questoes que possuem
+        # estrutura minima. O bloqueio final de publicacao ainda ocorre antes
+        # de liberar o QR Code.
+        questoes_filtradas = [
+            questao for questao in questoes_brutas
+            if (questao.get("enunciado") or "").strip()
+        ]
         media_score = 0.8
     else:
         # Filtra apenas questões com grounding_score > 0.7
@@ -262,7 +271,11 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
             score = val.get("grounding_score", 0.7)
             scores.append(score)
 
-            if score > 0.70:  # Threshold
+            if (
+                score >= 0.65
+                and val.get("bem_formulada", True) is not False
+                and val.get("risco_alucinacao", False) is not True
+            ):
                 questao["grounding_score"] = score
                 questao["verificado"] = val.get("bem_formulada", True)
                 questoes_filtradas.append(questao)

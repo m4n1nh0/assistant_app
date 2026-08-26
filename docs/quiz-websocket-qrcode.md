@@ -5,11 +5,11 @@
 **Aplicado em:** 2026-08-25
 **Situação:** QR Code e monitoramento WebSocket funcionais.
 
-- [x] Professor gera quiz e recebe monitor com QR Code.
+- [x] Professor prepara perguntas, confere o conteúdo validado e depois libera o QR Code.
 - [x] QR Code aponta para `/education/quiz/{quiz_id}/play`.
 - [x] URL pública do QR/share-info é derivada da requisição real, com override opcional por `base_url`.
 - [x] Endpoints PNG e SVG de QR Code disponíveis.
-- [x] Flutter abre `QuizQRCodeMonitor` após gerar quiz na aba `6. QUIZ`.
+- [x] Flutter abre `QuizQRCodeMonitor` somente após publicar o quiz validado na aba `6. QUIZ`.
 - [x] WebSocket `/ws/quiz/{quiz_id}/monitor` envia estatísticas iniciais e atualizações a cada 2 segundos.
 - [x] Contador `total_answers` representa o total real de respostas recebidas.
 - [x] Monitor permite encerrar o quiz; WebSocket informa `status` e `closed_at`.
@@ -21,7 +21,7 @@
 ## 🎯 Visão Geral
 
 Sistema de quiz onde:
-1. **Professor** gera quiz e compartilha via **QR Code**
+1. **Professor** prepara e publica quiz para compartilhar via **QR Code**
 2. **Alunos** escanean o QR Code e respondem questões
 3. **Professor** monitora em tempo real via **WebSocket** (sem polling)
 
@@ -35,16 +35,18 @@ Sistema de quiz onde:
 │                                     │
 │ 1. Abre Modo Educação               │
 │ 2. Seleciona Aula                   │
-│ 3. Clica "Gerar Quiz"               │
+│ 3. Clica "Preparar Perguntas"       │
 │    (LangGraph: Generate → Validate →│
 │     Filter)                         │
-│ 4. Recebe: Quiz ID + QR Code        │
+│ 4. Confere perguntas validadas      │
+│ 5. Clica "Liberar QR Code"          │
+│ 6. Recebe: Quiz ID + QR Code        │
 │    ┌──────────────────────────┐    │
 │    │    [QR CODE]             │    │
 │    │  https://seu-dominio.com │    │
 │    │  /education/quiz/...play │    │
 │    └──────────────────────────┘    │
-│ 5. Compartilha/Exibe QR Code        │
+│ 7. Compartilha/Exibe QR Code        │
 │    (WebSocket conectado)            │
 │                                     │
 │ 📊 Monitoramento em Tempo Real:     │
@@ -379,11 +381,14 @@ Cache-Control: public, max-age=3600
 │ 📊 Resumo da Aula                    │
 │ [Resumo completo...]                 │
 ├──────────────────────────────────────┤
-│ ✨ Gerar Quiz                        │
+│ ✨ Quiz da Aula                      │
 │ [Config: Prática, 10 q, Mista]      │
-│ [Gerar Quiz com IA]                 │
+│ [Preparar Perguntas com IA]         │
 │                                      │
-│ ✅ Quiz Gerado!                     │
+│ Perguntas preparadas                │
+│ [Liberar QR Code]                   │
+│                                      │
+│ Quiz liberado                       │
 │ ┌──────────────────────────────────┐│
 │ │                                  ││
 │ │    [QR CODE DA AULA]             ││
@@ -419,22 +424,24 @@ Cache-Control: public, max-age=3600
 
 ## 🔄 Fluxo Completo (Step by Step)
 
-### T=0s: Professor Gera Quiz
+### T=0s: Professor Prepara Perguntas
 
 ```
-1. Clica "Gerar Quiz"
+1. Clica "Preparar Perguntas"
 2. Seleciona: Prática, 10 questões, Mista
-3. Backend executa LangGraph
-4. Questões validadas com grounding_score > 0.70
-5. Quiz salvo no banco com quiz_id="quiz-abc123"
+3. Backend executa LangGraph usando resumo + transcrição
+4. Questões validadas com grounding_score >= 0.65
+5. Quiz salvo como draft com quiz_id="quiz-abc123"
 ```
 
-### T=5s: QR Code Exibido
+### T=5s: Professor Libera QR Code
 
 ```
-1. Flutter carrega imagem QR
-2. Professor exibe na tela/projetor
-3. Alunos começam a escanear
+1. Professor confere as perguntas geradas
+2. Clica "Liberar QR Code"
+3. Backend publica o quiz como open
+4. Flutter carrega imagem QR e abre o monitor
+5. Alunos começam a escanear
 ```
 
 ### T=10s: Primeira Resposta

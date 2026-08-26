@@ -1802,12 +1802,12 @@ class _QuizTabState extends State<_QuizTab> {
               lessonTitle: _lessonTitle(lesson),
               disciplineName: lesson.discipline,
               showShareDialog: false,
-              onQuizGenerated: (quizId, totalQuestions) {
+              onQuizPublished: (quizId, totalQuestions) {
                 setState(() {
                   _generatedQuizId = quizId;
                   _generatedQuizTitle = _lessonTitle(lesson);
                   _generatedQuestionCount = totalQuestions;
-                  _status = 'Quiz gerado com sucesso.';
+                  _status = 'Quiz liberado para a turma.';
                 });
                 _openMonitor();
               },

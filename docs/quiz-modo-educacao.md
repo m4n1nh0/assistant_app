@@ -9,7 +9,8 @@
 - [x] Geração permitida somente para aula encerrada.
 - [x] A aula encerrada pelo botão `ENCERRAR` abre a aba de quiz já selecionada.
 - [x] Backend usa `QuizCreateRequest` e respeita tipo, quantidade, dificuldade, tipos de questão e LLM.
-- [x] Geração baseada no resumo salvo da aula.
+- [x] Geração baseada no resumo salvo e, quando disponível, na transcrição da aula.
+- [x] Quiz nasce como `draft`; QR Code/link só são liberados depois da publicação pelo professor.
 - [x] Link público `/education/quiz/{quiz_id}/play` para alunos.
 - [x] Página HTML responsiva para o aluno responder.
 - [x] Respostas salvas no banco e comparadas com gabarito quando aplicável.
@@ -30,9 +31,10 @@ Sistema de geração e aplicação automática de quizzes integrado ao Modo Educ
 Professor (Flutter Desktop)
     ├─ Abre Modo Educação
     ├─ Seleciona aula com resumo
-    ├─ Clica "Gerar Quiz"
+    ├─ Clica "Preparar Perguntas"
     │   └─ Backend: LangGraph (Generate → Validate → Filter)
-    ├─ Recebe quiz_id
+    ├─ Confere as perguntas validadas
+    ├─ Clica "Liberar QR Code"
     └─ Compartilha link: /education/quiz/{quiz_id}/play
 
 Aluno (Browser - Mobile/Desktop)

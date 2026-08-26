@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 
-typedef QuizGeneratedCallback = void Function(
+typedef QuizPublishedCallback = void Function(
   String quizId,
   int totalQuestions,
 );
@@ -16,7 +16,7 @@ class QuizGeneratorWidget extends StatefulWidget {
   final String lessonId;
   final String lessonTitle;
   final String disciplineName;
-  final QuizGeneratedCallback? onQuizGenerated;
+  final QuizPublishedCallback? onQuizPublished;
   final bool showShareDialog;
 
   const QuizGeneratorWidget({
@@ -24,7 +24,7 @@ class QuizGeneratorWidget extends StatefulWidget {
     required this.lessonId,
     required this.lessonTitle,
     required this.disciplineName,
-    this.onQuizGenerated,
+    this.onQuizPublished,
     this.showShareDialog = true,
   });
 
@@ -34,8 +34,11 @@ class QuizGeneratorWidget extends StatefulWidget {
 
 class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   bool _isGenerating = false;
+  bool _isPublishing = false;
   String? _error;
   String? _generatedQuizId;
+  bool _quizPublished = false;
+  List<Map<String, dynamic>> _generatedQuestions = const [];
   int _questionCount = 10;
   String _quizType = 'pratica';
   String _difficulty = 'mista';
@@ -113,21 +116,23 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
         throw Exception('Resposta sem identificador do quiz');
       }
       final questions = response.data['questoes'];
+      final questionItems = questions is List
+          ? questions
+              .whereType<Map>()
+              .map((item) => item.map(
+                    (key, value) => MapEntry(key.toString(), value),
+                  ))
+              .toList()
+          : <Map<String, dynamic>>[];
       final totalQuestions =
-          questions is List ? questions.length : _questionCount;
+          questionItems.isNotEmpty ? questionItems.length : _questionCount;
 
       setState(() {
         _generatedQuizId = quizId;
+        _quizPublished = false;
+        _generatedQuestions = questionItems;
         _questionCount = totalQuestions.clamp(1, 50).toInt();
       });
-
-      // Callback para notificar parent
-      widget.onQuizGenerated?.call(quizId, totalQuestions);
-
-      // Mostra diálogo com opções
-      if (mounted && widget.showShareDialog) {
-        _showQuizShareDialog(quizId);
-      }
     } catch (e) {
       setState(() {
         _error = 'Erro ao gerar quiz: $e';
@@ -140,12 +145,57 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     }
   }
 
+  Future<void> _publishQuiz() async {
+    final quizId = _generatedQuizId;
+    if (quizId == null || _isPublishing) return;
+
+    setState(() {
+      _isPublishing = true;
+      _error = null;
+    });
+
+    try {
+      final response = await api.post(
+        '/education/quiz/$quizId/publish',
+        body: {},
+      );
+
+      if (!response.success) {
+        throw Exception(response.error ?? 'Erro ao liberar QR Code');
+      }
+
+      final questions = response.data['questoes'];
+      final totalQuestions =
+          questions is List ? questions.length : _questionCount;
+
+      setState(() {
+        _quizPublished = true;
+        _questionCount = totalQuestions.clamp(1, 50).toInt();
+      });
+
+      widget.onQuizPublished?.call(quizId, totalQuestions);
+
+      if (mounted && widget.showShareDialog) {
+        _showQuizShareDialog(quizId);
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Erro ao liberar QR Code: $e';
+      });
+      _showErrorSnackbar(_error!);
+    } finally {
+      setState(() {
+        _isPublishing = false;
+      });
+    }
+  }
+
   void _showQuizShareDialog(String quizId) {
     final link = _quizLink(quizId);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('✨ Quiz Gerado com Sucesso!'),
+        title: const Text('✨ Quiz Liberado com Sucesso!'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -155,7 +205,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            Text('Questões geradas: $_questionCount'),
+            Text('Questões liberadas: $_questionCount'),
             const SizedBox(height: 16),
             const Text('Compartilhe o link com seus alunos:'),
             const SizedBox(height: 12),
@@ -354,7 +404,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                       )
                     : const Icon(Icons.auto_awesome),
                 label: Text(
-                  _isGenerating ? 'Gerando...' : 'Gerar Quiz com IA',
+                  _isGenerating ? 'Gerando...' : 'Preparar Perguntas com IA',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -367,7 +417,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
               ),
             ),
 
-            // Se quiz foi gerado, mostra link
+            // Se quiz foi gerado, mostra perguntas antes de liberar o QR Code.
             if (_generatedQuizId != null)
               Padding(
                 padding: const EdgeInsets.only(top: 16),
@@ -386,7 +436,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                           const Icon(Icons.check_circle, color: Colors.green),
                           const SizedBox(width: 8),
                           const Text(
-                            'Quiz Gerado!',
+                            'Perguntas preparadas',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.green,
@@ -395,35 +445,92 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        'Link para compartilhar:',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 4),
-                      SelectableText(
-                        _quizLink(_generatedQuizId!),
-                        style: const TextStyle(
-                          fontFamily: 'Courier',
-                          fontSize: 12,
+                      if (_generatedQuestions.isNotEmpty) ...[
+                        Text(
+                          'Confira as perguntas antes de liberar o QR Code:',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 8),
+                        ..._generatedQuestions
+                            .take(8)
+                            .toList()
+                            .asMap()
+                            .entries
+                            .map((entry) {
+                          final index = entry.key;
+                          final question = entry.value;
+                          final enunciado =
+                              question['enunciado']?.toString().trim() ?? '';
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Text(
+                              '${index + 1}. $enunciado',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          );
+                        }),
+                        if (_generatedQuestions.length > 8)
+                          Text(
+                            '+ ${_generatedQuestions.length - 8} pergunta(s)',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        const SizedBox(height: 12),
+                      ],
+                      if (_quizPublished) ...[
+                        Text(
+                          'Link para compartilhar:',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 4),
+                        SelectableText(
+                          _quizLink(_generatedQuizId!),
+                          style: const TextStyle(
+                            fontFamily: 'Courier',
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              _copyToClipboard(_quizLink(_generatedQuizId!));
-                            },
-                            icon: const Icon(Icons.content_copy),
-                            label: const Text('Copiar'),
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: () =>
-                                _openQuizInBrowser(_generatedQuizId!),
-                            icon: const Icon(Icons.open_in_browser),
-                            label: const Text('Abrir'),
-                          ),
+                          if (!_quizPublished)
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _isPublishing ? null : _publishQuiz,
+                                icon: _isPublishing
+                                    ? const SizedBox(
+                                        height: 18,
+                                        width: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.qr_code_2),
+                                label: Text(
+                                  _isPublishing
+                                      ? 'Liberando...'
+                                      : 'Liberar QR Code',
+                                ),
+                              ),
+                            )
+                          else ...[
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                _copyToClipboard(_quizLink(_generatedQuizId!));
+                              },
+                              icon: const Icon(Icons.content_copy),
+                              label: const Text('Copiar'),
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: () =>
+                                  _openQuizInBrowser(_generatedQuizId!),
+                              icon: const Icon(Icons.open_in_browser),
+                              label: const Text('Abrir'),
+                            ),
+                          ],
                         ],
                       ),
                     ],

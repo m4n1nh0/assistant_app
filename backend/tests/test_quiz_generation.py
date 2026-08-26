@@ -32,6 +32,9 @@ class QuizDb:
     async def commit(self):
         self.commits += 1
 
+    async def execute(self, _stmt):
+        return EmptyQuestionResult()
+
 
 class EmptyQuestionResult:
     def scalars(self):
@@ -141,7 +144,9 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
     assert captured["disciplina"] == "Banco de Dados"
     quiz = next(item for item in db.added if isinstance(item, education.QuizModel))
     assert quiz.tipo_quiz == "diagnostico"
+    assert quiz.status == "draft"
     assert quiz.total_questoes == 1
+    assert response.status == "draft"
     assert response.tempo_estimado_resposta == 7
     assert response.questoes[0].dificuldade == "dificil"
     assert db.commits == 1
@@ -211,6 +216,35 @@ def test_close_quiz_marks_status_and_closed_at():
     assert quiz.closed_at is not None
     assert response.status == "closed"
     assert response.closed_at == quiz.closed_at
+    assert db.commits == 1
+    assert db.refreshes == 1
+
+
+def test_publish_quiz_marks_status_open():
+    quiz = education.QuizModel(
+        id="quiz-1",
+        tutor_id="tutor-1",
+        lesson_id="lesson-1",
+        titulo="Quiz teste",
+        tipo_quiz="pratica",
+        status="draft",
+        total_questoes=2,
+        tempo_estimado=5,
+    )
+    quiz.created_at = datetime.now(timezone.utc)
+
+    db = QuizCloseDb(quiz)
+
+    response = run(
+        education.publish_quiz(
+            "quiz-1",
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert quiz.status == "open"
+    assert response.status == "open"
     assert db.commits == 1
     assert db.refreshes == 1
 

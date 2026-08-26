@@ -13,6 +13,7 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 **Aplicado em 2026-08-25:**
 
 - [x] Geração automática de quiz a partir do resumo salvo da aula.
+- [x] Geração usa resumo e transcrição disponível como base para o LangGraph.
 - [x] Regra de produto: quiz só em aba própria e somente após encerrar a gravação.
 - [x] Backend com grafo Generate → Validate → Filter.
 - [x] Validação por grounding score e persistência de `grounding_score`.
@@ -20,6 +21,7 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 - [x] Tipos `multipla_escolha`, `verdadeiro_falso` e `aberta`.
 - [x] Configurações de tipo, quantidade, dificuldade, tipos de questão e LLM respeitadas pela API.
 - [x] Compartilhamento por link e QR Code.
+- [x] Publicação em duas etapas: preparar perguntas validadas e só depois liberar QR Code.
 - [x] Monitoramento em tempo real via WebSocket.
 - [x] Encerramento manual do quiz pelo professor, bloqueando novas respostas.
 
@@ -279,15 +281,17 @@ CREATE TABLE respostas_alunos (
 
 **Flow:**
 ```
-[Aula Detalhe] → [Botão "Gerar Quiz"]
+[Aula Detalhe] → [Botão "Preparar Perguntas"]
                       ↓
               [Formulário de Config]
                       ↓
-              [Preview + Validação]
+              [LangGraph + Validação]
                       ↓
-              [Salvar Quiz]
+              [Salvar Quiz como draft]
                       ↓
-              [Compartilhar QR / PDF]
+              [Liberar QR Code]
+                      ↓
+              [Compartilhar Link / QR]
 ```
 
 ---

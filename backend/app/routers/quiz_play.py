@@ -39,6 +39,8 @@ _PUBLIC_TEXT = {
         "unavailable_message": "Este quiz não existe ou foi removido.",
         "closed_title": "Quiz encerrado",
         "closed_message": "O professor encerrou o recebimento de respostas.",
+        "draft_title": "Quiz ainda não liberado",
+        "draft_message": "Aguarde o professor liberar o QR Code para a turma.",
         "empty_title": "Quiz sem perguntas",
         "empty_message": "Este quiz foi criado sem perguntas válidas. Gere um novo quiz.",
         "completed_title": "Quiz Completado! 🎉",
@@ -65,6 +67,8 @@ _PUBLIC_TEXT = {
         "unavailable_message": "Este cuestionario no existe o ha sido eliminado.",
         "closed_title": "Cuestionario finalizado",
         "closed_message": "El profesor cerró la recepción de respuestas.",
+        "draft_title": "Cuestionario aún no liberado",
+        "draft_message": "Espera a que el profesor libere el código QR para la clase.",
         "empty_title": "Cuestionario sin preguntas",
         "empty_message": "Este cuestionario se creó sin preguntas válidas. Genera uno nuevo.",
         "completed_title": "¡Cuestionario completado! 🎉",
@@ -91,6 +95,8 @@ _PUBLIC_TEXT = {
         "unavailable_message": "This quiz does not exist or has been removed.",
         "closed_title": "Quiz closed",
         "closed_message": "The teacher has closed answer submissions.",
+        "draft_title": "Quiz not released yet",
+        "draft_message": "Wait for the teacher to release the QR Code to the class.",
         "empty_title": "Quiz has no questions",
         "empty_message": "This quiz was created without valid questions. Generate a new one.",
         "completed_title": "Quiz Completed! 🎉",
@@ -463,6 +469,37 @@ p{{color:#6b7280;font-size:15px;margin:0}}
     )
 
 
+def _generate_draft_page(*, language: str = "pt") -> HTMLResponse:
+    """Gera pagina informando que o quiz ainda nao foi liberado."""
+
+    language = _normalize_public_language(language) or "pt"
+    text = _PUBLIC_TEXT[language]
+
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="{text["html_lang"]}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{text["page_prefix"]}</title>
+<style>
+*{{box-sizing:border-box}}
+body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+min-height:100vh;display:grid;place-items:center;padding:20px}}
+main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
+box-shadow:0 14px 35px #11182740;text-align:center;}}
+h1{{font-size:24px;margin:0 0 10px;color:#1f2937}}
+p{{color:#6b7280;font-size:15px;margin:0}}
+</style></head><body><main>
+<h1>{text["draft_title"]}</h1>
+<p>{text["draft_message"]}</p>
+</main></body></html>""",
+        status_code=403,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Language": language,
+        },
+    )
+
+
 @router.get("/{quiz_token}/play", response_class=HTMLResponse)
 async def quiz_play_page(
     quiz_token: str,
@@ -501,6 +538,8 @@ p{{color:#6b7280;font-size:14px;margin:0}}
 
     if quiz.status == "closed":
         return _generate_closed_page(language=language)
+    if quiz.status != "open":
+        return _generate_draft_page(language=language)
 
     attempt_id = _attempt_id(request, quiz_token)
 
@@ -566,6 +605,8 @@ async def quiz_submit_answer(
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
     if quiz.status == "closed":
         return _generate_closed_page(language=language)
+    if quiz.status != "open":
+        return _generate_draft_page(language=language)
 
     attempt_id = _attempt_id(request, quiz_token)
 

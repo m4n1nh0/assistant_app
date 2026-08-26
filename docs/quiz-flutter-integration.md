@@ -9,7 +9,8 @@
 - [x] Widget usado dentro da aba dedicada `6. QUIZ`, não na gravação ao vivo.
 - [x] A aba lista apenas aulas encerradas.
 - [x] A geração fica bloqueada quando a aula não tem resumo.
-- [x] Ao gerar, o monitor de QR Code abre automaticamente.
+- [x] Ao gerar, a interface mostra as perguntas validadas antes de liberar o QR Code.
+- [x] O monitor de QR Code abre somente após clicar em `Liberar QR Code`.
 - [x] Links copiados usam `api.baseUrl`, não domínio placeholder.
 - [x] QR autenticado carrega com header `Authorization`.
 - [x] Monitor inclui botão `Encerrar Quiz`, com confirmação e bloqueio de novas respostas.
@@ -59,15 +60,15 @@ class _LessonDetailScreenState extends State<LessonDetailScreen> {
             
             const SizedBox(height: 20),
             
-            // ⭐ Novo: Widget de Quiz
+            // Widget de Quiz
             QuizGeneratorWidget(
               lessonId: widget.lessonId,
               lessonTitle: widget.lessonTitle,
               disciplineName: widget.disciplineName,
-              onQuizGenerated: () {
+              onQuizPublished: (quizId, totalQuestions) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Quiz gerado com sucesso!'),
+                    content: Text('Quiz liberado para a turma.'),
                     backgroundColor: Colors.green,
                   ),
                 );
@@ -102,37 +103,46 @@ class _LessonDetailScreenState extends State<LessonDetailScreen> {
 │ 📊 Resumo                          │
 │ [Resumo completo da aula...]       │
 ├────────────────────────────────────┤
-│ ✨ Gerar Quiz                      │ ← NEW
+│ ✨ Quiz da Aula                    │ ← NEW
 │                                    │
 │ Tipo: [Prática ▼]  Dif: [Mista ▼] │
 │ Questões: ████░ (10)              │
 │                                    │
-│  [Gerar Quiz com IA]              │
+│  [Preparar Perguntas com IA]      │
+│  [Liberar QR Code]                │
 ├────────────────────────────────────┤
 │ 📍 Chamada por QR Code             │
 │  [Iniciar Chamada]                 │
 └────────────────────────────────────┘
 ```
 
-### Passo 2: Professor Clica "Gerar Quiz"
+### Passo 2: Professor Clica "Preparar Perguntas"
 
 ```
 ⏳ Aguardando... (5-30s)
 
 Backend:
-  ├─ Generate: Prompta LLM
-  ├─ Validate: Detecta hallucinations
-  └─ Filter: Valida grounding score
+  ├─ Generate: usa resumo + transcrição
+  ├─ Validate: detecta hallucinations
+  ├─ Filter: valida grounding score
+  └─ Salva quiz como draft
 ```
 
-### Passo 3: Quiz Gerado com Sucesso
+### Passo 3: Perguntas Preparadas com Sucesso
+
+O Flutter lista as perguntas validadas para conferência do professor.
+O QR Code ainda não é exibido nesta etapa.
+
+### Passo 4: Professor Clica "Liberar QR Code"
+
+O backend publica o quiz (`draft` -> `open`) e só então o Flutter abre o monitor com QR Code/link.
 
 ```
 ┌────────────────────────────────────┐
-│ ✅ Quiz Gerado com Sucesso!        │
+│ ✅ Quiz Liberado com Sucesso!      │
 ├────────────────────────────────────┤
 │ Quiz: Normalização de BD           │
-│ Questões geradas: 10               │
+│ Questões liberadas: 10             │
 │                                    │
 │ Compartilhe com seus alunos:       │
 │                                    │
@@ -143,7 +153,7 @@ Backend:
 └────────────────────────────────────┘
 ```
 
-### Passo 4: Aluno Recebe Link e Responde
+### Passo 5: Aluno Recebe Link e Responde
 
 **No Celular/Tablet:**
 ```
@@ -493,7 +503,7 @@ QuizGeneratorWidget(
   lessonId: lesson.id,
   lessonTitle: lesson.title,
   disciplineName: lesson.discipline,
-  onQuizGenerated: _onQuizGenerated,
+  onQuizPublished: _onQuizPublished,
 ),
 ```
 
@@ -537,13 +547,18 @@ Share.share('Responda meu quiz: $quizUrl')
 │ A normalização de banco de dados... │
 │ ...conceitos de chave estrangeira..│
 │                                     │
-├─ ✨ Gerar Quiz ──────────────────┤
+├─ ✨ Quiz da Aula ────────────────┤
 │ [Tipo: Prática] [Dif: Mista]       │
 │ Questões: ████░░░░░ (10)           │
 │                                     │
-│     [Gerar Quiz com IA]            │
+│     [Preparar Perguntas com IA]    │
 │                                     │
-│ ✅ Quiz Gerado!                    │
+│ Perguntas preparadas               │
+│ 1. O que caracteriza...?           │
+│ 2. Qual entidade...?               │
+│ [Liberar QR Code]                  │
+│                                     │
+│ Quiz liberado                      │
 │ https://seu-dominio.com/quiz/...   │
 │ [Copiar] [Abrir]                   │
 │                                     │

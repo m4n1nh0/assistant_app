@@ -1423,7 +1423,7 @@ class QuizGenerateResponse(BaseModel):
     titulo: str
     questoes: List[QuestionResponse]
     tempo_estimado_resposta: int
-    status: str = "success"
+    status: str = "draft"
     message: str = ""
 
 

@@ -2065,11 +2065,33 @@ async def generate_quiz_from_lesson(
             detail="Aula sem resumo. Gere um resumo antes de criar o quiz."
         )
 
+    stmt = (
+        select(LessonSegmentModel)
+        .where(
+            LessonSegmentModel.lesson_id == lesson_id,
+            LessonSegmentModel.tutor_id == tutor_id,
+        )
+        .order_by(LessonSegmentModel.sequence, LessonSegmentModel.created_at)
+    )
+    segments = (await db.execute(stmt)).scalars().all()
+    transcript = "\n\n".join(
+        segment.text.strip()
+        for segment in segments
+        if (segment.text or "").strip()
+    )
+    if transcript:
+        contexto_quiz = (
+            f"RESUMO VALIDADO DA AULA:\n{resumo_completo}\n\n"
+            f"TRANSCRIÇÃO DA AULA:\n{transcript[:60000]}"
+        )
+    else:
+        contexto_quiz = resumo_completo
+
     disciplina_nome = lesson.discipline or "Geral"
 
     # Gera quiz via serviço
     quiz_data = await quiz_generator_service.generate_quiz(
-        resumo=resumo_completo,
+        resumo=contexto_quiz,
         disciplina=disciplina_nome,
         titulo_aula=lesson.title or "Aula",
         tipo_quiz=request.tipo_quiz,
@@ -2110,7 +2132,7 @@ async def generate_quiz_from_lesson(
         lesson_id=lesson_id,
         titulo=f"Quiz: {lesson.title or 'Aula'}",
         tipo_quiz=request.tipo_quiz,
-        status="open",
+        status="draft",
         total_questoes=len(questoes_geradas),
         tempo_estimado=quiz_data.get("tempo_estimado", 15),
     )
@@ -2170,8 +2192,11 @@ async def generate_quiz_from_lesson(
         titulo=f"Quiz: {lesson.title or 'Aula'}",
         questoes=questoes_responses,
         tempo_estimado_resposta=quiz_data.get("tempo_estimado", 15),
-        status="success",
-        message=f"{len(questoes_responses)} questões geradas com sucesso"
+        status="draft",
+        message=(
+            f"{len(questoes_responses)} questões geradas e validadas. "
+            "Libere o QR Code quando estiver pronto para aplicar."
+        )
     )
 
 
@@ -2239,6 +2264,31 @@ async def get_quiz(
     quiz = await db.get(QuizModel, quiz_id)
     if not quiz or quiz.tutor_id != tutor_id:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+
+    return await _build_quiz_response(db, quiz)
+
+
+@router.post("/quiz/{quiz_id}/publish")
+async def publish_quiz(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Libera o quiz validado para os alunos acessarem por link/QR Code."""
+
+    tutor_id = user["tutor_id"]
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status == "closed":
+        raise HTTPException(status_code=409, detail="Quiz já encerrado")
+    if quiz.total_questoes <= 0:
+        raise HTTPException(status_code=409, detail="Quiz sem perguntas")
+
+    if quiz.status != "open":
+        quiz.status = "open"
+        await db.commit()
+        await db.refresh(quiz)
 
     return await _build_quiz_response(db, quiz)
 

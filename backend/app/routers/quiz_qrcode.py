@@ -86,6 +86,11 @@ async def quiz_qrcode(
 
     if not quiz or quiz.tutor_id != user["tutor_id"]:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail="Libere o quiz antes de gerar o QR Code.",
+        )
 
     # Gera URL do quiz
     base_url = _public_base_url(request, base_url)
@@ -120,6 +125,11 @@ async def quiz_qrcode_svg(
 
     if not quiz or quiz.tutor_id != user["tutor_id"]:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail="Libere o quiz antes de gerar o QR Code.",
+        )
 
     # Gera URL do quiz
     base_url = _public_base_url(request, base_url)
@@ -152,6 +162,11 @@ async def quiz_share_info(
 
     if not quiz or quiz.tutor_id != user["tutor_id"]:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail="Libere o quiz antes de compartilhar o link.",
+        )
 
     base_url = _public_base_url(request, base_url)
     quiz_url = f"{base_url}/education/quiz/{quiz_id}/play"
