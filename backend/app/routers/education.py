@@ -2085,6 +2085,23 @@ async def generate_quiz_from_lesson(
             detail=f"Erro ao gerar quiz: {quiz_data['error']}"
         )
 
+    questoes_geradas = [
+        item for item in quiz_data.get("questoes", [])
+        if (item.get("enunciado") or "").strip()
+        and (
+            item.get("tipo") != "multipla_escolha"
+            or bool(item.get("opcoes"))
+        )
+    ]
+    if not questoes_geradas:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "A IA não gerou perguntas válidas para este quiz. "
+                "Tente novamente com menos questões ou outro tipo de quiz."
+            ),
+        )
+
     # Persiste quiz e questões no banco
     quiz_id = str(uuid.uuid4())
     quiz = QuizModel(
@@ -2094,7 +2111,7 @@ async def generate_quiz_from_lesson(
         titulo=f"Quiz: {lesson.title or 'Aula'}",
         tipo_quiz=request.tipo_quiz,
         status="open",
-        total_questoes=len(quiz_data.get("questoes", [])),
+        total_questoes=len(questoes_geradas),
         tempo_estimado=quiz_data.get("tempo_estimado", 15),
     )
     db.add(quiz)
@@ -2102,7 +2119,7 @@ async def generate_quiz_from_lesson(
     # Insere questões
     questoes_responses = []
 
-    for q_data in quiz_data.get("questoes", []):
+    for q_data in questoes_geradas:
         question_id = str(uuid.uuid4())
 
         # Serializa opcoes se for multipla escolha

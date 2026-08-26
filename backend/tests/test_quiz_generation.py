@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.routers import education
+from app.routers import quiz_play
 from app.routers import quiz_qrcode
 from app.services import quiz_generator_service
 
@@ -161,6 +162,28 @@ def test_quiz_generation_requires_summary():
     assert error.value.status_code == 400
 
 
+def test_quiz_generation_rejects_empty_question_set(monkeypatch):
+    async def fake_generate_quiz(**_kwargs):
+        return {"tempo_estimado": 5, "questoes": []}
+
+    monkeypatch.setattr(
+        education.quiz_generator_service,
+        "generate_quiz",
+        fake_generate_quiz,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.generate_quiz_from_lesson(
+                education.QuizCreateRequest(lesson_id="lesson-1"),
+                user={"tutor_id": "tutor-1"},
+                db=QuizDb(_lesson()),
+            )
+        )
+
+    assert error.value.status_code == 502
+
+
 def test_close_quiz_marks_status_and_closed_at():
     quiz = education.QuizModel(
         id="quiz-1",
@@ -190,6 +213,35 @@ def test_close_quiz_marks_status_and_closed_at():
     assert response.closed_at == quiz.closed_at
     assert db.commits == 1
     assert db.refreshes == 1
+
+
+def test_public_quiz_attempt_progress_is_scoped_per_browser():
+    q1 = education.QuestionModel(
+        id="q1",
+        quiz_id="quiz-1",
+        tipo="verdadeiro_falso",
+        dificuldade="facil",
+        enunciado="Teste 1?",
+        resposta_correta="verdadeiro",
+    )
+    q2 = education.QuestionModel(
+        id="q2",
+        quiz_id="quiz-1",
+        tipo="verdadeiro_falso",
+        dificuldade="facil",
+        enunciado="Teste 2?",
+        resposta_correta="falso",
+    )
+
+    index, question = quiz_play._next_unanswered_question(
+        [q1, q2],
+        {"q1"},
+    )
+
+    assert index == 1
+    assert question is q2
+    assert quiz_play._is_correct_answer(q1, "verdadeiro") is True
+    assert quiz_play._is_correct_answer(q2, "verdadeiro") is False
 
 
 def test_quiz_public_base_url_uses_request_when_no_override():

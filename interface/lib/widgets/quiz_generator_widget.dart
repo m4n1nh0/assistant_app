@@ -118,7 +118,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
 
       setState(() {
         _generatedQuizId = quizId;
-        _questionCount = totalQuestions;
+        _questionCount = totalQuestions.clamp(1, 50).toInt();
       });
 
       // Callback para notificar parent
@@ -304,7 +304,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
             _buildSlider(
               label: 'Número de Questões: $_questionCount',
               value: _questionCount.toDouble(),
-              min: 5,
+              min: 1,
               max: 50,
               onChanged: (value) {
                 setState(() => _questionCount = value.toInt());

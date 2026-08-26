@@ -1,6 +1,7 @@
 """Interface web para responder quizzes - Integrada ao Modo Educação."""
 
 import json
+import uuid
 from html import escape
 from typing import Optional
 
@@ -38,6 +39,8 @@ _PUBLIC_TEXT = {
         "unavailable_message": "Este quiz não existe ou foi removido.",
         "closed_title": "Quiz encerrado",
         "closed_message": "O professor encerrou o recebimento de respostas.",
+        "empty_title": "Quiz sem perguntas",
+        "empty_message": "Este quiz foi criado sem perguntas válidas. Gere um novo quiz.",
         "completed_title": "Quiz Completado! 🎉",
         "completed_message": "Suas respostas foram registradas com sucesso.",
         "correct": "✅ Correto!",
@@ -62,6 +65,8 @@ _PUBLIC_TEXT = {
         "unavailable_message": "Este cuestionario no existe o ha sido eliminado.",
         "closed_title": "Cuestionario finalizado",
         "closed_message": "El profesor cerró la recepción de respuestas.",
+        "empty_title": "Cuestionario sin preguntas",
+        "empty_message": "Este cuestionario se creó sin preguntas válidas. Genera uno nuevo.",
         "completed_title": "¡Cuestionario completado! 🎉",
         "completed_message": "Sus respuestas se registraron correctamente.",
         "correct": "✅ ¡Correcto!",
@@ -86,6 +91,8 @@ _PUBLIC_TEXT = {
         "unavailable_message": "This quiz does not exist or has been removed.",
         "closed_title": "Quiz closed",
         "closed_message": "The teacher has closed answer submissions.",
+        "empty_title": "Quiz has no questions",
+        "empty_message": "This quiz was created without valid questions. Generate a new one.",
         "completed_title": "Quiz Completed! 🎉",
         "completed_message": "Your answers have been successfully recorded.",
         "correct": "✅ Correct!",
@@ -113,6 +120,7 @@ def _public_language(request: Request, override: Optional[str]) -> str:
 def _generate_quiz_page(
     *,
     quiz_id: str,
+    question_id: str,
     question_index: int,
     total_questions: int,
     question_text: str,
@@ -168,7 +176,11 @@ def _generate_quiz_page(
 
     # Botão submit/próxima
     button_text = text["submit"] if status is None else text["next"]
-    skip_button = f'<a href="?lang={language}&skip=true" class="btn-secondary">{text["skip"]}</a>' if status is None else ""
+    skip_button = (
+        f'<button type="submit" name="skip" value="true" '
+        f'class="btn-secondary" formnovalidate>{text["skip"]}</button>'
+        if status is None else ""
+    )
 
     feedback_html = ""
     if feedback:
@@ -241,6 +253,7 @@ border-radius:5px;padding:6px 10px;font-size:12px;transition:all 0.3s}}
 <div class="question-text">{escape(question_text)}</div>
 {feedback_html}
 <form method="post" action="?lang={language}">
+<input type="hidden" name="question_id" value="{escape(question_id)}">
 {options_html}
 <div class="actions">
 {skip_button}
@@ -255,6 +268,98 @@ border-radius:5px;padding:6px 10px;font-size:12px;transition:all 0.3s}}
             "Vary": "Accept-Language",
         },
     )
+
+
+def _attempt_cookie_name(quiz_id: str) -> str:
+    return f"intarq_quiz_attempt_{quiz_id.replace('-', '_')}"
+
+
+def _attempt_id(request: Request, quiz_id: str) -> str:
+    cookie_name = _attempt_cookie_name(quiz_id)
+    existing = request.cookies.get(cookie_name, "")
+    if existing.startswith(f"{quiz_id}:"):
+        return existing
+    return f"{quiz_id}:{uuid.uuid4().hex}"
+
+
+def _attach_attempt_cookie(
+    response: HTMLResponse,
+    *,
+    quiz_id: str,
+    attempt_id: str,
+) -> HTMLResponse:
+    response.set_cookie(
+        _attempt_cookie_name(quiz_id),
+        attempt_id,
+        max_age=60 * 60 * 8,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+def _parse_options(question: QuestionModel) -> list:
+    if question.tipo != "multipla_escolha" or not question.opcoes:
+        return []
+    try:
+        decoded = json.loads(question.opcoes)
+        return decoded if isinstance(decoded, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def _is_correct_answer(question: QuestionModel, answer: Optional[str]) -> Optional[bool]:
+    if answer is None:
+        return None
+    expected = (question.resposta_correta or "").strip()
+    received = answer.strip()
+    if question.tipo == "aberta":
+        return None
+    if question.tipo == "verdadeiro_falso":
+        truthy = {"verdadeiro", "v", "true", "sim", "s", "yes"}
+        falsy = {"falso", "f", "false", "nao", "não", "n", "no"}
+        expected_bool = expected.lower() in truthy
+        if received.lower() in truthy:
+            return expected_bool
+        if received.lower() in falsy:
+            return not expected_bool
+        return False
+    return received == expected
+
+
+async def _answered_question_ids(
+    *,
+    db: AsyncSession,
+    question_ids: list[str],
+    attempt_id: str,
+) -> set[str]:
+    if not question_ids:
+        return set()
+    stmt = select(StudentAnswerModel).where(
+        StudentAnswerModel.question_id.in_(question_ids),
+        StudentAnswerModel.student_id == attempt_id,
+    )
+    answers = (await db.execute(stmt)).scalars().all()
+    return {item.question_id for item in answers}
+
+
+def _next_unanswered_question(
+    questions: list[QuestionModel],
+    answered_ids: set[str],
+) -> tuple[int, Optional[QuestionModel]]:
+    for index, question in enumerate(questions):
+        if question.id not in answered_ids:
+            return index, question
+    return len(questions), None
+
+
+def _question_by_id(
+    questions: list[QuestionModel],
+    question_id: Optional[str],
+) -> Optional[QuestionModel]:
+    if not question_id:
+        return None
+    return next((item for item in questions if item.id == question_id), None)
 
 
 def _generate_completion_page(
@@ -290,6 +395,36 @@ text-decoration:none;transition:all 0.3s}}
 <p>{text["completed_message"]}</p>
 <a href="/" class="btn">Voltar ao Dashboard</a>
 </main></body></html>""",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Language": language,
+        },
+    )
+
+
+def _generate_empty_page(*, language: str = "pt") -> HTMLResponse:
+    """Gera pagina para quiz salvo sem perguntas validas."""
+
+    language = _normalize_public_language(language) or "pt"
+    text = _PUBLIC_TEXT[language]
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="{text["html_lang"]}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{text["page_prefix"]}</title>
+<style>
+*{{box-sizing:border-box}}
+body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+min-height:100vh;display:grid;place-items:center;padding:20px}}
+main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
+box-shadow:0 14px 35px #11182740;text-align:center;}}
+h1{{font-size:24px;margin:0 0 10px;color:#dc2626}}
+p{{color:#6b7280;font-size:15px;margin:0}}
+</style></head><body><main>
+<h1>{text["empty_title"]}</h1>
+<p>{text["empty_message"]}</p>
+</main></body></html>""",
+        status_code=409,
         headers={
             "Cache-Control": "no-store",
             "Content-Language": language,
@@ -367,31 +502,45 @@ p{{color:#6b7280;font-size:14px;margin:0}}
     if quiz.status == "closed":
         return _generate_closed_page(language=language)
 
-    # Busca primeira questão
+    attempt_id = _attempt_id(request, quiz_token)
+
+    # Busca questões
     stmt = select(QuestionModel).where(
         QuestionModel.quiz_id == quiz_token
-    ).limit(1)
-    question = (await db.execute(stmt)).scalar_one_or_none()
+    ).order_by(QuestionModel.created_at, QuestionModel.id)
+    questions = (await db.execute(stmt)).scalars().all()
 
-    if not question:
-        return _generate_completion_page(language=language)
+    if not questions:
+        return _generate_empty_page(language=language)
 
-    # Parse opcoes se for multipla escolha
-    options = None
-    if question.tipo == "multipla_escolha" and question.opcoes:
-        try:
-            options = json.loads(question.opcoes)
-        except:
-            options = []
+    answered_ids = await _answered_question_ids(
+        db=db,
+        question_ids=[item.id for item in questions],
+        attempt_id=attempt_id,
+    )
+    question_index, question = _next_unanswered_question(questions, answered_ids)
 
-    return _generate_quiz_page(
+    if question is None:
+        return _attach_attempt_cookie(
+            _generate_completion_page(language=language),
+            quiz_id=quiz_token,
+            attempt_id=attempt_id,
+        )
+
+    response = _generate_quiz_page(
         quiz_id=quiz_token,
-        question_index=0,
-        total_questions=quiz.total_questoes,
+        question_id=question.id,
+        question_index=question_index,
+        total_questions=len(questions),
         question_text=question.enunciado,
         question_type=question.tipo,
-        options=options,
+        options=_parse_options(question),
         language=language,
+    )
+    return _attach_attempt_cookie(
+        response,
+        quiz_id=quiz_token,
+        attempt_id=attempt_id,
     )
 
 
@@ -401,6 +550,8 @@ async def quiz_submit_answer(
     request: Request,
     lang: Optional[str] = Query(default=None),
     answer: Optional[str] = Form(default=None),
+    question_id: Optional[str] = Form(default=None),
+    skip: Optional[str] = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Processa resposta e exibe próxima questão."""
@@ -416,60 +567,64 @@ async def quiz_submit_answer(
     if quiz.status == "closed":
         return _generate_closed_page(language=language)
 
+    attempt_id = _attempt_id(request, quiz_token)
+
     # Busca todas as questões
     stmt = select(QuestionModel).where(
         QuestionModel.quiz_id == quiz_token
-    ).order_by(QuestionModel.created_at)
+    ).order_by(QuestionModel.created_at, QuestionModel.id)
     all_questions = (await db.execute(stmt)).scalars().all()
 
     if not all_questions:
-        return _generate_completion_page(language=language)
+        return _generate_empty_page(language=language)
 
-    # Encontra questão atual (primeira sem resposta)
-    current_index = 0
-    current_question = None
+    question_ids = [item.id for item in all_questions]
+    answered_ids = await _answered_question_ids(
+        db=db,
+        question_ids=question_ids,
+        attempt_id=attempt_id,
+    )
+    submitted_question = _question_by_id(all_questions, question_id)
+    if submitted_question is not None and submitted_question.id not in answered_ids:
+        response_text = "" if skip == "true" else answer
+        db.add(StudentAnswerModel(
+            id=str(uuid.uuid4()),
+            question_id=submitted_question.id,
+            student_id=attempt_id,
+            resposta=response_text,
+            correta=None if skip == "true" else _is_correct_answer(
+                submitted_question,
+                response_text,
+            ),
+        ))
+        await db.commit()
+        answered_ids.add(submitted_question.id)
 
-    for idx, q in enumerate(all_questions):
-        stmt = select(StudentAnswerModel).where(
-            StudentAnswerModel.question_id == q.id
-        )
-        answered = await db.execute(stmt)
-        if not answered.scalar_one_or_none():
-            current_index = idx
-            current_question = q
-            break
+    current_index, current_question = _next_unanswered_question(
+        all_questions,
+        answered_ids,
+    )
 
     # Se chegou ao fim, mostra conclusão
     if current_question is None:
-        return _generate_completion_page(language=language)
-
-    # Registra resposta anterior se existir
-    if current_index > 0 and answer is not None:
-        prev_question = all_questions[current_index - 1]
-        student_answer = StudentAnswerModel(
-            id=str(__import__("uuid").uuid4()),
-            question_id=prev_question.id,
-            student_id=None,  # Anônimo em quiz público
-            resposta=answer,
-            correta=answer == prev_question.resposta_correta if prev_question.tipo != "aberta" else None,
+        return _attach_attempt_cookie(
+            _generate_completion_page(language=language),
+            quiz_id=quiz_token,
+            attempt_id=attempt_id,
         )
-        db.add(student_answer)
-        await db.commit()
 
-    # Exibe próxima questão
-    options = None
-    if current_question.tipo == "multipla_escolha" and current_question.opcoes:
-        try:
-            options = json.loads(current_question.opcoes)
-        except:
-            options = []
-
-    return _generate_quiz_page(
+    response = _generate_quiz_page(
         quiz_id=quiz_token,
+        question_id=current_question.id,
         question_index=current_index,
         total_questions=len(all_questions),
         question_text=current_question.enunciado,
         question_type=current_question.tipo,
-        options=options,
+        options=_parse_options(current_question),
         language=language,
+    )
+    return _attach_attempt_cookie(
+        response,
+        quiz_id=quiz_token,
+        attempt_id=attempt_id,
     )

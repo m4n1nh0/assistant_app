@@ -411,6 +411,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
             final correct = qData['correct'] as int? ?? 0;
             final incorrect = qData['incorrect'] as int? ?? 0;
             final total = qData['total_answers'] as int? ?? 0;
+            final questionText =
+                qData['question_text']?.toString().trim() ?? '';
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -428,6 +430,18 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
                       'Q${questions.indexOf(q) + 1}',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
+                    if (questionText.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        questionText,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     LinearProgressIndicator(
                       value: qPercentage > 0 ? qPercentage / 100 : 0,

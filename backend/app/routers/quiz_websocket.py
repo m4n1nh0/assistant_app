@@ -137,7 +137,11 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
 
         questions_stats.append({
             "question_id": q.id,
-            "question_text": q.enunciado[:50] + "..." if len(q.enunciado) > 50 else q.enunciado,
+            "question_text": (
+                q.enunciado[:160] + "..."
+                if len(q.enunciado) > 160
+                else q.enunciado
+            ),
             "total_answers": q_total,
             "correct": q_correct,
             "incorrect": q_incorrect,
