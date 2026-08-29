@@ -1,0 +1,1 @@
+"""Entrypoint do tool-service."""

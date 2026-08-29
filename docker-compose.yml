@@ -101,6 +101,78 @@ services:
       retries: 3
       start_period: 10s
 
+  # --- Servicos extraidos -------------------------------------------------
+  # Ficam atras de profiles porque nao sobem no desenvolvimento padrao: o
+  # backend fala com eles in-process. Use `docker compose --profile services up`
+  # e ligue MCP_TRANSPORT/TOOL_TRANSPORT=remote para exercitar o modo remoto.
+
+  mcp-service:
+    profiles: ["services", "mcp"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: assistant-mcp-service
+    restart: unless-stopped
+    command: >-
+      python -m uvicorn services.mcp_service.main:app
+      --host 0.0.0.0 --port ${MCP_SERVICE_PORT:-8002}
+    ports:
+      - "${MCP_SERVICE_PORT:-8002}:${MCP_SERVICE_PORT:-8002}"
+    environment:
+      - MCP_SERVICE_PORT=${MCP_SERVICE_PORT:-8002}
+      - OTEL_SERVICE_NAME=mcp-service
+    env_file:
+      - path: ./backend/.env
+        required: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${MCP_SERVICE_PORT:-8002}/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  tool-service:
+    profiles: ["services", "tools"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: assistant-tool-service
+    restart: unless-stopped
+    command: >-
+      python -m uvicorn services.tool_service.main:app
+      --host 0.0.0.0 --port ${TOOL_SERVICE_PORT:-8003}
+    ports:
+      - "${TOOL_SERVICE_PORT:-8003}:${TOOL_SERVICE_PORT:-8003}"
+    environment:
+      - TOOL_SERVICE_PORT=${TOOL_SERVICE_PORT:-8003}
+      - OTEL_SERVICE_NAME=tool-service
+      # O tool-service consome MCP pelo mesmo gateway do backend.
+      - MCP_TRANSPORT=${MCP_TRANSPORT:-local}
+      - MCP_SERVICE_URL=${MCP_SERVICE_URL:-http://mcp-service:8002}
+    env_file:
+      - path: ./backend/.env
+        required: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${TOOL_SERVICE_PORT:-8003}/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Collector de traces. Nao ha "observability-service" proprio: seria
+  # reimplementar isto. A aplicacao exporta OTLP e o collector encaminha para o
+  # backend de observabilidade que a instalacao escolher.
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: assistant-otel-collector
+    restart: unless-stopped
+    ports:
+      - "${OBSERVABILITY_PORT:-8004}:4318"
+      - "4317:4317"
+    volumes:
+      - ./infra/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+
 volumes:
   assistant_data:
   assistant_logs:

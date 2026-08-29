@@ -644,54 +644,32 @@ async def build_study_context(
 ) -> str:
     """Recupera trechos de aula relevantes para injetar no prompt do chat.
 
-    Chamado apenas quando o roteador classifica o pedido como estudo, para nao
-    pagar uma busca vetorial em toda conversa. O corte por score evita colar
-    trecho aleatorio quando a aula nao fala do assunto perguntado.
+    A busca em si nao mora mais aqui: ela passou para o `RetrievalGateway`, que
+    o grafo tambem usa. Este modulo continua expondo a funcao porque o resumo de
+    aula e outros fluxos do modo educacao dependem dela, mas quem decide onde
+    procurar e o gateway - trocar de vector store nao encosta neste arquivo.
+
+    Args:
+        tutor_id: perfil dono das aulas.
+        message: pergunta do usuario.
+        limit: maximo de trechos.
+        min_score: corte de similaridade, que evita colar trecho aleatorio
+            quando a aula nao fala do assunto perguntado.
+
+    Returns:
+        O bloco de contexto pronto para concatenar ao prompt, ou string vazia
+        quando nao ha material relevante.
     """
-    from . import lesson_index_service, qdrant_service
+    from ..adapters.container import get_retrieval_gateway
+    from ..orchestration.nodes.retrieval import format_context
 
-    async def _search() -> List[Dict[str, Any]]:
-        try:
-            hits = await qdrant_service.search_lesson_transcripts(
-                tutor_id=tutor_id,
-                query=message,
-                limit=limit,
-            )
-        except Exception as e:
-            logger.warning(f"Busca de contexto de aula falhou: {e}")
-            return []
-        return [hit for hit in hits if hit.get("score", 0.0) >= min_score]
-
-    relevant = await _search()
-    if not relevant:
-        # A aula pode existir no MySQL e faltar no indice: o Qdrant estava fora
-        # do ar na gravacao, ou o modelo de embedding mudou. Reconstroi o que
-        # falta e pergunta de novo - uma vez, com intervalo minimo entre
-        # tentativas, para pergunta sem resposta nao virar reindexacao em loop.
-        outcome = await lesson_index_service.catch_up(
-            tutor_id=tutor_id, reason="busca de aula sem resultado"
-        )
-        if outcome.get("indexed"):
-            relevant = await _search()
-
-    if not relevant:
-        return ""
-
-    lines = []
-    for hit in relevant:
-        header = hit.get("discipline") or "aula"
-        date = hit.get("lesson_date") or ""
-        if date:
-            header = f"{header}, {date}"
-        lines.append(f"[{header}] {hit.get('content', '').strip()}")
-
-    return (
-        "\n\nTrechos das aulas gravadas pelo usuario que podem responder a "
-        "pergunta. Use-os como fonte e cite a disciplina e a data quando "
-        "responder. Se nao responderem o que foi perguntado, diga isso em vez "
-        "de completar com suposicao.\n"
-        + "\n".join(lines)
+    chunks = await get_retrieval_gateway().search_with_catch_up(
+        message,
+        tenant_id=tutor_id,
+        limit=limit,
+        min_score=min_score,
     )
+    return format_context(chunks)
 
 
 async def _dispatch_summary(

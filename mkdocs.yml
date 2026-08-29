@@ -90,6 +90,9 @@ nav:
       - Backend: referencia/backend/
       - Interface Flutter: referencia/interface.md
       - Infraestrutura: referencia/infra.md
+  - Arquitetura:
+      - Agentes, LangChain e LangGraph: arquitetura-agentes.md
+      - Configuracao por servico: configuracao-por-servico.md
   - Funcionalidades:
       - Modo Educacao: MODO_EDUCACAO.md
       - Quiz - Modo Educacao: quiz-modo-educacao.md

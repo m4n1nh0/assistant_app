@@ -1,13 +1,44 @@
 import asyncio
 
+import pytest
+
+from langchain_core.messages import AIMessage, SystemMessage
+
 from app.models.schemas import (
     LLMResponse,
     LaunchAction,
     ResponseModeEnum,
     ShortcutType,
 )
-from app.services import chat_graph_service
+from app.orchestration.nodes import action_detection
+from app.services import (
+    assistant_tools,
+    calendar_query_service,
+    chat_graph_service,
+    llm_routing_service,
+)
 from app.services.calendar_query_service import CalendarQueryPlan, CalendarQueryResult
+
+pytestmark = pytest.mark.integration
+
+
+def _system_of(messages) -> str:
+    """O prompt de sistema que chegou ao modelo, ja montado pelo grafo."""
+    return "\n".join(
+        str(item.content) for item in messages if isinstance(item, SystemMessage)
+    )
+
+
+def answering(content: str):
+    """Stub de um passo do modelo: responde em texto, sem chamar ferramenta."""
+
+    async def invoke_model(provider, messages, tools=()):
+        return (
+            AIMessage(content=content),
+            LLMResponse(llm=provider, content=content),
+        )
+
+    return invoke_model
 
 
 def run_graph(
@@ -73,18 +104,13 @@ def test_workspace_context_message_skips_action_detection_and_goes_to_llm(
     async def rank_providers(candidates, task="general", available_only=False):
         return ["gpt"]
 
-    async def run_with_tools(
-        provider, message, history, system_prompt, tools, **kwargs
-    ):
-        return LLMResponse(llm=provider, content="Analise do arquivo."), []
-
     monkeypatch.setattr(
         chat_graph_service.agent_service, "rank_auto_llms", rank_providers
     )
     monkeypatch.setattr(
         chat_graph_service.agent_service.langchain_agent_service,
-        "run_with_tools",
-        run_with_tools,
+        "invoke_model",
+        answering("Analise do arquivo."),
     )
 
     # Blob de contexto com gatilhos que antes disparavam acoes locais:
@@ -123,18 +149,13 @@ def test_asking_for_a_script_goes_to_the_llm_instead_of_registering_a_shortcut(
     async def rank_providers(candidates, task="general", available_only=False):
         return ["gpt"]
 
-    async def run_with_tools(
-        provider, message, history, system_prompt, tools, **kwargs
-    ):
-        return LLMResponse(llm=provider, content="Segue o script."), []
-
     monkeypatch.setattr(
         chat_graph_service.agent_service, "rank_auto_llms", rank_providers
     )
     monkeypatch.setattr(
         chat_graph_service.agent_service.langchain_agent_service,
-        "run_with_tools",
-        run_with_tools,
+        "invoke_model",
+        answering("Segue o script."),
     )
 
     result = run_graph(
@@ -174,7 +195,7 @@ def test_calendar_action_short_circuits_llm_and_requests_confirmation(monkeypatc
         raise AssertionError("LLM dispatch should not run for a calendar action")
 
     monkeypatch.setattr(
-        chat_graph_service,
+        assistant_tools,
         "invoke_calendar_action_tool",
         lambda message, timezone: {
             "type": "calendar_create",
@@ -224,8 +245,12 @@ def test_calendar_query_uses_interpreter_and_real_events_without_chat_hallucinat
     async def fail_dispatch(*args, **kwargs):
         raise AssertionError("Normal chat dispatch must not answer calendar data")
 
-    monkeypatch.setattr(chat_graph_service, "interpret_calendar_query", interpret)
-    monkeypatch.setattr(chat_graph_service, "execute_calendar_query", execute)
+    monkeypatch.setattr(
+        calendar_query_service, "interpret_calendar_query", interpret
+    )
+    monkeypatch.setattr(
+        calendar_query_service, "execute_calendar_query", execute
+    )
     monkeypatch.setattr(
         chat_graph_service.langchain_agent_service,
         "dispatch_single",
@@ -252,23 +277,23 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
         assert available_only is True
         return ["llama", "gpt"]
 
-    async def run_with_tools(
-        provider, message, history, system_prompt, tools, **kwargs
-    ):
+    async def invoke_model(provider, messages, tools=()):
         assert provider == "llama"
-        assert message == "Ola"
-        assert history == []
-        assert system_prompt.startswith("system")
-        return LLMResponse(llm=provider, content="Resposta local"), []
+        assert messages[-1].content == "Ola"
+        assert _system_of(messages).startswith("system")
+        return (
+            AIMessage(content="Resposta local"),
+            LLMResponse(llm=provider, content="Resposta local"),
+        )
 
-    monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
     monkeypatch.setattr(
         chat_graph_service.agent_service, "rank_auto_llms", rank_providers
     )
     monkeypatch.setattr(
         chat_graph_service.agent_service.langchain_agent_service,
-        "run_with_tools",
-        run_with_tools,
+        "invoke_model",
+        invoke_model,
     )
 
     result = run_graph(active_llms=["llama", "gpt"])
@@ -296,13 +321,13 @@ def test_multi_route_dispatches_all_active_providers(monkeypatch):
         assert available_only is True
         return llms
 
-    monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
     monkeypatch.setattr(
         chat_graph_service.langchain_agent_service,
         "dispatch_multi",
         dispatch,
     )
-    monkeypatch.setattr(chat_graph_service, "rank_auto_llms", rank)
+    monkeypatch.setattr(llm_routing_service, "rank_auto_llms", rank)
 
     result = run_graph(
         mode=ResponseModeEnum.multi,
@@ -327,13 +352,13 @@ def test_chain_route_dispatches_providers_in_order(monkeypatch):
         assert available_only is True
         return llms
 
-    monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
     monkeypatch.setattr(
         chat_graph_service.langchain_agent_service,
         "dispatch_chain",
         dispatch,
     )
-    monkeypatch.setattr(chat_graph_service, "rank_auto_llms", rank)
+    monkeypatch.setattr(llm_routing_service, "rank_auto_llms", rank)
 
     result = run_graph(
         mode=ResponseModeEnum.chain,
@@ -356,17 +381,18 @@ def test_launch_action_keeps_llm_response_and_injects_context(monkeypatch):
     async def find_shortcut(message, tutor_id):
         return launch_action, "launch", "\nlaunch context"
 
-    async def run_with_tools(
-        provider, message, history, system_prompt, tools, **kwargs
-    ):
-        assert "system\nlaunch context" in system_prompt
-        return LLMResponse(llm=provider, content="Abrindo."), []
+    async def invoke_model(provider, messages, tools=()):
+        assert "system\nlaunch context" in _system_of(messages)
+        return (
+            AIMessage(content="Abrindo."),
+            LLMResponse(llm=provider, content="Abrindo."),
+        )
 
-    monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", find_shortcut)
+    monkeypatch.setattr(action_detection, "lookup_shortcut", find_shortcut)
     monkeypatch.setattr(
         chat_graph_service.agent_service.langchain_agent_service,
-        "run_with_tools",
-        run_with_tools,
+        "invoke_model",
+        invoke_model,
     )
 
     result = run_graph(
@@ -384,7 +410,7 @@ def test_empty_provider_list_returns_controlled_error(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""
 
-    monkeypatch.setattr(chat_graph_service, "_lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
 
     result = run_graph()
 

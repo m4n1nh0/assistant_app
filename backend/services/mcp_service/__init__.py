@@ -1,0 +1,1 @@
+"""Entrypoint do mcp-service."""

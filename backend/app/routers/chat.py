@@ -18,6 +18,7 @@ from ..core.database import (
     ConversationModel,
     TutorModel,
 )
+from ..core.observability import bind
 from ..core.security import get_current_user
 from ..models.schemas import ChatLogRequest, ChatRequest, ChatResponse, LLMResponse
 from ..services import llm_service
@@ -158,17 +159,21 @@ async def chat(
 
     tutor_id = cfg.get("tutor_id") or "default"
     timezone_name = await _profile_timezone(tutor_id)
-    graph_result = await run_chat_graph(
-        message=body.message,
-        history=body.history,
-        mode=body.mode,
-        requested_llm=body.llm.value if body.llm else None,
-        active_llms=active,
-        system_prompt=sys_prompt,
-        tutor_id=tutor_id,
-        user_id=user["uid"],
-        timezone=timezone_name,
-    )
+    with bind(conversation_id=body.session_id, tenant_id=tutor_id, user_id=user["uid"]):
+        graph_result = await run_chat_graph(
+            message=body.message,
+            history=body.history,
+            mode=body.mode,
+            requested_llm=body.llm.value if body.llm else None,
+            active_llms=active,
+            system_prompt=sys_prompt,
+            tutor_id=tutor_id,
+            user_id=user["uid"],
+            timezone=timezone_name,
+            # A sessao e o `thread_id` do checkpoint: e o que permite retomar a
+            # execucao em vez de refazer a conversa inteira.
+            conversation_id=body.session_id,
+        )
     responses = graph_result["responses"]
     action = graph_result.get("action")
 

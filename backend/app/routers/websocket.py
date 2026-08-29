@@ -318,6 +318,7 @@ async def _handle_chat(
             tutor_id=tutor_id,
             user_id=user_id,
             timezone=payload.get("timezone") or "America/Sao_Paulo",
+            conversation_id=session_id,
         )
         responses = graph_result["responses"]
         action = graph_result.get("action")

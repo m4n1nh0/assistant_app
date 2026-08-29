@@ -96,6 +96,13 @@ class LLMResponse(BaseModel):
     is_error: bool = False
     duration_ms: int = 0
     tokens_used: Optional[int] = None
+    # Telemetria de consumo. Sao opcionais porque nem todo provedor informa, e
+    # `None` significa "nao informado", nunca zero: tratar ausencia como zero
+    # produziria relatorio de custo que parece barato e esta errado.
+    model: str = ""
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
 
 
 class ChatResponse(BaseModel):

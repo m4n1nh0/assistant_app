@@ -1,0 +1,38 @@
+# Collector de traces do ambiente de desenvolvimento.
+#
+# A aplicacao nao conhece nenhum fornecedor de observabilidade: ela exporta OTLP
+# e este arquivo decide para onde vai. Trocar de backend - Jaeger, Tempo, um
+# SaaS - e acrescentar um exporter aqui, sem tocar em uma linha de codigo.
+#
+# O padrao imprime no proprio log do collector, que basta para inspecionar um
+# trace localmente sem subir mais um servico.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  debug:
+    verbosity: normal
+  # Descomente e ajuste para enviar a um backend real.
+  # otlphttp/tempo:
+  #   endpoint: http://tempo:4318
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

@@ -1,12 +1,19 @@
-"""Especialistas e transferencia entre agentes (A2A).
+"""Execucao dos especialistas e transferencia entre agentes (A2A).
 
-Cada especialista e um papel com instrucoes proprias e um conjunto de
-ferramentas. O roteador escolhe quem atende; o proprio especialista pode
-transferir para outro quando o pedido nao e da area dele.
+O que este modulo faz mudou de natureza. Antes ele *era* a orquestracao: um laco
+que chamava o modelo, executava ferramenta, detectava handoff e repetia. Agora
+ele e a **camada de aplicacao** entre o resto do backend e o subgrafo de agente
+do LangGraph:
 
-A transferencia e decidida pelo orquestrador, nao pela ferramenta: o modelo
-apenas *pede* o repasse, e aqui validamos destino, contamos saltos e evitamos
-que dois agentes fiquem devolvendo a conversa um para o outro.
+- monta o contexto da requisicao (`AgentRuntimeContext`);
+- resolve as ferramentas pelo Tool Gateway, sem saber se elas sao locais ou
+  vieram de MCP;
+- escolhe o provedor com fallback;
+- roda o subgrafo e traduz o estado final para `AgentOutcome`.
+
+Quem controla ciclo, ramificacao e transferencia e o grafo, nao este arquivo.
+A definicao dos especialistas mora em `app.orchestration.agents`, sem dependencia
+de framework.
 """
 
 from __future__ import annotations
@@ -14,110 +21,50 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.messages import AIMessage
+from langchain_core.tools import BaseTool
 from loguru import logger
-from pydantic import BaseModel, Field
 
+from ..adapters.container import get_tool_gateway
+from ..adapters.tools.langchain_binding import to_langchain_tools
 from ..core.config import get_settings
+from ..core.observability import span
 from ..models.schemas import LLMResponse, Message
-from . import langchain_agent_service, mcp_service
-from .assistant_tools import ASSISTANT_TOOLS
+from ..orchestration.agent_graph import (
+    AgentRuntimeContext,
+    AgentState,
+    build_agent_graph,
+    build_handoff_tool,
+)
+from ..orchestration.agents import (
+    DEFAULT_SPECIALIST,
+    HANDOFF_TOOL_NAME,
+    SPECIALISTS,
+    Specialist,
+    select_specialist,
+)
+from ..ports.tools import ToolGateway
+from . import langchain_agent_service
 from .llm_routing_service import rank_auto_llms
 
 settings = get_settings()
 
-HANDOFF_TOOL_NAME = "transfer_to_agent"
-
-
-@dataclass(frozen=True)
-class Specialist:
-    """Um agente especialista: papel, instrucoes proprias e ferramentas permitidas."""
-    id: str
-    label: str
-    description: str
-    instructions: str
-    routing_task: str
-    tool_names: tuple[str, ...] = ()
-    use_mcp: bool = False
-
-
-SPECIALISTS: dict[str, Specialist] = {
-    "general": Specialist(
-        id="general",
-        label="Generalista",
-        description="conversa geral, duvidas amplas e pedidos que nao se "
-                    "encaixam nas outras especialidades",
-        instructions=(
-            "Voce e o agente generalista. Responda de forma direta e pratica. "
-            "Se o pedido for claramente de codigo, de aulas gravadas ou de "
-            "agenda, transfira para o agente correspondente em vez de "
-            "responder por conta propria."
-        ),
-        routing_task="general",
-        use_mcp=True,
-    ),
-    "code": Specialist(
-        id="code",
-        label="Codigo",
-        description="programacao, leitura de workspace, scripts, erros e "
-                    "revisao de codigo",
-        instructions=(
-            "Voce e o agente de codigo. Trabalhe com o contexto real do "
-            "workspace quando ele estiver na mensagem e proponha passos "
-            "pequenos e verificaveis. Nao execute nada: proponha e deixe a "
-            "interface confirmar."
-        ),
-        routing_task="code",
-        tool_names=(
-            "propose_coding_action",
-            "propose_computer_action",
-            "propose_project_action",
-        ),
-        use_mcp=True,
-    ),
-    "study": Specialist(
-        id="study",
-        label="Estudos",
-        description="aulas gravadas, materias, resumos e conteudo de estudo",
-        instructions=(
-            "Voce e o agente de estudos. Responda com base nos trechos de aula "
-            "fornecidos no contexto, citando disciplina e data. Se os trechos "
-            "nao cobrirem a pergunta, diga o que falta em vez de supor."
-        ),
-        routing_task="study",
-    ),
-    "calendar": Specialist(
-        id="calendar",
-        label="Agenda",
-        description="compromissos, reunioes, eventos e disponibilidade",
-        instructions=(
-            "Voce e o agente de agenda. Trate datas e horarios com precisao e "
-            "confirme o que ficou entendido antes de propor um evento."
-        ),
-        routing_task="calendar",
-        tool_names=("propose_calendar_event",),
-    ),
-}
-
-DEFAULT_SPECIALIST = "general"
-
-_TASK_TO_SPECIALIST = {
-    "code": "code",
-    "study": "study",
-    "calendar": "calendar",
-    "general": "general",
-}
-
-
-class HandoffInput(BaseModel):
-    """Pedido de transferencia feito pelo modelo, ainda por validar."""
-    agent: str = Field(description="id do agente que deve assumir")
-    reason: str = Field(default="", description="por que a transferencia")
+__all__ = [
+    "AgentOutcome",
+    "DEFAULT_SPECIALIST",
+    "HANDOFF_TOOL_NAME",
+    "SPECIALISTS",
+    "Specialist",
+    "build_tools",
+    "run_agents",
+    "select_specialist",
+]
 
 
 @dataclass
 class AgentOutcome:
     """Resultado de uma rodada de agentes: resposta, rastro e transferencias feitas."""
+
     response: LLMResponse
     agent_id: str
     provider: str
@@ -125,72 +72,129 @@ class AgentOutcome:
     handoffs: list[dict[str, str]] = field(default_factory=list)
 
 
-def select_specialist(task: str) -> Specialist:
-    """Escolhe o especialista que atende a tarefa.
-
-    Args:
-        task: tipo de tarefa detectado na mensagem.
-
-    Returns:
-        O especialista escolhido, com instrucoes e ferramentas dele.
-    """
-    return SPECIALISTS[_TASK_TO_SPECIALIST.get(task, DEFAULT_SPECIALIST)]
-
-
-def _handoff_tool(current: str) -> BaseTool:
-    """Ferramenta A2A, com a lista de destinos montada em tempo de execucao."""
-    others = [item for item in SPECIALISTS.values() if item.id != current]
-    catalog = "; ".join(f"{item.id} ({item.description})" for item in others)
-
-    def _transfer(agent: str, reason: str = "") -> str:
-        return f"transferencia solicitada para {agent}: {reason}"
-
-    return StructuredTool.from_function(
-        func=_transfer,
-        name=HANDOFF_TOOL_NAME,
-        description=(
-            "Transfere a conversa para outro agente quando o pedido nao e da "
-            f"sua area. Agentes disponiveis: {catalog}."
-        ),
-        args_schema=HandoffInput,
-    )
-
-
 async def build_tools(
     specialist: Specialist,
     *,
     allow_handoff: bool,
+    gateway: ToolGateway | None = None,
 ) -> list[BaseTool]:
     """Monta as ferramentas disponiveis para um especialista.
 
-    Junta as ferramentas de acao locais com as ferramentas MCP configuradas, quando
-    os servidores respondem.
+    O especialista nao escolhe mais o que existe: ele pergunta ao Tool Gateway
+    o que **ele** pode usar, e o gateway responde com o catalogo ja filtrado por
+    escopo, incluindo as capacidades publicadas via MCP. E por isso que o agente
+    nao importa nada de MCP.
+
+    Args:
+        specialist: quem vai atender.
+        allow_handoff: se ainda ha salto disponivel para transferir a conversa.
+        gateway: porta de acesso ao catalogo; `None` usa a do processo.
+
+    Returns:
+        As tools no formato que o `ToolNode` do LangGraph executa.
     """
-    tools: list[BaseTool] = []
+    resolved = gateway if gateway is not None else get_tool_gateway()
+    try:
+        descriptors = await resolved.list_tools(agent_id=specialist.id)
+    except Exception as exc:
+        # Catalogo fora do ar nao pode calar o assistente: ele responde sem
+        # ferramenta, como ja fazia quando o MCP caia.
+        logger.warning(f"Catalogo de ferramentas indisponivel: {exc}")
+        descriptors = []
 
-    if specialist.tool_names:
-        by_name = {tool.name: tool for tool in ASSISTANT_TOOLS}
-        tools.extend(
-            by_name[name] for name in specialist.tool_names if name in by_name
-        )
-
-    if specialist.use_mcp:
-        try:
-            tools.extend(await mcp_service.get_tools())
-        except Exception as e:
-            logger.warning(f"Ferramentas MCP indisponiveis: {e}")
-
+    tools = to_langchain_tools(resolved, descriptors, agent_id=specialist.id)
     if allow_handoff:
-        tools.append(_handoff_tool(specialist.id))
-
+        tools.append(build_handoff_tool(specialist.id))
     return tools
 
 
-def _find_handoff(trace: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
-    for entry in reversed(list(trace)):
-        if entry.get("tool") == HANDOFF_TOOL_NAME:
-            return entry
-    return None
+async def _providers_for(
+    specialist: Specialist,
+    context: AgentRuntimeContext,
+) -> list[str]:
+    if context.requested_llm:
+        return [context.requested_llm]
+    return await rank_auto_llms(
+        list(context.active_llms),
+        specialist.routing_task,
+        available_only=True,
+    )
+
+
+async def _call_model(
+    state: AgentState,
+    specialist: Specialist,
+    tools: Sequence[BaseTool],
+    context: AgentRuntimeContext,
+) -> tuple[AIMessage, LLMResponse]:
+    """Fala com o provedor, caindo para o proximo quando o primeiro falha.
+
+    O fallback so vale quando o usuario nao pediu um provedor especifico: se ele
+    escolheu um agente na interface, trocar por outro pelas costas esconderia a
+    indisponibilidade em vez de mostra-la.
+    """
+    providers = await _providers_for(specialist, context)
+    if not providers:
+        return (
+            AIMessage(content=""),
+            LLMResponse(
+                llm="backend",
+                content="Nenhum agente de IA esta disponivel agora.",
+                is_error=True,
+            ),
+        )
+
+    message = AIMessage(content="")
+    response = LLMResponse(llm="backend", content="", is_error=True)
+    messages = list(state.get("messages") or [])
+
+    for provider in providers:
+        message, response = await langchain_agent_service.invoke_model(
+            provider, messages, tools
+        )
+        if not response.is_error or context.requested_llm:
+            break
+        logger.warning(
+            "Agente {}: {} falhou; tentando proximo provedor disponivel",
+            specialist.id,
+            provider,
+        )
+    return message, response
+
+
+async def _finalize(
+    state: AgentState,
+    specialist: Specialist,
+    context: AgentRuntimeContext,
+) -> LLMResponse:
+    """Fecha a rodada sem ferramentas quando o teto de iteracoes estoura."""
+    providers = await _providers_for(specialist, context)
+    if not providers:
+        return LLMResponse(
+            llm="backend",
+            content="Nenhum agente de IA esta disponivel agora.",
+            is_error=True,
+        )
+    return await langchain_agent_service.plain_response(
+        providers[0], list(state.get("messages") or [])
+    )
+
+
+async def _tools_for(specialist: Specialist, allow_handoff: bool) -> list[BaseTool]:
+    return await build_tools(specialist, allow_handoff=allow_handoff)
+
+
+def _build_graph():
+    return build_agent_graph(
+        call_model=_call_model,
+        tools_for=_tools_for,
+        finalize=_finalize,
+        node_max_attempts=1,
+    )
+
+
+agent_graph = _build_graph()
+"""Subgrafo compilado do agente, exposto para inspecao e teste."""
 
 
 async def run_agents(
@@ -202,86 +206,54 @@ async def run_agents(
     active_llms: list[str],
     requested_llm: str | None = None,
 ) -> AgentOutcome:
-    """Roda o especialista escolhido, seguindo transferencias ate o teto."""
+    """Roda o especialista escolhido, seguindo transferencias ate o teto.
+
+    Args:
+        message: pergunta do usuario.
+        history: historico da conversa.
+        system_prompt: instrucao de sistema com persona e contexto.
+        task: tarefa detectada, que escolhe o especialista de entrada.
+        active_llms: provedores disponiveis nesta requisicao.
+        requested_llm: provedor pedido explicitamente; `None` deixa o roteamento
+            decidir e habilita o fallback.
+
+    Returns:
+        A resposta final, o agente que respondeu e o rastro de ferramentas e
+        transferencias, para a interface poder mostrar o que aconteceu.
+    """
     specialist = select_specialist(task)
-    visited = {specialist.id}
-    handoffs: list[dict[str, str]] = []
-    tool_trace: list[dict[str, Any]] = []
-    max_handoffs = max(0, settings.agent_max_handoffs)
+    context = AgentRuntimeContext(
+        system_prompt=system_prompt,
+        requested_llm=requested_llm,
+        active_llms=tuple(active_llms),
+        max_tool_iterations=max(1, settings.agent_max_tool_iterations),
+        max_hops=max(0, settings.agent_max_handoffs),
+    )
 
-    provider = requested_llm or ""
-    response = LLMResponse(llm="backend", content="", is_error=True)
+    seed: AgentState = {
+        "messages": langchain_agent_service.langchain_messages(
+            message, history, f"{system_prompt}\n\n{specialist.instructions}"
+        ),
+        "current_agent": specialist.id,
+        "hops": 0,
+        "iterations": 0,
+        "visited": [specialist.id],
+        "tool_trace": [],
+        "handoffs": [],
+    }
 
-    for hop in range(max_handoffs + 1):
-        providers = (
-            [requested_llm]
-            if requested_llm
-            else await rank_auto_llms(
-                active_llms,
-                specialist.routing_task,
-                available_only=True,
-            )
-        )
-        if not providers:
-            return AgentOutcome(
-                response=LLMResponse(
-                    llm="backend",
-                    content="Nenhum agente de IA esta disponivel agora.",
-                    is_error=True,
-                ),
-                agent_id=specialist.id,
-                provider="",
-            )
+    async with span("orchestration.agents", "agent", entry_agent=specialist.id):
+        final = await agent_graph.ainvoke(seed, context=context)
 
-        allow_handoff = hop < max_handoffs
-        tools = await build_tools(specialist, allow_handoff=allow_handoff)
-
-        trace: list[dict[str, Any]] = []
-        for provider in providers:
-            response, trace = await langchain_agent_service.run_with_tools(
-                provider,
-                message,
-                history,
-                f"{system_prompt}\n\n{specialist.instructions}",
-                tools,
-                max_iterations=max(1, settings.agent_max_tool_iterations),
-                stop_tools={HANDOFF_TOOL_NAME} if allow_handoff else set(),
-            )
-            tool_trace.extend(trace)
-            if not response.is_error or trace or requested_llm:
-                break
-            logger.warning(
-                "Agente {}: {} falhou; tentando proximo provedor disponivel",
-                specialist.id,
-                provider,
-            )
-
-        handoff = _find_handoff(trace)
-        if handoff is None:
-            break
-
-        target_id = str((handoff.get("args") or {}).get("agent") or "").strip()
-        target = SPECIALISTS.get(target_id)
-        # Destino invalido ou ja visitado encerra o repasse: sem isso, dois
-        # agentes podem empurrar a conversa um para o outro ate o teto.
-        if target is None or target.id in visited:
-            logger.info(
-                f"Transferencia ignorada ({specialist.id} -> {target_id or 'vazio'})"
-            )
-            break
-
-        handoffs.append({
-            "from": specialist.id,
-            "to": target.id,
-            "reason": str((handoff.get("args") or {}).get("reason") or ""),
-        })
-        visited.add(target.id)
-        specialist = target
-
+    response = final.get("response") or LLMResponse(
+        llm="backend",
+        content="Nao consegui gerar uma resposta agora.",
+        is_error=True,
+    )
     return AgentOutcome(
         response=response,
-        agent_id=specialist.id,
-        provider=provider,
-        tool_trace=tool_trace,
-        handoffs=handoffs,
+        agent_id=str(final.get("current_agent") or specialist.id),
+        provider=response.llm if not response.is_error else (requested_llm or ""),
+        tool_trace=list(final.get("tool_trace") or []),
+        handoffs=list(final.get("handoffs") or []),
     )

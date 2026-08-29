@@ -42,12 +42,18 @@ contexto local e comunicacao com a API.
 assistant_app/
 |-- backend/                 FastAPI + Python
 |   |-- app/
-|   |   |-- core/            configuracao, banco e seguranca
+|   |   |-- core/            configuracao, banco, seguranca e observabilidade
+|   |   |-- ports/           contratos (Protocol) sem SDK e sem I/O
+|   |   |-- orchestration/   LangGraph: estado, nos, arestas, checkpoint
+|   |   |-- toolkit/         Tool Service: registry, executor e catalogo
+|   |   |-- mcp/             MCP: configuracao, conexao e resiliencia
+|   |   |-- adapters/        implementacoes local/remota/fake dos contratos
 |   |   |-- models/          schemas Pydantic e contratos de API
 |   |   |-- routers/         endpoints REST, SSE e WebSocket
 |   |   |-- services/        regras de negocio e integracoes externas
 |   |   `-- utils/           scheduler e utilitarios
-|   |-- tests/               testes unitarios do backend
+|   |-- services/            entrypoints de processo (mcp, tool, orchestrator)
+|   |-- tests/               testes unitarios, de integracao e de contrato
 |   |-- Dockerfile
 |   `-- requirements.txt
 |
@@ -83,7 +89,13 @@ flowchart LR
     FastAPI --> Routers[Routers REST / SSE / WebSocket]
     Routers --> ChatGraph[LangGraph Chat Workflow]
     Routers --> Services[Service Layer]
-    ChatGraph --> AgentLayer[LangChain Models / Tools / Structured Output]
+    ChatGraph --> AgentGraph[Subgrafo de agente: ToolNode + handoff]
+    AgentGraph --> AgentLayer[LangChain Models / Tools / Retrievers]
+    AgentGraph --> ToolGw[Tool Gateway: registry, escopo, timeout]
+    ToolGw --> LocalTools[Ferramentas locais]
+    ToolGw --> MCPGw[MCP Gateway]
+    MCPGw --> MCPServers[Servidores MCP externos]
+    ChatGraph --> Checkpoint[(Checkpointer: retomada por sessao)]
     AgentLayer --> Services
     ChatGraph --> Services
     Services --> Models[Schemas Pydantic]
@@ -109,11 +121,21 @@ flowchart LR
   agenda, notificacoes, automacoes, memoria e acoes locais.
 - **Orquestracao de chat**: LangGraph torna explicitas a deteccao de acoes, a
   resolucao de atalhos, as consultas de agenda e as rotas single, multi e chain
-  sem alterar o contrato consumido pela interface.
+  sem alterar o contrato consumido pela interface. O ciclo do agente e o handoff
+  entre especialistas tambem sao nos e arestas, com `ToolNode` e `Command`.
 - **Adaptacao LangChain**: padroniza os provedores existentes, expoe as
-  propostas de acoes como tools tipadas e valida as respostas internas com
-  modelos Pydantic. A selecao das tools e deterministica; nao ha execucao
-  autonoma de comandos pelo backend.
+  propostas de acoes como tools tipadas, veste a cascata de embeddings como
+  `Embeddings` e as aulas como `BaseRetriever`. A selecao das tools e
+  deterministica; nao ha execucao autonoma de comandos pelo backend.
+- **Tool Service**: catalogo unico com escopo por agente, validacao, timeout,
+  retry e auditoria. O agente nunca executa codigo de ferramenta — ele pede ao
+  gateway.
+- **MCP**: tratado como protocolo, com ciclo de vida, cache, disjuntor e
+  entrypoint proprio. As capacidades entram no catalogo com origem `mcp`, sem
+  que nenhum agente conheca o protocolo.
+- **Observabilidade**: correlation IDs que atravessam API, grafo, agente, tool,
+  MCP e provedor; spans sobre OpenTelemetry (opcional) e telemetria de tokens e
+  custo estimado por provedor, agente, conversa e execucao.
 - **Banco relacional**: MySQL via SQLAlchemy async para conversas,
   configuracoes, perfis, atalhos, auditoria, automacoes e os dados fonte do
   modo educacao.
@@ -278,31 +300,65 @@ mantendo integracoes e fluxos testaveis em servicos dedicados.
 
 ### Workflow De Chat Com LangChain E LangGraph
 
-As requisicoes completas de chat, tanto REST quanto WebSocket, passam pelo
-grafo compilado em `backend/app/services/chat_graph_service.py`:
+Cada tecnologia tem uma responsabilidade arquitetural definida, e nao ha
+sobreposicao entre elas:
+
+| Camada | Responsabilidade |
+| --- | --- |
+| **LangChain** | Componentes e integracoes de IA: modelos, prompts, tools, retrievers, embeddings |
+| **LangGraph** | Orquestracao stateful: nos, arestas, roteamento, ciclos, handoff, checkpoint |
+| **MCP** | Protocolo de interoperabilidade com capacidades externas |
+| **Tool Service** | Catalogo, governanca e execucao das ferramentas |
+| **Observabilidade** | Tracing, metricas, logs, custo e correlacao distribuida |
+
+O detalhamento completo — contratos, fronteiras de servico, estado do grafo,
+checkpointing, resiliencia e telemetria de custo — esta em
+[docs/arquitetura-agentes.md](docs/arquitetura-agentes.md).
+
+As requisicoes completas de chat, tanto REST quanto WebSocket, passam pelo grafo
+composto em `backend/app/orchestration/graph.py` (a fachada historica
+`app/services/chat_graph_service.py` continua sendo o ponto de entrada das
+rotas):
 
 ```mermaid
 flowchart TD
     Health[Health paralelo: endpoint, saldo e modelo] --> Start([START])
-    Start --> Detect[Detectar acao local]
-    Detect --> Shortcut[Resolver atalho do usuario]
-    Shortcut --> Ctx[Classificar tarefa e recuperar contexto]
+    Start --> Detect[detect_action]
+    Detect --> Shortcut[resolve_shortcut]
+    Shortcut --> Ctx[retrieve_context: classifica tarefa e busca RAG]
     Ctx --> Route{Rota}
-    Route -->|acao local| Ack[Confirmar acao para a interface]
-    Route -->|consulta agenda| Cal[Responder pela agenda]
-    Route -->|single| Agent[Especialista + ferramentas]
-    Route -->|multi| Multi[Despachar provedores em paralelo]
-    Route -->|chain| Chain[Despachar provedores em cadeia]
-    Agent --> Handoff{Transferir?}
-    Agent -->|provedor falhou| Fallback[Atualizar cache e tentar proximo]
-    Fallback --> Agent
-    Handoff -->|sim| Agent
-    Handoff -->|nao| End([END])
-    Ack --> End
+    Route -->|acao local| Ack[acknowledge_action]
+    Route -->|consulta agenda| Cal[query_calendar]
+    Route -->|single| Sub[Subgrafo de agente]
+    Route -->|multi| Multi[dispatch_multi]
+    Route -->|chain| Chain[dispatch_chain]
+    Ack --> End([END])
     Cal --> End
     Multi --> End
     Chain --> End
+    Sub --> End
 ```
+
+O modo `single` entra num **subgrafo de agente** com nos e arestas proprios, em
+vez do laco que existia antes:
+
+```mermaid
+stateDiagram-v2
+    [*] --> agent
+    agent --> tools: tool_calls (ToolNode)
+    agent --> handoff: transfer_to_agent
+    agent --> finalize: teto de iteracoes
+    agent --> [*]: resposta em texto
+    tools --> agent
+    handoff --> agent: Command(goto, novo especialista)
+    handoff --> [*]: destino invalido ou ja visitado
+    finalize --> [*]
+```
+
+O `ToolNode` do LangGraph executa as chamadas de ferramenta, `Command(goto=...)`
+expressa a transferencia entre agentes como transicao do grafo, e `RetryPolicy`
+cobre a falha do no. O estado do grafo guarda so o que decide o fluxo; prompt,
+provedores e tetos viajam em `context_schema`, fora do estado persistido.
 
 O no `retrieve_context` faz duas coisas antes de qualquer provedor ser
 escolhido: classifica o pedido (`code`, `study`, `calendar`, `general`) e, so
@@ -320,11 +376,28 @@ nunca chegava ao provedor. Nome de arquivo com ponto (`config.json`) nao conta
 como destino: so URL por extenso.
 
 O modo `single` passa por especialistas. O roteador escolhe quem atende a
-partir da tarefa, o especialista recebe apenas as ferramentas da area dele e
-pode transferir a conversa (A2A) quando o pedido nao for seu. A transferencia e
-validada pelo orquestrador — destino desconhecido ou ja visitado encerra o
-repasse, e `AGENT_MAX_HANDOFFS` limita a cadeia. Os modos `multi` e `chain`
-continuam despachando direto, sem especialistas.
+partir da tarefa; o especialista **pergunta ao Tool Gateway** quais ferramentas
+ele pode usar, e recebe o catalogo ja filtrado por escopo — incluindo as
+capacidades publicadas via MCP. Ele nao importa nada de MCP: uma capacidade MCP
+e apenas uma entrada do catalogo com origem `mcp`, cujo executor delega ao
+`MCPGateway`. E o que mantem MCP como protocolo e Tool Calling como mecanismo.
+
+O especialista pode transferir a conversa (A2A) quando o pedido nao for seu. A
+transferencia e validada pelo no `handoff` do grafo, e nao pela ferramenta —
+destino desconhecido ou ja visitado encerra o repasse, e `AGENT_MAX_HANDOFFS`
+limita a cadeia. Os modos `multi` e `chain` continuam despachando direto, sem
+especialistas: sao comparacao e refinamento entre provedores, e dar ferramenta a
+eles multiplicaria efeito colateral por N sem melhorar a resposta.
+
+O agente nunca executa codigo de ferramenta. Ele monta uma `ToolInvocation` e
+entrega ao gateway, que valida escopo e argumentos, aplica timeout, repete so o
+que e transitorio, audita e devolve resultado normalizado — falha inclusive, que
+vira texto para o modelo contornar em vez de excecao que mata a resposta.
+
+A execucao e persistida por sessao (`CHECKPOINT_BACKEND`), com o dono dos dados
+compondo a chave da linha de execucao. Isso torna a retomada uma continuacao a
+partir do checkpoint, em vez de refazer uma conversa que ja custou busca
+vetorial, chamadas de modelo e ferramenta.
 
 O preflight consulta os provedores em paralelo e valida disponibilidade,
 saldo quando a API o expõe e o modelo de chat configurado. LocalAI e Ollama
@@ -1124,7 +1197,23 @@ Backend:
 
 ```bash
 cd backend
-python -m pytest tests
+python -m pytest                 # tudo
+python -m pytest -m unit         # unidade isolada, sem I/O
+python -m pytest -m integration  # componentes reais no mesmo processo
+python -m pytest -m contract     # gateway local e remoto precisam concordar
+```
+
+Os testes de contrato sao o que sustenta a promessa de que extrair o
+`tool-service` ou o `mcp-service` e mudanca de configuracao, e nao de
+comportamento: a mesma assercao roda contra os dois transportes. Nenhum teste de
+agente sobe servidor MCP ou tool-service — eles usam os gateways fake de
+`app/adapters/fakes.py`.
+
+Para exercitar o modo remoto de verdade:
+
+```bash
+docker compose --profile services up          # mcp-service + tool-service
+docker compose --profile observability up     # collector OTLP
 ```
 
 Interface:

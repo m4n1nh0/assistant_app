@@ -32,7 +32,15 @@ class Settings(BaseSettings):
     )
 
     host: str = "0.0.0.0"
-    port: int = 8000
+    # `PORT` vem primeiro porque e a variavel que as plataformas injetam (Railway,
+    # Render, Fly) e para a qual elas roteiam o trafego. Se `ASSISTANT_API_PORT`
+    # tivesse precedencia, copiar o .env.example para as variaveis do deploy faria
+    # o backend escutar numa porta que o roteador nao conhece, e o healthcheck
+    # falharia sem mensagem util. Localmente, sem `PORT`, o nome explicito vale.
+    port: int = Field(
+        8000,
+        validation_alias=AliasChoices("PORT", "ASSISTANT_API_PORT"),
+    )
     reload: bool = True
     log_level: str = "info"
     secret_key: str = "change-me-in-production"
@@ -182,6 +190,67 @@ class Settings(BaseSettings):
     agent_max_tool_iterations: int = 3
     agent_max_handoffs: int = 2
 
+    # --- Tool Service -----------------------------------------------------
+    # `local` executa o catalogo dentro do processo; `remote` fala com o
+    # tool-service por HTTP. O padrao e local porque as ferramentas daqui so
+    # montam proposta, sem efeito colateral - nesse caso o salto de rede so
+    # acrescenta latencia. A governanca (registry, timeout, auditoria) vale nos
+    # dois modos, porque mora no gateway e nao no transporte.
+    tool_transport: str = "local"
+    tool_service_url: str = ""
+    tool_service_port: int = 8003
+    tool_timeout_seconds: float = 20.0
+    tool_max_retries: int = 1
+    tool_retry_backoff_seconds: float = 0.5
+
+    # --- MCP Service ------------------------------------------------------
+    # Servidor MCP stdio sobe subprocesso; por isso `remote` aqui tem ganho real
+    # de isolamento, diferente do tool-service.
+    mcp_transport: str = "local"
+    mcp_service_url: str = ""
+    mcp_service_port: int = 8002
+    mcp_timeout_seconds: float = 30.0
+    mcp_max_retries: int = 2
+    mcp_retry_backoff_seconds: float = 0.5
+    mcp_circuit_failure_threshold: int = 3
+    mcp_circuit_reset_seconds: float = 60.0
+    mcp_tools_cache_ttl_seconds: float = 300.0
+
+    # --- Orquestrador e portas de desenvolvimento -------------------------
+    orchestrator_port: int = 8001
+    observability_port: int = 8004
+
+    # --- Checkpointing do grafo -------------------------------------------
+    # `memory` nao sobrevive a restart, mas cobre o caso real de retomada dentro
+    # da mesma sessao sem exigir dependencia extra. `sqlite` persiste entre
+    # reinicios quando langgraph-checkpoint-sqlite esta instalado.
+    checkpoint_backend: str = "memory"
+    checkpoint_sqlite_path: str = "data/checkpoints.sqlite"
+    # Teto de conversas retidas em memoria. O `InMemorySaver` do LangGraph nunca
+    # descarta nada, e um backend que roda por dias acumularia todo checkpoint
+    # ja gravado ate estourar a memoria da instancia. O teto mantem a retomada
+    # util (as conversas recentes) e descarta as antigas, que ninguem retoma.
+    checkpoint_max_threads: int = 200
+    graph_node_max_retries: int = 2
+
+    # --- Observabilidade --------------------------------------------------
+    otel_enabled: bool = False
+    otel_service_name: str = "assistant-api"
+    otel_exporter_endpoint: str = ""
+    otel_console_export: bool = False
+    telemetry_memory_events: int = 2000
+    # Precos por milhao de tokens, sobrescrevendo a tabela interna:
+    # {"claude": {"input": 3.0, "output": 15.0}, "gpt:gpt-4o": {...}}
+    llm_pricing: str = ""
+
+    langsmith_enabled: bool = False
+    langsmith_api_key: str = Field(
+        "",
+        validation_alias=AliasChoices("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY"),
+    )
+    langsmith_project: str = "assistant-app"
+    langsmith_endpoint: str = ""
+
     education_segment_seconds: int = 60
     education_summary_max_chars: int = 24000
     education_min_segment_chars: int = 12
@@ -238,6 +307,32 @@ class Settings(BaseSettings):
         if not base_url or base_url.endswith("/v1"):
             return base_url
         return f"{base_url}/v1"
+
+    @property
+    def tool_service_base_url(self) -> str:
+        """Endereco do tool-service, deduzido da porta quando a URL nao foi dada."""
+        return (
+            self.tool_service_url.rstrip("/")
+            or f"http://127.0.0.1:{self.tool_service_port}"
+        )
+
+    @property
+    def mcp_service_base_url(self) -> str:
+        """Endereco do mcp-service, deduzido da porta quando a URL nao foi dada."""
+        return (
+            self.mcp_service_url.rstrip("/")
+            or f"http://127.0.0.1:{self.mcp_service_port}"
+        )
+
+    @property
+    def uses_remote_tools(self) -> bool:
+        """Diz se o catalogo de ferramentas roda em outro processo."""
+        return self.tool_transport.strip().lower() == "remote"
+
+    @property
+    def uses_remote_mcp(self) -> bool:
+        """Diz se o MCP roda em outro processo."""
+        return self.mcp_transport.strip().lower() == "remote"
 
     @property
     def active_llms(self) -> List[str]:

@@ -23,6 +23,10 @@ from .core.config import get_settings
 from .core.database import init_db
 from .core.database_seed import apply_database_seed, database_seed_requested
 from .core.net import client_ip, client_ip_identifier
+from .core.observability.middleware import (
+    setup_observability,
+    shutdown_observability,
+)
 from .core.rate_limit import mark_ready as mark_rate_limiter_ready
 from .core.redis_client import set_client as set_redis_client
 from .utils.scheduler import start_scheduler, stop_scheduler
@@ -34,6 +38,7 @@ from .routers.routes import (
     router_auth, router_calendar, router_calendar_public,
     router_notif, router_voice, router_health,
 )
+from .routers.observability import router as observability_router
 from .routers.system import router as system_router
 from .routers.tutor import router as tutor_router
 from .routers.education import router as education_router
@@ -152,6 +157,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Listening on {settings.host}:{settings.port}")
     yield
     stop_scheduler()
+    shutdown_observability()
     if FastAPILimiter.redis is not None:
         await FastAPILimiter.close()
     set_redis_client(None)
@@ -175,6 +181,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Precisa vir depois da criacao do app e antes do primeiro request: e ele que
+# abre o contexto de correlacao que todas as camadas abaixo leem.
+setup_observability(app, service_name=settings.otel_service_name, settings=settings)
 
 
 @app.middleware("http")
@@ -215,6 +225,7 @@ app.include_router(launcher_router)
 app.include_router(memory_router)
 app.include_router(automations_router)
 app.include_router(system_router)
+app.include_router(observability_router)
 app.include_router(desktop_router)
 app.include_router(computer_router)
 app.include_router(llm_config_router)

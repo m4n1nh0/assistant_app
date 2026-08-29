@@ -5,8 +5,26 @@ python-multipart==0.0.29
 qrcode[pil]==8.0
 langchain==1.3.14
 langgraph==1.2.10
+# Traz ToolNode, tools_condition e create_agent: o ciclo do agente e do
+# framework, nao codigo proprio.
+langgraph-prebuilt==1.1.0
+# Checkpointer do grafo. O padrao e em memoria; para sobreviver a restart,
+# instale tambem langgraph-checkpoint-sqlite e use CHECKPOINT_BACKEND=sqlite.
+langgraph-checkpoint==4.1.1
 mcp==1.29.0
 langchain-mcp-adapters==0.3.2
+# Observabilidade dos fluxos de IA (prompt, cadeia, agente). Opcional em tempo
+# de execucao: sem LANGSMITH_ENABLED nada e enviado.
+langsmith==0.10.11
+
+# Tracing distribuido sobre padrao aberto. A aplicacao fala com a abstracao em
+# app.core.observability; estes pacotes so aparecem no adaptador, e a ausencia
+# deles degrada para log em vez de quebrar o boot.
+opentelemetry-api==1.39.0
+opentelemetry-sdk==1.39.0
+opentelemetry-exporter-otlp-proto-http==1.39.0
+opentelemetry-instrumentation-fastapi==0.60b0
+opentelemetry-instrumentation-httpx==0.60b0
 
 anthropic==0.102.0
 openai==2.37.0

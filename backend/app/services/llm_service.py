@@ -150,10 +150,15 @@ async def call_claude(
             messages=messages,
         )
         content = response.content[0].text
+        usage = response.usage
         return LLMResponse(
             llm="claude", content=content,
             duration_ms=int((time.monotonic() - start) * 1000),
-            tokens_used=response.usage.output_tokens,
+            tokens_used=usage.output_tokens,
+            model=settings.claude_model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cached_tokens=getattr(usage, "cache_read_input_tokens", None),
         )
     except Exception as e:
         message = _log_llm_error("claude", e)
@@ -198,11 +203,19 @@ async def call_gpt(
             max_tokens=max_tokens or _DEFAULT_MAX_TOKENS,
             messages=messages,
         )
+        usage = resp.usage
+        cached = getattr(
+            getattr(usage, "prompt_tokens_details", None), "cached_tokens", None
+        )
         return LLMResponse(
             llm="gpt",
             content=resp.choices[0].message.content,
             duration_ms=int((time.monotonic() - start) * 1000),
-            tokens_used=resp.usage.completion_tokens,
+            tokens_used=usage.completion_tokens,
+            model=settings.openai_model,
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            cached_tokens=cached,
         )
     except Exception as e:
         message = _log_llm_error("gpt", e)
@@ -274,11 +287,18 @@ async def call_openai_compatible(
         if not isinstance(choices, list) or not choices:
             raise Exception(f"Resposta sem choices: {_error_message(data)}")
         usage = data.get("usage") or {}
+        details = usage.get("prompt_tokens_details") or {}
         return LLMResponse(
             llm=service_id,
             content=choices[0]["message"]["content"],
             duration_ms=int((time.monotonic() - start) * 1000),
             tokens_used=usage.get("completion_tokens"),
+            model=str(data.get("model") or model),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+            cached_tokens=(
+                details.get("cached_tokens") if isinstance(details, dict) else None
+            ),
         )
     except Exception as e:
         message = _log_llm_error(service_id, e)
@@ -398,9 +418,15 @@ async def call_gemini(
         if "error" in data:
             raise Exception(_error_message(data["error"]))
         content = data["candidates"][0]["content"]["parts"][0]["text"]
+        usage = data.get("usageMetadata") or {}
         return LLMResponse(
             llm="gemini", content=content,
             duration_ms=int((time.monotonic() - start) * 1000),
+            tokens_used=usage.get("candidatesTokenCount"),
+            model=settings.gemini_model,
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+            cached_tokens=usage.get("cachedContentTokenCount"),
         )
     except Exception as e:
         message = _log_llm_error("gemini", e)

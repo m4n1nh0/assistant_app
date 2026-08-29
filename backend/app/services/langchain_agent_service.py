@@ -32,6 +32,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from .user_llm_config_service import runtime_settings
+from ..core.observability import build_usage, current_context, record_usage, span
 from ..models.schemas import LLMResponse, Message
 from . import llm_service
 
@@ -40,12 +41,16 @@ settings = runtime_settings
 
 
 class StructuredModelResponse(BaseModel):
-    """Resposta do modelo ja separada em texto e chamadas de ferramenta."""
+    """Resposta do modelo ja separada em texto, consumo e chamadas de ferramenta."""
     provider: str
     content: str
     is_error: bool = False
     duration_ms: int = 0
     tokens_used: int | None = None
+    model: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_tokens: int | None = None
 
     def to_llm_response(self) -> LLMResponse:
         """Converte a saida do LangChain no `LLMResponse` usado pelo resto do backend."""
@@ -55,6 +60,10 @@ class StructuredModelResponse(BaseModel):
             is_error=self.is_error,
             duration_ms=self.duration_ms,
             tokens_used=self.tokens_used,
+            model=self.model,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            cached_tokens=self.cached_tokens,
         )
 
 
@@ -221,18 +230,48 @@ class ProviderChatModel(BaseChatModel):
         if self.bound_tools:
             system_prompt += _tool_catalog(self.bound_tools)
 
-        response = await llm_service.dispatch_single(
-            self.provider,
-            message,
-            history,
-            system_prompt,
+        async with span(
+            f"llm.{self.provider}",
+            "llm",
+            provider=self.provider,
+            tools=len(self.bound_tools) or None,
+        ) as observed:
+            response = await llm_service.dispatch_single(
+                self.provider,
+                message,
+                history,
+                system_prompt,
+            )
+            observed.set(model=response.model or None)
+            if response.is_error:
+                observed.fail(response.content)
+
+        record_usage(
+            build_usage(
+                response.llm,
+                model=response.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cached_tokens=response.cached_tokens,
+                duration_ms=float(response.duration_ms),
+                agent_id=current_context().agent_id,
+                ok=not response.is_error,
+                correlation=current_context().as_dict(),
+            )
         )
 
         metadata = {
             "provider": response.llm,
+            "model": response.model,
             "is_error": response.is_error,
             "duration_ms": response.duration_ms,
             "tokens_used": response.tokens_used,
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "cached_tokens": response.cached_tokens,
+            # O consumo ja foi contabilizado acima; o callback de telemetria le
+            # esta marca para nao somar a mesma chamada duas vezes.
+            "telemetry_recorded": True,
         }
 
         tool_calls = []
@@ -250,11 +289,30 @@ class ProviderChatModel(BaseChatModel):
             content="" if tool_calls else response.content,
             tool_calls=tool_calls,
             response_metadata=metadata,
+            usage_metadata=_usage_metadata(response),
         )
         return ChatResult(
             generations=[ChatGeneration(message=ai_message)],
             llm_output={"provider": response.llm},
         )
+
+
+def _usage_metadata(response: LLMResponse) -> dict[str, Any] | None:
+    """Consumo no formato padrao do LangChain, quando o provedor informou algo.
+
+    Fica `None` quando nenhum numero veio: preencher com zero faria qualquer
+    agregador tratar ausencia de dado como custo zero.
+    """
+    if response.input_tokens is None and response.output_tokens is None:
+        return None
+    usage: dict[str, Any] = {
+        "input_tokens": response.input_tokens or 0,
+        "output_tokens": response.output_tokens or 0,
+        "total_tokens": (response.input_tokens or 0) + (response.output_tokens or 0),
+    }
+    if response.cached_tokens:
+        usage["input_token_details"] = {"cache_read": response.cached_tokens}
+    return usage
 
 
 def _structured_response(message: AIMessage) -> StructuredModelResponse:
@@ -265,6 +323,10 @@ def _structured_response(message: AIMessage) -> StructuredModelResponse:
         is_error=bool(metadata.get("is_error", False)),
         duration_ms=int(metadata.get("duration_ms") or 0),
         tokens_used=metadata.get("tokens_used"),
+        model=str(metadata.get("model") or ""),
+        input_tokens=metadata.get("input_tokens"),
+        output_tokens=metadata.get("output_tokens"),
+        cached_tokens=metadata.get("cached_tokens"),
     )
 
 
@@ -430,4 +492,60 @@ async def dispatch_chain(
         content=f"**Resposta em etapas:**\n\n{last_success.content}",
         duration_ms=last_success.duration_ms,
         tokens_used=last_success.tokens_used,
+    )
+
+
+def langchain_messages(
+    message: str,
+    history: list[Message],
+    system_prompt: str,
+) -> list[BaseMessage]:
+    """Monta a conversa no formato do LangChain, para semear o grafo do agente."""
+    return _langchain_messages(message, history, system_prompt)
+
+
+async def invoke_model(
+    provider: str,
+    messages: Sequence[BaseMessage],
+    tools: Sequence[BaseTool] = (),
+) -> tuple[AIMessage, LLMResponse]:
+    """Um passo do modelo: recebe a conversa, devolve a mensagem e o resumo.
+
+    E a unidade que o subgrafo do agente executa em cada visita ao no `agent`.
+    Diferente de `run_with_tools`, nao ha laco aqui - quem repete e o grafo, com
+    aresta explicita, e nao um `for` escondido.
+
+    Args:
+        provider: chave do provedor.
+        messages: conversa acumulada, incluindo resultados de ferramenta.
+        tools: ferramentas disponiveis nesta rodada.
+
+    Returns:
+        A `AIMessage` crua, para o grafo inspecionar `tool_calls`, e o
+        `LLMResponse` normalizado que o resto do backend consome.
+    """
+    model = ProviderChatModel(provider=provider)
+    if tools:
+        model = model.bind_tools(list(tools))
+    result = await model.ainvoke(list(messages))
+    if not isinstance(result, AIMessage):
+        result = AIMessage(content=str(result))
+    return result, _structured_response(result).to_llm_response()
+
+
+async def plain_response(
+    provider: str,
+    messages: Sequence[BaseMessage],
+) -> LLMResponse:
+    """Resposta final sem ferramentas, a partir da conversa ja acumulada.
+
+    Usada quando o teto de iteracoes estoura: sem este passo, o usuario receberia
+    o JSON cru de uma chamada de ferramenta que nunca foi executada.
+    """
+    system_prompt, history, message = _provider_request(list(messages))
+    return await llm_service.dispatch_single(
+        provider,
+        message or "Responda ao pedido original usando os resultados acima.",
+        history,
+        system_prompt,
     )
