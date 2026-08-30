@@ -5,6 +5,9 @@
 backend/.env
 backend/.env.*
 !backend/.env.example
+# Um .env por servico extraido (mcp-service, tool-service, orchestrator).
+# Os .example sao versionados; os arquivos reais, nunca.
+!backend/.env.*.example
 
 # Local tool and editor state
 .vscode/
@@ -74,3 +77,7 @@ temp/
 # Documentacao gerada (mkdocs + dart doc). Versione as docstrings, nao o site.
 site/
 .cache/
+
+# Instaladores gerados por scripts/build_installer.ps1. Sao artefato de build
+# (20 MB por versao): distribua por release, nao pelo repositorio.
+dist/

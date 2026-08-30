@@ -74,6 +74,14 @@ services:
       - ./backend:/app
       - assistant_data:/app/data
       - assistant_logs:/app/logs
+    # `environment:` vence `env_file:` no Compose. O que esta aqui e topologia
+    # do compose - o endereco dos outros containers -, e sobrescrever o
+    # backend/.env e o comportamento desejado.
+    #
+    # MCP_TRANSPORT e TOOL_TRANSPORT NAO entram aqui de proposito: se
+    # entrassem, defini-las no backend/.env passaria a nao ter efeito, sem erro
+    # nenhum. Para o backend falar com os servicos extraidos, edite
+    # backend/.env.
     environment:
       - HOST=0.0.0.0
       - PORT=8000
@@ -101,31 +109,57 @@ services:
       retries: 3
       start_period: 10s
 
-  # --- Servicos extraidos -------------------------------------------------
+  # --- Servicos extraidos ---------------------------------------------------
   # Ficam atras de profiles porque nao sobem no desenvolvimento padrao: o
-  # backend fala com eles in-process. Use `docker compose --profile services up`
-  # e ligue MCP_TRANSPORT/TOOL_TRANSPORT=remote para exercitar o modo remoto.
+  # backend fala com eles in-process. Para exercitar o modo remoto:
+  #
+  #   cp backend/.env.mcp-service.example  backend/.env.mcp-service
+  #   cp backend/.env.tool-service.example backend/.env.tool-service
+  #   # e, no backend/.env: MCP_TRANSPORT=remote e TOOL_TRANSPORT=remote
+  #   docker compose --profile services up
+  #
+  # Cada um tem o proprio env_file e nao herda o backend/.env: um processo que
+  # nao le DATABASE_URL nem JWT_SECRET tambem nao deve recebe-los.
+  #
+  # E cada um tem o proprio Dockerfile, com o recorte de dependencias que ele de
+  # fato carrega: ~100 MB no mcp-service e ~136 MB no tool-service, contra os
+  # ~2 GB de wheels de CUDA que a imagem cheia instala por causa do
+  # faster-whisper. O agent-orchestrator e a excecao, e o comentario dele diz
+  # por que.
+  #
+  # O comando de entrada e o CMD de cada Dockerfile - `python -m
+  # services.<x>.main`, o mesmo do PaaS, que passa por serve() e faz PORT e
+  # RELOAD se comportarem como em producao. Por isso nao ha `command:` aqui:
+  # um lugar so decide como o servico sobe.
+  #
+  # Lembre que `environment:` vence `env_file:`. So entra ali o que o compose
+  # decide, nunca configuracao de aplicacao.
 
   mcp-service:
     profiles: ["services", "mcp"]
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.mcp-service
+      args:
+        # Servidor MCP stdio com `npx` precisa de Node dentro da imagem.
+        # Servidores `http` nao precisam. Veja Dockerfile.mcp-service.
+        WITH_NODE: "${MCP_WITH_NODE:-false}"
     container_name: assistant-mcp-service
     restart: unless-stopped
-    command: >-
-      python -m uvicorn services.mcp_service.main:app
-      --host 0.0.0.0 --port ${MCP_SERVICE_PORT:-8002}
     ports:
-      - "${MCP_SERVICE_PORT:-8002}:${MCP_SERVICE_PORT:-8002}"
+      # Esquerda: a porta na sua maquina, mude se 8002 estiver ocupada.
+      # Direita: a do container, fixada por PORT no .env.mcp-service - e igual
+      # ao padrao do Settings enquanto esse arquivo nao existir.
+      - "${MCP_HOST_PORT:-8002}:8002"
     environment:
-      - MCP_SERVICE_PORT=${MCP_SERVICE_PORT:-8002}
-      - OTEL_SERVICE_NAME=mcp-service
+      # Container nao vigia arquivo. O padrao do Settings e `true`, entao a
+      # linha e necessaria mesmo antes de existir um .env.mcp-service.
+      - RELOAD=false
     env_file:
-      - path: ./backend/.env
+      - path: ./backend/.env.mcp-service
         required: false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${MCP_SERVICE_PORT:-8002}/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -135,25 +169,61 @@ services:
     profiles: ["services", "tools"]
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.tool-service
+      args:
+        # So faz falta com MCP_TRANSPORT=local, quando este servico sobe os
+        # servidores MCP por conta propria.
+        WITH_NODE: "${TOOL_WITH_NODE:-false}"
     container_name: assistant-tool-service
     restart: unless-stopped
-    command: >-
-      python -m uvicorn services.tool_service.main:app
-      --host 0.0.0.0 --port ${TOOL_SERVICE_PORT:-8003}
     ports:
-      - "${TOOL_SERVICE_PORT:-8003}:${TOOL_SERVICE_PORT:-8003}"
+      - "${TOOL_HOST_PORT:-8003}:8003"
     environment:
-      - TOOL_SERVICE_PORT=${TOOL_SERVICE_PORT:-8003}
-      - OTEL_SERVICE_NAME=tool-service
-      # O tool-service consome MCP pelo mesmo gateway do backend.
-      - MCP_TRANSPORT=${MCP_TRANSPORT:-local}
-      - MCP_SERVICE_URL=${MCP_SERVICE_URL:-http://mcp-service:8002}
+      - RELOAD=false
+    # De onde vem as capacidades MCP (MCP_TRANSPORT, MCP_SERVICE_URL) esta no
+    # .env.tool-service, e nao aqui: como `environment:` vence `env_file:`,
+    # declarar o transporte nos dois lugares faria o arquivo virar decoracao.
     env_file:
-      - path: ./backend/.env
+      - path: ./backend/.env.tool-service
+        required: false
+    # Sem depends_on no mcp-service de proposito: o gateway tem timeout, retry e
+    # disjuntor, e /health/ready reflete a indisponibilidade. Amarrar a ordem de
+    # subida esconderia justamente o comportamento que se quer exercitar aqui.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Perfil proprio, fora de "services": o arranjo padrao de desenvolvimento e
+  # MCP + ferramentas remotos com o grafo rodando dentro da assistant-api. Este
+  # servico existe para teste de carga isolado do fluxo agentivo.
+  #
+  # UNICO servico extraido que usa a imagem cheia, e de proposito: ao atender
+  # POST /orchestrate/chat ele importa agent_service e langchain_agent_service
+  # (app/orchestration/nodes/dispatch.py:169), que puxam os SDKs de provedor, o
+  # banco e o Qdrant. Uma imagem enxuta aqui subiria, passaria no healthcheck e
+  # quebraria na primeira requisicao - economizar 2 GB em troca desse tipo de
+  # falha nao e economia. Por isso tambem ele mantem `command:`: o CMD da imagem
+  # cheia e o da assistant-api.
+  agent-orchestrator:
+    profiles: ["orchestrator"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: assistant-agent-orchestrator
+    restart: unless-stopped
+    command: python -m services.orchestrator.main
+    ports:
+      - "${ORCHESTRATOR_HOST_PORT:-8001}:8001"
+    environment:
+      - RELOAD=false
+    env_file:
+      - path: ./backend/.env.orchestrator
         required: false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${TOOL_SERVICE_PORT:-8003}/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3

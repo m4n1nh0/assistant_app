@@ -1,0 +1,86 @@
+# Dependencias do tool-service (backend/Dockerfile.tool-service).
+#
+# Derivado do fecho de imports real do entrypoint. AS VERSOES TEM DE BATER COM
+# requirements.txt - tests/test_service_requirements.py falha se divergirem.
+#
+# Este conjunto e maior que o do mcp-service por duas razoes bem diferentes:
+# uma legitima (as ferramentas sao declaradas com o decorador @tool do
+# LangChain) e uma acidental (o fecho de imports arrasta banco e seguranca).
+# A segunda esta anotada no fim.
+
+# --- servidor HTTP -----------------------------------------------------------
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
+
+# --- configuracao ------------------------------------------------------------
+pydantic[email]==2.13.4
+pydantic-settings==2.14.1
+python-dotenv==1.2.2
+python-multipart==0.0.29
+
+# --- catalogo de ferramentas -------------------------------------------------
+# app/services/assistant_tools.py:15 declara as ferramentas com @tool, e
+# app/toolkit/catalog.py:18 tipa o registry com BaseTool. E o mesmo registry do
+# modo in-process: e justamente por isso que mover o catalogo para fora nao muda
+# regra de autorizacao, timeout nem auditoria.
+langchain==1.3.14
+# Vem junto com langchain. Pinados mesmo assim para a imagem bater exatamente
+# com a da assistant-api.
+langgraph==1.2.10
+langgraph-prebuilt==1.1.0
+langgraph-checkpoint==4.1.1
+
+# app/services/calendar_action_service.py:19. Faltou na primeira versao deste
+# arquivo e so apareceu ao instalar num venv limpo: o import esta dentro de
+# assistant_tools, entao a ausencia derruba a MONTAGEM do catalogo - o servico
+# nem chega a subir.
+pytz==2026.2
+
+# --- cliente HTTP ------------------------------------------------------------
+httpx==0.28.1
+
+# --- MCP: este servico publica as capacidades no catalogo --------------------
+mcp==1.29.0
+langchain-mcp-adapters==0.3.2
+
+# --- log e serializacao ------------------------------------------------------
+loguru==0.7.3
+orjson==3.11.9
+
+# --- observabilidade ---------------------------------------------------------
+opentelemetry-api==1.39.0
+opentelemetry-sdk==1.39.0
+opentelemetry-exporter-otlp-proto-http==1.39.0
+
+# --- carregadas sem serem usadas ---------------------------------------------
+# Montar o catalogo importa transitivamente app.core.database, app.core.security
+# e credential_storage_service:
+#
+#   build_local_tool_gateway -> toolkit.catalog -> services.assistant_tools
+#     -> launcher_service            -> app.core.database   (modelos + engine)
+#     -> user_llm_config_service     -> app.core.security   (JWT)
+#                                    -> credential_storage_service (cifra)
+#
+# Nenhum codigo executado por este servico usa esses modulos - as ferramentas
+# daqui so montam proposta -, mas o import precisa resolver, entao os pacotes
+# entram na imagem. As VARIAVEIS correspondentes (DATABASE_URL, JWT_SECRET,
+# CREDENTIAL_ENCRYPTION_KEY) continuam nao devendo existir no ambiente: o engine
+# do SQLAlchemy e construido no import e nunca conecta.
+#
+# Resolver isso significa separar as construtoras puras
+# (build_project_open_action, build_shortcut_registration_action) do modulo que
+# carrega os modelos de banco. Ate la, sao ~40 MB de imagem por uma aresta de
+# arquitetura, e nao por necessidade.
+sqlalchemy==2.0.49
+aiomysql==0.3.2
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+# passlib 1.7.4 le bcrypt.__about__, removido no bcrypt>=4.1.
+bcrypt==4.0.1
+cryptography==48.0.0
+
+# NAO entram: anthropic, openai, google-generativeai, huggingface-hub
+# (nenhuma ferramenta daqui fala com modelo - o fallback de LLM do
+# launcher_service esta em suggest_launch_command, que as construtoras usadas
+# pelas ferramentas nao alcancam), faster-whisper, nvidia-*, fastembed,
+# qdrant-client, redis, apscheduler, python-telegram-bot, google-api-*.

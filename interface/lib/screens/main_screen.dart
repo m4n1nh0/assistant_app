@@ -1,6 +1,11 @@
 /// Tela principal, que compoe os tres paineis do app.
 ///
 /// Tambem cuida do estado da janela (foco, minimizar, restaurar) via `WindowListener`.
+///
+/// Os paineis so sao montados depois da autenticacao. Antes disso a janela
+/// mostra apenas a marca: sem esse portao, o app renderizava a conversa inteira
+/// atras do dialogo de acesso - inclusive a do usuario anterior, ja que o
+/// dialogo aparece um quadro depois da tela.
 library;
 
 import 'dart:async';
@@ -21,6 +26,8 @@ import '../widgets/left_panel.dart';
 import '../widgets/chat_panel.dart';
 import '../widgets/right_panel.dart';
 import '../widgets/auth_dialog.dart';
+import '../widgets/blurred_barrier.dart';
+import '../widgets/locked_backdrop.dart';
 
 /// Tela principal, com os paineis lateral, central e direito.
 class MainScreen extends ConsumerStatefulWidget {
@@ -227,17 +234,23 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
     final username = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AuthDialog(
-        assistantName: config.assistantName,
-        needsSetup: authStatus.needsSetup,
-        inviteRegistrationEnabled: authStatus.inviteRegistrationEnabled,
-        registrationRequiresToken: authStatus.registrationRequiresToken,
-        registrationDeliveryConfigured:
-            authStatus.registrationDeliveryConfigured,
-        adminEmailHint: authStatus.adminEmailHint,
-        initialUsername: storedUsername,
-        backendUrl: api.baseUrl,
-        backendWarning: backendWarning,
+      // Barreira mais opaca que o padrao (`black54`) e desfocada. Isso vale
+      // sobretudo na reautenticacao apos "trocar usuario", quando o dialogo
+      // pode aparecer sobre uma tela que ainda esta sendo desmontada.
+      barrierColor: AssistantTheme.bg.withOpacity(0.86),
+      builder: (_) => BlurredBarrier(
+        child: AuthDialog(
+          assistantName: config.assistantName,
+          needsSetup: authStatus.needsSetup,
+          inviteRegistrationEnabled: authStatus.inviteRegistrationEnabled,
+          registrationRequiresToken: authStatus.registrationRequiresToken,
+          registrationDeliveryConfigured:
+              authStatus.registrationDeliveryConfigured,
+          adminEmailHint: authStatus.adminEmailHint,
+          initialUsername: storedUsername,
+          backendUrl: api.baseUrl,
+          backendWarning: backendWarning,
+        ),
       ),
     );
     if (username != null) {
@@ -400,19 +413,29 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
+    // O portao e aqui, e nao no dialogo: enquanto nao ha sessao, os paineis nem
+    // sao construidos. Escurecer o fundo esconderia o conteudo do olho, mas ele
+    // continuaria montado, buscando dados e visivel num screenshot ou numa
+    // captura de tela compartilhada.
+    final authenticated = ref.watch(isAuthenticatedProvider);
+
     return Scaffold(
       backgroundColor: AssistantTheme.bg,
       body: Column(
         children: [
+          // A barra de titulo fica de fora do portao: sem ela o usuario nao
+          // consegue mover, minimizar nem fechar a janela na tela de acesso.
           const AssistantTitleBar(),
           Expanded(
-            child: Row(
-              children: [
-                const LeftPanel(),
-                const Expanded(child: ChatPanel()),
-                const RightPanel(),
-              ],
-            ),
+            child: authenticated
+                ? Row(
+                    children: [
+                      const LeftPanel(),
+                      const Expanded(child: ChatPanel()),
+                      const RightPanel(),
+                    ],
+                  )
+                : const LockedBackdrop(),
           ),
         ],
       ),

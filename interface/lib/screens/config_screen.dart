@@ -20,6 +20,7 @@ import '../services/neural_tts_service.dart';
 import '../services/neural_audio_player.dart';
 import '../services/audio_input_service.dart';
 import '../services/connected_ai_service.dart';
+import '../services/app_defaults_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
@@ -1260,8 +1261,24 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 
   Widget _buildSystem() => _TabContent(title: 'SISTEMA', children: [
         _SectionCard(title: '🌐 CONEXÃO COM O BACKEND', children: [
+          // Um build que saiu sem o asset de configuracao aponta todo mundo
+          // para a maquina do proprio usuario. Sem este aviso, o unico sintoma
+          // e o app nao conectar - e ninguem procura no lugar certo.
+          if (AppDefaultsService.usingFallback)
+            _WarningBox(
+              'Nenhuma configuração de distribuição foi encontrada. O app está '
+              'usando ${AppConfig.developmentBackendUrl}, que só serve para '
+              'desenvolvimento.\n\n'
+              '${AppDefaultsService.loadError.isEmpty ? '' : 'Motivo: '
+                  '${AppDefaultsService.loadError}\n\n'}'
+              'Se este é um build de produção, ele está quebrado: '
+              'assets/config/app_defaults.json não entrou no pacote. '
+              'Recrie o arquivo e rode flutter clean antes de gerar o build.',
+            ),
           _InfoBox(
-            'Padrão da distribuição: ${AppConfig.defaultBackendUrl}. '
+            'Padrão da distribuição: ${AppConfig.defaultBackendUrl} '
+            '(origem: ${AppDefaultsService.source}, '
+            'ambiente: ${AppDefaultsService.environment}). '
             'Em produção, esse valor vem de assets/config/app_defaults.json '
             'ou de intarq_config.json ao lado do executável. Use localhost '
             'apenas para desenvolvimento.',
@@ -1809,6 +1826,31 @@ class _InfoBox extends StatelessWidget {
                 fontFamily: 'JetBrains Mono',
                 fontSize: 10,
                 color: AssistantTheme.textSecondary,
+                height: 1.6)),
+      );
+}
+
+/// Caixa de aviso: mesmo formato do `_InfoBox`, na cor de alerta.
+///
+/// Existe para o caso em que a configuracao esta ausente e o app segue rodando
+/// com um padrao que nao e o desejado - situacao que precisa saltar aos olhos,
+/// nao se misturar ao texto explicativo.
+class _WarningBox extends StatelessWidget {
+  final String text;
+  const _WarningBox(this.text);
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+            border: Border.all(color: AssistantTheme.danger.withOpacity(0.5)),
+            borderRadius: BorderRadius.circular(3),
+            color: AssistantTheme.danger.withOpacity(0.08)),
+        child: Text(text,
+            style: const TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 10,
+                color: AssistantTheme.danger,
                 height: 1.6)),
       );
 }

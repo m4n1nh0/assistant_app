@@ -1,0 +1,70 @@
+# mcp-service: imagem propria, com o que o processo de fato carrega.
+#
+# Por que nao a imagem do backend: ela instala faster-whisper e os wheels de
+# CUDA (nvidia-cublas-cu12, nvidia-cudnn-cu12), que sozinhos passam de 2 GB e
+# que este servico nunca importa. Aqui sao ~100 MB de dependencias.
+#
+# O preco da escolha, para ficar registrado: um import novo em app/core/* ou
+# app/mcp/* quebra este servico em RUNTIME, e nao no build.
+# tests/test_service_requirements.py cobre a deriva de versao; a de pacote so
+# aparece quando o servico sobe, e por isso o healthcheck do deploy importa.
+
+FROM python:3.14-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv
+
+RUN python -m venv "${VIRTUAL_ENV}"
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+WORKDIR /build
+
+COPY requirements-mcp-service.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --only-binary=:all: -r requirements-mcp-service.txt
+
+
+FROM python:3.14-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
+
+# Servidor MCP com transporte stdio sobe SUBPROCESSO nesta imagem - `npx`, um
+# binario, um script -, e o runtime dele precisa existir aqui. Node nao entra
+# por padrao porque dobraria o tamanho da imagem sem que todo servidor precise
+# dele. Se os seus MCP_SERVERS usam npx:
+#
+#   docker build -f Dockerfile.mcp-service --build-arg WITH_NODE=true .
+#
+# Servidores com transporte `http` nao tem esse requisito.
+ARG WITH_NODE=false
+
+# curl e o healthcheck do orquestrador de container. ffmpeg NAO entra: este
+# servico nao transcreve audio.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && if [ "${WITH_NODE}" = "true" ]; then \
+         apt-get install -y --no-install-recommends nodejs npm; \
+       fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+
+# So o codigo que este processo carrega. `COPY . .` traria tests/, sql/,
+# static/ e o seed de desenvolvimento - nada disso e executado aqui.
+COPY --chown=app:app app ./app
+COPY --chown=app:app services ./services
+
+USER app
+
+# Documental. A porta efetiva vem de PORT (plataforma) ou MCP_SERVICE_PORT.
+EXPOSE 8002
+
+CMD ["python", "-m", "services.mcp_service.main"]

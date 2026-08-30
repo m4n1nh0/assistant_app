@@ -1,0 +1,49 @@
+# Dependencias do mcp-service (backend/Dockerfile.mcp-service).
+#
+# Derivado do fecho de imports real do entrypoint, e nao a olho: o processo foi
+# importado e os modulos de terceiros em sys.modules foram mapeados de volta
+# para as distribuicoes que os fornecem.
+#
+# AS VERSOES TEM DE BATER COM requirements.txt. Nao e convencao: quatro imagens
+# com a mesma base e versoes diferentes produzem bug que so aparece em um dos
+# servicos. tests/test_service_requirements.py falha se divergirem.
+
+# --- servidor HTTP -----------------------------------------------------------
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
+# Importado por services/common.py:145, dentro de serve() - por isso nao aparece
+# no fecho de imports estatico, mas sem ele o processo nao sobe.
+
+# --- configuracao ------------------------------------------------------------
+pydantic[email]==2.13.4
+pydantic-settings==2.14.1
+python-dotenv==1.2.2
+python-multipart==0.0.29
+
+# --- MCP ---------------------------------------------------------------------
+mcp==1.29.0
+# app/mcp/client.py:122 importa MultiServerMCPClient dentro da funcao: so e
+# exercitado quando o servico conecta de fato num servidor. Um teste que apenas
+# importa o modulo passaria sem este pacote, e o deploy quebraria na primeira
+# chamada.
+langchain-mcp-adapters==0.3.2
+
+# --- log e serializacao ------------------------------------------------------
+loguru==0.7.3
+orjson==3.11.9
+
+# --- observabilidade (opcional em runtime, obrigatoria aqui) -----------------
+# app/core/observability/otel.py importa tudo dentro de try/except e degrada
+# para log quando falta. Ficam na imagem porque OTEL_ENABLED e uma opcao
+# documentada deste servico: sem os pacotes, ligar a variavel nao daria erro -
+# daria silencio, que e pior.
+opentelemetry-api==1.39.0
+opentelemetry-sdk==1.39.0
+opentelemetry-exporter-otlp-proto-http==1.39.0
+
+# NAO entram aqui, e o motivo esta em docs/configuracao-por-servico.md:
+#   sqlalchemy, aiomysql       - este servico nao conhece banco
+#   python-jose, passlib       - nao autentica ninguem
+#   anthropic, openai, gemini  - nao fala com modelo
+#   faster-whisper, nvidia-*   - nao transcreve nada (o grosso da imagem cheia)
+#   fastembed, qdrant-client   - nao indexa nada

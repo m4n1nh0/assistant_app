@@ -1,0 +1,62 @@
+# tool-service: imagem propria, com o que o processo de fato carrega.
+#
+# Maior que a do mcp-service (~136 MB contra ~100 MB) por duas razoes bem
+# diferentes: as ferramentas sao declaradas com o decorador @tool do LangChain,
+# o que e legitimo, e o fecho de imports arrasta SQLAlchemy, jose e passlib sem
+# que nada os use, o que e uma aresta conhecida - veja o rodape de
+# requirements-tool-service.txt.
+#
+# Ainda assim, fica fora daqui o grosso da imagem cheia: faster-whisper, os
+# wheels de CUDA, fastembed/onnxruntime, os SDKs de provedor e o cliente do
+# Qdrant.
+
+FROM python:3.14-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv
+
+RUN python -m venv "${VIRTUAL_ENV}"
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+WORKDIR /build
+
+COPY requirements-tool-service.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --only-binary=:all: -r requirements-tool-service.txt
+
+
+FROM python:3.14-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
+
+# Node so faz falta com MCP_TRANSPORT=local, quando este servico sobe os
+# servidores MCP stdio por conta propria. No arranjo recomendado
+# (MCP_TRANSPORT=remote) quem faz isso e o mcp-service, e aqui so trafega HTTP.
+ARG WITH_NODE=false
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && if [ "${WITH_NODE}" = "true" ]; then \
+         apt-get install -y --no-install-recommends nodejs npm; \
+       fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+
+COPY --chown=app:app app ./app
+COPY --chown=app:app services ./services
+
+USER app
+
+# Documental. A porta efetiva vem de PORT (plataforma) ou TOOL_SERVICE_PORT.
+EXPOSE 8003
+
+CMD ["python", "-m", "services.tool_service.main"]

@@ -1101,6 +1101,51 @@ runner correspondente com o Flutter no sistema de destino e valide os serviços
 locais específicos da plataforma; consulte o
 [guia da interface](interface/README.md#outras-plataformas).
 
+### Instalador Windows
+
+```powershell
+pwsh scripts/build_installer.ps1
+```
+
+Gera `dist/INTARQ-Setup-<versao>.exe` (~20 MB) a partir do build de release. O
+script encadeia quatro etapas nesta ordem, e para na primeira que falhar:
+
+1. **testes da interface** — inclui a guarda de
+   `assets/config/app_defaults.json`;
+2. **`flutter build windows --release`**;
+3. **verificação do bundle** — confirma que o asset de configuração entrou em
+   `flutter_assets` e que um build marcado `environment=production` não aponta
+   para `localhost`;
+4. **Inno Setup** — compila o instalador.
+
+A etapa 3 não é redundante com a 1: o Flutter aceita em silêncio uma pasta de
+asset declarada e vazia, então o arquivo pode existir no repositório e mesmo
+assim não entrar no pacote. Foi exatamente o que aconteceu uma vez, e o sintoma
+foi o app instalado apontar para `localhost` em todas as máquinas.
+
+Pré-requisito único, instalado uma vez:
+
+```powershell
+winget install --id JRSoftware.InnoSetup -e
+```
+
+Características do instalador ([installer/intarq.iss](installer/intarq.iss)):
+
+- **por usuário**, sem prompt de UAC;
+- fecha o app antes de sobrescrever binários e o reabre depois;
+- atalhos de menu iniciar, área de trabalho (opcional) e inicialização
+  automática (opcional);
+- **verifica o runtime WebView2** e o instala quando ausente — presente por
+  padrão no Windows 11, nem sempre no Windows 10;
+- desinstalador que remove tudo, sem apagar conversas e configuração do usuário.
+
+Flags úteis: `-SkipBuild` reaproveita o release atual, `-SkipTests` pula a
+suíte, `-Version 1.1.0` sobrescreve a versão do `pubspec.yaml`.
+
+Sem certificado de code signing, o SmartScreen exibe um aviso na primeira
+execução — comportamento esperado para binário não assinado, não erro do
+instalador.
+
 ### Docker
 
 Na raiz do projeto:
