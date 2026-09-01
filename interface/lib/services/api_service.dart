@@ -1488,7 +1488,8 @@ class LlmProviderConfig {
   final String recommendedModel;
 
   /// Estado da ultima checagem: online, limited, offline, model_unavailable,
-  /// invalid_credentials ou missing_key.
+  /// invalid_credentials ou missing_key. Vazio quando o backend nao informou -
+  /// o que acontece ao falar com uma versao anterior a este campo.
   final String status;
 
   /// Explicacao da falha, ja sanitizada pelo backend.
@@ -1536,7 +1537,10 @@ class LlmProviderConfig {
             .where((item) => item.isNotEmpty)
             .toList(),
         recommendedModel: json['recommended_model']?.toString() ?? '',
-        status: json['status']?.toString() ?? 'missing_key',
+        // Vazio significa "o backend nao informou", e nao "nao configurado".
+        // Assumir `missing_key` aqui fazia a tela afirmar que nao havia chave
+        // sempre que falava com um backend anterior a este campo.
+        status: json['status']?.toString() ?? '',
         statusError: json['status_error']?.toString() ?? '',
         balance: json['balance']?.toString() ?? '',
       );

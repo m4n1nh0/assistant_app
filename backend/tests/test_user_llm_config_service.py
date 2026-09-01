@@ -213,3 +213,44 @@ def test_provider_list_carries_the_catalog_so_the_ui_needs_no_extra_route(monkey
     # em vez de mostrar uma lista de escolha vazia.
     assert por_id["openrouter"]["available_models"] == []
     assert por_id["openrouter"]["recommended_model"] == ""
+
+
+def test_provider_without_a_health_check_reports_no_state_instead_of_no_key(
+    monkeypatch,
+):
+    """Ausencia de checagem nao e ausencia de credencial.
+
+    Preencher "missing_key" aqui fazia a tela afirmar que o provedor estava sem
+    chave sem nunca ter verificado.
+    """
+    async def no_migration(_user):
+        return None
+
+    async def load(_tutor_id):
+        return service.UserLLMRuntime(scope="tutor:one", providers={})
+
+    async def safe_list(_tutor_id):
+        return [{"id": "gpt", "label": "OpenAI", "kind": "external",
+                 "enabled": True, "configured": True, "model": "gpt-4o"}]
+
+    async def statuses(force=False):
+        return {}
+
+    async def available(force=False):
+        return []
+
+    monkeypatch.setattr(router, "migrate_legacy_environment_for_user", no_migration)
+    monkeypatch.setattr(router, "load_user_llm_runtime", load)
+    monkeypatch.setattr(router, "list_provider_config", safe_list)
+    monkeypatch.setattr(router, "get_llm_statuses", statuses)
+    monkeypatch.setattr(router, "get_available_llms", available)
+    monkeypatch.setattr(
+        router,
+        "runtime_settings",
+        SimpleNamespace(active_llms=[], llm_labels={}),
+    )
+
+    response = run(router._response({"uid": "one", "tutor_id": "one"}))
+
+    assert response["providers"][0]["status"] == ""
+    assert response["providers"][0]["configured"] is True

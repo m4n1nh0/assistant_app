@@ -44,7 +44,10 @@ async def _response(user: dict, *, force: bool = False) -> dict:
                 "recommended_model": status.recommended_model if status else "",
                 # Estado resumido para a lista de agentes conseguir sinalizar
                 # sem cruzar `providers` com `llm_status` do lado do cliente.
-                "status": status.status if status else "missing_key",
+                # Vazio quando nao ha checagem para este provedor: afirmar
+                # "missing_key" ai seria a interface dizer que nao ha chave sem
+                # ter verificado.
+                "status": status.status if status else "",
                 "status_error": (status.error or "") if status else "",
                 "balance": (status.balance or "") if status else "",
             })

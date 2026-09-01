@@ -1779,16 +1779,28 @@ class _AgentState {
         return const _AgentState(AssistantTheme.danger, 'Fora do ar');
       case 'checking':
         return const _AgentState(AssistantTheme.textMuted, 'Checando...');
+      case 'missing_key':
+        return _semConfiguracao(provider);
       default:
-        // Ollama e LocalAI nao tem credencial: o que os liga e um endereco.
-        // Rotular os dois como "sem chave" manda procurar uma chave que nao
-        // existe.
-        return _AgentState(
-          AssistantTheme.textMuted,
-          provider.kind == 'local' ? 'Sem endereço' : 'Sem chave',
-        );
+        // Campo ausente: backend anterior a este contrato. Dizer "sem chave"
+        // aqui seria afirmar o que nao se sabe - e era exatamente o que a tela
+        // fazia, marcando como sem credencial provedores que tinham uma. O que
+        // da para afirmar vem de `configured`, que qualquer versao envia.
+        return provider.configured
+            ? const _AgentState(
+                AssistantTheme.textMuted, 'Chave cadastrada · estado não verificado')
+            : _semConfiguracao(provider);
     }
   }
+
+  /// Provedor sem o que precisa para funcionar.
+  ///
+  /// Ollama e LocalAI nao tem credencial: o que os liga e um endereco. Rotular
+  /// os dois como "sem chave" manda procurar uma chave que nao existe.
+  static _AgentState _semConfiguracao(LlmProviderConfig provider) => _AgentState(
+        AssistantTheme.textMuted,
+        provider.kind == 'local' ? 'Sem endereço' : 'Sem chave',
+      );
 }
 
 /// Um agente na lista: nome, estado em cor e o modelo em uso.
