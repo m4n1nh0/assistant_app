@@ -1780,7 +1780,13 @@ class _AgentState {
       case 'checking':
         return const _AgentState(AssistantTheme.textMuted, 'Checando...');
       default:
-        return const _AgentState(AssistantTheme.textMuted, 'Sem chave');
+        // Ollama e LocalAI nao tem credencial: o que os liga e um endereco.
+        // Rotular os dois como "sem chave" manda procurar uma chave que nao
+        // existe.
+        return _AgentState(
+          AssistantTheme.textMuted,
+          provider.kind == 'local' ? 'Sem endereço' : 'Sem chave',
+        );
     }
   }
 }

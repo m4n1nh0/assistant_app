@@ -312,18 +312,23 @@ def _label(provider: str) -> str:
     return settings.llm_labels.get(provider, provider.upper())
 
 
+# O que falta configurar em cada provedor. Ollama e LocalAI nao tem credencial:
+# o que os liga e um endereco. Dizer "credencial nao configurada" para eles
+# manda procurar uma chave que nao existe - e foi o que a guarda nova do
+# `_check_llama` passou a fazer ao reusar a mensagem padrao.
+_MISSING_REASON = {
+    "localai": "LOCALAI_BASE_URL nao configurada",
+    "llama": "OLLAMA_BASE_URL nao configurada",
+}
+
+
 def _missing(provider: str) -> LLMStatus:
-    error = (
-        "LOCALAI_BASE_URL nao configurada"
-        if provider == "localai"
-        else "Credencial nao configurada"
-    )
     return LLMStatus(
         id=provider,
         label=_label(provider),
         configured=False,
         status="missing_key",
-        error=error,
+        error=_MISSING_REASON.get(provider, "Credencial nao configurada"),
     )
 
 

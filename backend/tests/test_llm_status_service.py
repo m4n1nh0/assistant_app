@@ -613,3 +613,18 @@ def test_balance_checked_provider_still_offers_a_model_list(monkeypatch):
 
     assert status.available is True
     assert status.available_models == ["openrouter/auto"]
+
+
+def test_missing_local_provider_asks_for_an_address_not_a_key():
+    """Ollama e LocalAI nao tem credencial: o que falta neles e endereco.
+
+    A guarda nova do `_check_llama` reusava a mensagem padrao e mandava o
+    usuario procurar uma chave que nao existe.
+    """
+    llama = service._missing("llama")
+    localai = service._missing("localai")
+    nuvem = service._missing("gpt")
+
+    assert "OLLAMA_BASE_URL" in (llama.error or "")
+    assert "LOCALAI_BASE_URL" in (localai.error or "")
+    assert "Credencial" in (nuvem.error or "")
