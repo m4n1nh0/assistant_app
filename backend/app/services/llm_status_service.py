@@ -14,7 +14,7 @@ import asyncio
 import json
 import re
 import time
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import quote
 
 import httpx
@@ -339,6 +339,70 @@ def _checking(provider: str) -> LLMStatus:
     )
 
 
+# Modelo que nao serve para conversar. O catalogo de um provedor mistura chat,
+# embedding, transcricao, moderacao e imagem; oferecer tudo numa lista de
+# escolha faria o usuario configurar um `whisper` como agente de chat.
+_NOT_CHAT_MARKERS = (
+    "embed", "whisper", "tts", "audio", "speech", "voice", "orpheus",
+    "guard", "moderation", "safety", "rerank", "reranker",
+    "stable-diffusion", "flux", "dall-e", "image", "vision-encoder",
+)
+
+# Preferencia por provedor, em ordem, casada por trecho do id contra o catalogo
+# que o provedor devolveu. E deliberadamente por padrao, e nao por id fixo: id
+# fixo e exatamente o que quebrou aqui quando a Mistral saiu do router do HF e
+# quando o `llama-3.3-70b-versatile` virou tier Enterprise na Groq. Casando por
+# trecho, sumindo o preferido a sugestao cai sozinha para o proximo.
+_MODEL_PREFERENCE: dict[str, tuple[str, ...]] = {
+    "claude": ("sonnet", "opus", "haiku"),
+    "gpt": ("gpt-4o", "gpt-4.1", "gpt-4", "o4-", "gpt-3.5"),
+    "gemini": ("flash", "pro"),
+    "together": ("llama-3.3-70b", "llama-3.1-70b", "qwen", "llama-3"),
+    "openrouter": ("auto", ":free", "llama-3.3"),
+    "deepseek": ("deepseek-chat", "deepseek"),
+    "grok": ("grok-", "gpt-oss-120b", "llama-3.3-70b", "llama-3.1-8b-instant"),
+    "hf": (
+        "llama-3.3-70b-instruct", "qwen2.5-72b", "llama-3.1-8b-instruct",
+        "gemma-3-27b", "instruct",
+    ),
+}
+
+
+def _is_chat_model(model_id: str) -> bool:
+    lowered = model_id.lower()
+    return not any(marker in lowered for marker in _NOT_CHAT_MARKERS)
+
+
+def _sorted_models(models: Iterable[str] | None) -> list[str]:
+    """Catalogo limpo e estavel: so modelo de chat, sem repeticao, ordenado."""
+    if not models:
+        return []
+    return sorted({str(item) for item in models if item and _is_chat_model(str(item))})
+
+
+def recommended_model(provider: str, models: Iterable[str] | None) -> str:
+    """Sugere o modelo mais adequado entre os que a conta realmente tem.
+
+    Devolve string vazia quando nao ha catalogo - sugerir um id que a conta nao
+    pode usar seria repetir o problema que esta funcao existe para evitar.
+
+    Args:
+        provider: chave do provedor.
+        models: catalogo devolvido pelo provedor nesta checagem.
+
+    Returns:
+        O id sugerido, ou "" quando nao da para sugerir.
+    """
+    catalog = _sorted_models(models)
+    if not catalog:
+        return ""
+    for pattern in _MODEL_PREFERENCE.get(provider, ()):
+        for model_id in catalog:
+            if pattern in model_id.lower():
+                return model_id
+    return catalog[0]
+
+
 def _status(
     provider: str,
     *,
@@ -349,6 +413,7 @@ def _status(
     balance: str | None = None,
     currency: str | None = None,
     error: str | None = None,
+    models: Iterable[str] | None = None,
 ) -> LLMStatus:
     available = configured and online and balance_ok is not False
     if not configured:
@@ -360,6 +425,7 @@ def _status(
     else:
         status = "online"
 
+    catalog = _sorted_models(models)
     return LLMStatus(
         id=provider,
         label=_label(provider),
@@ -372,10 +438,25 @@ def _status(
         currency=currency,
         status=status,
         error=error,
+        available_models=catalog,
+        recommended_model=recommended_model(provider, catalog),
     )
 
 
-def _model_unavailable(provider: str, model: str) -> LLMStatus:
+def _model_unavailable(
+    provider: str, model: str, models: Iterable[str] | None = None
+) -> LLMStatus:
+    """Modelo configurado que o provedor nao oferece a esta conta.
+
+    A lista de modelos entra no resultado porque a checagem **ja a baixou** para
+    descobrir a ausencia. Descarta-la deixava o usuario com um beco sem saida:
+    o erro dizia que o modelo nao servia, mas nao qual serviria.
+    """
+    catalog = _sorted_models(models)
+    suggestion = recommended_model(provider, catalog)
+    error = f"Modelo de chat '{model}' indisponivel ou sem acesso"
+    if suggestion:
+        error += f". Disponivel nesta conta, por exemplo: {suggestion}"
     return LLMStatus(
         id=provider,
         label=_label(provider),
@@ -383,7 +464,9 @@ def _model_unavailable(provider: str, model: str) -> LLMStatus:
         online=True,
         available=False,
         status="model_unavailable",
-        error=f"Modelo de chat '{model}' indisponivel ou sem acesso",
+        error=error,
+        available_models=catalog,
+        recommended_model=suggestion,
     )
 
 
@@ -397,12 +480,33 @@ def _model_id_without_policy(model: str) -> str:
 
 
 def _listed_model_ids(data: Any) -> set[str]:
-    raw_models = data.get("data", []) if isinstance(data, dict) else []
-    return {
-        str(model.get("id"))
-        for model in raw_models
-        if isinstance(model, dict) and model.get("id")
-    }
+    """Ids de modelo de uma listagem, nos tres formatos que os provedores usam.
+
+    OpenAI, Anthropic e Groq devolvem `{"data": [{"id": ...}]}`; a Together
+    devolve a lista crua; o Gemini devolve `{"models": [{"name": "models/x"}]}`.
+    Um parser so evita tres funcoes de checagem quase iguais.
+    """
+    if isinstance(data, dict):
+        raw_models = data.get("data") or data.get("models") or []
+    elif isinstance(data, list):
+        raw_models = data
+    else:
+        raw_models = []
+
+    ids: set[str] = set()
+    for model in raw_models:
+        if not isinstance(model, dict):
+            continue
+        identifier = model.get("id") or model.get("name") or ""
+        identifier = str(identifier).strip()
+        if not identifier:
+            continue
+        # O Gemini prefixa com `models/`; a chave usada na chamada nao tem o
+        # prefixo, entao guardar com ele faria a comparacao falhar sempre.
+        if identifier.startswith("models/"):
+            identifier = identifier[len("models/"):]
+        ids.add(identifier)
+    return ids
 
 
 async def _check_chat_model_endpoint(
@@ -428,8 +532,8 @@ async def _check_chat_model_endpoint(
         model_ids = _listed_model_ids(_safe_json(resp))
         wanted = _model_id_without_policy(model.strip())
         if not wanted or wanted not in model_ids:
-            return _model_unavailable(provider, wanted or model)
-        return _status(provider, configured=True, online=True)
+            return _model_unavailable(provider, wanted or model, model_ids)
+        return _status(provider, configured=True, online=True, models=model_ids)
     except Exception as exc:
         return _status(
             provider,
@@ -437,6 +541,33 @@ async def _check_chat_model_endpoint(
             online=False,
             error=_exception_error(exc),
         )
+
+
+async def _catalog(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str] | None = None,
+) -> set[str]:
+    """Catalogo de modelos por fora da checagem de saude, sem influenciar nela.
+
+    Serve o provedor cuja checagem consulta saldo, e nao modelos: sem isto,
+    OpenRouter e DeepSeek ficariam com campo de texto livre na interface
+    enquanto todos os outros ganham lista de escolha - e digitar o id na mao e
+    o que faz a configuracao apontar para modelo aposentado.
+
+    Falha aqui devolve conjunto vazio de proposito. Catalogo e conveniencia de
+    formulario; deixar uma listagem indisponivel marcar o provedor como offline
+    seria transformar enfeite em incidente. O custo e uma requisicao a mais por
+    checagem, amortizada pelo cache de status.
+    """
+    try:
+        resp = await client.get(url, headers=headers)
+        if resp.is_error:
+            return set()
+        return _listed_model_ids(_safe_json(resp))
+    except Exception as exc:
+        logger.debug(f"Catalogo de modelos indisponivel em {url}: {exc}")
+        return set()
 
 
 async def _check_json_endpoint(
@@ -447,6 +578,13 @@ async def _check_json_endpoint(
     key: str,
     headers: dict[str, str] | None = None,
 ) -> LLMStatus:
+    """Confirma que o provedor responde, e aproveita o catalogo que ele mandou.
+
+    Estes provedores ja eram checados contra o endpoint de modelos - o corpo da
+    resposta so era descartado. Ler os ids aqui nao custa nenhuma requisicao a
+    mais e e o que permite a interface oferecer uma lista de escolha em vez de
+    um campo de texto livre.
+    """
     if not key:
         return _missing(provider)
     try:
@@ -458,7 +596,12 @@ async def _check_json_endpoint(
                 online=False,
                 error=_response_error(resp),
             )
-        return _status(provider, configured=True, online=True)
+        return _status(
+            provider,
+            configured=True,
+            online=True,
+            models=_listed_model_ids(_safe_json(resp)),
+        )
     except Exception as exc:
         return _status(provider, configured=True, online=False, error=_exception_error(exc))
 
@@ -528,6 +671,11 @@ async def _check_openrouter(client: httpx.AsyncClient) -> LLMStatus:
             balance_ok=None if remaining is None else remaining > 0,
             balance=balance,
             currency="USD" if remaining is not None else None,
+            models=await _catalog(
+                client,
+                "https://openrouter.ai/api/v1/models",
+                {"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            ),
         )
     except Exception as exc:
         return _status(
@@ -571,6 +719,11 @@ async def _check_deepseek(client: httpx.AsyncClient) -> LLMStatus:
             balance_ok=is_available,
             balance=_money(amount, currency) if amount is not None else None,
             currency=currency,
+            models=await _catalog(
+                client,
+                "https://api.deepseek.com/models",
+                {"Authorization": f"Bearer {settings.deepseek_api_key}"},
+            ),
         )
     except Exception as exc:
         return _status(
@@ -656,12 +809,15 @@ async def _check_localai(client: httpx.AsyncClient) -> LLMStatus:
                 isinstance(config_data, dict)
                 and str(config_data.get("name", "")) == wanted
             ):
-                return _status("localai", configured=True, online=True)
+                return _status(
+                    "localai", configured=True, online=True, models=model_ids
+                )
             return _status(
                 "localai",
                 configured=True,
                 online=False,
                 error=f"Modelo local '{wanted}' nao encontrado no LocalAI",
+                models=model_ids,
             )
         if not wanted and not model_ids:
             return _status(
@@ -670,7 +826,7 @@ async def _check_localai(client: httpx.AsyncClient) -> LLMStatus:
                 online=False,
                 error="Nenhum modelo disponivel no LocalAI",
             )
-        return _status("localai", configured=True, online=True)
+        return _status("localai", configured=True, online=True, models=model_ids)
     except Exception as exc:
         return _status(
             "localai",
@@ -681,6 +837,13 @@ async def _check_localai(client: httpx.AsyncClient) -> LLMStatus:
 
 
 async def _check_llama(client: httpx.AsyncClient) -> LLMStatus:
+    # Endereco vazio nao e falha de rede: e configuracao ausente, e precisa
+    # dizer isso. Sem esta guarda a URL vira o caminho relativo `/api/tags`, e o
+    # httpx responde "missing an 'http://' or 'https://' protocol" - uma
+    # mensagem que manda procurar defeito no Ollama quando o defeito esta em
+    # `OLLAMA_BASE_URL`. O `_check_localai` ja fazia essa distincao.
+    if not settings.ollama_base_url:
+        return _missing("llama")
     try:
         resp = await client.get(f"{settings.ollama_base_url}/api/tags")
         if resp.is_error:
@@ -701,11 +864,13 @@ async def _check_llama(client: httpx.AsyncClient) -> LLMStatus:
                 configured=True,
                 online=False,
                 error=f"Modelo local '{wanted}' nao encontrado no Ollama",
+                models=names,
             )
         return _status(
             "llama",
             configured=True,
             online=True,
+            models=names,
         )
     except Exception as exc:
         return _status("llama", configured=True, online=False, error=_exception_error(exc))
@@ -737,7 +902,34 @@ def _exception_error(exc: Exception) -> str:
 
 
 def _sanitize_error(text: str) -> str:
+    """Remove credencial da mensagem antes de ela virar resposta, log ou tela.
+
+    A mensagem de erro do provedor vai inteira para `/llm/config`, para a
+    interface e para o log. Provedor que ecoa a chave no proprio erro - e o
+    httpx, ao recusar um header malformado - transformaria o diagnostico em
+    vazamento. Por isso a redacao e por forma da credencial, e nao por
+    provedor: chave nova aparece o tempo todo, e um padrao esquecido aqui e um
+    segredo publicado.
+    """
+    # "Incorrect API key provided: sk-..." (OpenAI)
     text = re.sub(r"provided:\s*[^.\s]+", "provided: [redacted]", text)
+    # "Illegal header value b'Bearer sk-or-v1-...'" (httpx recusando o header).
+    # `Bearer` e sempre seguido do token; os outros rotulos so contam com o
+    # separador explicito, senao a regra come prosa - "API key provided" viraria
+    # "API [redacted]".
+    text = re.sub(r"(?i)\b(bearer)\s+[\"']?[A-Za-z0-9_\-.]{8,}", r"\1 [redacted]", text)
+    text = re.sub(
+        r"(?i)\b(authorization|api[-_ ]?key)\s*[:=]\s*[\"']?[A-Za-z0-9_\-.]{8,}",
+        r"\1: [redacted]",
+        text,
+    )
+    # Prefixos conhecidos soltos no meio da mensagem, sem rotulo antes.
+    text = re.sub(
+        r"\b(sk|sk-or|sk-ant|gsk|hf|xai|AIza|pplx|nvapi)[-_][A-Za-z0-9_\-]{6,}",
+        "[redacted]",
+        text,
+    )
+    # Chave ja mascarada pelo proprio provedor (`sk-ab****cd`).
     return re.sub(r"\b[A-Za-z0-9_-]{2,}\*{2,}[A-Za-z0-9_-]{2,}\b", "[redacted]", text)
 
 

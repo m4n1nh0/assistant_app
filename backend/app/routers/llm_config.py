@@ -31,8 +31,25 @@ async def _response(user: dict, *, force: bool = False) -> dict:
     try:
         statuses = await get_llm_statuses(force=force)
         available = await get_available_llms()
+        # O catalogo de modelos vem da checagem de saude, mas quem o consome e
+        # o formulario de provedores. Juntar aqui evita a interface ter de
+        # cruzar duas listas por conta propria - e evita uma rota nova so para
+        # isso, ja que este payload ja chega inteiro na tela.
+        providers = []
+        for item in await list_provider_config(user["tutor_id"]):
+            status = statuses.get(str(item.get("id")))
+            providers.append({
+                **item,
+                "available_models": list(status.available_models) if status else [],
+                "recommended_model": status.recommended_model if status else "",
+                # Estado resumido para a lista de agentes conseguir sinalizar
+                # sem cruzar `providers` com `llm_status` do lado do cliente.
+                "status": status.status if status else "missing_key",
+                "status_error": (status.error or "") if status else "",
+                "balance": (status.balance or "") if status else "",
+            })
         return {
-            "providers": await list_provider_config(user["tutor_id"]),
+            "providers": providers,
             "active_llms": runtime_settings.active_llms,
             "available_llms": available,
             "llm_labels": runtime_settings.llm_labels,

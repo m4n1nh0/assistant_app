@@ -416,6 +416,11 @@ class LLMStatus(BaseModel):
     Distingue tres coisas que costumam ser confundidas: `configured` (ha chave),
     `online` (a API respondeu) e `available` (da para usar agora). `balance` so vem
     preenchido nos provedores que expoem consulta de saldo.
+
+    `available_models` vem preenchido quando a checagem consultou o catalogo do
+    provedor - o que ela ja fazia, e antes descartava. E o que permite a interface
+    oferecer uma lista em vez de campo livre, e o que transforma "modelo
+    indisponivel" de beco sem saida em escolha.
     """
     id: str
     label: str
@@ -428,6 +433,8 @@ class LLMStatus(BaseModel):
     currency: Optional[str] = None
     status: str = "missing_key"
     error: Optional[str] = None
+    available_models: List[str] = Field(default_factory=list)
+    recommended_model: str = ""
     checked_at: datetime = Field(default_factory=datetime.utcnow)
 
 

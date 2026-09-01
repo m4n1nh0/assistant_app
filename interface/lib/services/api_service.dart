@@ -1479,6 +1479,24 @@ class LlmProviderConfig {
   final String apiKey;
   final bool clearApiKey;
 
+  /// Modelos que o provedor oferece a esta conta, quando o backend conseguiu
+  /// consultar o catalogo. Vazio significa "nao da para listar" - e nao
+  /// "nenhum modelo": provedor cuja checagem e de saldo nunca lista.
+  final List<String> availableModels;
+
+  /// Modelo sugerido entre os disponiveis, escolhido pelo backend.
+  final String recommendedModel;
+
+  /// Estado da ultima checagem: online, limited, offline, model_unavailable,
+  /// invalid_credentials ou missing_key.
+  final String status;
+
+  /// Explicacao da falha, ja sanitizada pelo backend.
+  final String statusError;
+
+  /// Saldo formatado, nos provedores que expoem consulta.
+  final String balance;
+
   const LlmProviderConfig({
     required this.id,
     required this.label,
@@ -1488,7 +1506,22 @@ class LlmProviderConfig {
     required this.model,
     this.apiKey = '',
     this.clearApiKey = false,
+    this.availableModels = const [],
+    this.recommendedModel = '',
+    this.status = 'missing_key',
+    this.statusError = '',
+    this.balance = '',
   });
+
+  /// Se da para oferecer uma lista de escolha em vez de campo de texto livre.
+  bool get canPickModel => availableModels.isNotEmpty;
+
+  /// Se o modelo salvo nao esta mais no catalogo do provedor.
+  ///
+  /// E o caso que motivou tudo isto: a Mistral saiu do router do Hugging Face
+  /// e a configuracao continuou apontando para ela.
+  bool get modelIsStale =>
+      canPickModel && model.isNotEmpty && !availableModels.contains(model);
 
   factory LlmProviderConfig.fromJson(Map<String, dynamic> json) =>
       LlmProviderConfig(
@@ -1498,6 +1531,14 @@ class LlmProviderConfig {
         enabled: json['enabled'] == true,
         configured: json['configured'] == true,
         model: json['model']?.toString() ?? '',
+        availableModels: (json['available_models'] as List<dynamic>? ?? const [])
+            .map((item) => item.toString())
+            .where((item) => item.isNotEmpty)
+            .toList(),
+        recommendedModel: json['recommended_model']?.toString() ?? '',
+        status: json['status']?.toString() ?? 'missing_key',
+        statusError: json['status_error']?.toString() ?? '',
+        balance: json['balance']?.toString() ?? '',
       );
 
   LlmProviderConfig copyWith({
@@ -1515,6 +1556,11 @@ class LlmProviderConfig {
         model: model ?? this.model,
         apiKey: apiKey ?? this.apiKey,
         clearApiKey: clearApiKey ?? this.clearApiKey,
+        availableModels: availableModels,
+        recommendedModel: recommendedModel,
+        status: status,
+        statusError: statusError,
+        balance: balance,
       );
 
   Map<String, dynamic> toUpdateJson() => {

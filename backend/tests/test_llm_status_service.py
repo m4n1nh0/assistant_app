@@ -451,3 +451,165 @@ def test_check_localai_accepts_configured_cold_model(monkeypatch):
 
     assert status.available is True
     assert status.online is True
+
+
+# --- Catalogo de modelos: o que a checagem baixa deixa de ser descartado -----
+
+
+def test_listed_model_ids_reads_the_three_provider_formats():
+    """OpenAI/Anthropic/Groq, Together e Gemini devolvem formatos diferentes."""
+    openai_like = service._listed_model_ids({"data": [{"id": "gpt-4o"}]})
+    together_like = service._listed_model_ids([{"id": "meta-llama/Llama-3.3-70B"}])
+    gemini_like = service._listed_model_ids(
+        {"models": [{"name": "models/gemini-1.5-flash"}]}
+    )
+
+    assert openai_like == {"gpt-4o"}
+    assert together_like == {"meta-llama/Llama-3.3-70B"}
+    # O prefixo `models/` sai: a chamada usa o id sem ele, e guardar com o
+    # prefixo faria a comparacao de modelo falhar sempre.
+    assert gemini_like == {"gemini-1.5-flash"}
+
+
+def test_json_endpoint_check_keeps_the_catalog_it_already_downloaded():
+    """Estes provedores ja consultavam /models e jogavam o corpo fora."""
+
+    async def handler(request):
+        return httpx.Response(200, json={"data": [{"id": "gpt-4o"}, {"id": "gpt-4"}]})
+
+    async def check():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            return await service._check_json_endpoint(
+                client, "gpt", "https://api.openai.com/v1/models", key="k"
+            )
+
+    status = run(check())
+
+    assert status.online is True
+    assert status.available_models == ["gpt-4", "gpt-4o"]
+    assert status.recommended_model == "gpt-4o"
+
+
+def test_model_unavailable_names_a_model_that_actually_exists():
+    status = service._model_unavailable(
+        "hf",
+        "mistralai/Mistral-7B-Instruct-v0.3",
+        {"meta-llama/Llama-3.3-70B-Instruct", "Qwen/Qwen3-8B"},
+    )
+
+    assert status.status == "model_unavailable"
+    assert status.available_models == [
+        "Qwen/Qwen3-8B",
+        "meta-llama/Llama-3.3-70B-Instruct",
+    ]
+    # O erro deixa de ser beco sem saida: diz o que da para usar no lugar.
+    assert "meta-llama/Llama-3.3-70B-Instruct" in status.error
+
+
+def test_recommendation_falls_through_when_the_preferred_model_is_gone():
+    """E o caso real: a Mistral saiu do router do HF e o preferido sumiu."""
+    sem_llama = service.recommended_model("hf", {"Qwen/Qwen2.5-72B-Instruct"})
+    com_llama = service.recommended_model(
+        "hf", {"Qwen/Qwen2.5-72B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"}
+    )
+
+    assert com_llama == "meta-llama/Llama-3.3-70B-Instruct"
+    assert sem_llama == "Qwen/Qwen2.5-72B-Instruct"
+    assert service.recommended_model("hf", set()) == ""
+
+
+def test_catalog_hides_models_that_do_not_serve_for_chat():
+    catalogo = service._sorted_models(
+        {"gpt-4o", "text-embedding-3-large", "whisper-1", "llama-guard-4-12b"}
+    )
+
+    assert catalogo == ["gpt-4o"]
+
+
+# --- Ollama sem endereco: configuracao ausente, nao falha de rede -----------
+
+
+def test_llama_without_base_url_reports_missing_config(monkeypatch):
+    """Antes virava `/api/tags`, e o httpx acusava falta de protocolo.
+
+    A mensagem mandava procurar defeito no Ollama quando o defeito estava em
+    `OLLAMA_BASE_URL`.
+    """
+    monkeypatch.setattr(service.settings, "ollama_base_url", "", raising=False)
+
+    async def explode(*args, **kwargs):
+        raise AssertionError("nao deve haver requisicao sem endereco")
+
+    async def check():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(explode)
+        ) as client:
+            return await service._check_llama(client)
+
+    status = run(check())
+
+    assert status.status == "missing_key"
+    assert status.configured is False
+
+
+# --- Sanitizacao: credencial nao pode sair em resposta, log ou tela ---------
+
+
+def test_sanitize_error_redacts_the_key_httpx_echoes_from_a_bad_header():
+    """Foi assim que a chave da OpenRouter vazou em `/llm/config`."""
+    vazado = service._sanitize_error(
+        "Illegal header value b'Bearer sk-or-v1-4576b87c78c15efafec346a856788a8f'"
+    )
+
+    assert "sk-or-v1-4576b87c78c15efafec346a856788a8f" not in vazado
+    assert "[redacted]" in vazado
+
+
+def test_sanitize_error_redacts_loose_key_prefixes_and_keeps_the_message():
+    vazado = service._sanitize_error("falha ao autenticar com gsk_abcdef123456 no Groq")
+
+    assert "gsk_abcdef123456" not in vazado
+    assert "no Groq" in vazado
+
+
+def test_catalog_failure_never_marks_a_provider_offline():
+    """Listagem de modelo e conveniencia de formulario, nao sinal de saude.
+
+    OpenRouter e DeepSeek sao checados pelo saldo. Buscar o catalogo deles e um
+    pedido a mais, e ele nao pode derrubar o provedor se falhar.
+    """
+
+    async def recusa(request):
+        return httpx.Response(500, json={"error": "indisponivel"})
+
+    async def busca():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(recusa)) as client:
+            return await service._catalog(client, "https://exemplo/models")
+
+    assert run(busca()) == set()
+
+
+def test_balance_checked_provider_still_offers_a_model_list(monkeypatch):
+    monkeypatch.setattr(
+        service.settings, "openrouter_api_key", "sk-or-teste", raising=False
+    )
+
+    async def handler(request):
+        if request.url.path.endswith("/credits"):
+            return httpx.Response(
+                200, json={"data": {"total_credits": 5.0, "total_usage": 1.0}}
+            )
+        return httpx.Response(200, json={"data": [{"id": "openrouter/auto"}]})
+
+    async def check():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            return await service._check_openrouter(client)
+
+    status = run(check())
+
+    assert status.available is True
+    assert status.available_models == ["openrouter/auto"]
