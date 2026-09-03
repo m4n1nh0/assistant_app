@@ -16,6 +16,8 @@ import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../services/calendar_service.dart';
 import '../services/connected_ai_service.dart';
+import '../services/local_capability_channel.dart';
+import '../services/local_capability_registry.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../models/app_config.dart';
@@ -43,6 +45,12 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   final Map<String, Timer> _eventNotificationTimers = {};
   final Set<String> _deliveredEventNotifications = {};
   bool _backendStatusSyncing = false;
+
+  /// Sessao do canal: a mesma que vai no `session_id` do chat, porque e ela
+  /// que liga a conversa no backend ao catalogo desta maquina.
+  static const _sessionId = 'default';
+  StreamSubscription<Map<String, dynamic>>? _capabilitySub;
+  Timer? _capabilityRetry;
 
   @override
   void initState() {
@@ -78,7 +86,110 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
     if (ref.read(isAuthenticatedProvider)) {
       _startWelcome();
       _startCalendarSync();
+      _startCapabilityChannel();
     }
+  }
+
+  /// Abre o canal da sessao e declara ao backend o que esta maquina sabe fazer.
+  ///
+  /// Sem isto o backend nao tem catalogo desta maquina e o assistente volta a
+  /// depender do que estivesse escrito no servidor.
+  void _startCapabilityChannel() {
+    if (_capabilitySub != null) return;
+
+    final channel = LocalCapabilityChannel(
+      send: api.wsSend,
+      confirm: _confirmCapability,
+      onStarted: (capability) =>
+          _addLocalMessage('Executando na sua maquina: ${capability.name}...'),
+      onExecuted: (result) => _addLocalMessage(result.summary),
+      onRefused: _addLocalMessage,
+    );
+
+    try {
+      _capabilitySub = api.connectWebSocket(_sessionId).listen(
+            channel.handleMessage,
+            onError: (_) => _scheduleCapabilityRetry(),
+            onDone: _scheduleCapabilityRetry,
+            cancelOnError: true,
+          );
+      channel.publishManifest();
+    } catch (_) {
+      _scheduleCapabilityRetry();
+    }
+  }
+
+  void _scheduleCapabilityRetry() {
+    // Fecha antes de reagendar: cancelar so a inscricao deixaria o socket
+    // aberto e o servidor com uma conexao fantasma por tentativa.
+    _capabilitySub?.cancel();
+    _capabilitySub = null;
+    api.disconnectWebSocket();
+    _capabilityRetry?.cancel();
+    if (!mounted || !ref.read(isAuthenticatedProvider)) return;
+    // Reconectar sozinho: sem canal, o assistente perde as capacidades desta
+    // maquina sem nenhum aviso visivel.
+    _capabilityRetry = Timer(
+      const Duration(seconds: 10),
+      _startCapabilityChannel,
+    );
+  }
+
+  void _stopCapabilityChannel() {
+    _capabilityRetry?.cancel();
+    _capabilityRetry = null;
+    _capabilitySub?.cancel();
+    _capabilitySub = null;
+    api.disconnectWebSocket();
+  }
+
+  void _addLocalMessage(String text) {
+    if (!mounted || text.trim().isEmpty) return;
+    ref.read(chatProvider.notifier).addMessage(ChatMessage(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          role: 'assistant',
+          content: text,
+          llm: AppConfig.localAgent,
+        ));
+  }
+
+  /// Pergunta antes de executar o que a capacidade marcou como confirmavel.
+  ///
+  /// O backend so propoe; a decisao e de quem esta na frente da maquina.
+  Future<bool> _confirmCapability(
+    LocalCapability capability,
+    Map<String, dynamic> args,
+  ) async {
+    if (!mounted) return false;
+    final risky = capability.riskLevel != 'low';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: Text(
+          capability.name,
+          style: const TextStyle(color: AssistantTheme.textPrimary),
+        ),
+        content: Text(
+          '${capability.description}\n\n'
+          'O assistente pediu para executar isso nesta maquina.',
+          style: TextStyle(
+            color: risky ? AssistantTheme.c4 : AssistantTheme.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Nao autorizar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Executar'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   Future<void> _activateAccount(CurrentAccount account) async {
@@ -404,6 +515,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
 
   @override
   void dispose() {
+    _stopCapabilityChannel();
     _calendarTimer?.cancel();
     _backendStatusTimer?.cancel();
     _clearEventNotificationTimers();

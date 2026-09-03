@@ -11,13 +11,7 @@ import re
 import unicodedata
 from typing import Any
 
-
-_LOCAL_CONTEXT_MARKERS = (
-    "contexto local do workspace",
-    "workspace capturado pela interface",
-    "snapshot local do projeto",
-    "resultado da inspecao do workspace",
-)
+from .local_message_markers import LOCAL_MESSAGE_MARKERS, has_marker
 
 
 def build_coding_action(message: str) -> dict[str, Any] | None:
@@ -31,7 +25,7 @@ def build_coding_action(message: str) -> dict[str, Any] | None:
         A acao proposta, ou `None` quando a mensagem nao pede alteracao de codigo.
     """
     text = _normalize(message)
-    if not text or any(marker in text for marker in _LOCAL_CONTEXT_MARKERS):
+    if not text or has_marker(text, LOCAL_MESSAGE_MARKERS):
         return None
 
     codex_terms = (

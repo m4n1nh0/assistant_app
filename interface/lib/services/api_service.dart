@@ -1210,24 +1210,41 @@ class ApiService {
   }
 
   Stream<Map<String, dynamic>> connectWebSocket(String sessionId) {
-    _wsStream = StreamController<Map<String, dynamic>>.broadcast();
+    // Uma conexao por vez. Reconectar sem fechar a anterior deixava o socket
+    // velho vivo: o servidor acumulava conexoes da mesma sessao e so a ultima
+    // recebia push, enquanto as antigas seguiam abertas ate o processo morrer.
+    disconnectWebSocket();
+
+    // Os callbacks falam com **este** controlador, nao com o campo: fechar a
+    // conexao anterior dispara o `onDone` dela depois de `_wsStream` ja ter
+    // virado null, e um `_wsStream!` ali estourava a cada reconexao.
+    final controller = StreamController<Map<String, dynamic>>.broadcast();
+    _wsStream = controller;
     final tokenQuery =
         _token != null ? '?token=${Uri.encodeComponent(_token!)}' : '';
-    _ws =
+    final channel =
         WebSocketChannel.connect(Uri.parse('$wsUrl/ws/$sessionId$tokenQuery'));
+    _ws = channel;
 
-    _ws!.stream.listen(
+    channel.stream.listen(
       (raw) {
+        if (controller.isClosed) return;
         try {
           final data = jsonDecode(raw as String) as Map<String, dynamic>;
-          _wsStream!.add(data);
+          controller.add(data);
         } catch (_) {}
       },
-      onDone: () => _wsStream!.close(),
-      onError: (e) => _wsStream!.addError(e),
+      onDone: () {
+        if (!controller.isClosed) controller.close();
+      },
+      // Backend fora do ar chega aqui como SocketException. Quem escuta decide
+      // se reconecta; deixar subir derrubava a zona com excecao nao tratada.
+      onError: (e) {
+        if (!controller.isClosed) controller.addError(e);
+      },
     );
 
-    return _wsStream!.stream;
+    return controller.stream;
   }
 
   void wsSend(Map<String, dynamic> data) {
@@ -1999,6 +2016,48 @@ class ScriptRunResult {
   });
 
   bool get ok => exitCode == 0 && !timedOut;
+
+  /// Texto que vai para a IA analisar esta execucao.
+  ///
+  /// Mora no resultado, e nao em quem chamou, para o script detectado numa
+  /// resposta e o script pedido por acao local descreverem a execucao do mesmo
+  /// jeito.
+  String toPromptText({
+    String name = 'Script local',
+    int? timeoutSeconds,
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('Resultado do script local "$name".')
+      ..writeln('Shell: $shell')
+      ..writeln('Comando: $command')
+      ..writeln('Diretorio: $workingDirectory')
+      ..writeln('Exit code: $exitCode')
+      ..writeln('Duracao: ${durationMs}ms')
+      ..writeln('Timeout: ${timedOut ? 'sim' : 'nao'}');
+    if (timedOut) {
+      final limit = timeoutSeconds == null ? '' : ' de ${timeoutSeconds}s';
+      buffer
+        ..writeln()
+        ..writeln(
+          'O script estourou o limite$limit. '
+          'Verifique se ele ficou aguardando entrada interativa, rede lenta, instalacao demorada '
+          'ou loop. Sugira proximo passo pratico sem pedir para repetir a mesma execucao.',
+        );
+    }
+    if (stdout.trim().isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('STDOUT:')
+        ..writeln(stdout.trim());
+    }
+    if (stderr.trim().isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('STDERR:')
+        ..writeln(stderr.trim());
+    }
+    return buffer.toString().trim();
+  }
 
   String get combinedOutput {
     final parts = [

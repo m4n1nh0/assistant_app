@@ -8,6 +8,12 @@ As ferramentas de acao sao chamadas aqui **sem passar pelo modelo**: sao
 construtoras determinísticas, e gastar uma chamada de LLM para decidir se
 "verifique meu IP" e um diagnostico de rede seria pagar por uma decisao que uma
 expressao regular resolve.
+
+O que mudou desde entao: quem diz o que existe passou a ser o catalogo publicado
+pela maquina do usuario, e nao mais a lista escrita aqui. Este no continua sendo
+o caminho rapido para as formas obvias de pedir - resposta sem round-trip de
+modelo -, mas so atalha o que aquela maquina declarou saber fazer; o resto segue
+para o modelo escolher no catalogo real (`machine_supports`).
 """
 
 from __future__ import annotations
@@ -20,21 +26,39 @@ from ...core.observability import span
 from ...models.schemas import ShortcutRegistrationAction
 from ..state import ChatGraphState, ChatRuntimeContext
 
-# A interface embrulha algumas mensagens com contexto local (workspace, janela).
-# Esses blocos disparam falso positivo nos detectores por palavra-chave - "ip"
-# dentro do codigo fonte vira diagnostico de rede, "vscode-projects" no caminho
-# vira atalho - entao a deteccao de acao e pulada para eles.
-_LOCAL_CONTEXT_MARKERS = (
-    "contexto local do workspace",
-    "contexto automatico do workspace",
-    "contexto da janela",
-)
+# A interface embrulha algumas mensagens com material que ela mesma coletou:
+# contexto do workspace, contexto da janela e o resultado de uma acao local
+# voltando para analise. Esses blocos disparam falso positivo nos detectores por
+# palavra-chave - "ip" dentro do codigo fonte vira diagnostico de rede,
+# "vscode-projects" no caminho vira atalho, "api.ipify.org" na saida do ipconfig
+# vira inspecao de workspace - entao a deteccao de acao e pulada para eles.
+
+
+def machine_supports(action_id: Any) -> bool:
+    """Diz se a maquina desta sessao declarou saber executar aquela acao.
+
+    A deteccao por palavra-chave e um **atalho** para as formas obvias de pedir,
+    e nao mais a dona da decisao: quem lista o que existe e o catalogo publicado
+    pela maquina. Enquanto uma sessao nao publicar catalogo - cliente antigo, ou
+    canal ainda subindo - o atalho vale como antes, senao uma versao velha da
+    interface perderia as acoes locais de uma hora para outra.
+    """
+    from ...services.device_catalog_service import get_device_catalog
+
+    catalog = get_device_catalog()
+    declared = catalog.descriptors()
+    if not declared:
+        return True
+    if not action_id:
+        return True
+    return catalog.find(f"local_{action_id}") is not None
 
 
 def is_context_wrapped(message: str) -> bool:
-    """Diz se a mensagem e um blob de contexto local montado pela interface."""
-    head = message[:600].lower()
-    return any(marker in head for marker in _LOCAL_CONTEXT_MARKERS)
+    """Diz se a mensagem e material local montado pela interface."""
+    from ...services.local_message_markers import is_local_message
+
+    return is_local_message(message)
 
 
 async def detect_action(
@@ -56,7 +80,7 @@ async def detect_action(
     async with span("graph.detect_action", "node") as observed:
         if is_context_wrapped(message):
             observed.set(kind="chat", reason="contexto local")
-            return {"action_kind": "chat"}
+            return {"action_kind": "chat", "action": None}
 
         education_action = build_education_open_action(message)
         if education_action:
@@ -71,23 +95,16 @@ async def detect_action(
             observed.set(kind="calendar")
             return {"action": calendar_action, "action_kind": "calendar"}
 
-        calendar_query = await interpret_calendar_query(
-            message,
-            history=state.get("history", []),
-            timezone_name=context.timezone,
-            requested_llm=context.requested_llm,
-            active_llms=list(context.active_llms),
-        )
-        if calendar_query:
-            observed.set(kind="calendar_query")
-            return {
-                "action": calendar_query.model_dump(mode="json"),
-                "action_kind": "calendar_query",
-            }
-
         for action_kind in ("computer", "coding", "project", "registration"):
             action = invoke_action_tool(action_kind, message)
             if not action:
+                continue
+            if not machine_supports(action.get("action_id")):
+                # A maquina desta sessao publicou catalogo e essa capacidade nao
+                # esta nele: o atalho por palavra-chave nao pode propor o que o
+                # computador do usuario nao sabe fazer. Segue para o modelo, que
+                # escolhe dentro do catalogo real.
+                observed.set(skipped=action_kind, reason="fora do catalogo")
                 continue
             observed.set(kind=action_kind)
             update: dict[str, Any] = {
@@ -102,8 +119,28 @@ async def detect_action(
                 )
             return update
 
+        # Consulta de agenda por ultimo entre os detectores: e o unico que
+        # pergunta a um modelo, e ele le o historico. Rodando antes, uma pergunta
+        # de agenda contaminava a conversa inteira - "verifique meu IP" depois de
+        # "liste minha agenda" voltava como "nao encontrei conta de calendario",
+        # e a resposta errada realimentava o historico. O que da para reconhecer
+        # sem modelo decide primeiro; o modelo opina no que sobrou.
+        calendar_query = await interpret_calendar_query(
+            message,
+            history=state.get("history", []),
+            timezone_name=context.timezone,
+            requested_llm=context.requested_llm,
+            active_llms=list(context.active_llms),
+        )
+        if calendar_query:
+            observed.set(kind="calendar_query")
+            return {
+                "action": calendar_query.model_dump(mode="json"),
+                "action_kind": "calendar_query",
+            }
+
         observed.set(kind="unresolved")
-        return {"action_kind": "unresolved"}
+        return {"action_kind": "unresolved", "action": None}
 
 
 async def lookup_shortcut(

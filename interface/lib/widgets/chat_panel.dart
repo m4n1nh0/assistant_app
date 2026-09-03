@@ -21,7 +21,7 @@ import '../services/api_service.dart';
 import '../services/audio_input_service.dart';
 import '../services/external_launcher_service.dart';
 import '../services/installed_apps_service.dart';
-import '../services/local_computer_action_service.dart';
+import '../services/local_capability_registry.dart';
 import '../services/local_desktop_context_service.dart';
 import '../services/connected_ai_service.dart';
 import '../services/local_script_service.dart';
@@ -2194,38 +2194,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   String _scriptRunAnalysisPrompt(
     _DetectedScript script,
     ScriptRunResult result,
-  ) {
-    final buffer = StringBuffer()
-      ..writeln('Resultado do script local "${script.name}".')
-      ..writeln('Shell: ${result.shell}')
-      ..writeln('Comando: ${result.command}')
-      ..writeln('Diretorio: ${result.workingDirectory}')
-      ..writeln('Exit code: ${result.exitCode}')
-      ..writeln('Duracao: ${result.durationMs}ms')
-      ..writeln('Timeout: ${result.timedOut ? 'sim' : 'nao'}');
-    if (result.timedOut) {
-      buffer
-        ..writeln()
-        ..writeln(
-          'O script estourou o limite de ${script.timeoutSeconds}s. '
-          'Verifique se ele ficou aguardando entrada interativa, rede lenta, instalacao demorada '
-          'ou loop. Sugira proximo passo pratico sem pedir para repetir a mesma execucao.',
-        );
-    }
-    if (result.stdout.trim().isNotEmpty) {
-      buffer
-        ..writeln()
-        ..writeln('STDOUT:')
-        ..writeln(result.stdout.trim());
-    }
-    if (result.stderr.trim().isNotEmpty) {
-      buffer
-        ..writeln()
-        ..writeln('STDERR:')
-        ..writeln(result.stderr.trim());
-    }
-    return buffer.toString().trim();
-  }
+  ) =>
+      result.toPromptText(
+        name: script.name,
+        timeoutSeconds: script.timeoutSeconds,
+      );
 
   List<_DetectedScript> _detectScriptsFromResponses(
     List<LlmResponse> responses,
@@ -2695,19 +2668,15 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       _addSystemMsg('Inspecionando workspace local...');
       _scrollToBottom();
 
-      final snapshot = await LocalWorkspaceService.inspectWorkspace(
-        query: query,
-        rootPath: rootPath,
-        maxTreeFiles: _intArgument(action.arguments['max_files'], 320)
-            .clamp(30, 800)
-            .toInt(),
-        maxFileChars: _intArgument(action.arguments['max_file_chars'], 8000)
-            .clamp(1000, 16000)
-            .toInt(),
-        maxTotalChars: _intArgument(action.arguments['max_total_chars'], 26000)
-            .clamp(6000, 60000)
-            .toInt(),
-      );
+      // Os limites e o recorte de arquivos sao do catalogo local; aqui so
+      // chegam os argumentos ja confirmados pelo usuario no dialogo.
+      final run = await LocalCapabilityRegistry.run('inspect_workspace', {
+        ...action.arguments,
+        'query': query,
+        'root_path': rootPath,
+        'allow_edits': allowEdits,
+      });
+      final snapshot = run.raw as WorkspaceSnapshot;
 
       setState(() {
         _lastWorkspacePath = snapshot.path;
@@ -2776,26 +2745,33 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       _addSystemMsg('Executando acao local: ${action.name}');
       _scrollToBottom();
 
-      final result = await LocalComputerActionService.runAction(action);
+      // Quem sabe executar e o catalogo desta maquina, nao o id que veio no
+      // pacote: o backend propoe pelo nome declarado e para por ai.
+      final result = await LocalCapabilityRegistry.run(
+        action.actionId,
+        action.arguments,
+      );
       ref.read(chatProvider.notifier).addMessage(ChatMessage(
             id: DateTime.now().millisecondsSinceEpoch.toString(),
             role: 'assistant',
-            content: result.toLocalSummaryText(),
-            llm: 'backend',
+            content: result.summary,
+            // Marcador LOCAL, nao BACKEND: estes dados sairam de comandos
+            // executados nesta maquina, e o backend so propos a acao.
+            llm: AppConfig.localAgent,
           ));
       _scrollToBottom();
 
       final prompt = '''
-Resultado da acao local "${result.actionName}" executada neste computador.
+Resultado da acao local "${result.name}" executada neste computador.
 Analise os dados abaixo, destaque problemas provaveis e diga os proximos passos praticos.
 Nao peca para eu executar de novo os mesmos comandos.
 
-${result.toPromptText()}
+${result.promptText}
 ''';
 
       await _sendMessage(
         prompt,
-        displayText: 'Analise o resultado local: ${result.actionName}',
+        displayText: 'Analise o resultado local: ${result.name}',
         showUserMessage: false,
         allowDesktopContext: false,
         attachWorkspaceContext: false,
@@ -2850,13 +2826,14 @@ ${result.toPromptText()}
     try {
       _addSystemMsg('Executando script local: ${detected.name}');
       _scrollToBottom();
-      final result = await LocalScriptService.runScript(
-        shell: shell,
-        script: script,
-        workingDirectory: workingDirectory,
-        timeoutSeconds: timeoutSeconds,
-        allowHighRisk: allowHighRisk,
-      );
+      final run = await LocalCapabilityRegistry.run('run_script', {
+        'shell': shell,
+        'script': script,
+        'working_directory': workingDirectory,
+        'timeout_seconds': timeoutSeconds,
+        'allow_high_risk': allowHighRisk,
+      });
+      final result = run.raw as ScriptRunResult;
       await _sendMessage(
         _scriptRunAnalysisPrompt(detected, result),
         displayText: result.timedOut
@@ -3763,9 +3740,11 @@ class ChatServiceChips extends ConsumerWidget {
       children: services.map((llm) {
         final color = _colors[llm] ?? AssistantTheme.c1;
         final isSelected = available.isNotEmpty && llm == selected;
+        // Rotulo curto na faixa e nome completo (com o modelo) no tooltip:
+        // doze nomes inteiros ocupavam tres linhas do cabecalho.
         final label =
-            llm == AppConfig.autoAgent ? 'AUTO' : config.serviceName(llm);
-        return InkWell(
+            llm == AppConfig.autoAgent ? 'AUTO' : config.shortServiceName(llm);
+        final chip = InkWell(
           key: Key('chat-agent-chip-$llm'),
           borderRadius: BorderRadius.circular(10),
           onTap: available.isEmpty
@@ -3792,6 +3771,15 @@ class ChatServiceChips extends ConsumerWidget {
               ),
             ),
           ),
+        );
+        final full = llm == AppConfig.autoAgent
+            ? 'AUTO · orquestração entre todos'
+            : config.serviceName(llm);
+        if (full.toUpperCase() == label.toUpperCase()) return chip;
+        return Tooltip(
+          message: full,
+          waitDuration: const Duration(milliseconds: 350),
+          child: chip,
         );
       }).toList(),
     );

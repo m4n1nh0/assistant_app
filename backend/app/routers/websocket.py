@@ -22,6 +22,17 @@ from ..models.schemas import ResponseModeEnum, Message
 from ..services import llm_service, notification_service
 from ..services.calendar_service import fetch_all_account_events
 from ..services.chat_graph_service import run_chat_graph
+from ..services.client_capability_service import (
+    ClientManifestError,
+    parse_manifest,
+)
+from ..services.device_catalog_service import (
+    bind_device,
+    device_key,
+    get_device_catalog,
+    reset_device,
+)
+from ..services.remote_capability_gateway import RemoteCapabilityGateway
 from ..services.llm_status_service import get_ready_llms
 from ..services.llm_routing_service import pick_auto_llm
 from ..services.runtime_config_service import load_notif_config
@@ -177,6 +188,61 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _send_to_device(device_id: str, payload: dict) -> None:
+    """Empurra uma chamada de ferramenta para a maquina daquela sessao.
+
+    Falha alto quando a conexao nao existe mais: o `manager.send` engole erro
+    de socket, e engolir aqui deixaria a ferramenta esperando ate o timeout por
+    uma maquina que ja foi embora.
+    """
+    if device_id not in manager.active:
+        raise ConnectionError("a interface desta sessao nao esta conectada")
+    await manager.send(device_id, payload)
+
+
+#: Leva chamadas de ferramenta ate a maquina do usuario e espera a resposta.
+remote_capabilities = RemoteCapabilityGateway(_send_to_device)
+
+
+async def _handle_capabilities(connection_id: str, payload: dict) -> None:
+    """Publica o catalogo que a maquina daquela sessao acabou de declarar."""
+    try:
+        manifest = parse_manifest(payload, device_id=connection_id)
+    except ClientManifestError as exc:
+        await _send_error(connection_id, f"Manifesto recusado: {exc}")
+        return
+
+    published = get_device_catalog().publish(
+        manifest, remote_capabilities.runner_factory()
+    )
+    await manager.send(connection_id, {
+        "type": "capabilities_ack",
+        "payload": {
+            "published": published,
+            "rejected": list(manifest.rejected),
+            "platform": manifest.platform,
+        },
+    })
+
+
+def _handle_tool_result(payload: dict) -> None:
+    """Entrega a resposta da maquina a chamada que estava esperando por ela."""
+    call_id = str(payload.get("call_id") or "")
+    if not call_id:
+        return
+    remote_capabilities.resolve(call_id, payload)
+
+
+def _release_device(connection_id: str) -> None:
+    """Solta tudo que pertencia a uma sessao que terminou."""
+    get_device_catalog().drop(connection_id)
+    released = remote_capabilities.cancel_device(connection_id)
+    if released:
+        logger.info(
+            f"{released} chamada(s) pendente(s) encerradas com {connection_id}"
+        )
+
+
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
     """Canal WebSocket da sessao: chat em tempo real e eventos do servidor.
@@ -193,7 +259,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
         await ws.close(code=4401, reason="Não autenticado")
         return
 
-    connection_id = f"{user['uid']}:{session_id}"
+    connection_id = device_key(user["uid"], session_id)
     await migrate_legacy_environment_for_user(user)
     runtime_token = activate_user_llms(
         await load_user_llm_runtime(user["tutor_id"])
@@ -209,6 +275,11 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
             "server": "assistente-backend v1.0",
         },
     })
+
+    # Amarra a maquina desta sessao: e o que faz o catalogo dela - e so o dela -
+    # aparecer para o agente durante o chat, sem carregar o id por parametro
+    # ate o executor.
+    device_token = bind_device(connection_id)
 
     try:
         while True:
@@ -242,6 +313,10 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
                     )
                 case "notify":
                     await _handle_notify(connection_id, payload, user["uid"])
+                case "capabilities":
+                    await _handle_capabilities(connection_id, payload)
+                case "tool_result":
+                    _handle_tool_result(payload)
                 case "ping":
                     await manager.send(
                         connection_id, {"type": "pong", "payload": {}}
@@ -257,6 +332,8 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
         logger.error(f"WS error ({session_id}): {e}")
         manager.disconnect(connection_id)
     finally:
+        _release_device(connection_id)
+        reset_device(device_token)
         reset_user_llms(runtime_token)
 
 

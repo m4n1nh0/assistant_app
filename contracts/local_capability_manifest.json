@@ -1,0 +1,104 @@
+{
+  "platform": "windows",
+  "capabilities": [
+    {
+      "id": "network_diagnostics",
+      "name": "Diagnostico de rede",
+      "description": "Coleta a configuracao de rede desta maquina (IP local, gateway, DNS), descobre o IP externo e mede um ping, para analisar conectividade, lentidao ou queda de internet.",
+      "args_schema": {
+        "type": "object",
+        "properties": {}
+      },
+      "risk_level": "low",
+      "requires_confirmation": false,
+      "read_only": true,
+      "platforms": []
+    },
+    {
+      "id": "system_diagnostics",
+      "name": "Diagnostico do sistema",
+      "description": "Coleta uso de memoria RAM, processos que mais consomem e espaco em disco desta maquina, para analisar lentidao ou falta de recurso.",
+      "args_schema": {
+        "type": "object",
+        "properties": {}
+      },
+      "risk_level": "low",
+      "requires_confirmation": false,
+      "read_only": true,
+      "platforms": []
+    },
+    {
+      "id": "inspect_workspace",
+      "name": "Inspecionar workspace local",
+      "description": "Le a estrutura de pastas e o conteudo dos arquivos relevantes de um projeto nesta maquina, para responder sobre o codigo com o contexto real em vez de suposicao.",
+      "args_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Pedido do usuario, usado para escolher os arquivos."
+          },
+          "root_path": {
+            "type": "string",
+            "description": "Pasta do projeto. Vazio deixa a interface resolver."
+          },
+          "max_files": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 800
+          },
+          "max_file_chars": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 16000
+          },
+          "max_total_chars": {
+            "type": "integer",
+            "minimum": 6000,
+            "maximum": 60000
+          }
+        }
+      },
+      "risk_level": "low",
+      "requires_confirmation": true,
+      "read_only": true,
+      "platforms": []
+    },
+    {
+      "id": "run_script",
+      "name": "Executar script local",
+      "description": "Executa no shell desta maquina um script que o usuario pediu explicitamente, e devolve saida, erro e codigo de retorno.",
+      "args_schema": {
+        "type": "object",
+        "required": [
+          "script"
+        ],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "Conteudo do script."
+          },
+          "shell": {
+            "type": "string",
+            "description": "powershell, cmd, bash, sh ou python."
+          },
+          "working_directory": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 180
+          },
+          "allow_high_risk": {
+            "type": "boolean"
+          }
+        }
+      },
+      "risk_level": "medium",
+      "requires_confirmation": true,
+      "read_only": false,
+      "platforms": []
+    }
+  ]
+}

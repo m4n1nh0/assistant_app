@@ -19,6 +19,7 @@ from ...ports.tools import ToolDescriptor, ToolInvocation, ToolResult
 from ...toolkit.catalog import sync_mcp_tools
 from ...toolkit.executor import ToolExecutor
 from ...toolkit.registry import ToolRegistry
+from ...services.device_catalog_service import DeviceCatalog, get_device_catalog
 
 
 class LocalToolGateway:
@@ -31,11 +32,13 @@ class LocalToolGateway:
         *,
         mcp: MCPGateway | None = None,
         mcp_timeout_seconds: float | None = None,
+        devices: "DeviceCatalog | None" = None,
     ) -> None:
         self._registry = registry
         self._executor = executor
         self._mcp = mcp
         self._mcp_timeout = mcp_timeout_seconds
+        self._devices = devices if devices is not None else get_device_catalog()
 
     @property
     def registry(self) -> ToolRegistry:
@@ -48,12 +51,24 @@ class LocalToolGateway:
         A sincronizacao com o MCP acontece aqui, e nao na subida do processo:
         servidor MCP pode entrar e sair a qualquer momento, e o cache do proprio
         gateway MCP e quem controla a frequencia de reconsulta.
+
+        As capacidades da maquina do usuario entram por cima, vindas do catalogo
+        daquele dispositivo - nunca do catalogo do processo, para uma sessao nao
+        enxergar a maquina de outra.
         """
         await self._refresh_mcp(agent_id)
-        return self._registry.descriptors(agent_id=agent_id)
+        tools = self._registry.descriptors(agent_id=agent_id)
+        return tools + self._devices.descriptors(agent_id=agent_id)
 
     async def invoke(self, invocation: ToolInvocation) -> ToolResult:
-        """Executa uma ferramenta pelo executor governado."""
+        """Executa uma ferramenta pelo executor governado.
+
+        Capacidade da maquina do usuario roda pelo executor daquele dispositivo,
+        que so alcanca o catalogo dele.
+        """
+        device_executor = self._devices.executor()
+        if device_executor is not None and self._devices.find(invocation.name):
+            return await device_executor.invoke(invocation)
         return await self._executor.invoke(invocation)
 
     async def health(self) -> dict[str, Any]:
@@ -68,6 +83,7 @@ class LocalToolGateway:
             "tools": len(descriptors),
             "by_source": by_source,
             "mcp_attached": self._mcp is not None and self._mcp.configured(),
+            "devices": len(self._devices),
         }
 
     async def _refresh_mcp(self, agent_id: str) -> None:

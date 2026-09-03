@@ -293,3 +293,35 @@ def test_retained_conversation_is_still_resumable(graph_factory):
     )
 
     assert snapshot.values["responses"][0].content == "resposta do agente"
+
+
+def test_action_does_not_survive_into_the_next_message(graph):
+    """Acao de uma rodada nao pode voltar na resposta da rodada seguinte.
+
+    O checkpoint e indexado pela conversa, entao o estado atravessa mensagens.
+    Sem zerar a acao, o diagnostico proposto numa mensagem voltava junto com a
+    resposta da mensagem seguinte - a interface executava de novo, mandava o
+    resultado para analise, e isso virava outra rodada: loop infinito, com o
+    computador do usuario rodando o mesmo comando a cada volta.
+    """
+    primeira = invoke(
+        graph,
+        conversation_id="conversa-1",
+        message="Verifique meu IP e faca um diagnostico de rede",
+    )
+
+    assert primeira["action_kind"] == "computer"
+    assert primeira["action"]["action_id"] == "network_diagnostics"
+
+    # O resultado que a interface manda de volta para a IA analisar.
+    segunda = invoke(
+        graph,
+        conversation_id="conversa-1",
+        message=(
+            'Resultado da acao local "Diagnostico de rede" executada neste '
+            "computador.\nAnalise os dados abaixo.\n\nIP externo: 203.0.113.10"
+        ),
+    )
+
+    assert segunda["action_kind"] == "chat"
+    assert segunda["action"] is None

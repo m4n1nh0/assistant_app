@@ -92,6 +92,33 @@ class ConfigNotifier extends StateNotifier<AppConfig> {
     HiveConfig.write(state.toSafeJson());
   }
 
+  /// Liga/desliga a fala das respostas (fila de ícones do painel direito).
+  void setTtsEnabled(bool value) {
+    state = AppConfig.fromJson({...state.toJson(), 'ttsEnabled': value});
+    HiveConfig.write(state.toSafeJson());
+  }
+
+  /// Liga/desliga a escuta contínua. O chat observa esta preferência e começa
+  /// ou pausa a gravação sozinho, sem passar pela tela de configuração.
+  void setContinuousVoiceMode(bool value) {
+    state =
+        AppConfig.fromJson({...state.toJson(), 'continuousVoiceMode': value});
+    HiveConfig.write(state.toSafeJson());
+  }
+
+  /// Liga/desliga um canal de notificação sem mexer nas credenciais dele.
+  void setNotifChannel({bool? telegram, bool? whatsapp}) {
+    state = AppConfig.fromJson({
+      ...state.toJson(),
+      'notif': {
+        ...state.notif.toJson(),
+        if (telegram != null) 'tgEnabled': telegram,
+        if (whatsapp != null) 'waEnabled': whatsapp,
+      },
+    });
+    HiveConfig.write(state.toSafeJson());
+  }
+
   /// Atualiza os agentes conectados detectados neste computador. Se o agente
   /// selecionado perdeu o login, a seleção volta para a orquestração.
   void setConnectedAgents(Map<String, bool> agents) {

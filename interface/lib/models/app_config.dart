@@ -30,11 +30,46 @@ class AppConfig {
   static String serviceLabel(String id) =>
       serviceLabels[id] ?? id.toUpperCase();
 
+  /// Rotulos curtos para os marcadores da conversa.
+  ///
+  /// O nome que o backend manda traz o modelo junto - "Together
+  /// (meta-llama/Llama-3.3-70B-Instruct-Turbo)" - e uma duzia desses empurra a
+  /// faixa do cabecalho para tres linhas. O nome completo continua no tooltip.
+  static const serviceShortLabels = {
+    'backend': 'Backend',
+    'claude': 'Claude',
+    'gpt': 'GPT',
+    'together': 'Together',
+    'openrouter': 'OpenRouter',
+    'deepseek': 'DeepSeek',
+    'gemini': 'Gemini',
+    'grok': 'Grok',
+    'localai': 'LocalAI',
+    'llama': 'Ollama',
+    'hf': 'HF',
+    'codex_cli': 'Codex CLI',
+    'claude_cli': 'Claude CLI',
+  };
+
+  /// Tira o modelo entre parenteses de um rotulo vindo do backend.
+  static String stripModel(String label) {
+    final open = label.indexOf('(');
+    if (open <= 0) return label.trim();
+    final base = label.substring(0, open).trim();
+    return base.isEmpty ? label.trim() : base;
+  }
+
   /// Agentes que rodam pelo cliente oficial instalado no computador.
   static const connectedAgentIds = {'codex_cli', 'claude_cli'};
 
   /// Valor de [selectedAgent] que deixa o backend orquestrar entre todos.
   static const autoAgent = 'auto';
+
+  /// Autor das mensagens montadas com dados coletados nesta maquina.
+  ///
+  /// Nao entra em [serviceLabels]: nao e um provedor que se possa escolher, e
+  /// so o marcador que separa o que a interface coletou do que veio do backend.
+  static const localAgent = 'local';
 
   static const responseModeLabels = {
     'single': 'Padrão',
@@ -179,6 +214,10 @@ class AppConfig {
       connectedAgentIds.contains(effectiveAgent);
 
   String serviceName(String id) => llmLabels[id] ?? serviceLabel(id);
+
+  /// Nome sem o modelo, para onde a largura e curta (marcadores, painel).
+  String shortServiceName(String id) =>
+      serviceShortLabels[id] ?? stripModel(serviceName(id));
   LlmStatus? serviceStatus(String id) => llmStatuses[id];
 
   bool get isConfigured => true;

@@ -108,6 +108,20 @@ def test_specialist_only_gets_its_own_tools(monkeypatch):
     assert [tool.name for tool in tools] == ["propose_calendar_event"]
 
 
+def test_proposal_only_tools_are_hidden_from_the_model():
+    """Ferramenta que so monta proposta nao pode aparecer para o modelo.
+
+    O `action` da resposta e escrito unicamente por `detect_action`; uma
+    `propose_*` escolhida dentro do loop do agente devolveria JSON e terminaria
+    em nada. Quem executa de verdade e o catalogo publicado pela maquina
+    (`local_*`), entao as duas que ganharam equivalente real sairam de escopo.
+    """
+    from app.orchestration.agents import scopes_for_tool
+
+    assert scopes_for_tool("propose_computer_action") == ()
+    assert scopes_for_tool("propose_coding_action") == ()
+
+
 def test_handoff_tool_is_added_when_allowed(monkeypatch):
     local_gateway(monkeypatch)
 
