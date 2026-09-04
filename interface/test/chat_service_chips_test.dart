@@ -51,8 +51,8 @@ void main() {
     await _pump(tester, _config(['claude', 'gpt', 'llama']), 800);
 
     expect(find.text('AUTO'), findsOneWidget);
-    expect(find.text('CLAUDE SONNET 4'), findsOneWidget);
-    expect(find.text('GPT-4O'), findsOneWidget);
+    expect(find.text('CLAUDE'), findsOneWidget);
+    expect(find.text('GPT'), findsOneWidget);
     expect(find.text('OLLAMA'), findsOneWidget);
     // Servico desligado nao aparece.
     expect(find.text('GROK'), findsNothing);
@@ -65,7 +65,7 @@ void main() {
     // Um RenderFlex estourado vira excecao no teste: e o traco amarelo e preto
     // que aparecia na tela.
     expect(tester.takeException(), isNull);
-    for (final rotulo in ['CLAUDE SONNET 4', 'HUGGING FACE', 'OPENROUTER']) {
+    for (final rotulo in ['CLAUDE', 'HF', 'OPENROUTER']) {
       expect(find.text(rotulo), findsOneWidget);
     }
   });
@@ -96,10 +96,10 @@ void main() {
     await _pump(tester, config, 800);
 
     expect(find.text('AUTO'), findsOneWidget);
-    expect(find.text('CODEX CONECTADO'), findsOneWidget);
-    expect(find.text('CLAUDE CONECTADO'), findsNothing);
-    expect(find.text('CLAUDE SONNET 4'), findsOneWidget);
-    expect(find.text('GPT-4O'), findsOneWidget);
+    expect(find.text('CODEX CLI'), findsOneWidget);
+    expect(find.text('CLAUDE CLI'), findsNothing);
+    expect(find.text('CLAUDE'), findsOneWidget);
+    expect(find.text('GPT'), findsOneWidget);
   });
 
   testWidgets('agente selecionado fica destacado', (tester) async {
@@ -116,5 +116,29 @@ void main() {
       ),
     );
     expect(chip.style!.fontWeight, FontWeight.w700);
+  });
+
+  testWidgets('rotulo com modelo do backend vira nome curto no marcador',
+      (tester) async {
+    // E assim que o backend nomeia os servicos: doze desses nomes inteiros
+    // empurravam a faixa do cabecalho para tres linhas.
+    final config = AppConfig(
+      activeLlms: {for (final id in _todos) id: id == 'together'},
+      llmLabels: const {
+        'together': 'Together (meta-llama/Llama-3.3-70B-Instruct-Turbo)',
+      },
+    );
+
+    await _pump(tester, config, 800);
+
+    expect(find.text('TOGETHER'), findsOneWidget);
+    expect(find.textContaining('LLAMA-3.3-70B'), findsNothing);
+
+    // O nome completo nao some: fica no tooltip do marcador.
+    final tooltip = tester.widget<Tooltip>(find.ancestor(
+      of: find.byKey(const Key('chat-agent-chip-together')),
+      matching: find.byType(Tooltip),
+    ));
+    expect(tooltip.message, contains('Llama-3.3-70B-Instruct-Turbo'));
   });
 }

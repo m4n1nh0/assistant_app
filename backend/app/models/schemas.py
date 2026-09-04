@@ -416,6 +416,11 @@ class LLMStatus(BaseModel):
     Distingue tres coisas que costumam ser confundidas: `configured` (ha chave),
     `online` (a API respondeu) e `available` (da para usar agora). `balance` so vem
     preenchido nos provedores que expoem consulta de saldo.
+
+    `available_models` vem preenchido quando a checagem consultou o catalogo do
+    provedor - o que ela ja fazia, e antes descartava. E o que permite a interface
+    oferecer uma lista em vez de campo livre, e o que transforma "modelo
+    indisponivel" de beco sem saida em escolha.
     """
     id: str
     label: str
@@ -428,6 +433,8 @@ class LLMStatus(BaseModel):
     currency: Optional[str] = None
     status: str = "missing_key"
     error: Optional[str] = None
+    available_models: List[str] = Field(default_factory=list)
+    recommended_model: str = ""
     checked_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -457,6 +464,8 @@ class HealthResponse(BaseModel):
     """
     status: str = "ok"
     version: str = "1.0.0"
+    #: Commit que originou o processo. Vazio fora de ambiente com deploy.
+    revision: str = ""
     active_llms: List[str] = Field(default_factory=list)
     available_llms: List[str] = Field(default_factory=list)
     llm_labels: Dict[str, str] = Field(default_factory=dict)
@@ -934,18 +943,30 @@ class StudentImportItem(BaseModel):
 
 
 class StudentImportRequest(BaseModel):
-    """Importacao em lote de alunos para uma turma."""
+    """Importacao em lote de alunos para uma turma.
+
+    `deactivate_ids` sincroniza a turma com o arquivo: quem ficou de fora da
+    planilha e some das listas sem perder presenca, pontos ou respostas de quiz,
+    que referenciam o aluno por id. A interface escolhe quem entra nessa lista, e
+    o servidor recusa desativar quem esta no arquivo ou e de outra turma.
+    """
     class_id: Optional[str] = None
     class_group: str = ""
     discipline: str = ""
-    students: List[StudentImportItem] = Field(min_length=1, max_length=1000)
+    # Lista vazia e valida quando ha `deactivate_ids`: sincronizar uma turma as
+    # vezes e so tirar quem saiu, sem nenhum cadastro novo.
+    students: List[StudentImportItem] = Field(
+        default_factory=list, max_length=1000
+    )
+    deactivate_ids: List[str] = Field(default_factory=list, max_length=1000)
 
 
 class StudentImportResponse(BaseModel):
-    """Resultado da importacao: criados, atualizados e total."""
+    """Resultado da importacao: criados, atualizados, desativados e total."""
     created: int
     updated: int
     total: int
+    deactivated: int = 0
 
 
 class StudentBulkDeleteRequest(BaseModel):

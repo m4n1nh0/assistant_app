@@ -69,11 +69,14 @@ SPECIALISTS: dict[str, Specialist] = {
             "interface confirmar."
         ),
         routing_task="code",
-        tool_names=(
-            "propose_coding_action",
-            "propose_computer_action",
-            "propose_project_action",
-        ),
+        # `propose_coding_action` e `propose_computer_action` sairam daqui: a
+        # capacidade real chega pelo catalogo que a maquina publica
+        # (`local_inspect_workspace`, `local_network_diagnostics`, ...), e essa
+        # sim executa. As `propose_*` apenas montam a proposta, e proposta
+        # criada dentro do loop do agente nao chega na interface - o `action`
+        # da resposta so e escrito por `detect_action`. Deixa-las visiveis para
+        # o modelo era oferecer um caminho que termina em nada.
+        tool_names=("propose_project_action",),
         use_mcp=True,
     ),
     "study": Specialist(

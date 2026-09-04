@@ -508,9 +508,14 @@ class EducationService {
     return Student.fromJson(_decode(response) as Map<String, dynamic>);
   }
 
+  /// Importa a lista e, opcionalmente, desativa quem ficou fora do arquivo.
+  ///
+  /// `deactivateIds` sincroniza a turma com a planilha sem apagar ninguem: o
+  /// historico de presenca e pontos referencia o aluno por id.
   Future<StudentImportResult> importStudents({
     required String classId,
     required List<StudentCsvRow> students,
+    List<String> deactivateIds = const [],
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/students/import'),
@@ -523,6 +528,7 @@ class EducationService {
                   'name': student.name,
                 })
             .toList(),
+        if (deactivateIds.isNotEmpty) 'deactivate_ids': deactivateIds,
       }),
     );
     return StudentImportResult.fromJson(
@@ -530,11 +536,13 @@ class EducationService {
     );
   }
 
+  /// Altera um aluno. `active` reativa quem foi desativado numa importacao.
   Future<Student> updateStudent(
     String studentId, {
     String? name,
     String? classId,
     List<String>? aliases,
+    bool? active,
   }) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/education/students/$studentId'),
@@ -543,6 +551,7 @@ class EducationService {
         if (name != null) 'name': name,
         if (classId != null) 'class_id': classId,
         if (aliases != null) 'aliases': aliases,
+        if (active != null) 'active': active,
       }),
     );
     return Student.fromJson(_decode(response) as Map<String, dynamic>);
@@ -1237,11 +1246,13 @@ class StudentImportResult {
   final int created;
   final int updated;
   final int total;
+  final int deactivated;
 
   const StudentImportResult({
     required this.created,
     required this.updated,
     required this.total,
+    this.deactivated = 0,
   });
 
   factory StudentImportResult.fromJson(Map<String, dynamic> json) =>
@@ -1249,6 +1260,7 @@ class StudentImportResult {
         created: (json['created'] as num?)?.toInt() ?? 0,
         updated: (json['updated'] as num?)?.toInt() ?? 0,
         total: (json['total'] as num?)?.toInt() ?? 0,
+        deactivated: (json['deactivated'] as num?)?.toInt() ?? 0,
       );
 }
 

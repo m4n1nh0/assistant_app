@@ -177,6 +177,13 @@ async def run_chat_graph(
                         "mode": mode,
                         "system_prompt": system_prompt,
                         "execution_id": execution,
+                        # Mensagem nova comeca sem acao. O checkpoint e indexado
+                        # pela conversa, entao sem zerar aqui a acao da rodada
+                        # anterior sobrevivia no estado e voltava na resposta -
+                        # a interface executava de novo o mesmo diagnostico, e o
+                        # resultado disso virava outra rodada, em loop.
+                        "action": None,
+                        "action_kind": "unresolved",
                         "tool_trace": [],
                         "handoffs": [],
                         "errors": [],

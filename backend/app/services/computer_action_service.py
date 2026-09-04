@@ -14,6 +14,8 @@ import unicodedata
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .local_message_markers import LOCAL_MESSAGE_MARKERS, has_marker
+
 
 class ComputerActionError(ValueError):
     """Acao invalida, desconhecida ou nao executavel neste contexto."""
@@ -58,14 +60,6 @@ SAFE_ACTIONS = {
     SCRIPT_EXECUTION.id: SCRIPT_EXECUTION,
 }
 
-_ANALYSIS_MARKERS = (
-    "resultado da acao local",
-    "resultado da ação local",
-    "saida da acao local",
-    "resultado do script local",
-    "saida do script local",
-    "saída da ação local",
-)
 
 _HIGH_RISK_PATTERNS = (
     r"\brm\s+-rf\s+[/~*]",
@@ -102,7 +96,7 @@ def build_computer_action(message: str) -> dict[str, Any] | None:
         A acao proposta, ou `None` quando a mensagem nao pede acao no computador.
     """
     text = _normalize(message)
-    if not text or any(marker in text for marker in _ANALYSIS_MARKERS):
+    if not text or has_marker(text, LOCAL_MESSAGE_MARKERS):
         return None
 
     network_terms = (

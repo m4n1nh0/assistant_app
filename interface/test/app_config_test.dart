@@ -191,4 +191,15 @@ void main() {
     expect(config.effectiveAgent, AppConfig.autoAgent);
     expect(config.selectedIsConnectedAgent, isFalse);
   });
+
+  test('local agent labels collected data without becoming a provider', () {
+    final config = AppConfig(activeLlms: {'gpt': true});
+
+    // O resultado de uma acao local vinha marcado como BACKEND, o que fazia os
+    // dados coletados nesta maquina parecerem vindos do servidor.
+    expect(config.serviceName(AppConfig.localAgent), 'LOCAL');
+    // E um marcador de origem, nao um provedor: nao entra na lista de agentes.
+    expect(AppConfig.serviceLabels.containsKey(AppConfig.localAgent), isFalse);
+    expect(config.availableAgents.contains(AppConfig.localAgent), isFalse);
+  });
 }

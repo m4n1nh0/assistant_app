@@ -1,13 +1,13 @@
-/// Execucao local das acoes de computador propostas pelo backend.
+/// Coletores de diagnostico que rodam nesta maquina.
 ///
-/// O backend monta e valida a acao; executar e sempre daqui, apos confirmacao.
+/// Quem despacha por id e o catalogo em `local_capability_registry.dart`; aqui
+/// ficam so os coletores, cada um sem saber por que foi chamado.
 library;
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../models/app_config.dart';
 import 'api_service.dart';
 import 'local_script_service.dart';
 
@@ -26,21 +26,10 @@ class LocalComputerActionException implements Exception {
 /// O backend deliberadamente nao executa nada disso: ele monta e valida a acao, e a
 /// execucao acontece aqui, depois da confirmacao do usuario.
 class LocalComputerActionService {
-  static Future<ComputerActionResult> runAction(ComputerAction action) async {
-    switch (action.actionId) {
-      case 'network_diagnostics':
-        return _runNetworkDiagnostics(action);
-      case 'system_diagnostics':
-        return _runSystemDiagnostics(action);
-    }
-    throw LocalComputerActionException(
-      'Executor local nao implementado para: ${action.actionId}',
-    );
-  }
-
-  static Future<ComputerActionResult> _runNetworkDiagnostics(
-    ComputerAction action,
-  ) async {
+  /// Coleta a configuracao de rede, o IP externo e um ping desta maquina.
+  static Future<ComputerActionResult> runNetworkDiagnostics({
+    String name = 'Diagnostico de rede',
+  }) async {
     final started = DateTime.now();
     final outputs = <ComputerCommandOutput>[];
 
@@ -69,6 +58,7 @@ class LocalComputerActionService {
       );
     }
 
+    final externalIpStarted = DateTime.now();
     final externalIp = await _externalIp();
     if (externalIp.isNotEmpty) {
       outputs.insert(
@@ -79,14 +69,17 @@ class LocalComputerActionService {
           exitCode: 0,
           stdout: externalIp,
           stderr: '',
-          durationMs: 0,
+          // Medido de verdade: 0ms fixo fazia a etapa parecer nao ter rodado
+          // nesta maquina.
+          durationMs:
+              DateTime.now().difference(externalIpStarted).inMilliseconds,
         ),
       );
     }
 
     return ComputerActionResult(
-      actionId: action.actionId,
-      actionName: action.name,
+      actionId: 'network_diagnostics',
+      actionName: name,
       status: 'executed',
       summary: _buildNetworkSummary(outputs),
       outputs: outputs,
@@ -94,9 +87,10 @@ class LocalComputerActionService {
     );
   }
 
-  static Future<ComputerActionResult> _runSystemDiagnostics(
-    ComputerAction action,
-  ) async {
+  /// Coleta memoria, processos por consumo e uso de disco desta maquina.
+  static Future<ComputerActionResult> runSystemDiagnostics({
+    String name = 'Diagnostico do sistema',
+  }) async {
     final started = DateTime.now();
     final script = await _systemDiagnosticsScript();
     final result = await LocalScriptService.runScript(
@@ -113,8 +107,8 @@ class LocalComputerActionService {
       durationMs: result.durationMs,
     );
     return ComputerActionResult(
-      actionId: action.actionId,
-      actionName: action.name,
+      actionId: 'system_diagnostics',
+      actionName: name,
       status: result.exitCode == 0 ? 'executed' : 'failed',
       summary: result.exitCode == 0
           ? 'Coleta finalizada. Inclui memoria/RAM, processos por consumo e uso de disco.'

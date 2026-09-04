@@ -39,6 +39,8 @@ class AssistantTheme {
     'localai': c3,
     'llama': c2,
     'hf': cHF,
+    // Dados coletados nesta maquina, nao resposta de provedor.
+    'local': c3,
   };
 
   static ThemeData get darkTheme => ThemeData(

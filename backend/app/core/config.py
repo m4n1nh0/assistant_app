@@ -439,3 +439,28 @@ def _normalize_http_base_url(value: object, *, default_port: int) -> str:
 
     return urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", ""))
 
+
+
+def build_revision() -> str:
+    """Commit que originou o processo em execucao, ou vazio quando desconhecido.
+
+    Existe para responder "o que esta no ar?" sem abrir o painel do provedor.
+    Sem isso, a unica forma de descobrir que um deploy nao chegou era comparar o
+    formato da resposta da API com o codigo local - foi o que aconteceu quando a
+    importacao de alunos parou de desativar e a causa era producao rodando um
+    commit anterior.
+
+    Railway, Render e a maioria dos provedores injetam o SHA sozinhos; em
+    desenvolvimento nao ha nenhuma dessas variaveis e o campo fica vazio, que e
+    a resposta honesta.
+    """
+    for name in (
+        "RAILWAY_GIT_COMMIT_SHA",
+        "RENDER_GIT_COMMIT",
+        "SOURCE_COMMIT",
+        "GIT_COMMIT_SHA",
+    ):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value[:7]
+    return ""

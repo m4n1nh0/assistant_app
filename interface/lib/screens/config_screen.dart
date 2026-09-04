@@ -74,6 +74,13 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   List<LlmProviderConfig> _llmProviders = const [];
   final Map<String, TextEditingController> _llmModelCtrls = {};
   final Map<String, TextEditingController> _llmKeyCtrls = {};
+
+  /// Agente aberto no painel. `null` deixa a escolha para
+  /// [_agentePadrao], que abre no primeiro que precisa de atenção.
+  String? _selectedAgentId;
+
+  /// Filtro da lista de agentes, exibido só quando a lista fica longa.
+  final TextEditingController _agentFilterCtrl = TextEditingController();
   final Set<String> _llmKeysToClear = {};
   bool _llmBusy = false;
   List<ConnectedAiStatus> _connectedAiStatuses = const [];
@@ -192,6 +199,13 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     for (final item in providers.where((item) => item.kind == 'external')) {
       _llmModelCtrls[item.id] = TextEditingController(text: item.model);
       _llmKeyCtrls[item.id] = TextEditingController();
+    }
+    // Recarregar nao pode tirar o agente aberto de baixo do usuario. Mas se ele
+    // sumiu da lista, a selecao volta a ser nula para o padrao recalcular - e o
+    // padrao acompanha o estado, que pode ter mudado nesta mesma resposta.
+    if (_selectedAgentId != null &&
+        !providers.any((item) => item.id == _selectedAgentId)) {
+      _selectedAgentId = null;
     }
     setState(() => _llmProviders = providers);
   }
@@ -1029,7 +1043,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                 ),
               )),
       ]),
-      ...external.map(_buildExternalAgent),
+      _buildExternalAgentsPanel(external),
       _ActionBtn(
         label: _llmBusy ? 'VERIFICANDO...' : 'SALVAR E VERIFICAR AGENTES',
         color: AssistantTheme.c1,
@@ -1122,10 +1136,130 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     );
   }
 
+  /// Lista de agentes a esquerda, formulario do selecionado a direita.
+  ///
+  /// Empilhar um cartao por provedor obrigava a rolar oito formularios para
+  /// mexer em um. E a lista e o lugar natural do estado: a bolinha de cada
+  /// agente conta em um relance o que antes so aparecia depois de abrir e ler
+  /// o erro de cada um.
+  /// Acima disto a lista deixa de ser escaneável de relance e ganha busca.
+  static const _buscaAPartirDe = 6;
+
+  /// Altura do painel. Fixa de propósito: com ela cada coluna rola por conta
+  /// própria, então uma lista longa não empurra o formulário para fora da tela.
+  static const _alturaDoPainel = 430.0;
+
+  /// Agente que o painel abre quando o usuário ainda não escolheu.
+  ///
+  /// Abre no que precisa de atenção, não no primeiro alfabético: quem entra
+  /// nesta tela quase sempre vem porque algo parou de responder. Provedor sem
+  /// chave não conta - ele não está quebrado, só não foi configurado.
+  LlmProviderConfig _agentePadrao(List<LlmProviderConfig> external) {
+    const gravidade = {
+      'invalid_credentials': 0,
+      'offline': 1,
+      'model_unavailable': 2,
+      'limited': 3,
+    };
+    LlmProviderConfig? pior;
+    int piorPeso = 99;
+    for (final item in external) {
+      final peso = gravidade[item.status] ?? 99;
+      if (peso < piorPeso) {
+        pior = item;
+        piorPeso = peso;
+      }
+    }
+    return pior ?? external.first;
+  }
+
+  Widget _buildExternalAgentsPanel(List<LlmProviderConfig> external) {
+    if (external.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final selecionado = external.firstWhere(
+      (item) => item.id == _selectedAgentId,
+      orElse: () => _agentePadrao(external),
+    );
+
+    final termo = _agentFilterCtrl.text.trim().toLowerCase();
+    final visiveis = termo.isEmpty
+        ? external
+        : external
+            .where((item) =>
+                item.label.toLowerCase().contains(termo) ||
+                item.id.toLowerCase().contains(termo) ||
+                item.model.toLowerCase().contains(termo))
+            .toList();
+
+    return _SectionCard(title: 'PROVEDORES EXTERNOS DESTE USUÁRIO', children: [
+      SizedBox(
+        height: _alturaDoPainel,
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SizedBox(
+            width: 226,
+            child: Column(children: [
+              if (external.length > _buscaAPartirDe) ...[
+                TextField(
+                  controller: _agentFilterCtrl,
+                  onChanged: (_) => setState(() {}),
+                  style: const TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 11,
+                      color: AssistantTheme.textPrimary),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'Filtrar agentes',
+                    prefixIcon: Icon(Icons.search,
+                        size: 15, color: AssistantTheme.textMuted),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              Expanded(
+                child: visiveis.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Nenhum agente\ncom esse nome',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 10,
+                              color: AssistantTheme.textMuted),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: visiveis.length,
+                        itemBuilder: (context, i) => _AgentTile(
+                          provider: visiveis[i],
+                          selected: visiveis[i].id == selecionado.id,
+                          onTap: () => setState(
+                              () => _selectedAgentId = visiveis[i].id),
+                        ),
+                      ),
+              ),
+            ]),
+          ),
+          const SizedBox(width: 14),
+          Container(width: 1, color: AssistantTheme.border),
+          const SizedBox(width: 14),
+          Expanded(
+            child: SingleChildScrollView(
+              child: _buildExternalAgent(selecionado),
+            ),
+          ),
+        ]),
+      ),
+    ]);
+  }
+
   Widget _buildExternalAgent(LlmProviderConfig item) {
     final index = _llmProviders.indexWhere((entry) => entry.id == item.id);
     final removing = _llmKeysToClear.contains(item.id);
-    return _SectionCard(title: item.label.toUpperCase(), children: [
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _AgentStatusBanner(provider: item),
+      const SizedBox(height: 12),
       _Toggle(
         'Ativar para este usuário',
         item.enabled && !removing,
@@ -1134,7 +1268,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           if (value) _llmKeysToClear.remove(item.id);
         }),
       ),
-      _Field('MODELO', _llmModelCtrls[item.id]!, hint: 'Modelo do provedor'),
+      _ModelPicker(
+        provider: item,
+        ctrl: _llmModelCtrls[item.id]!,
+        onChanged: () => setState(() {}),
+      ),
       _Field(
         'API KEY',
         _llmKeyCtrls[item.id]!,
@@ -1451,6 +1589,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     for (final c in [..._llmModelCtrls.values, ..._llmKeyCtrls.values]) {
       c.dispose();
     }
+    _agentFilterCtrl.dispose();
     _voicePreviewPlayer.dispose();
     _microphoneRecorder.dispose();
     _microphonePlayer.dispose();
@@ -1616,6 +1755,430 @@ class _Field extends StatelessWidget {
                   color: AssistantTheme.textPrimary),
               decoration: InputDecoration(hintText: hint)),
         ]),
+      );
+}
+
+/// Vocabulario visual do estado de um agente, compartilhado pela lista e pelo
+/// painel: uma cor e uma frase curta por estado, definidas em um lugar so.
+class _AgentState {
+  final Color cor;
+  final String rotulo;
+  const _AgentState(this.cor, this.rotulo);
+
+  static _AgentState of(LlmProviderConfig provider) {
+    switch (provider.status) {
+      case 'online':
+        return const _AgentState(AssistantTheme.c3, 'Pronto para uso');
+      case 'limited':
+        return const _AgentState(AssistantTheme.c4, 'Sem saldo');
+      case 'model_unavailable':
+        return const _AgentState(AssistantTheme.c4, 'Modelo indisponível');
+      case 'invalid_credentials':
+        return const _AgentState(AssistantTheme.danger, 'Credencial recusada');
+      case 'offline':
+        return const _AgentState(AssistantTheme.danger, 'Fora do ar');
+      case 'checking':
+        return const _AgentState(AssistantTheme.textMuted, 'Checando...');
+      case 'missing_key':
+        return _semConfiguracao(provider);
+      default:
+        // Campo ausente: backend anterior a este contrato. Dizer "sem chave"
+        // aqui seria afirmar o que nao se sabe - e era exatamente o que a tela
+        // fazia, marcando como sem credencial provedores que tinham uma. O que
+        // da para afirmar vem de `configured`, que qualquer versao envia.
+        return provider.configured
+            ? const _AgentState(
+                AssistantTheme.textMuted, 'Chave cadastrada · estado não verificado')
+            : _semConfiguracao(provider);
+    }
+  }
+
+  /// Provedor sem o que precisa para funcionar.
+  ///
+  /// Ollama e LocalAI nao tem credencial: o que os liga e um endereco. Rotular
+  /// os dois como "sem chave" manda procurar uma chave que nao existe.
+  static _AgentState _semConfiguracao(LlmProviderConfig provider) => _AgentState(
+        AssistantTheme.textMuted,
+        provider.kind == 'local' ? 'Sem endereço' : 'Sem chave',
+      );
+}
+
+/// Um agente na lista: nome, estado em cor e o modelo em uso.
+///
+/// O estado vem do mesmo health check que alimenta o roteamento, entao o que
+/// esta escrito aqui e exatamente o que decide se o agente recebe uma pergunta.
+class _AgentTile extends StatelessWidget {
+  final LlmProviderConfig provider;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _AgentTile({
+    required this.provider,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final estado = _AgentState.of(provider);
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected ? AssistantTheme.surface2 : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: selected ? AssistantTheme.c1 : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          borderRadius: const BorderRadius.horizontal(
+            right: Radius.circular(6),
+          ),
+        ),
+        child: Row(children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: estado.cor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  provider.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 11,
+                    color: selected
+                        ? AssistantTheme.textPrimary
+                        : AssistantTheme.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  provider.model.isEmpty ? estado.rotulo : provider.model,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 9,
+                      color: AssistantTheme.textMuted),
+                ),
+              ],
+            ),
+          ),
+          if (!provider.enabled)
+            const Icon(Icons.pause_circle_outline,
+                size: 13, color: AssistantTheme.textMuted),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Cabecalho do painel: diz o estado do agente e por que ele esta assim.
+///
+/// A explicacao vem do backend ja sanitizada. Mostra-la aqui e o que evita a
+/// caca ao problema que essa tela deveria ter respondido de cara.
+class _AgentStatusBanner extends StatelessWidget {
+  final LlmProviderConfig provider;
+  const _AgentStatusBanner({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final estado = _AgentState.of(provider);
+    final detalhe = [
+      if (provider.balance.isNotEmpty) 'saldo ${provider.balance}',
+      if (provider.statusError.isNotEmpty) provider.statusError,
+    ].join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: AssistantTheme.bg2,
+        border: Border.all(color: estado.cor.withOpacity(.45)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: estado.cor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              '${provider.label.toUpperCase()}  ·  ${estado.rotulo}',
+              style: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 11,
+                  letterSpacing: 1.2,
+                  color: estado.cor),
+            ),
+          ),
+        ]),
+        if (detalhe.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            detalhe,
+            style: const TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 10,
+                height: 1.45,
+                color: AssistantTheme.textMuted),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+/// Escolha do modelo de um provedor.
+///
+/// Vira lista de selecao quando o backend conseguiu consultar o catalogo do
+/// provedor, e continua campo de texto livre quando nao conseguiu - provedor
+/// cuja checagem e de saldo, como OpenRouter e DeepSeek, nunca lista modelo.
+/// Digitar o id na mao era a unica opcao antes, e era assim que a configuracao
+/// apontava para um modelo que o provedor tinha aposentado sem avisar.
+class _ModelPicker extends StatelessWidget {
+  final LlmProviderConfig provider;
+  final TextEditingController ctrl;
+  final VoidCallback onChanged;
+
+  const _ModelPicker({
+    required this.provider,
+    required this.ctrl,
+    required this.onChanged,
+  });
+
+  static const _labelStyle = TextStyle(
+      fontFamily: 'JetBrains Mono',
+      fontSize: 9,
+      letterSpacing: 3,
+      color: AssistantTheme.textMuted);
+
+  /// Acima disto, rolar uma lista suspensa deixa de ser navegacao e vira
+  /// procura. A OpenRouter devolve 411 modelos de chat e a Featherless passa de
+  /// 21 mil - nenhum dropdown resolve isso.
+  static const _limiteDaLista = 30;
+
+  /// Teto de sugestoes exibidas por vez, para a busca continuar leve num
+  /// catalogo de dezenas de milhares.
+  static const _maxSugestoes = 60;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!provider.canPickModel) {
+      return _Field('MODELO', ctrl, hint: 'Modelo do provedor');
+    }
+    if (provider.availableModels.length > _limiteDaLista) {
+      return _buscavel();
+    }
+
+    final atual = ctrl.text.trim();
+    // O modelo salvo pode nao estar mais no catalogo. Ele entra na lista mesmo
+    // assim, marcado: sumir com a selecao atual esconderia justamente o que o
+    // usuario precisa ver para corrigir.
+    final indisponivel = atual.isNotEmpty &&
+        !provider.availableModels.contains(atual);
+    final opcoes = [
+      if (indisponivel) atual,
+      ...provider.availableModels,
+    ];
+    final sugerido = provider.recommendedModel;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('MODELO', style: _labelStyle),
+        const SizedBox(height: 5),
+        DropdownButtonFormField<String>(
+          // `initialValue` so vale na primeira construcao. Sem uma chave que
+          // mude junto, aplicar a sugestao atualizaria o controller e o
+          // dropdown continuaria exibindo a selecao anterior.
+          key: ValueKey('${provider.id}:$atual'),
+          initialValue: atual.isEmpty ? null : atual,
+          isExpanded: true,
+          dropdownColor: AssistantTheme.surface2,
+          style: const TextStyle(
+              fontFamily: 'JetBrains Mono',
+              fontSize: 12,
+              color: AssistantTheme.textPrimary),
+          decoration: const InputDecoration(hintText: 'Escolha o modelo'),
+          items: [
+            for (final opcao in opcoes)
+              DropdownMenuItem(
+                value: opcao,
+                child: Text(
+                  opcao == atual && indisponivel
+                      ? '$opcao  (indisponível)'
+                      : opcao,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 12,
+                      color: opcao == atual && indisponivel
+                          ? AssistantTheme.c4
+                          : AssistantTheme.textPrimary),
+                ),
+              ),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            ctrl.text = value;
+            onChanged();
+          },
+        ),
+        if (indisponivel)
+          _ModelHint(
+            texto: 'Este modelo não está mais disponível nesta conta.',
+            cor: AssistantTheme.c4,
+          ),
+        if (sugerido.isNotEmpty && sugerido != atual)
+          InkWell(
+            onTap: () {
+              ctrl.text = sugerido;
+              onChanged();
+            },
+            child: _ModelHint(
+              texto: 'Sugerido: $sugerido  ·  toque para usar',
+              cor: AssistantTheme.c3,
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+/// Variante de busca, para catalogo grande demais para uma lista suspensa.
+///
+/// Continua aceitando texto livre de proposito: o catalogo pode estar
+/// desatualizado em relacao ao que o provedor aceita, e travar o campo faria a
+/// interface impedir uma configuracao valida.
+extension _ModelPickerBusca on _ModelPicker {
+  Widget _buscavel() {
+    final atual = ctrl.text.trim();
+    final sugerido = provider.recommendedModel;
+    final indisponivel =
+        atual.isNotEmpty && !provider.availableModels.contains(atual);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Text('MODELO', style: _ModelPicker._labelStyle),
+          const Spacer(),
+          Text(
+            '${provider.availableModels.length} disponíveis · digite para filtrar',
+            style: const TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 9,
+                color: AssistantTheme.textMuted),
+          ),
+        ]),
+        const SizedBox(height: 5),
+        Autocomplete<String>(
+          initialValue: TextEditingValue(text: atual),
+          optionsBuilder: (value) {
+            final termo = value.text.trim().toLowerCase();
+            final base = termo.isEmpty
+                ? provider.availableModels
+                : provider.availableModels
+                    .where((item) => item.toLowerCase().contains(termo));
+            return base.take(_ModelPicker._maxSugestoes);
+          },
+          onSelected: (value) {
+            ctrl.text = value;
+            onChanged();
+          },
+          fieldViewBuilder: (context, campo, foco, _) {
+            campo.addListener(() => ctrl.text = campo.text.trim());
+            return TextField(
+              controller: campo,
+              focusNode: foco,
+              style: const TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 12,
+                  color: AssistantTheme.textPrimary),
+              decoration: const InputDecoration(
+                hintText: 'Digite parte do nome do modelo',
+                prefixIcon: Icon(Icons.search,
+                    size: 15, color: AssistantTheme.textMuted),
+              ),
+            );
+          },
+          optionsViewBuilder: (context, escolher, opcoes) => Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+              color: AssistantTheme.surface2,
+              elevation: 6,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260, maxWidth: 460),
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  children: [
+                    for (final opcao in opcoes)
+                      InkWell(
+                        onTap: () => escolher(opcao),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          child: Text(
+                            opcao,
+                            style: const TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 11,
+                                color: AssistantTheme.textPrimary),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (indisponivel)
+          const _ModelHint(
+            texto: 'Este modelo não aparece no catálogo atual do provedor.',
+            cor: AssistantTheme.c4,
+          ),
+        if (sugerido.isNotEmpty && sugerido != atual)
+          InkWell(
+            onTap: () {
+              ctrl.text = sugerido;
+              onChanged();
+            },
+            child: _ModelHint(
+              texto: 'Sugerido: $sugerido  ·  toque para usar',
+              cor: AssistantTheme.c3,
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+class _ModelHint extends StatelessWidget {
+  final String texto;
+  final Color cor;
+  const _ModelHint({required this.texto, required this.cor});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(
+          texto,
+          style: TextStyle(
+              fontFamily: 'JetBrains Mono', fontSize: 10, color: cor),
+        ),
       );
 }
 

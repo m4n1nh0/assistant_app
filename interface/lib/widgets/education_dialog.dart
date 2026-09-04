@@ -23,6 +23,7 @@ import '../services/education_service.dart';
 import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
+import '../utils/student_roster_diff.dart';
 import 'summary_pickers.dart';
 import '../providers/app_provider.dart';
 import '../branding/intarq_brand.dart';
@@ -1874,6 +1875,10 @@ class _RosterTabState extends State<_RosterTab> {
   Discipline? _newDiscipline;
   List<Discipline> _disciplines = [];
   List<Student> _students = [];
+
+  /// O que a lista de alunos mostra. Comeca nos ativos, que e a turma de fato;
+  /// desativado so aparece quando o professor vai atras dele.
+  _StudentFilter _studentFilter = _StudentFilter.ativos;
   final Set<String> _selectedStudentIds = {};
   var _loading = true;
   var _importing = false;
@@ -1946,7 +1951,12 @@ class _RosterTabState extends State<_RosterTab> {
       return;
     }
     try {
-      final students = await education.listStudents(classId: group.id);
+      // Traz ativos e desativados: o filtro da tela e local, entao alternar
+      // nao custa uma ida ao servidor.
+      final students = await education.listStudents(
+        classId: group.id,
+        activeOnly: false,
+      );
       if (mounted) {
         setState(() {
           _students = students;
@@ -2297,6 +2307,174 @@ class _RosterTabState extends State<_RosterTab> {
     aliasCtrl.dispose();
   }
 
+  /// Mostra linha a linha o que a planilha vai fazer e devolve o que aplicar.
+  ///
+  /// Retorna `null` quando o professor cancela. A lista vem toda marcada -
+  /// aceitar o arquivo inteiro e o caso comum - mas cada linha e desmarcavel,
+  /// porque a decisao real e por aluno: o que trancou some da planilha e ainda
+  /// precisa aparecer na chamada, e as vezes um nome novo e engano do sistema
+  /// academico.
+  Future<_RosterImportChoice?> _confirmRosterImport(
+    ClassGroup group,
+    List<StudentCsvRow> rows,
+    RosterDiff diff,
+  ) async {
+    final entries = diff.entries;
+    final marcadas = {for (final entry in entries) entry.key};
+
+    return showDialog<_RosterImportChoice>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final novos = entries
+              .where((e) => e.action == RosterAction.novo && marcadas.contains(e.key))
+              .length;
+          final ausentes = entries
+              .where((e) =>
+                  e.action == RosterAction.ausente && marcadas.contains(e.key))
+              .length;
+
+          return AlertDialog(
+            backgroundColor: AssistantTheme.surface,
+            title: const Text('Importar alunos'),
+            content: SizedBox(
+              width: 620,
+              height: 460,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${group.display} · arquivo com ${rows.length} linha(s)',
+                    style: const TextStyle(color: AssistantTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$novos a cadastrar · ${diff.kept.length} na turma · '
+                    '$ausentes a desativar',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AssistantTheme.textMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: marcadas.length == entries.length
+                            ? true
+                            : (marcadas.isEmpty ? false : null),
+                        tristate: true,
+                        onChanged: (_) => setDialogState(() {
+                          if (marcadas.length == entries.length) {
+                            marcadas.clear();
+                          } else {
+                            marcadas
+                              ..clear()
+                              ..addAll(entries.map((e) => e.key));
+                          }
+                        }),
+                      ),
+                      const Text(
+                        'Selecionar todos',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AssistantTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 1, color: AssistantTheme.border),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: entries.length,
+                      itemBuilder: (_, index) {
+                        final entry = entries[index];
+                        return _RosterPreviewRow(
+                          entry: entry,
+                          checked: marcadas.contains(entry.key),
+                          onChanged: (marcado) => setDialogState(() {
+                            if (marcado) {
+                              marcadas.add(entry.key);
+                            } else {
+                              marcadas.remove(entry.key);
+                            }
+                          }),
+                        );
+                      },
+                    ),
+                  ),
+                  if (diff.unmatchable.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '${diff.unmatchable.length} aluno(s) sem matricula '
+                        'cadastrada nao entraram na comparacao.',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AssistantTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                  if (ausentes > 0)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'Desativar tira o aluno das listas e preserva presenca, '
+                        'pontos e respostas de quiz ja registrados.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AssistantTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('CANCELAR'),
+              ),
+              FilledButton(
+                onPressed: marcadas.isEmpty
+                    ? null
+                    : () => Navigator.pop(
+                          dialogContext,
+                          _RosterImportChoice(
+                            students: [
+                              for (final entry in entries)
+                                if (entry.row != null &&
+                                    marcadas.contains(entry.key))
+                                  entry.row!,
+                            ],
+                            deactivateIds: [
+                              for (final entry in entries)
+                                if (entry.action == RosterAction.ausente &&
+                                    marcadas.contains(entry.key))
+                                  entry.studentId!,
+                            ],
+                          ),
+                        ),
+                child: const Text('IMPORTAR'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Devolve a turma um aluno desativado por engano numa importacao.
+  Future<void> _reactivateStudent(Student student) async {
+    try {
+      await education.updateStudent(student.id, active: true);
+      _report('${student.name} voltou para a turma.');
+      await _loadClasses(keepId: _selected?.id);
+    } catch (e) {
+      _report('Falha ao reativar: $e', error: true);
+    }
+  }
+
   Future<void> _importCsv() async {
     final group = _selected;
     if (group == null) {
@@ -2330,71 +2508,23 @@ class _RosterTabState extends State<_RosterTab> {
       final rows = parseStudentCsv(content);
       if (!mounted) return;
 
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          backgroundColor: AssistantTheme.surface,
-          title: const Text('Importar alunos'),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${rows.length} aluno(s) para ${group.display}.',
-                  style: const TextStyle(color: AssistantTheme.textPrimary),
-                ),
-                const SizedBox(height: 10),
-                ...rows.take(5).map(
-                      (row) => Text(
-                        '${row.enrollment} - ${row.name}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AssistantTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                if (rows.length > 5)
-                  Text(
-                    '... e mais ${rows.length - 5}.',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AssistantTheme.textMuted,
-                    ),
-                  ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Matriculas existentes serao atualizadas e passam para esta '
-                  'turma; as demais serao cadastradas.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AssistantTheme.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('CANCELAR'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('IMPORTAR'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
+      // A previa compara o arquivo com a turma antes de aplicar: sem isso o
+      // professor so descobre o que a planilha fez depois de aplicada.
+      final diff = diffRoster(roster: _students, file: rows);
+      final escolha = await _confirmRosterImport(group, rows, diff);
+      if (escolha == null) return;
 
       final result = await education.importStudents(
         classId: group.id,
-        students: rows,
+        students: escolha.students,
+        deactivateIds: escolha.deactivateIds,
       );
-      _report('Importacao concluida: ${result.created} cadastrado(s) e '
-          '${result.updated} atualizado(s).');
+      final partes = [
+        '${result.created} cadastrado(s)',
+        '${result.updated} atualizado(s)',
+        if (result.deactivated > 0) '${result.deactivated} desativado(s)',
+      ];
+      _report('Importacao concluida: ${partes.join(', ')}.');
       await _loadClasses(keepId: group.id);
     } catch (error) {
       final message = error is FormatException ? error.message : '$error';
@@ -2597,11 +2727,14 @@ class _RosterTabState extends State<_RosterTab> {
 
   Widget _buildStudentColumn() {
     final group = _selected;
-    final selectedStudents = _students
+    final ativos = _students.where((student) => student.active).length;
+    final desativados = _students.length - ativos;
+    final visiveis = _students.where(_studentFilter.matches).toList();
+    final selectedStudents = visiveis
         .where((student) => _selectedStudentIds.contains(student.id))
         .toList();
     final allSelected =
-        _students.isNotEmpty && selectedStudents.length == _students.length;
+        visiveis.isNotEmpty && selectedStudents.length == visiveis.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2657,6 +2790,18 @@ class _RosterTabState extends State<_RosterTab> {
                       )
                     : Column(
                         children: [
+                          _StudentFilterBar(
+                            current: _studentFilter,
+                            ativos: ativos,
+                            desativados: desativados,
+                            onChanged: (filtro) => setState(() {
+                              _studentFilter = filtro;
+                              // A selecao vale para o que esta na tela: manter
+                              // marcado quem sumiu do filtro faria a exclusao
+                              // em lote pegar quem nao aparece.
+                              _selectedStudentIds.clear();
+                            }),
+                          ),
                           Row(
                             children: [
                               Checkbox(
@@ -2666,7 +2811,7 @@ class _RosterTabState extends State<_RosterTab> {
                                     : (checked) => setState(() {
                                           if (checked == true) {
                                             _selectedStudentIds.addAll(
-                                              _students.map(
+                                              visiveis.map(
                                                 (student) => student.id,
                                               ),
                                             );
@@ -2680,7 +2825,7 @@ class _RosterTabState extends State<_RosterTab> {
                                 selectedStudents.isEmpty
                                     ? 'Selecionar todos'
                                     : '${selectedStudents.length} de '
-                                        '${_students.length} selecionados',
+                                        '${visiveis.length} selecionados',
                                 style: const TextStyle(
                                   fontSize: 10,
                                   color: AssistantTheme.textMuted,
@@ -2694,13 +2839,13 @@ class _RosterTabState extends State<_RosterTab> {
                           ),
                           Expanded(
                             child: ListView.separated(
-                              itemCount: _students.length,
+                              itemCount: visiveis.length,
                               separatorBuilder: (_, __) => const Divider(
                                 height: 12,
                                 color: AssistantTheme.border,
                               ),
                               itemBuilder: (_, index) {
-                                final student = _students[index];
+                                final student = visiveis[index];
                                 final tags = [
                                   if (student.externalId?.isNotEmpty == true)
                                     'matricula: ${student.externalId}',
@@ -2731,12 +2876,32 @@ class _RosterTabState extends State<_RosterTab> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          Text(
-                                            student.name,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              color: AssistantTheme.textPrimary,
-                                            ),
+                                          Row(
+                                            children: [
+                                              Flexible(
+                                                child: Text(
+                                                  student.name,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 13,
+                                                    color: student.active
+                                                        ? AssistantTheme
+                                                            .textPrimary
+                                                        : AssistantTheme
+                                                            .textMuted,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (!student.active) ...[
+                                                const SizedBox(width: 8),
+                                                const _StudentTag(
+                                                  label: 'DESATIVADO',
+                                                  color: AssistantTheme.c4,
+                                                ),
+                                              ],
+                                            ],
                                           ),
                                           if (tags.isNotEmpty)
                                             Text(
@@ -2760,6 +2925,18 @@ class _RosterTabState extends State<_RosterTab> {
                                           ? null
                                           : () => _editStudent(student),
                                     ),
+                                    if (!student.active)
+                                      IconButton(
+                                        tooltip: 'Reativar aluno',
+                                        icon: const Icon(
+                                          Icons.restore_outlined,
+                                          size: 15,
+                                        ),
+                                        color: AssistantTheme.c3,
+                                        onPressed: _deletingStudents
+                                            ? null
+                                            : () => _reactivateStudent(student),
+                                      ),
                                     IconButton(
                                       tooltip: 'Excluir aluno',
                                       icon: const Icon(
@@ -4682,4 +4859,230 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+/// O que a tela devolve da previa: o que importar e quem desativar.
+class _RosterImportChoice {
+  final List<StudentCsvRow> students;
+  final List<String> deactivateIds;
+
+  const _RosterImportChoice({
+    required this.students,
+    required this.deactivateIds,
+  });
+}
+
+/// Uma linha da previa, no formato da tabela de cadastro: marcador, acao,
+/// matricula e nome.
+class _RosterPreviewRow extends StatelessWidget {
+  final RosterEntry entry;
+  final bool checked;
+  final ValueChanged<bool> onChanged;
+
+  const _RosterPreviewRow({
+    required this.entry,
+    required this.checked,
+    required this.onChanged,
+  });
+
+  static const _acoes = {
+    RosterAction.novo: ('NOVO', AssistantTheme.c3),
+    RosterAction.mantido: ('NA TURMA', AssistantTheme.textMuted),
+    RosterAction.ausente: ('DESATIVAR', AssistantTheme.c4),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final (rotulo, cor) = _acoes[entry.action]!;
+    final apagado = !checked;
+
+    return InkWell(
+      onTap: () => onChanged(!checked),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 34,
+              child: Checkbox(
+                value: checked,
+                visualDensity: VisualDensity.compact,
+                onChanged: (valor) => onChanged(valor == true),
+              ),
+            ),
+            SizedBox(
+              width: 78,
+              child: Text(
+                rotulo,
+                style: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 9,
+                  letterSpacing: 0.5,
+                  color: apagado ? AssistantTheme.border : cor,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 108,
+              child: Text(
+                entry.enrollment.isEmpty ? '—' : entry.enrollment,
+                style: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 10,
+                  color: apagado
+                      ? AssistantTheme.border
+                      : AssistantTheme.textMuted,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                entry.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  decoration: apagado ? TextDecoration.lineThrough : null,
+                  color: apagado
+                      ? AssistantTheme.textMuted
+                      : AssistantTheme.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// O recorte da lista de alunos.
+enum _StudentFilter {
+  ativos('ATIVOS'),
+  todos('TODOS'),
+  desativados('DESATIVADOS');
+
+  const _StudentFilter(this.label);
+
+  final String label;
+
+  bool matches(Student student) => switch (this) {
+        _StudentFilter.ativos => student.active,
+        _StudentFilter.todos => true,
+        _StudentFilter.desativados => !student.active,
+      };
+}
+
+/// Alterna o recorte da lista, com a contagem de cada lado.
+///
+/// A contagem fica no botao de proposito: e ela que responde "sobrou alguem
+/// desativado?" sem precisar trocar de aba.
+class _StudentFilterBar extends StatelessWidget {
+  final _StudentFilter current;
+  final int ativos;
+  final int desativados;
+  final ValueChanged<_StudentFilter> onChanged;
+
+  const _StudentFilterBar({
+    required this.current,
+    required this.ativos,
+    required this.desativados,
+    required this.onChanged,
+  });
+
+  int _count(_StudentFilter filter) => switch (filter) {
+        _StudentFilter.ativos => ativos,
+        _StudentFilter.todos => ativos + desativados,
+        _StudentFilter.desativados => desativados,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          for (final filter in _StudentFilter.values) ...[
+            _FilterChip(
+              label: '${filter.label} ${_count(filter)}',
+              selected: filter == current,
+              // Sem desativados nao ha o que filtrar: o botao fica visivel para
+              // a contagem, mas nao leva a uma lista vazia.
+              onTap: filter == _StudentFilter.desativados && desativados == 0
+                  ? null
+                  : () => onChanged(filter),
+            ),
+            const SizedBox(width: 6),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cor = onTap == null
+        ? AssistantTheme.border
+        : (selected ? AssistantTheme.c1 : AssistantTheme.textMuted);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(3),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          border: Border.all(color: cor.withOpacity(selected ? 0.9 : 0.35)),
+          borderRadius: BorderRadius.circular(3),
+          color: selected ? cor.withOpacity(0.12) : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 9,
+            letterSpacing: 0.6,
+            color: cor,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Etiqueta curta ao lado do nome do aluno.
+class _StudentTag extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _StudentTag({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withOpacity(0.5)),
+          borderRadius: BorderRadius.circular(2),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 8,
+            letterSpacing: 0.6,
+            color: color,
+          ),
+        ),
+      );
 }

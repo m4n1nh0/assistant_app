@@ -86,7 +86,7 @@ def test_successful_invocation_matches(monkeypatch, index):
     result = run(
         gateways[index].invoke(
             ToolInvocation(
-                name="propose_coding_action",
+                name="propose_project_action",
                 args={"request": "abrir o projeto no vscode"},
                 agent_id="code",
             )
@@ -94,7 +94,7 @@ def test_successful_invocation_matches(monkeypatch, index):
     )
 
     assert result.ok is True
-    assert result.name == "propose_coding_action"
+    assert result.name == "propose_project_action"
 
 
 @pytest.mark.parametrize("index", [0, 1], ids=["local", "remote"])

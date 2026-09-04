@@ -37,6 +37,48 @@ PROVIDER_SPECS: dict[str, dict[str, str]] = {
 }
 
 
+def clean_api_key(value: Any, *, strict: bool = True) -> str:
+    """Normaliza a chave colada e recusa o que nao cabe num header HTTP.
+
+    Chave de API nunca tem espaco no meio, mas colagem quebrada por largura de
+    campo tem - e uma quebra de linha ali nao e erro visivel: `.strip()` nao
+    alcanca o meio da string, a chave e salva, e a falha so aparece muito
+    depois, como `Illegal header value` vindo do httpx no health check. Pior:
+    essa mensagem carrega a chave inteira. Recusar aqui troca um vazamento por
+    um erro de formulario.
+
+    Args:
+        value: o que veio do formulario ou do ambiente.
+        strict: `True` levanta `ValueError` em caractere invalido, para a rota
+            devolver 422; `False` descarta a chave, para a migracao de
+            ambiente nao derrubar o login por causa de uma variavel suja.
+
+    Returns:
+        A chave sem espaco algum, ou "" quando nao havia chave.
+
+    Raises:
+        ValueError: em modo estrito, quando sobra caractere que nao pode ir em
+            header HTTP.
+    """
+    raw = str(value or "")
+    key = "".join(raw.split())
+    if not key:
+        return ""
+    # Header HTTP so aceita ASCII imprimivel. Aspas curvas e espaco
+    # nao-quebravel vindos de pagina web caem aqui, e sao invisiveis no campo.
+    invalid = {char for char in key if not (0x20 < ord(char) < 0x7F)}
+    if invalid:
+        if not strict:
+            return ""
+        amostra = ", ".join(sorted(f"U+{ord(c):04X}" for c in invalid)[:4])
+        raise ValueError(
+            "A chave contém caractere que não pode ser enviado em cabeçalho "
+            f"HTTP ({amostra}). Copie a chave direto do painel do provedor, "
+            "sem formatação."
+        )
+    return key
+
+
 def _default_model(provider: str) -> str:
     spec = PROVIDER_SPECS[provider]
     if spec.get("model"):
@@ -267,7 +309,7 @@ async def save_provider_config(
             if row is not None:
                 await db.delete(row)
             continue
-        api_key = str(update.get("api_key") or "").strip()
+        api_key = clean_api_key(update.get("api_key"))
         if row is None:
             if not api_key:
                 continue
@@ -325,7 +367,10 @@ async def migrate_legacy_environment_for_user(user: dict) -> None:
         for provider, spec in PROVIDER_SPECS.items():
             if provider in existing:
                 continue
-            key = str(getattr(base, spec["key_attr"], "")).strip()
+            # Nao estrito: variavel de ambiente suja nao pode impedir o usuario
+            # de entrar - ela e simplesmente ignorada, e a chave e cadastrada
+            # pela tela.
+            key = clean_api_key(getattr(base, spec["key_attr"], ""), strict=False)
             if key:
                 model = (
                     base.groq_model if provider == "grok" and key.startswith("gsk_")

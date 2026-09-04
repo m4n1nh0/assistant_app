@@ -26,8 +26,21 @@ class RightPanel extends ConsumerWidget {
         : '${available.length} disponíveis';
     final agentLabel = selected == AppConfig.autoAgent
         ? 'AUTO'
-        : config.serviceName(selected);
+        : config.shortServiceName(selected);
     final aiStatuses = config.llmStatuses.values.toList();
+    // O bloco "AGENTES IA" saiu do painel: repetia os marcadores da conversa e
+    // comia 190px. O que so existia la - saldo e motivo de um provedor cair -
+    // sobrevive nesta linha, que fica vermelha e explica no tooltip.
+    final configured = aiStatuses.where((s) => s.configured).toList();
+    final degraded = configured.where((s) => !s.available).toList();
+    final iaValue = degraded.isEmpty
+        ? servicesLabel
+        : '${configured.length - degraded.length}/${configured.length} ONLINE';
+    final iaTooltip = degraded.isEmpty
+        ? null
+        : degraded
+            .map((s) => '${s.label}: ${s.balance ?? s.shortStatus}')
+            .join('\n');
 
     return Container(
       width: 260,
@@ -44,7 +57,9 @@ class RightPanel extends ConsumerWidget {
                     'Usuário',
                     config.userName.isEmpty ? '—' : config.userName,
                     AssistantTheme.c3),
-                _InfoRow('IA', servicesLabel, AssistantTheme.c2),
+                _InfoRow('IA', iaValue,
+                    degraded.isEmpty ? AssistantTheme.c2 : AssistantTheme.c4,
+                    tooltip: iaTooltip),
                 _InfoRow('Agente', agentLabel, AssistantTheme.c2),
                 _InfoRow(
                     'Modo',
@@ -56,30 +71,53 @@ class RightPanel extends ConsumerWidget {
             ),
           ),
           _RpSection(
-            label: 'AGENTES IA',
-            child: aiStatuses.isEmpty
-                ? _InfoRow('Online', servicesLabel, AssistantTheme.c2)
-                : ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 190),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        children: aiStatuses
-                            .map((status) => _AiStatusRow(status: status))
-                            .toList(),
-                      ),
-                    ),
-                  ),
-          ),
-          _RpSection(
             label: 'NOTIFICAÇÕES',
-            child: Column(
+            // Quatro linhas de rotulo + interruptor viravam um quarto do
+            // painel para dizer "ligado/desligado": os mesmos quatro estados
+            // cabem numa fila de icones, com o nome no tooltip.
+            child: Row(
               children: [
-                _ToggleRow('Telegram', config.notif.tgEnabled,
-                    config.notif.tgToken.isNotEmpty),
-                _ToggleRow('WhatsApp', config.notif.waEnabled,
-                    config.notif.waNumber.isNotEmpty),
-                _ToggleRow('Resposta por voz', config.ttsEnabled, true),
-                _ToggleRow('Mic ativo', config.continuousVoiceMode, true),
+                _NotifIcon(
+                  id: 'telegram',
+                  icon: Icons.send,
+                  label: 'Telegram',
+                  value: config.notif.tgEnabled,
+                  configured: config.notif.tgToken.isNotEmpty,
+                  missingHint: 'sem token',
+                  onToggle: (v) => ref
+                      .read(configProvider.notifier)
+                      .setNotifChannel(telegram: v),
+                ),
+                _NotifIcon(
+                  id: 'whatsapp',
+                  icon: Icons.chat_bubble,
+                  label: 'WhatsApp',
+                  value: config.notif.waEnabled,
+                  configured: config.notif.waNumber.isNotEmpty,
+                  missingHint: 'sem número',
+                  onToggle: (v) => ref
+                      .read(configProvider.notifier)
+                      .setNotifChannel(whatsapp: v),
+                ),
+                _NotifIcon(
+                  id: 'tts',
+                  icon: Icons.volume_up,
+                  label: 'Resposta por voz',
+                  value: config.ttsEnabled,
+                  configured: true,
+                  onToggle: (v) =>
+                      ref.read(configProvider.notifier).setTtsEnabled(v),
+                ),
+                _NotifIcon(
+                  id: 'mic',
+                  icon: Icons.mic,
+                  label: 'Mic ativo',
+                  value: config.continuousVoiceMode,
+                  configured: true,
+                  onToggle: (v) => ref
+                      .read(configProvider.notifier)
+                      .setContinuousVoiceMode(v),
+                ),
               ],
             ),
           ),
@@ -124,144 +162,122 @@ class RightPanel extends ConsumerWidget {
   }
 }
 
-class _AiStatusRow extends StatelessWidget {
-  final LlmStatus status;
-  const _AiStatusRow({required this.status});
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  /// Detalhe que nao cabe na linha (ex: quais provedores cairam).
+  final String? tooltip;
+  const _InfoRow(this.label, this.value, this.color, {this.tooltip});
 
   @override
   Widget build(BuildContext context) {
-    final color = _statusColor(status);
-    final detail = status.balance ??
-        (status.error?.isNotEmpty == true ? status.error! : status.shortStatus);
-
-    return Tooltip(
-      message: detail,
-      waitDuration: const Duration(milliseconds: 350),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 5),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-        decoration: BoxDecoration(
-          border: Border.all(color: color.withOpacity(0.24)),
-          borderRadius: BorderRadius.circular(3),
-          color: color.withOpacity(status.available ? 0.05 : 0.025),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                status.label,
-                style: TextStyle(
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(
                   fontFamily: 'JetBrains Mono',
-                  fontSize: 9.5,
-                  color: status.available
-                      ? AssistantTheme.textPrimary
-                      : AssistantTheme.textSecondary,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 82),
-              child: Text(
-                status.balance ?? status.shortStatus,
-                style: TextStyle(
+                  fontSize: 10,
+                  color: AssistantTheme.textMuted)),
+          Text(value,
+              style: TextStyle(
                   fontFamily: 'JetBrains Mono',
-                  fontSize: 8.5,
-                  letterSpacing: 0.6,
+                  fontSize: 10,
                   color: color,
-                ),
-                textAlign: TextAlign.right,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+                  letterSpacing: 1)),
+        ],
+      ),
+    );
+    if (tooltip == null) return row;
+    return Tooltip(
+      message: tooltip!,
+      waitDuration: const Duration(milliseconds: 350),
+      child: row,
+    );
+  }
+}
+
+/// Um estado de notificacao como icone: aceso quando ligado e configurado,
+/// e clicavel para inverter sem passar pela tela de configuracao.
+///
+/// Canal sem credencial nao liga no clique - avisa o que falta e oferece o
+/// caminho para configurar, porque ligar sem token so daria erro depois.
+class _NotifIcon extends StatelessWidget {
+  final String id;
+  final IconData icon;
+  final String label;
+  final bool value;
+  final bool configured;
+  final ValueChanged<bool> onToggle;
+
+  /// O que falta quando [configured] e falso (ex: 'sem token').
+  final String? missingHint;
+
+  const _NotifIcon({
+    required this.id,
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.configured,
+    required this.onToggle,
+    this.missingHint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final on = value && configured;
+    final color = on
+        ? AssistantTheme.c3
+        : configured
+            ? AssistantTheme.textMuted
+            : AssistantTheme.border;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Tooltip(
+        message: '$label · '
+            '${on ? 'ativo' : configured ? 'desligado' : 'não configurado'}'
+            '\n${configured ? 'Clique para ${on ? 'desligar' : 'ligar'}' : 'Clique para configurar'}',
+        waitDuration: const Duration(milliseconds: 350),
+        child: InkWell(
+          key: Key('notif-icon-$id'),
+          borderRadius: BorderRadius.circular(3),
+          onTap: () => _handleTap(context),
+          child: Container(
+            width: 32,
+            height: 26,
+            decoration: BoxDecoration(
+              border: Border.all(color: color.withOpacity(on ? 0.9 : 0.4)),
+              borderRadius: BorderRadius.circular(3),
+              color: on ? color.withOpacity(0.12) : null,
             ),
-          ],
+            child: Icon(icon, size: 13, color: color),
+          ),
         ),
       ),
     );
   }
 
-  Color _statusColor(LlmStatus status) {
-    if (!status.configured) return AssistantTheme.textMuted;
-    if (status.status == 'checking') return AssistantTheme.c2;
-    if (!status.online) return AssistantTheme.danger;
-    if (status.balanceOk == false) return AssistantTheme.c4;
-    return AssistantTheme.c3;
+  void _handleTap(BuildContext context) {
+    if (configured) {
+      onToggle(!value);
+      return;
+    }
+    final navigator = Navigator.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('$label ${missingHint ?? 'não configurado'}.'),
+      backgroundColor: AssistantTheme.surface2,
+      action: SnackBarAction(
+        label: 'CONFIGURAR',
+        textColor: AssistantTheme.c1,
+        onPressed: () => navigator.pushNamed('/config'),
+      ),
+    ));
   }
-}
-
-class _InfoRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  const _InfoRow(this.label, this.value, this.color);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label,
-                style: const TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 10,
-                    color: AssistantTheme.textMuted)),
-            Text(value,
-                style: TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 10,
-                    color: color,
-                    letterSpacing: 1)),
-          ],
-        ),
-      );
-}
-
-class _ToggleRow extends StatelessWidget {
-  final String label;
-  final bool value;
-  final bool configured;
-  const _ToggleRow(this.label, this.value, this.configured);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label,
-                style: const TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 10,
-                    color: AssistantTheme.textSecondary)),
-            Container(
-              width: 28,
-              height: 15,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: (value && configured)
-                    ? AssistantTheme.c3
-                    : AssistantTheme.border,
-              ),
-              child: Align(
-                alignment: (value && configured)
-                    ? Alignment.centerRight
-                    : Alignment.centerLeft,
-                child: Container(
-                  width: 11,
-                  height: 11,
-                  margin: const EdgeInsets.all(2),
-                  decoration: const BoxDecoration(
-                      shape: BoxShape.circle, color: AssistantTheme.bg),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
 }
 
 class _EventCard extends ConsumerWidget {

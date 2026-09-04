@@ -1210,24 +1210,41 @@ class ApiService {
   }
 
   Stream<Map<String, dynamic>> connectWebSocket(String sessionId) {
-    _wsStream = StreamController<Map<String, dynamic>>.broadcast();
+    // Uma conexao por vez. Reconectar sem fechar a anterior deixava o socket
+    // velho vivo: o servidor acumulava conexoes da mesma sessao e so a ultima
+    // recebia push, enquanto as antigas seguiam abertas ate o processo morrer.
+    disconnectWebSocket();
+
+    // Os callbacks falam com **este** controlador, nao com o campo: fechar a
+    // conexao anterior dispara o `onDone` dela depois de `_wsStream` ja ter
+    // virado null, e um `_wsStream!` ali estourava a cada reconexao.
+    final controller = StreamController<Map<String, dynamic>>.broadcast();
+    _wsStream = controller;
     final tokenQuery =
         _token != null ? '?token=${Uri.encodeComponent(_token!)}' : '';
-    _ws =
+    final channel =
         WebSocketChannel.connect(Uri.parse('$wsUrl/ws/$sessionId$tokenQuery'));
+    _ws = channel;
 
-    _ws!.stream.listen(
+    channel.stream.listen(
       (raw) {
+        if (controller.isClosed) return;
         try {
           final data = jsonDecode(raw as String) as Map<String, dynamic>;
-          _wsStream!.add(data);
+          controller.add(data);
         } catch (_) {}
       },
-      onDone: () => _wsStream!.close(),
-      onError: (e) => _wsStream!.addError(e),
+      onDone: () {
+        if (!controller.isClosed) controller.close();
+      },
+      // Backend fora do ar chega aqui como SocketException. Quem escuta decide
+      // se reconecta; deixar subir derrubava a zona com excecao nao tratada.
+      onError: (e) {
+        if (!controller.isClosed) controller.addError(e);
+      },
     );
 
-    return _wsStream!.stream;
+    return controller.stream;
   }
 
   void wsSend(Map<String, dynamic> data) {
@@ -1479,6 +1496,25 @@ class LlmProviderConfig {
   final String apiKey;
   final bool clearApiKey;
 
+  /// Modelos que o provedor oferece a esta conta, quando o backend conseguiu
+  /// consultar o catalogo. Vazio significa "nao da para listar" - e nao
+  /// "nenhum modelo": provedor cuja checagem e de saldo nunca lista.
+  final List<String> availableModels;
+
+  /// Modelo sugerido entre os disponiveis, escolhido pelo backend.
+  final String recommendedModel;
+
+  /// Estado da ultima checagem: online, limited, offline, model_unavailable,
+  /// invalid_credentials ou missing_key. Vazio quando o backend nao informou -
+  /// o que acontece ao falar com uma versao anterior a este campo.
+  final String status;
+
+  /// Explicacao da falha, ja sanitizada pelo backend.
+  final String statusError;
+
+  /// Saldo formatado, nos provedores que expoem consulta.
+  final String balance;
+
   const LlmProviderConfig({
     required this.id,
     required this.label,
@@ -1488,7 +1524,22 @@ class LlmProviderConfig {
     required this.model,
     this.apiKey = '',
     this.clearApiKey = false,
+    this.availableModels = const [],
+    this.recommendedModel = '',
+    this.status = 'missing_key',
+    this.statusError = '',
+    this.balance = '',
   });
+
+  /// Se da para oferecer uma lista de escolha em vez de campo de texto livre.
+  bool get canPickModel => availableModels.isNotEmpty;
+
+  /// Se o modelo salvo nao esta mais no catalogo do provedor.
+  ///
+  /// E o caso que motivou tudo isto: a Mistral saiu do router do Hugging Face
+  /// e a configuracao continuou apontando para ela.
+  bool get modelIsStale =>
+      canPickModel && model.isNotEmpty && !availableModels.contains(model);
 
   factory LlmProviderConfig.fromJson(Map<String, dynamic> json) =>
       LlmProviderConfig(
@@ -1498,6 +1549,17 @@ class LlmProviderConfig {
         enabled: json['enabled'] == true,
         configured: json['configured'] == true,
         model: json['model']?.toString() ?? '',
+        availableModels: (json['available_models'] as List<dynamic>? ?? const [])
+            .map((item) => item.toString())
+            .where((item) => item.isNotEmpty)
+            .toList(),
+        recommendedModel: json['recommended_model']?.toString() ?? '',
+        // Vazio significa "o backend nao informou", e nao "nao configurado".
+        // Assumir `missing_key` aqui fazia a tela afirmar que nao havia chave
+        // sempre que falava com um backend anterior a este campo.
+        status: json['status']?.toString() ?? '',
+        statusError: json['status_error']?.toString() ?? '',
+        balance: json['balance']?.toString() ?? '',
       );
 
   LlmProviderConfig copyWith({
@@ -1515,6 +1577,11 @@ class LlmProviderConfig {
         model: model ?? this.model,
         apiKey: apiKey ?? this.apiKey,
         clearApiKey: clearApiKey ?? this.clearApiKey,
+        availableModels: availableModels,
+        recommendedModel: recommendedModel,
+        status: status,
+        statusError: statusError,
+        balance: balance,
       );
 
   Map<String, dynamic> toUpdateJson() => {
@@ -1949,6 +2016,48 @@ class ScriptRunResult {
   });
 
   bool get ok => exitCode == 0 && !timedOut;
+
+  /// Texto que vai para a IA analisar esta execucao.
+  ///
+  /// Mora no resultado, e nao em quem chamou, para o script detectado numa
+  /// resposta e o script pedido por acao local descreverem a execucao do mesmo
+  /// jeito.
+  String toPromptText({
+    String name = 'Script local',
+    int? timeoutSeconds,
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('Resultado do script local "$name".')
+      ..writeln('Shell: $shell')
+      ..writeln('Comando: $command')
+      ..writeln('Diretorio: $workingDirectory')
+      ..writeln('Exit code: $exitCode')
+      ..writeln('Duracao: ${durationMs}ms')
+      ..writeln('Timeout: ${timedOut ? 'sim' : 'nao'}');
+    if (timedOut) {
+      final limit = timeoutSeconds == null ? '' : ' de ${timeoutSeconds}s';
+      buffer
+        ..writeln()
+        ..writeln(
+          'O script estourou o limite$limit. '
+          'Verifique se ele ficou aguardando entrada interativa, rede lenta, instalacao demorada '
+          'ou loop. Sugira proximo passo pratico sem pedir para repetir a mesma execucao.',
+        );
+    }
+    if (stdout.trim().isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('STDOUT:')
+        ..writeln(stdout.trim());
+    }
+    if (stderr.trim().isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('STDERR:')
+        ..writeln(stderr.trim());
+    }
+    return buffer.toString().trim();
+  }
 
   String get combinedOutput {
     final parts = [

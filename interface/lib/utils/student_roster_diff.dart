@@ -1,0 +1,175 @@
+/// Comparacao entre a lista da turma e o arquivo importado.
+///
+/// A importacao deixou de ser "manda tudo e torce": antes de aplicar, a tela
+/// mostra o que vai mudar. O que responde a pergunta que o professor faz na
+/// hora - *o que este arquivo vai fazer com a minha turma?* - e a separacao em
+/// novos, mantidos e ausentes.
+///
+/// A matricula e a chave. Nome muda de caixa, ganha e perde acento, vem
+/// abreviado num sistema e completo em outro; matricula e estavel.
+library;
+
+import '../services/education_service.dart';
+import '../services/student_csv_parser.dart';
+
+/// O que a importacao faz com uma linha.
+enum RosterAction {
+  /// Matricula do arquivo que a turma ainda nao tem.
+  novo,
+
+  /// Matricula nos dois lados: o nome passa a ser o do arquivo.
+  mantido,
+
+  /// Aluno ativo da turma que ficou de fora do arquivo.
+  ausente,
+}
+
+/// Uma linha da previa: o que e, e o que vai acontecer com ela.
+///
+/// A tela mostra a lista inteira em vez de contagens com amostra, porque a
+/// decisao e por aluno - o professor precisa ver *quem* sai antes de aceitar.
+class RosterEntry {
+  final RosterAction action;
+  final String enrollment;
+  final String name;
+
+  /// Id do cadastro. So existe para quem ja esta na turma.
+  final String? studentId;
+
+  /// A linha do arquivo. Nula para quem so existe no cadastro.
+  final StudentCsvRow? row;
+
+  const RosterEntry({
+    required this.action,
+    required this.enrollment,
+    required this.name,
+    this.studentId,
+    this.row,
+  });
+
+  /// Chave estavel para marcar/desmarcar na tela.
+  String get key => studentId ?? 'csv:${enrollment.toLowerCase()}';
+}
+
+/// Um aluno da turma que nao veio no arquivo.
+class MissingStudent {
+  final Student student;
+
+  const MissingStudent(this.student);
+
+  String get label => student.externalId?.trim().isNotEmpty == true
+      ? '${student.name} (${student.externalId})'
+      : student.name;
+}
+
+/// O que a importacao vai fazer com a turma.
+class RosterDiff {
+  /// Matriculas do arquivo que a turma ainda nao tem.
+  final List<StudentCsvRow> incoming;
+
+  /// Matriculas presentes nos dois lados: o nome e atualizado.
+  final List<StudentCsvRow> kept;
+
+  /// Alunos ativos da turma que ficaram de fora do arquivo.
+  final List<MissingStudent> missing;
+
+  /// Alunos sem matricula cadastrada, que nao dao para comparar.
+  final List<Student> unmatchable;
+
+  const RosterDiff({
+    required this.incoming,
+    required this.kept,
+    required this.missing,
+    required this.unmatchable,
+    required List<MapEntry<StudentCsvRow, String>> keptPairs,
+  }) : _keptPairs = keptPairs;
+
+  /// Todas as linhas na ordem em que a tela mostra: novos, mantidos, ausentes.
+  List<RosterEntry> get entries => [
+        for (final row in incoming)
+          RosterEntry(
+            action: RosterAction.novo,
+            enrollment: row.enrollment,
+            name: row.name,
+            row: row,
+          ),
+        for (final entry in _keptPairs)
+          RosterEntry(
+            action: RosterAction.mantido,
+            enrollment: entry.key.enrollment,
+            name: entry.key.name,
+            studentId: entry.value,
+            row: entry.key,
+          ),
+        for (final item in missing)
+          RosterEntry(
+            action: RosterAction.ausente,
+            enrollment: item.student.externalId ?? '',
+            name: item.student.name,
+            studentId: item.student.id,
+          ),
+      ];
+
+  final List<MapEntry<StudentCsvRow, String>> _keptPairs;
+
+  bool get isEmpty =>
+      incoming.isEmpty && kept.isEmpty && missing.isEmpty;
+
+  /// True quando o arquivo nao acrescenta nem altera nada.
+  bool get changesNothing => incoming.isEmpty && missing.isEmpty;
+}
+
+/// Compara a turma com o arquivo.
+///
+/// Aluno ja desativado fica de fora: ele nao aparece na turma, e reaparecer na
+/// lista de ausentes a cada importacao seria ruido.
+RosterDiff diffRoster({
+  required List<Student> roster,
+  required List<StudentCsvRow> file,
+}) {
+  final fileByEnrollment = <String, StudentCsvRow>{
+    for (final row in file) _key(row.enrollment): row,
+  };
+
+  final incoming = <StudentCsvRow>[];
+  final kept = <StudentCsvRow>[];
+  final keptPairs = <MapEntry<StudentCsvRow, String>>[];
+  final missing = <MissingStudent>[];
+  final unmatchable = <Student>[];
+
+  final rosterById = <String, Student>{};
+  for (final student in roster) {
+    if (!student.active) continue;
+    final key = _key(student.externalId ?? '');
+    if (key.isEmpty) {
+      // Sem matricula nao da para provar ausencia: cadastro manual antigo nao
+      // pode ser desativado so porque a planilha nao o menciona.
+      unmatchable.add(student);
+      continue;
+    }
+    rosterById[key] = student;
+    if (!fileByEnrollment.containsKey(key)) {
+      missing.add(MissingStudent(student));
+    }
+  }
+
+  for (final row in file) {
+    final student = rosterById[_key(row.enrollment)];
+    if (student == null) {
+      incoming.add(row);
+    } else {
+      kept.add(row);
+      keptPairs.add(MapEntry(row, student.id));
+    }
+  }
+
+  return RosterDiff(
+    incoming: incoming,
+    kept: kept,
+    missing: missing,
+    unmatchable: unmatchable,
+    keptPairs: keptPairs,
+  );
+}
+
+String _key(String enrollment) => enrollment.trim().toLowerCase();

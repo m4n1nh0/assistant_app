@@ -23,6 +23,7 @@ from ..core.security import get_current_user
 from ..models.schemas import ChatLogRequest, ChatRequest, ChatResponse, LLMResponse
 from ..services import llm_service
 from ..services.chat_graph_service import run_chat_graph
+from ..services.device_catalog_service import session_device
 from ..services.llm_status_service import get_llm_statuses, get_ready_llms
 from ..services.llm_routing_service import pick_auto_llm
 from ..services.user_llm_config_service import runtime_settings, user_llm_context
@@ -159,7 +160,12 @@ async def chat(
 
     tutor_id = cfg.get("tutor_id") or "default"
     timezone_name = await _profile_timezone(tutor_id)
-    with bind(conversation_id=body.session_id, tenant_id=tutor_id, user_id=user["uid"]):
+    # Amarra a maquina desta sessao: as capacidades que a interface publicou
+    # pelo WebSocket so aparecem para o agente enquanto este `with` durar, e so
+    # para a conversa desta conta.
+    with session_device(user["uid"], body.session_id), bind(
+        conversation_id=body.session_id, tenant_id=tutor_id, user_id=user["uid"]
+    ):
         graph_result = await run_chat_graph(
             message=body.message,
             history=body.history,

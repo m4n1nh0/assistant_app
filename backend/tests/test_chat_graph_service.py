@@ -131,6 +131,72 @@ def test_workspace_context_message_skips_action_detection_and_goes_to_llm(
     assert result["responses"][0].content == "Analise do arquivo."
 
 
+def test_local_action_result_skips_action_detection_and_goes_to_llm(
+    monkeypatch,
+):
+    async def rank_providers(candidates, task="general", available_only=False):
+        return ["gpt"]
+
+    monkeypatch.setattr(
+        chat_graph_service.agent_service, "rank_auto_llms", rank_providers
+    )
+    monkeypatch.setattr(
+        chat_graph_service.agent_service.langchain_agent_service,
+        "invoke_model",
+        answering("Sua rede esta ok."),
+    )
+
+    # Resultado que a interface manda de volta para analise. O "api" de
+    # `api.ipify.org` somado ao "Analise" do cabecalho fazia o detector de
+    # codigo propor "Inspecionar workspace local" depois de cada diagnostico.
+    message = (
+        'Resultado da acao local "Diagnostico de rede" executada neste'
+        " computador.\n"
+        "Analise os dados abaixo, destaque problemas provaveis e diga os"
+        " proximos passos praticos.\n\n"
+        "--- IP externo ---\n"
+        "Comando: GET https://api.ipify.org\n"
+        "Exit code: 0\n"
+        "STDOUT:\n"
+        "170.78.32.127\n"
+    )
+    result = run_graph(message=message, active_llms=["gpt"])
+
+    assert result["action_kind"] == "chat"
+    assert result.get("action") is None
+    assert result["responses"][0].content == "Sua rede esta ok."
+
+
+def test_calendar_classifier_cannot_swallow_a_deterministic_action(monkeypatch):
+    """Agenda e o unico detector que pergunta a um modelo - e ele le o historico.
+
+    Depois de uma pergunta de agenda, o classificador passava a rotular tudo como
+    calendario: "verifique meu IP" voltava como "nao encontrei conta de
+    calendario", e a resposta errada realimentava o historico. Aqui ele erra de
+    proposito; o diagnostico de rede tem que ganhar mesmo assim.
+    """
+
+    async def sempre_calendario(*args, **kwargs):
+        return CalendarQueryResult(
+            plan=CalendarQueryPlan(intent="list", days=1),
+            events=[],
+            answer="Nao encontrei uma conta de calendario conectada.",
+        )
+
+    monkeypatch.setattr(
+        calendar_query_service, "interpret_calendar_query", sempre_calendario
+    )
+
+    result = run_graph(
+        message="Como verificar meu IP, configuracoes de rede e diagnostico "
+                "de conexao?",
+        active_llms=["gpt"],
+    )
+
+    assert result["action_kind"] == "computer"
+    assert result["action"]["action_id"] == "network_diagnostics"
+
+
 def test_registration_tool_routes_structured_action_to_interface():
     result = run_graph(
         message="Cadastre o Notepad como bloco",
@@ -303,7 +369,9 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
         LLMResponse(llm="llama", content="Resposta local")
     ]
     assert result["agent_id"] == "general"
-    assert "action" not in result
+    # A chave existe valendo None de proposito: o checkpoint atravessa
+    # mensagens, e omiti-la deixava a acao da rodada anterior sobreviver.
+    assert result["action"] is None
 
 
 def test_multi_route_dispatches_all_active_providers(monkeypatch):
@@ -434,3 +502,91 @@ def test_unexpected_graph_failure_returns_controlled_error(monkeypatch):
     assert result["responses"][0].llm == "gpt"
     assert result["responses"][0].is_error is True
     assert "Tente novamente" in result["responses"][0].content
+
+
+def _publish_machine(monkeypatch, *capability_ids: str):
+    """Simula uma maquina conectada que publicou aquelas capacidades."""
+    from app.services import device_catalog_service
+    from app.services.client_capability_service import parse_manifest
+
+    catalog = device_catalog_service.DeviceCatalog()
+    catalog.publish(
+        parse_manifest(
+            {
+                "platform": "windows",
+                "capabilities": [
+                    {
+                        "id": capability_id,
+                        "name": capability_id,
+                        "description": f"Faz {capability_id} nesta maquina.",
+                        "args_schema": {"type": "object"},
+                    }
+                    for capability_id in capability_ids
+                ],
+            },
+            device_id="maquina-1",
+        ),
+        lambda manifest, capability: _noop_runner,
+    )
+    monkeypatch.setattr(
+        device_catalog_service, "get_device_catalog", lambda: catalog
+    )
+    return device_catalog_service.bind_device("maquina-1")
+
+
+async def _noop_runner(args):
+    return ""
+
+
+def test_shortcut_still_answers_for_a_capability_the_machine_declares(
+    monkeypatch,
+):
+    from app.services import device_catalog_service
+
+    token = _publish_machine(monkeypatch, "network_diagnostics")
+    try:
+        result = run_graph(
+            message="Verifique meu IP e o diagnostico de rede",
+            active_llms=["gpt"],
+        )
+    finally:
+        device_catalog_service.reset_device(token)
+
+    assert result["action_kind"] == "computer"
+    assert result["action"]["action_id"] == "network_diagnostics"
+
+
+def test_shortcut_does_not_propose_what_the_machine_cannot_do(monkeypatch):
+    """A maquina publicou catalogo e o diagnostico de rede nao esta nele."""
+    from app.services import device_catalog_service
+
+    async def rank_providers(candidates, task="general", available_only=False):
+        return ["gpt"]
+
+    monkeypatch.setattr(
+        chat_graph_service.agent_service, "rank_auto_llms", rank_providers
+    )
+    monkeypatch.setattr(
+        chat_graph_service.agent_service.langchain_agent_service,
+        "invoke_model",
+        answering("Nao consigo diagnosticar a rede daqui."),
+    )
+
+    async def no_shortcut(message, tutor_id):
+        return None, "chat", ""
+
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
+
+    token = _publish_machine(monkeypatch, "inspect_workspace")
+    try:
+        result = run_graph(
+            message="Verifique meu IP e o diagnostico de rede",
+            active_llms=["gpt"],
+        )
+    finally:
+        device_catalog_service.reset_device(token)
+
+    # Sem acao chumbada: a conversa segue para o modelo, que escolhe dentro do
+    # catalogo que aquela maquina publicou.
+    assert result["action_kind"] == "chat"
+    assert result.get("action") is None

@@ -1190,6 +1190,9 @@ async def import_students(
         if not discipline:
             raise HTTPException(422, "Disciplina e obrigatoria para importar alunos")
 
+    if not body.students and not body.deactivate_ids:
+        raise HTTPException(422, "Nada a importar: sem alunos e sem desativacoes")
+
     incoming: dict[str, tuple[str, str]] = {}
     for index, item in enumerate(body.students, start=2):
         enrollment = item.enrollment.strip()
@@ -1204,12 +1207,23 @@ async def import_students(
             raise HTTPException(422, f"Matricula duplicada no arquivo: {enrollment}")
         incoming[key] = (enrollment, name)
 
-    result = await db.execute(
-        select(StudentModel).where(
-            StudentModel.tutor_id == user["tutor_id"],
-            StudentModel.external_id.is_not(None),
-        )
+    # A matricula e procurada **dentro da turma**, nao no tutor inteiro. O mesmo
+    # aluno cursando duas disciplinas tem um registro em cada uma, com a presenca
+    # e a pontuacao daquela disciplina. Buscando global, importar a turma de uma
+    # disciplina *movia* o aluno (class_id e uma coluna so) e esvaziava a outra -
+    # era isso que deixava umas turmas cheias e outras faltando gente.
+    scope = select(StudentModel).where(
+        StudentModel.tutor_id == user["tutor_id"],
+        StudentModel.external_id.is_not(None),
     )
+    if group is not None:
+        scope = scope.where(StudentModel.class_id == group.id)
+    else:
+        scope = scope.where(
+            StudentModel.class_group == class_group,
+            StudentModel.discipline == discipline,
+        )
+    result = await db.execute(scope)
     existing = {
         student.external_id.strip().casefold(): student
         for student in result.scalars().all()
@@ -1244,12 +1258,66 @@ async def import_students(
         student.active = True
         updated += 1
 
+    deactivated = await _deactivate_missing(
+        db,
+        tutor_id=user["tutor_id"],
+        student_ids=body.deactivate_ids,
+        class_id=group.id if group else None,
+        keep_enrollments=set(incoming),
+    )
+
     await db.commit()
     return StudentImportResponse(
         created=created,
         updated=updated,
         total=created + updated,
+        deactivated=deactivated,
     )
+
+
+async def _deactivate_missing(
+    db: AsyncSession,
+    *,
+    tutor_id: str,
+    student_ids: list[str],
+    class_id: str | None,
+    keep_enrollments: set[str],
+) -> int:
+    """Desativa os alunos que a interface marcou como ausentes do arquivo.
+
+    Desativar, e nao apagar: presenca, pontos e respostas de quiz guardam o
+    `student_id` sem chave estrangeira, entao remover a linha deixaria esse
+    historico apontando para ninguem.
+
+    A lista vem do cliente, mas quem decide e o servidor: aluno de outra turma
+    ou que esta no arquivo importado nunca e desativado.
+
+    Returns:
+        Quantos alunos foram desativados agora.
+    """
+    wanted = {item.strip() for item in student_ids if item and item.strip()}
+    if not wanted:
+        return 0
+
+    result = await db.execute(
+        select(StudentModel).where(
+            StudentModel.tutor_id == tutor_id,
+            StudentModel.id.in_(wanted),
+        )
+    )
+
+    deactivated = 0
+    for student in result.scalars().all():
+        if class_id is not None and student.class_id != class_id:
+            continue
+        enrollment = (student.external_id or "").strip().casefold()
+        if enrollment and enrollment in keep_enrollments:
+            continue
+        if not student.active:
+            continue
+        student.active = False
+        deactivated += 1
+    return deactivated
 
 
 @router.patch("/students/{student_id}", response_model=StudentResponse)
