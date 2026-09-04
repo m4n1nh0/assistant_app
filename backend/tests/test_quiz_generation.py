@@ -458,8 +458,14 @@ def test_quiz_service_preserves_estimated_time(monkeypatch):
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
-    async def fake_dispatch_single(_llm, prompt, _history, _system_prompt):
+    async def fake_dispatch_single(
+        _llm, prompt, _history, _system_prompt, *, max_tokens=None
+    ):
         if "Formato de resposta" in prompt:
+            # So a geracao carrega teto proprio: e o JSON longo que vinha
+            # cortado e derrubava o quiz no template. A validacao segue com o
+            # padrao do provedor.
+            assert max_tokens and max_tokens >= 2000
             return LLMResponse(
                 llm="fake-llm",
                 content="""
@@ -535,8 +541,14 @@ def test_quiz_service_normalizes_alternate_llm_question_shape(monkeypatch):
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
-    async def fake_dispatch_single(_llm, prompt, _history, _system_prompt):
+    async def fake_dispatch_single(
+        _llm, prompt, _history, _system_prompt, *, max_tokens=None
+    ):
         if "Formato de resposta" in prompt:
+            # So a geracao carrega teto proprio: e o JSON longo que vinha
+            # cortado e derrubava o quiz no template. A validacao segue com o
+            # padrao do provedor.
+            assert max_tokens and max_tokens >= 2000
             return LLMResponse(
                 llm="fake-llm",
                 content="""
@@ -611,8 +623,14 @@ def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
     async def fake_resolve(_preferred=None):
         return "fake-llm"
 
-    async def fake_dispatch_single(_llm, prompt, _history, _system_prompt):
+    async def fake_dispatch_single(
+        _llm, prompt, _history, _system_prompt, *, max_tokens=None
+    ):
         if "Formato de resposta" in prompt:
+            # So a geracao carrega teto proprio: e o JSON longo que vinha
+            # cortado e derrubava o quiz no template. A validacao segue com o
+            # padrao do provedor.
+            assert max_tokens and max_tokens >= 2000
             return LLMResponse(
                 llm="fake-llm",
                 content="""
@@ -682,7 +700,9 @@ def test_quiz_service_builds_reviewable_fallback_when_llm_returns_no_json(monkey
     async def fake_resolve(_preferred=None):
         return "bad-llm"
 
-    async def fake_dispatch_single(_llm, _prompt, _history, _system_prompt):
+    async def fake_dispatch_single(
+        _llm, _prompt, _history, _system_prompt, *, max_tokens=None
+    ):
         return LLMResponse(llm="bad-llm", content="Nao consegui montar o JSON solicitado.")
 
     monkeypatch.setattr(
@@ -813,3 +833,51 @@ def test_pergunta_por_template_chega_marcada_na_interface(monkeypatch):
 
     assert questao.fallback is True
     assert questao.model_dump()["fallback"] is True
+
+
+def test_teto_de_tokens_acompanha_o_tamanho_do_quiz():
+    """2000 tokens e teto de resposta de chat, nao de um JSON com N questoes.
+
+    Era o que cortava a resposta no meio e derrubava tudo no template - e o
+    corte ficava mais garantido quanto mais questoes o professor pedia.
+    """
+    from app.services.quiz_generator_service import _token_budget
+
+    assert _token_budget(1) >= 2000
+    assert _token_budget(20) > _token_budget(5)
+    # Teto proprio: pedir 50 nao pode estourar o limite de saida do provedor.
+    assert _token_budget(50) <= 8000
+
+
+def test_resposta_cortada_aproveita_as_questoes_completas():
+    """Sete questoes de verdade valem mais que dez de template."""
+    from app.services.quiz_generator_service import _json_from_content
+
+    cortada = """{
+      "questoes": [
+        {"tipo": "multipla_escolha", "enunciado": "O que e normalizacao?",
+         "opcoes": [{"label": "A", "texto": "Organizar dados", "correta": true}]},
+        {"tipo": "multipla_escolha", "enunciado": "Para que serve uma chave?",
+         "opcoes": [{"label": "A", "texto": "Identificar", "correta": true}]},
+        {"tipo": "multipla_escolha", "enunciado": "O que e uma tabela inc"""
+
+    data = _json_from_content(cortada)
+
+    assert len(data["questoes"]) == 2
+    assert data["questoes"][0]["enunciado"] == "O que e normalizacao?"
+
+
+def test_json_inteiro_continua_sendo_lido_normalmente():
+    from app.services.quiz_generator_service import _json_from_content
+
+    data = _json_from_content(
+        'Segue o quiz:\n```json\n{"questoes": [{"enunciado": "Pergunta?"}]}\n```'
+    )
+
+    assert data["questoes"][0]["enunciado"] == "Pergunta?"
+
+
+def test_texto_sem_json_nao_inventa_questao():
+    from app.services.quiz_generator_service import _json_from_content
+
+    assert _json_from_content("Desculpe, nao consegui gerar o quiz.") == {}

@@ -132,17 +132,92 @@ async def _resolve_llm_for_quiz(preferred: Optional[str] = None) -> str:
     return (await _candidate_llms_for_quiz(preferred))[0]
 
 
+def _token_budget(quantidade_questoes: int) -> int:
+    """Teto de saida proporcional ao tamanho do quiz pedido.
+
+    O padrao dos provedores e 2000 tokens, dimensionado para resposta de chat.
+    Um JSON com dez questoes de multipla escolha - enunciado, quatro
+    alternativas e justificativa em cada - passa disso, e a resposta voltava
+    cortada no meio: `json.loads` falhava nos tres modelos candidatos e o quiz
+    inteiro caia no gerador por template. Quanto mais questoes o professor
+    pedia, mais garantido era o corte.
+    """
+    return min(max(2000, 300 * max(quantidade_questoes, 1) + 500), 8000)
+
+
+def _salvage_questions(content: str) -> List[Dict[str, Any]]:
+    """Recupera as questoes inteiras de um JSON que veio cortado.
+
+    Sete questoes de verdade valem mais que dez de template, entao um corte no
+    meio do array nao precisa perder o que ja estava completo. Varre o texto
+    contando chaves e devolve so os objetos que fecharam.
+    """
+    start = content.find("[")
+    if start < 0:
+        return []
+
+    recovered: List[Dict[str, Any]] = []
+    depth = 0
+    in_string = False
+    escaped = False
+    piece_start = -1
+
+    for index in range(start, len(content)):
+        char = content[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                piece_start = index
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0 and piece_start >= 0:
+                try:
+                    item = json.loads(content[piece_start:index + 1])
+                except ValueError:
+                    piece_start = -1
+                    continue
+                if isinstance(item, dict) and item.get("enunciado"):
+                    recovered.append(item)
+                piece_start = -1
+    return recovered
+
+
 def _json_from_content(content: str) -> Dict[str, Any]:
     """Extrai JSON mesmo quando o modelo envolve a resposta em texto."""
     json_match = re.search(r'\{.*\}', content or "", re.DOTALL)
     if json_match:
-        parsed = json.loads(json_match.group())
-        return parsed if isinstance(parsed, dict) else {}
+        try:
+            parsed = json.loads(json_match.group())
+            return parsed if isinstance(parsed, dict) else {}
+        except ValueError:
+            pass
 
     list_match = re.search(r'\[.*\]', content or "", re.DOTALL)
     if list_match:
-        parsed = json.loads(list_match.group())
-        return {"questoes": parsed} if isinstance(parsed, list) else {}
+        try:
+            parsed = json.loads(list_match.group())
+            return {"questoes": parsed} if isinstance(parsed, list) else {}
+        except ValueError:
+            pass
+
+    # Resposta cortada: aproveita o que fechou em vez de descartar tudo.
+    salvaged = _salvage_questions(content or "")
+    if salvaged:
+        logger.warning(
+            f"JSON do quiz veio incompleto; {len(salvaged)} questao(oes) "
+            "aproveitadas do trecho valido."
+        )
+        return {"questoes": salvaged}
 
     return {}
 
@@ -479,6 +554,7 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
                 prompt,
                 [],
                 "Responda somente com JSON válido para geração de quiz.",
+                max_tokens=_token_budget(state["quantidade_questoes"]),
             )
         except Exception as e:
             last_error = f"Erro ao chamar LLM {llm_name}: {e}"
