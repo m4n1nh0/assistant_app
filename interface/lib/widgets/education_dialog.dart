@@ -23,6 +23,7 @@ import '../services/education_service.dart';
 import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
+import '../utils/student_roster_diff.dart';
 import 'summary_pickers.dart';
 import '../providers/app_provider.dart';
 import '../branding/intarq_brand.dart';
@@ -2297,6 +2298,135 @@ class _RosterTabState extends State<_RosterTab> {
     aliasCtrl.dispose();
   }
 
+  /// Mostra o que a planilha vai fazer com a turma e devolve quem desativar.
+  ///
+  /// Retorna `null` quando o professor cancela, e a lista - possivelmente
+  /// vazia - de ids a desativar quando ele confirma. Os ausentes vem marcados,
+  /// porque sincronizar e o motivo de importar de novo, mas cada um pode ser
+  /// desmarcado: aluno que trancou no meio do semestre as vezes some da
+  /// planilha e ainda assim precisa aparecer na chamada.
+  Future<List<String>?> _confirmRosterImport(
+    ClassGroup group,
+    List<StudentCsvRow> rows,
+    RosterDiff diff,
+  ) async {
+    final desativar = {for (final item in diff.missing) item.student.id};
+
+    return showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: const Text('Importar alunos'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${group.display} · arquivo com ${rows.length} linha(s)',
+                    style: const TextStyle(color: AssistantTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 14),
+                  _ImportBucket(
+                    marker: '+',
+                    color: AssistantTheme.c3,
+                    label: 'Novos',
+                    detail: 'serao cadastrados',
+                    count: diff.incoming.length,
+                    lines: diff.incoming
+                        .map((row) => '${row.enrollment} - ${row.name}')
+                        .toList(),
+                  ),
+                  _ImportBucket(
+                    marker: '=',
+                    color: AssistantTheme.textMuted,
+                    label: 'Mantidos',
+                    detail: 'nome atualizado pelo arquivo',
+                    count: diff.kept.length,
+                    lines: const [],
+                  ),
+                  if (diff.missing.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    _ImportBucket(
+                      marker: '−',
+                      color: AssistantTheme.c4,
+                      label: 'Ausentes do arquivo',
+                      detail: desativar.isEmpty
+                          ? 'nenhum sera desativado'
+                          : '${desativar.length} serao desativados',
+                      count: diff.missing.length,
+                      lines: const [],
+                    ),
+                    ...diff.missing.map(
+                      (item) => CheckboxListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.only(left: 18),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: desativar.contains(item.student.id),
+                        onChanged: (marcado) => setDialogState(() {
+                          if (marcado == true) {
+                            desativar.add(item.student.id);
+                          } else {
+                            desativar.remove(item.student.id);
+                          }
+                        }),
+                        title: Text(
+                          item.label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AssistantTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(left: 18, top: 4),
+                      child: Text(
+                        'Desativar tira o aluno das listas e preserva presenca, '
+                        'pontos e respostas de quiz ja registrados.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AssistantTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (diff.unmatchable.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        '${diff.unmatchable.length} aluno(s) sem matricula '
+                        'cadastrada nao entraram na comparacao.',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AssistantTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('CANCELAR'),
+            ),
+            FilledButton(
+              onPressed: diff.changesNothing && diff.kept.isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, desativar.toList()),
+              child: const Text('IMPORTAR'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _importCsv() async {
     final group = _selected;
     if (group == null) {
@@ -2330,71 +2460,23 @@ class _RosterTabState extends State<_RosterTab> {
       final rows = parseStudentCsv(content);
       if (!mounted) return;
 
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          backgroundColor: AssistantTheme.surface,
-          title: const Text('Importar alunos'),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${rows.length} aluno(s) para ${group.display}.',
-                  style: const TextStyle(color: AssistantTheme.textPrimary),
-                ),
-                const SizedBox(height: 10),
-                ...rows.take(5).map(
-                      (row) => Text(
-                        '${row.enrollment} - ${row.name}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AssistantTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                if (rows.length > 5)
-                  Text(
-                    '... e mais ${rows.length - 5}.',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AssistantTheme.textMuted,
-                    ),
-                  ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Matriculas existentes serao atualizadas e passam para esta '
-                  'turma; as demais serao cadastradas.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AssistantTheme.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('CANCELAR'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('IMPORTAR'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
+      // A previa compara o arquivo com a turma antes de aplicar: sem isso o
+      // professor so descobre o que a planilha fez depois de aplicada.
+      final diff = diffRoster(roster: _students, file: rows);
+      final deactivateIds = await _confirmRosterImport(group, rows, diff);
+      if (deactivateIds == null) return;
 
       final result = await education.importStudents(
         classId: group.id,
         students: rows,
+        deactivateIds: deactivateIds,
       );
-      _report('Importacao concluida: ${result.created} cadastrado(s) e '
-          '${result.updated} atualizado(s).');
+      final partes = [
+        '${result.created} cadastrado(s)',
+        '${result.updated} atualizado(s)',
+        if (result.deactivated > 0) '${result.deactivated} desativado(s)',
+      ];
+      _report('Importacao concluida: ${partes.join(', ')}.');
       await _loadClasses(keepId: group.id);
     } catch (error) {
       final message = error is FormatException ? error.message : '$error';
@@ -4678,6 +4760,109 @@ class _EmptyState extends StatelessWidget {
             style: const TextStyle(
                 fontSize: 11, height: 1.5, color: AssistantTheme.textMuted),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Uma linha de resumo da previa de importacao: quantos e o que acontece.
+class _ImportBucket extends StatelessWidget {
+  final String marker;
+  final Color color;
+  final String label;
+  final String detail;
+  final int count;
+
+  /// Amostra do conteudo. Vazio mostra so a contagem.
+  final List<String> lines;
+
+  const _ImportBucket({
+    required this.marker,
+    required this.color,
+    required this.label,
+    required this.detail,
+    required this.count,
+    required this.lines,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const amostra = 4;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 16,
+                child: Text(
+                  marker,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 170,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AssistantTheme.textPrimary,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 34,
+                child: Text(
+                  '$count',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 12,
+                    color: color,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  detail,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AssistantTheme.textMuted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          for (final line in lines.take(amostra))
+            Padding(
+              padding: const EdgeInsets.only(left: 34, top: 2),
+              child: Text(
+                line,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AssistantTheme.textSecondary,
+                ),
+              ),
+            ),
+          if (lines.length > amostra)
+            Padding(
+              padding: const EdgeInsets.only(left: 34, top: 2),
+              child: Text(
+                '... e mais ${lines.length - amostra}.',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AssistantTheme.textMuted,
+                ),
+              ),
+            ),
         ],
       ),
     );

@@ -941,18 +941,26 @@ class StudentImportItem(BaseModel):
 
 
 class StudentImportRequest(BaseModel):
-    """Importacao em lote de alunos para uma turma."""
+    """Importacao em lote de alunos para uma turma.
+
+    `deactivate_ids` sincroniza a turma com o arquivo: quem ficou de fora da
+    planilha e some das listas sem perder presenca, pontos ou respostas de quiz,
+    que referenciam o aluno por id. A interface escolhe quem entra nessa lista, e
+    o servidor recusa desativar quem esta no arquivo ou e de outra turma.
+    """
     class_id: Optional[str] = None
     class_group: str = ""
     discipline: str = ""
     students: List[StudentImportItem] = Field(min_length=1, max_length=1000)
+    deactivate_ids: List[str] = Field(default_factory=list, max_length=1000)
 
 
 class StudentImportResponse(BaseModel):
-    """Resultado da importacao: criados, atualizados e total."""
+    """Resultado da importacao: criados, atualizados, desativados e total."""
     created: int
     updated: int
     total: int
+    deactivated: int = 0
 
 
 class StudentBulkDeleteRequest(BaseModel):
