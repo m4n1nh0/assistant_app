@@ -464,6 +464,8 @@ class HealthResponse(BaseModel):
     """
     status: str = "ok"
     version: str = "1.0.0"
+    #: Commit que originou o processo. Vazio fora de ambiente com deploy.
+    revision: str = ""
     active_llms: List[str] = Field(default_factory=list)
     available_llms: List[str] = Field(default_factory=list)
     llm_labels: Dict[str, str] = Field(default_factory=dict)

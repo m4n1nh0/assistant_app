@@ -34,7 +34,7 @@ from ..core.security import (
     require_admin,
     verify_secret,
 )
-from ..core.config import get_settings
+from ..core.config import build_revision, get_settings
 from ..core.rate_limit import rate_limit
 from ..core.database import (
     AssistantProfileModel,
@@ -1968,6 +1968,7 @@ async def health():
     sources = []
     return HealthResponse(
         status="ok",
+        revision=build_revision(),
         active_llms=s.active_llms,
         available_llms=available_llms,
         llm_labels={
@@ -2001,6 +2002,9 @@ async def health_live():
     return {
         "status": "ok",
         "version": "1.0.0",
+        # Tambem aqui: e o unico health que responde com as dependencias fora
+        # do ar, entao e onde da para conferir a versao de um deploy quebrado.
+        "revision": build_revision(),
         "uptime_seconds": round(time.time() - _start, 1),
     }
 
