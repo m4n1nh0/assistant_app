@@ -319,6 +319,75 @@ class EducationService {
 
   /// Envia um bloco de audio da aula. O backend transcreve, indexa no Qdrant
   /// e extrai pontuacoes extras citadas no trecho.
+  /// Envia um material da disciplina e devolve o registro ja com o texto lido.
+  ///
+  /// O servidor extrai o PDF em thread separada; aqui a espera e so de rede.
+  Future<CourseMaterial> uploadMaterial({
+    required List<int> bytes,
+    required String filename,
+    String disciplineId = '',
+    String discipline = '',
+    String title = '',
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_baseUrl/education/materials'),
+    );
+    if (_api.token != null) {
+      request.headers['Authorization'] = 'Bearer ${_api.token}';
+    }
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: filename),
+    );
+    if (disciplineId.isNotEmpty) request.fields['discipline_id'] = disciplineId;
+    if (discipline.isNotEmpty) request.fields['discipline'] = discipline;
+    if (title.isNotEmpty) request.fields['title'] = title;
+
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode >= 400) {
+      throw EducationException(_uploadError(streamed.statusCode, body));
+    }
+    return CourseMaterial.fromJson(jsonDecode(body) as Map<String, dynamic>);
+  }
+
+  /// Mensagem do servidor em vez do corpo cru: 422 aqui costuma ser PDF
+  /// digitalizado, e o professor precisa entender que falta OCR.
+  String _uploadError(int status, String body) {
+    try {
+      final data = jsonDecode(body);
+      if (data is Map && data['detail'] != null) return '${data['detail']}';
+    } catch (_) {}
+    return 'HTTP $status: $body';
+  }
+
+  Future<List<CourseMaterial>> listMaterials({
+    String? disciplineId,
+    String? discipline,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/materials').replace(
+      queryParameters: {
+        if (disciplineId != null && disciplineId.isNotEmpty)
+          'discipline_id': disciplineId,
+        if (discipline != null && discipline.isNotEmpty)
+          'discipline': discipline,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    final data = _decode(response) as List<dynamic>;
+    return data
+        .map((item) => CourseMaterial.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> deleteMaterial(String materialId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/materials/$materialId'),
+      headers: _headers,
+    );
+    _decode(response);
+  }
+
   Future<SegmentIngestResult> uploadAudioChunk(
     String lessonId,
     List<int> audioBytes, {
@@ -1621,3 +1690,50 @@ class EmbeddingStatus {
 }
 
 final education = EducationService(api);
+
+
+/// Material didatico da disciplina, com o texto ja extraido no servidor.
+///
+/// `CourseMaterial` e nao `Material` porque este arquivo e importado junto
+/// com o Flutter em toda a interface, e `Material` e widget do framework: o
+/// nome curto tornava ambiguo qualquer arquivo que usasse os dois.
+class CourseMaterial {
+  final String id;
+  final String? disciplineId;
+  final String discipline;
+  final String title;
+  final String filename;
+  final String sourceType;
+  final int pageCount;
+  final int charCount;
+
+  /// True quando o arquivo era maior que o teto e o texto foi cortado.
+  final bool truncated;
+  final DateTime? createdAt;
+
+  const CourseMaterial({
+    required this.id,
+    this.disciplineId,
+    required this.discipline,
+    required this.title,
+    required this.filename,
+    this.sourceType = 'pdf',
+    this.pageCount = 0,
+    this.charCount = 0,
+    this.truncated = false,
+    this.createdAt,
+  });
+
+  factory CourseMaterial.fromJson(Map<String, dynamic> json) => CourseMaterial(
+        id: json['id'].toString(),
+        disciplineId: json['discipline_id']?.toString(),
+        discipline: json['discipline']?.toString() ?? '',
+        title: json['title']?.toString() ?? '',
+        filename: json['filename']?.toString() ?? '',
+        sourceType: json['source_type']?.toString() ?? 'pdf',
+        pageCount: (json['page_count'] as num?)?.toInt() ?? 0,
+        charCount: (json['char_count'] as num?)?.toInt() ?? 0,
+        truncated: json['truncated'] == true,
+        createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      );
+}

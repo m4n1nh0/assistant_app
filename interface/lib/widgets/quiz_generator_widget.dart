@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
+import '../services/education_service.dart';
 import 'quiz_preview_dialog.dart';
 
 typedef QuizPublishedCallback = void Function(
@@ -49,11 +50,34 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
 
   /// Tentativas por modelo, para a revisao explicar por que caiu no template.
   List<Map<String, dynamic>> _generationAttempts = const [];
+
+  /// Material escolhido como fonte. Nulo usa a aula gravada.
+  String? _materialId;
+  List<CourseMaterial> _materials = const [];
   int _questionCount = 10;
   String _quizType = 'pratica';
   String _difficulty = 'mista';
 
   final List<String> _quizTypes = ['pratica', 'revisao', 'diagnostico'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMaterials();
+  }
+
+  /// Materiais da disciplina desta aula, para servirem de fonte alternativa.
+  ///
+  /// Falha em silencio de proposito: sem material a tela continua igual ao que
+  /// era, gerando a partir da aula.
+  Future<void> _loadMaterials() async {
+    try {
+      final items = await education.listMaterials(
+        discipline: widget.disciplineName,
+      );
+      if (mounted) setState(() => _materials = items);
+    } catch (_) {}
+  }
   final List<String> _difficulties = ['facil', 'medio', 'dificil', 'mista'];
 
   String _quizTypeLabel(String value) {
@@ -108,7 +132,12 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
       final response = await api.post(
         '/education/quiz/generate',
         body: {
-          'lesson_id': widget.lessonId,
+          // Fonte unica: aula OU material. O servidor recusa os dois juntos,
+          // porque quiz de origem ambigua nao da para rastrear na revisao.
+          if (_materialId == null)
+            'lesson_id': widget.lessonId
+          else
+            'material_id': _materialId,
           'tipo_quiz': _quizType,
           'quantidade_questoes': _questionCount,
           'tipos_questao': ['multipla_escolha'],
@@ -377,6 +406,8 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                   ),
             ),
             const SizedBox(height: 12),
+
+            _buildSourcePicker(),
 
             // Configuração: Número de Questões
             _buildSlider(
@@ -648,6 +679,57 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
       onChanged: (newValue) {
         if (newValue != null) onChanged(newValue);
       },
+    );
+  }
+
+  /// Escolha da fonte do quiz: a aula gravada ou um material da disciplina.
+  ///
+  /// So aparece quando ha material: sem isso a tela ganharia um controle com
+  /// uma opcao so, e a aula continua sendo o caminho comum.
+  Widget _buildSourcePicker() {
+    if (_materials.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Gerar a partir de:',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String?>(
+            initialValue: _materialId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+              contentPadding:
+                  EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            ),
+            items: [
+              DropdownMenuItem<String?>(
+                value: null,
+                child: Text(
+                  'Aula: ${widget.lessonTitle}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              for (final material in _materials)
+                DropdownMenuItem<String?>(
+                  value: material.id,
+                  child: Text(
+                    'Material: ${material.title.isEmpty ? material.filename : material.title}'
+                    ' (${material.pageCount}p)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            onChanged: (value) => setState(() => _materialId = value),
+          ),
+        ],
+      ),
     );
   }
 

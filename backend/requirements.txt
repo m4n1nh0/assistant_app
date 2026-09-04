@@ -83,3 +83,4 @@ tenacity==9.1.4
 orjson==3.11.9
 
 pytest==9.0.3
+pypdf==6.14.2  # extracao de texto do material didatico (PDF)

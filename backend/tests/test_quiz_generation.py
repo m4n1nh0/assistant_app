@@ -881,3 +881,106 @@ def test_texto_sem_json_nao_inventa_questao():
     from app.services.quiz_generator_service import _json_from_content
 
     assert _json_from_content("Desculpe, nao consegui gerar o quiz.") == {}
+
+
+def test_gabarito_nao_marca_duas_alternativas():
+    """`resposta_correta` somava a marcacao do modelo em vez de substituir.
+
+    A questao saia com duas corretas e a turma era corrigida errado - foi o que
+    apareceu na primeira geracao real depois de destravar a IA.
+    """
+    from app.services.quiz_generator_service import _normalize_options
+
+    opcoes = _normalize_options(
+        [
+            {"label": "A", "texto": "Depende de outro atributo", "correta": True},
+            {"label": "B", "texto": "Depende da chave inteira"},
+            {"label": "C", "texto": "Esta em 1FN", "correta": False},
+        ],
+        "C",
+    )
+
+    corretas = [o for o in opcoes if o["correta"]]
+    assert len(corretas) == 1
+    assert corretas[0]["label"] == "C"
+
+
+def test_sem_gabarito_nao_inventa_alternativa_correta():
+    """Marcar a primeira criava uma chave errada com cara de legitima."""
+    from app.services.quiz_generator_service import _normalize_options
+
+    opcoes = _normalize_options(
+        [
+            {"label": "A", "texto": "Primeira"},
+            {"label": "B", "texto": "Segunda"},
+        ],
+        "",
+    )
+
+    assert len(opcoes) == 2
+    assert not any(o["correta"] for o in opcoes)
+
+
+def test_duas_marcadas_pelo_modelo_sem_gabarito_viram_nenhuma():
+    """Ambiguidade nao se resolve no chute: sobra para a revisao."""
+    from app.services.quiz_generator_service import _normalize_options
+
+    opcoes = _normalize_options(
+        [
+            {"label": "A", "texto": "Uma", "correta": True},
+            {"label": "B", "texto": "Outra", "correta": True},
+        ],
+        "",
+    )
+
+    assert not any(o["correta"] for o in opcoes)
+
+
+def test_marcacao_unica_do_modelo_vale_sem_gabarito():
+    from app.services.quiz_generator_service import _normalize_options
+
+    opcoes = _normalize_options(
+        [
+            {"label": "A", "texto": "Uma"},
+            {"label": "B", "texto": "Outra", "correta": True},
+        ],
+        "",
+    )
+
+    assert [o["correta"] for o in opcoes] == [False, True]
+
+
+def test_questao_sem_gabarito_e_marcada_para_revisao():
+    from app.services.quiz_generator_service import _normalize_question
+
+    questao = _normalize_question(
+        {
+            "tipo": "multipla_escolha",
+            "enunciado": "Qual e a primeira forma normal?",
+            "opcoes": [
+                {"label": "A", "texto": "Uma", "correta": True},
+                {"label": "B", "texto": "Outra", "correta": True},
+            ],
+        },
+        ["multipla_escolha"],
+    )
+
+    assert questao["chave_ambigua"] is True
+
+
+def test_quiz_exige_uma_fonte_e_so_uma():
+    """Aula e material sao exclusivos: dois quizzes de origem ambigua seriam
+    impossiveis de rastrear na hora de revisar a pergunta."""
+    from app.models.schemas import QuizCreateRequest
+
+    for payload in (
+        QuizCreateRequest(),
+        QuizCreateRequest(lesson_id="aula-1", material_id="mat-1"),
+    ):
+        with pytest.raises(HTTPException) as error:
+            run(education.generate_quiz_from_lesson(
+                payload,
+                user={"tutor_id": "tutor-1"},
+                db=QuizDb(_lesson()),
+            ))
+        assert error.value.status_code == 422

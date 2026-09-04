@@ -34,8 +34,12 @@ Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de for
 5. Inclua todos os tópicos principais encontrados no conteúdo
 6. Para "multipla_escolha", gere exatamente 4 opções com labels A, B, C e D
 7. Marque exatamente uma opção como correta
-8. Use "resposta_correta" com o label da alternativa correta
-9. Responda somente com JSON válido, sem markdown e sem comentários fora do JSON
+8. Alternativas curtas: no máximo 8 palavras cada, sem frase completa. O quiz é
+   respondido no celular com o enunciado projetado, e alternativa longa não cabe
+   na tela nem dá para ler no tempo da pergunta
+9. Enunciado direto, em uma linha
+10. Use "resposta_correta" com o label da alternativa correta
+11. Responda somente com JSON válido, sem markdown e sem comentários fora do JSON
 
 **Formato de resposta (JSON):**
 {{
@@ -306,23 +310,49 @@ def _normalize_options(raw_options: Any, correct_answer: str) -> List[Dict[str, 
         if not texto:
             continue
 
-        if correct_norm and (
+        aponta_para_esta = bool(correct_norm) and (
             label.lower() == correct_norm
             or texto.lower() == correct_norm
             or correct_norm in {f"{label.lower()})", f"{label.lower()}."}
-        ):
-            correta = True
+        )
 
         normalized.append({
             "label": label or chr(ord("A") + len(normalized)),
             "texto": texto,
             "correta": correta,
+            "_apontada": aponta_para_esta,
         })
 
-    if normalized and not any(option["correta"] for option in normalized):
-        normalized[0]["correta"] = True
+    return _single_correct_option(normalized, bool(correct_norm))
 
-    return normalized
+
+def _single_correct_option(
+    options: List[Dict[str, Any]],
+    tem_gabarito: bool,
+) -> List[Dict[str, Any]]:
+    """Deixa no maximo uma alternativa correta, sem inventar gabarito.
+
+    Duas coisas davam errado aqui. O `resposta_correta` **somava** uma marcacao
+    aa que o modelo ja tinha feito, entao a questao saia com duas alternativas
+    corretas e a turma era corrigida errado. E, quando o modelo nao marcava
+    nenhuma, o codigo marcava a primeira - fabricando um gabarito com cara de
+    legitimo, que e pior do que nao ter gabarito.
+
+    Agora `resposta_correta` manda quando resolve; senao vale a marcacao do
+    modelo, e so quando ela e unica. Ambiguidade sobra como zero corretas, e
+    quem chama sinaliza a questao para revisao.
+    """
+    apontadas = [item for item in options if item.pop("_apontada", False)]
+    if tem_gabarito and len(apontadas) == 1:
+        for item in options:
+            item["correta"] = item is apontadas[0]
+        return options
+
+    marcadas = [item for item in options if item["correta"]]
+    if len(marcadas) != 1:
+        for item in options:
+            item["correta"] = False
+    return options
 
 
 def _normalize_question(item: Any, tipos_questao: Sequence[str]) -> Optional[Dict[str, Any]]:
@@ -349,11 +379,19 @@ def _normalize_question(item: Any, tipos_questao: Sequence[str]) -> Optional[Dic
         tipo = "aberta"
         opcoes = []
 
+    # Multipla escolha sem gabarito resolvido nao pode ser liberada em silencio:
+    # a turma seria corrigida contra uma chave que nao existe. Fica marcada para
+    # aparecer na revisao como nao verificada.
+    chave_ambigua = tipo == "multipla_escolha" and not any(
+        opcao["correta"] for opcao in opcoes
+    )
+
     return {
         "tipo": tipo,
         "dificuldade": _normalize_difficulty(item.get("dificuldade") or item.get("difficulty")),
         "enunciado": enunciado,
         "opcoes": opcoes,
+        "chave_ambigua": chave_ambigua,
         "resposta_correta": resposta_correta,
         "justificativa": str(item.get("justificativa") or item.get("feedback") or item.get("explanation") or "").strip(),
         "conceitos": item.get("conceitos") or item.get("conceitos_relacionados") or item.get("concepts") or [],
@@ -745,8 +783,8 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
             questao["grounding_score"] = score
             questao["verificado"] = (
                 not is_fallback
-                and
-                score >= 0.65 and val.get("bem_formulada", True) is not False
+                and not questao.get("chave_ambigua")
+                and score >= 0.65 and val.get("bem_formulada", True) is not False
             )
             questoes_filtradas.append(questao)
 

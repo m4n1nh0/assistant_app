@@ -31,6 +31,7 @@ import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'education_dashboard.dart';
 import 'quiz_generator_widget.dart';
+import 'materials_panel.dart';
 import 'quiz_qrcode_monitor.dart';
 import 'sia_attendance_importer.dart';
 
@@ -129,7 +130,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 7,
+                  length: 8,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -162,6 +163,10 @@ class _EducationDialogState extends State<EducationDialog> {
                             Tab(
                                 icon: Icon(Icons.quiz_outlined, size: 17),
                                 text: '6. QUIZ'),
+                            Tab(
+                                icon: Icon(Icons.folder_open_outlined,
+                                    size: 17),
+                                text: '7. MATERIAL'),
                           ],
                         ),
                         Expanded(
@@ -200,6 +205,7 @@ class _EducationDialogState extends State<EducationDialog> {
                               _PointsTab(classes: _classes),
                               AttendanceTab(classes: _classes),
                               _QuizTab(selectedLessonId: _quizLessonId),
+                              const MaterialsPanel(),
                             ],
                           ),
                         ),

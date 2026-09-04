@@ -20,6 +20,8 @@ from ..core.database import (
     LessonModel,
     LessonPointModel,
     LessonSegmentModel,
+    MaterialModel,
+    QuizSourceModel,
     StudentModel,
     DisciplineModel,
     QuizModel,
@@ -69,6 +71,7 @@ from ..models.schemas import (
     DisciplineUpdate,
     QuestionOption,
     QuestionResponse,
+    MaterialResponse,
     QuizCreateRequest,
     QuizResponse,
     QuizGenerateResponse,
@@ -83,7 +86,7 @@ from ..services import (
 )
 from ..services.voice_service import transcribe_audio, trim_transcript_overlap
 from ..services.user_llm_config_service import user_llm_context
-from ..services import quiz_generator_service
+from ..services import material_service, quiz_generator_service
 
 settings = get_settings()
 
@@ -2104,6 +2107,179 @@ async def reindex_lessons(
 # --- Quiz Generation ---
 
 
+@router.post("/materials", response_model=MaterialResponse)
+async def upload_material(
+    file: UploadFile = File(...),
+    discipline_id: str = Form(""),
+    discipline: str = Form(""),
+    title: str = Form(""),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Guarda um material da disciplina, ja com o texto extraido.
+
+    A extracao roda fora do event loop: ler um PDF grande e trabalho de CPU e
+    seguraria todas as outras requisicoes durante o upload.
+    """
+    nome = (file.filename or "material.pdf").strip()
+    if not nome.lower().endswith(".pdf"):
+        raise HTTPException(422, "Por enquanto so PDF.")
+
+    data = await file.read()
+    try:
+        extraido = await material_service.extract_pdf(data)
+    except material_service.MaterialError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    vinculo, rotulo = await _resolve_discipline(
+        discipline_id.strip(), discipline.strip(), user["tutor_id"], db
+    )
+    material = MaterialModel(
+        tutor_id=user["tutor_id"],
+        discipline_id=vinculo,
+        discipline=rotulo,
+        title=(title.strip() or nome.rsplit(".", 1)[0]),
+        filename=nome,
+        source_type="pdf",
+        page_count=extraido.page_count,
+        char_count=extraido.char_count,
+        truncated=extraido.truncated,
+        content=extraido.text,
+    )
+    db.add(material)
+    await db.commit()
+    await db.refresh(material)
+    return _material_response(material)
+
+
+@router.get("/materials", response_model=list[MaterialResponse])
+async def list_materials(
+    discipline_id: Optional[str] = None,
+    discipline: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Materiais do professor, opcionalmente de uma disciplina."""
+    query = select(MaterialModel).where(
+        MaterialModel.tutor_id == user["tutor_id"]
+    )
+    if discipline_id:
+        query = query.where(MaterialModel.discipline_id == discipline_id)
+    elif discipline:
+        query = query.where(MaterialModel.discipline == discipline)
+    rows = (
+        await db.execute(query.order_by(MaterialModel.created_at.desc()))
+    ).scalars().all()
+    return [_material_response(item) for item in rows]
+
+
+@router.delete("/materials/{material_id}")
+async def delete_material(
+    material_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove um material. Quiz ja gerado a partir dele continua valendo."""
+    material = await db.get(MaterialModel, material_id)
+    if not material or material.tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Material nao encontrado")
+    await db.delete(material)
+    await db.commit()
+    return {"deleted": material_id}
+
+
+async def _resolve_discipline(
+    discipline_id: str,
+    texto: str,
+    tutor_id: str,
+    db: AsyncSession,
+) -> tuple[Optional[str], str]:
+    """Liga o material a uma disciplina cadastrada quando der.
+
+    Aceita o id (caminho da interface, que lista as disciplinas) ou o texto
+    (caminho manual). Texto que casa com uma disciplina existente ganha o id de
+    brinde; texto solto continua valendo, para nao travar o upload de quem ainda
+    nao cadastrou a disciplina.
+    """
+    if discipline_id:
+        item = await db.get(DisciplineModel, discipline_id)
+        if not item or item.tutor_id != tutor_id:
+            raise HTTPException(404, "Disciplina nao encontrada")
+        return item.id, _discipline_label(item)
+
+    if not texto:
+        return None, ""
+
+    alvo = texto.casefold()
+    rows = (await db.execute(
+        select(DisciplineModel).where(DisciplineModel.tutor_id == tutor_id)
+    )).scalars().all()
+    for item in rows:
+        if alvo in {
+            _discipline_label(item).casefold(),
+            (item.code or "").strip().casefold(),
+            (item.name or "").strip().casefold(),
+        }:
+            return item.id, _discipline_label(item)
+    return None, texto
+
+
+def _material_response(material: MaterialModel) -> MaterialResponse:
+    return MaterialResponse(
+        id=material.id,
+        discipline_id=material.discipline_id,
+        discipline=material.discipline or "",
+        title=material.title or "",
+        filename=material.filename or "",
+        source_type=material.source_type or "pdf",
+        page_count=material.page_count or 0,
+        char_count=material.char_count or 0,
+        truncated=bool(material.truncated),
+        created_at=material.created_at,
+    )
+
+
+async def _generate_quiz_from_material(
+    request: QuizCreateRequest,
+    user: dict,
+    db: AsyncSession,
+):
+    """Gera o quiz a partir de um material da disciplina.
+
+    Mesmo gerador da aula: o que muda e a fonte do texto. O recorte existe
+    porque material inteiro estoura a janela do modelo, e resposta cortada e o
+    que derruba o quiz no gerador por template.
+    """
+    material = await db.get(MaterialModel, request.material_id)
+    if not material or material.tutor_id != user["tutor_id"]:
+        raise HTTPException(status_code=404, detail="Material não encontrado")
+
+    contexto = material_service.summary_for_quiz(material.content or "")
+    if not contexto.strip():
+        raise HTTPException(status_code=400, detail="Material sem texto.")
+
+    quiz_data = await quiz_generator_service.generate_quiz(
+        resumo="MATERIAL DA DISCIPLINA:\n" + contexto,
+        disciplina=material.discipline or "Geral",
+        titulo_aula=material.title or material.filename or "Material",
+        tipo_quiz=request.tipo_quiz,
+        quantidade_questoes=request.quantidade_questoes,
+        tipos_questao=["multipla_escolha"],
+        dificuldade=request.dificuldade,
+        llm=request.llm,
+    )
+    return await _persist_generated_quiz(
+        quiz_data,
+        request=request,
+        tutor_id=user["tutor_id"],
+        titulo=f"Quiz: {material.title or material.filename or 'Material'}",
+        source_type="material",
+        source_id=material.id,
+        source_label=material.title or material.filename,
+        db=db,
+    )
+
+
 @router.post("/quiz/generate")
 async def generate_quiz_from_lesson(
     request: QuizCreateRequest,
@@ -2114,6 +2290,15 @@ async def generate_quiz_from_lesson(
 
     tutor_id = user["tutor_id"]
     lesson_id = request.lesson_id
+
+    if bool(request.lesson_id) == bool(request.material_id):
+        raise HTTPException(
+            status_code=422,
+            detail="Informe uma aula OU um material como fonte do quiz.",
+        )
+
+    if request.material_id:
+        return await _generate_quiz_from_material(request, user, db)
 
     # Valida que a aula existe e pertence ao professor
     lesson = await db.get(LessonModel, lesson_id)
@@ -2169,6 +2354,40 @@ async def generate_quiz_from_lesson(
         llm=request.llm,
     )
 
+    return await _persist_generated_quiz(
+        quiz_data,
+        request=request,
+        tutor_id=tutor_id,
+        titulo=f"Quiz: {lesson.title or 'Aula'}",
+        source_type="lesson",
+        source_id=lesson.id,
+        source_label=lesson.title or "Aula",
+        db=db,
+        lesson_id=lesson.id,
+    )
+
+
+async def _persist_generated_quiz(
+    quiz_data: dict,
+    *,
+    request: QuizCreateRequest,
+    tutor_id: str,
+    titulo: str,
+    source_type: str,
+    source_id: str,
+    source_label: str,
+    db: AsyncSession,
+    lesson_id: str = "",
+):
+    """Valida, grava e devolve o quiz gerado, venha ele de aula ou de material.
+
+    Compartilhado pelos dois caminhos de proposito: filtro de questao invalida,
+    serializacao das alternativas e resposta sao regra de quiz, nao de fonte -
+    duplicar isso deixaria os dois divergindo na primeira correcao.
+
+    `lesson_id` vazio marca quiz sem aula. A coluna e NOT NULL e nao ha
+    migracao aqui, entao a origem real fica em `quiz_sources`.
+    """
     if quiz_data.get("error"):
         raise HTTPException(
             status_code=500,
@@ -2190,38 +2409,36 @@ async def generate_quiz_from_lesson(
             ),
         )
 
-    # Persiste quiz e questões no banco
     quiz_id = str(uuid.uuid4())
-    quiz = QuizModel(
+    db.add(QuizModel(
         id=quiz_id,
         tutor_id=tutor_id,
         lesson_id=lesson_id,
-        titulo=f"Quiz: {lesson.title or 'Aula'}",
+        titulo=titulo,
         tipo_quiz=request.tipo_quiz,
         status="draft",
         total_questoes=len(questoes_geradas),
         tempo_estimado=quiz_data.get("tempo_estimado", 15),
-    )
-    db.add(quiz)
+    ))
+    db.add(QuizSourceModel(
+        quiz_id=quiz_id,
+        source_type=source_type,
+        source_id=source_id,
+        label=source_label or "",
+    ))
 
-    # Insere questões
     questoes_responses = []
-
     for q_data in questoes_geradas:
         question_id = str(uuid.uuid4())
-
-        # Serializa opcoes se for multipla escolha
         opcoes_json = None
         if q_data.get("tipo") == "multipla_escolha" and q_data.get("opcoes"):
             opcoes_json = json.dumps(q_data["opcoes"], ensure_ascii=False)
-
-        # Serializa conceitos
         conceitos_json = json.dumps(
             q_data.get("conceitos", []),
             ensure_ascii=False
         ) if q_data.get("conceitos") else None
 
-        question = QuestionModel(
+        db.add(QuestionModel(
             id=question_id,
             quiz_id=quiz_id,
             tipo=q_data.get("tipo", "multipla_escolha"),
@@ -2234,8 +2451,7 @@ async def generate_quiz_from_lesson(
             topico_origem=q_data.get("topico_origem"),
             grounding_score=q_data.get("grounding_score", 0.8),
             verificado=q_data.get("verificado", True),
-        )
-        db.add(question)
+        ))
 
         questoes_responses.append(QuestionResponse(
             id=question_id,
@@ -2258,7 +2474,7 @@ async def generate_quiz_from_lesson(
 
     return QuizGenerateResponse(
         quiz_id=quiz_id,
-        titulo=f"Quiz: {lesson.title or 'Aula'}",
+        titulo=titulo,
         questoes=questoes_responses,
         tempo_estimado_resposta=quiz_data.get("tempo_estimado", 15),
         status="draft",

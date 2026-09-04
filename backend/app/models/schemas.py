@@ -1423,9 +1423,29 @@ class QuestionResponse(QuestionCreate):
     created_at: datetime
 
 
+class MaterialResponse(BaseModel):
+    """Material didatico guardado, sem o texto completo."""
+    id: str
+    discipline_id: Optional[str] = None
+    discipline: str
+    title: str
+    filename: str
+    source_type: str
+    page_count: int
+    char_count: int
+    truncated: bool
+    created_at: datetime
+
+
 class QuizCreateRequest(BaseModel):
-    """Criacao de um quiz a partir de uma aula ou de perguntas informadas."""
-    lesson_id: str
+    """Criacao de um quiz a partir de uma aula, de um material ou de perguntas.
+
+    `lesson_id` e `material_id` sao exclusivos: um quiz vem de uma fonte so, e
+    aceitar as duas deixaria ambiguo de onde o conteudo saiu na hora de revisar
+    a pergunta.
+    """
+    lesson_id: Optional[str] = None
+    material_id: Optional[str] = None
     tipo_quiz: Literal["revisao", "diagnostico", "pratica"] = "pratica"
     quantidade_questoes: int = Field(default=10, ge=1, le=50)
     tipos_questao: List[

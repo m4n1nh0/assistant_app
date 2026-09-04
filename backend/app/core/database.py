@@ -643,6 +643,52 @@ class QuizModel(Base):
     created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class QuizSourceModel(Base):
+    """De onde saiu o conteudo de um quiz: aula, material, ou varios deles.
+
+    Tabela propria em vez de coluna em `quizzes` por duas razoes. A primeira e
+    pratica: nao ha ferramenta de migracao aqui - `create_all` cria tabela nova,
+    mas nao altera tabela existente -, entao acrescentar coluna quebraria a base
+    ja em producao. A segunda e de modelagem: o simulado junta varias fontes num
+    quiz so, e isso e uma relacao, nao um campo.
+    """
+
+    __tablename__ = "quiz_sources"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id     = Column(String(64), nullable=False, index=True)
+    source_type = Column(String(32), nullable=False, default="lesson")
+    source_id   = Column(String(64), nullable=False, index=True)
+    label       = Column(String(255), nullable=False, default="")
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MaterialModel(Base):
+    """Material didatico da disciplina, com o texto ja extraido do arquivo.
+
+    Fica na disciplina, e nao na aula: apostila e capitulo servem a varias aulas,
+    e e isso que permite gerar quiz e simulado a partir de mais de uma fonte.
+
+    O texto extraido e guardado junto porque a extracao e cara e o arquivo
+    original pode nem ficar no servidor; o quiz le daqui.
+    """
+
+    __tablename__ = "materials"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    # Os dois campos, como em `class_groups`: o id sobrevive a renomear a
+    # disciplina, e o texto mantem a consulta por nome funcionando.
+    discipline_id = Column(String(64), nullable=True, index=True)
+    discipline  = Column(String(120), nullable=False, default="", index=True)
+    title       = Column(String(255), nullable=False, default="")
+    filename    = Column(String(255), nullable=False, default="")
+    source_type = Column(String(32), nullable=False, default="pdf")
+    page_count  = Column(Integer, nullable=False, default=0)
+    char_count  = Column(Integer, nullable=False, default=0)
+    truncated   = Column(Boolean, nullable=False, default=False)
+    content     = Column(Text, nullable=False)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class QuestionModel(Base):
     """Questao de um quiz, com alternativas, gabarito e justificativa."""
     __tablename__ = "questions"
