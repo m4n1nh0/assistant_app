@@ -2250,6 +2250,7 @@ async def generate_quiz_from_lesson(
             topico_origem=q_data.get("topico_origem"),
             grounding_score=q_data.get("grounding_score", 0.8),
             verificado=q_data.get("verificado", True),
+            fallback=q_data.get("fallback", False),
             created_at=datetime.now(timezone.utc),
         ))
 

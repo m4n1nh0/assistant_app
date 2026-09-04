@@ -172,6 +172,13 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
     assert quiz.status == "draft"
     assert quiz.total_questoes == 1
     assert response.status == "draft"
+
+    # As alternativas precisam atravessar a serializacao: sem elas o professor
+    # revisa um enunciado solto e a pergunta nao e respondivel pela turma.
+    questao = response.questoes[0]
+    assert [op.label for op in questao.opcoes] == ["A", "B"]
+    assert [op.correta for op in questao.opcoes] == [True, False]
+    assert questao.fallback is False
     assert response.tempo_estimado_resposta == 7
     assert response.questoes[0].dificuldade == "dificil"
     assert response.questoes[0].grounding_score == 0.91
@@ -778,3 +785,31 @@ def test_fallback_de_multipla_escolha_traz_alternativas():
         assert questao["tipo"] == "multipla_escolha"
         assert len(questao["opcoes"]) >= 2
         assert any(op.get("correta") for op in questao["opcoes"])
+
+
+def test_pergunta_por_template_chega_marcada_na_interface(monkeypatch):
+    """A marca de "gerada por template" morria na serializacao.
+
+    `QuestionResponse` nao tinha o campo, e o Pydantic descarta o que nao esta
+    no modelo: a interface recebia perguntas de template sem nenhum sinal de que
+    nao foram escritas pela IA.
+    """
+    from app.models.schemas import QuestionResponse
+
+    questao = QuestionResponse(
+        id="q1",
+        quiz_id="quiz-1",
+        tipo="multipla_escolha",
+        dificuldade="medio",
+        enunciado="De acordo com a aula, qual afirmacao se relaciona a X?",
+        opcoes=[{"label": "A", "texto": "Sim", "correta": True}],
+        resposta_correta="A",
+        justificativa="Preparada automaticamente; revise antes de liberar.",
+        grounding_score=0.55,
+        verificado=False,
+        fallback=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    assert questao.fallback is True
+    assert questao.model_dump()["fallback"] is True

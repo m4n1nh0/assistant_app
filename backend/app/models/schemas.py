@@ -1416,6 +1416,10 @@ class QuestionResponse(QuestionCreate):
     quiz_id: str
     grounding_score: float = 0.0
     verificado: bool = False
+    #: True quando a pergunta saiu do gerador por template, e nao do modelo.
+    #: Sem isso na resposta, a interface nao tinha como avisar que aquelas
+    #: perguntas nao foram escritas pela IA - a informacao morria no servidor.
+    fallback: bool = False
     created_at: datetime
 
 
