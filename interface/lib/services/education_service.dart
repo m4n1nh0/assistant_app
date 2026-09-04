@@ -536,11 +536,13 @@ class EducationService {
     );
   }
 
+  /// Altera um aluno. `active` reativa quem foi desativado numa importacao.
   Future<Student> updateStudent(
     String studentId, {
     String? name,
     String? classId,
     List<String>? aliases,
+    bool? active,
   }) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/education/students/$studentId'),
@@ -549,6 +551,7 @@ class EducationService {
         if (name != null) 'name': name,
         if (classId != null) 'class_id': classId,
         if (aliases != null) 'aliases': aliases,
+        if (active != null) 'active': active,
       }),
     );
     return Student.fromJson(_decode(response) as Map<String, dynamic>);

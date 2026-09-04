@@ -91,6 +91,8 @@ void main() {
     expect(diff.kept, hasLength(2));
   });
 
+  _entriesGroup();
+
   test('turma vazia: tudo do arquivo e novo', () {
     final diff = diffRoster(
       roster: const [],
@@ -99,5 +101,54 @@ void main() {
 
     expect(diff.incoming, hasLength(2));
     expect(diff.missing, isEmpty);
+  });
+}
+
+void _entriesGroup() {
+  group('linhas da previa', () {
+    test('vem na ordem novos, mantidos, ausentes, com a acao de cada uma', () {
+      final diff = diffRoster(
+        roster: [_aluno('Ana Silva', '1001'), _aluno('Carla Souza', '1003')],
+        file: [_linha('1001', 'ANA SILVA'), _linha('1004', 'Diego Rocha')],
+      );
+
+      final entries = diff.entries;
+
+      expect(entries.map((e) => e.action), [
+        RosterAction.novo,
+        RosterAction.mantido,
+        RosterAction.ausente,
+      ]);
+      expect(entries[0].name, 'Diego Rocha');
+      expect(entries[1].name, 'ANA SILVA');
+      expect(entries[2].name, 'Carla Souza');
+    });
+
+    test('so quem esta na turma carrega o id do cadastro', () {
+      final diff = diffRoster(
+        roster: [_aluno('Ana', '1001'), _aluno('Carla', '1003')],
+        file: [_linha('1001', 'Ana'), _linha('1004', 'Diego')],
+      );
+
+      final porAcao = {for (final e in diff.entries) e.action: e};
+
+      // Novo ainda nao tem cadastro; ausente nao tem linha no arquivo.
+      expect(porAcao[RosterAction.novo]!.studentId, isNull);
+      expect(porAcao[RosterAction.novo]!.row, isNotNull);
+      expect(porAcao[RosterAction.mantido]!.studentId, 'id-1001');
+      expect(porAcao[RosterAction.ausente]!.studentId, 'id-1003');
+      expect(porAcao[RosterAction.ausente]!.row, isNull);
+    });
+
+    test('a chave de marcacao nao colide entre linhas', () {
+      final diff = diffRoster(
+        roster: [_aluno('Ana', '1001'), _aluno('Carla', '1003')],
+        file: [_linha('1001', 'Ana'), _linha('1004', 'Diego')],
+      );
+
+      final chaves = diff.entries.map((e) => e.key).toList();
+
+      expect(chaves.toSet().length, chaves.length);
+    });
   });
 }

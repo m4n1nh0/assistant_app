@@ -1190,6 +1190,9 @@ async def import_students(
         if not discipline:
             raise HTTPException(422, "Disciplina e obrigatoria para importar alunos")
 
+    if not body.students and not body.deactivate_ids:
+        raise HTTPException(422, "Nada a importar: sem alunos e sem desativacoes")
+
     incoming: dict[str, tuple[str, str]] = {}
     for index, item in enumerate(body.students, start=2):
         enrollment = item.enrollment.strip()

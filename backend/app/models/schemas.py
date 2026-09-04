@@ -951,7 +951,11 @@ class StudentImportRequest(BaseModel):
     class_id: Optional[str] = None
     class_group: str = ""
     discipline: str = ""
-    students: List[StudentImportItem] = Field(min_length=1, max_length=1000)
+    # Lista vazia e valida quando ha `deactivate_ids`: sincronizar uma turma as
+    # vezes e so tirar quem saiu, sem nenhum cadastro novo.
+    students: List[StudentImportItem] = Field(
+        default_factory=list, max_length=1000
+    )
     deactivate_ids: List[str] = Field(default_factory=list, max_length=1000)
 
 

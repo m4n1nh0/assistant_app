@@ -12,6 +12,45 @@ library;
 import '../services/education_service.dart';
 import '../services/student_csv_parser.dart';
 
+/// O que a importacao faz com uma linha.
+enum RosterAction {
+  /// Matricula do arquivo que a turma ainda nao tem.
+  novo,
+
+  /// Matricula nos dois lados: o nome passa a ser o do arquivo.
+  mantido,
+
+  /// Aluno ativo da turma que ficou de fora do arquivo.
+  ausente,
+}
+
+/// Uma linha da previa: o que e, e o que vai acontecer com ela.
+///
+/// A tela mostra a lista inteira em vez de contagens com amostra, porque a
+/// decisao e por aluno - o professor precisa ver *quem* sai antes de aceitar.
+class RosterEntry {
+  final RosterAction action;
+  final String enrollment;
+  final String name;
+
+  /// Id do cadastro. So existe para quem ja esta na turma.
+  final String? studentId;
+
+  /// A linha do arquivo. Nula para quem so existe no cadastro.
+  final StudentCsvRow? row;
+
+  const RosterEntry({
+    required this.action,
+    required this.enrollment,
+    required this.name,
+    this.studentId,
+    this.row,
+  });
+
+  /// Chave estavel para marcar/desmarcar na tela.
+  String get key => studentId ?? 'csv:${enrollment.toLowerCase()}';
+}
+
 /// Um aluno da turma que nao veio no arquivo.
 class MissingStudent {
   final Student student;
@@ -42,7 +81,36 @@ class RosterDiff {
     required this.kept,
     required this.missing,
     required this.unmatchable,
-  });
+    required List<MapEntry<StudentCsvRow, String>> keptPairs,
+  }) : _keptPairs = keptPairs;
+
+  /// Todas as linhas na ordem em que a tela mostra: novos, mantidos, ausentes.
+  List<RosterEntry> get entries => [
+        for (final row in incoming)
+          RosterEntry(
+            action: RosterAction.novo,
+            enrollment: row.enrollment,
+            name: row.name,
+            row: row,
+          ),
+        for (final entry in _keptPairs)
+          RosterEntry(
+            action: RosterAction.mantido,
+            enrollment: entry.key.enrollment,
+            name: entry.key.name,
+            studentId: entry.value,
+            row: entry.key,
+          ),
+        for (final item in missing)
+          RosterEntry(
+            action: RosterAction.ausente,
+            enrollment: item.student.externalId ?? '',
+            name: item.student.name,
+            studentId: item.student.id,
+          ),
+      ];
+
+  final List<MapEntry<StudentCsvRow, String>> _keptPairs;
 
   bool get isEmpty =>
       incoming.isEmpty && kept.isEmpty && missing.isEmpty;
@@ -65,10 +133,11 @@ RosterDiff diffRoster({
 
   final incoming = <StudentCsvRow>[];
   final kept = <StudentCsvRow>[];
+  final keptPairs = <MapEntry<StudentCsvRow, String>>[];
   final missing = <MissingStudent>[];
   final unmatchable = <Student>[];
 
-  final rosterKeys = <String>{};
+  final rosterById = <String, Student>{};
   for (final student in roster) {
     if (!student.active) continue;
     final key = _key(student.externalId ?? '');
@@ -78,17 +147,19 @@ RosterDiff diffRoster({
       unmatchable.add(student);
       continue;
     }
-    rosterKeys.add(key);
+    rosterById[key] = student;
     if (!fileByEnrollment.containsKey(key)) {
       missing.add(MissingStudent(student));
     }
   }
 
   for (final row in file) {
-    if (rosterKeys.contains(_key(row.enrollment))) {
-      kept.add(row);
-    } else {
+    final student = rosterById[_key(row.enrollment)];
+    if (student == null) {
       incoming.add(row);
+    } else {
+      kept.add(row);
+      keptPairs.add(MapEntry(row, student.id));
     }
   }
 
@@ -97,6 +168,7 @@ RosterDiff diffRoster({
     kept: kept,
     missing: missing,
     unmatchable: unmatchable,
+    keptPairs: keptPairs,
   );
 }
 
