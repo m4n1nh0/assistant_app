@@ -33,6 +33,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from datetime import datetime, timezone
 from loguru import logger
 from .config import get_settings
@@ -685,7 +686,12 @@ class MaterialModel(Base):
     page_count  = Column(Integer, nullable=False, default=0)
     char_count  = Column(Integer, nullable=False, default=0)
     truncated   = Column(Boolean, nullable=False, default=False)
-    content     = Column(Text, nullable=False)
+    # TEXT no MySQL guarda 64 KB, e o material vai ate MAX_CHARS (120 mil
+    # caracteres, que em utf8mb4 passam disso com folga). Sem a variante, a
+    # apostila sobe e o INSERT volta 'Data too long for column content'.
+    content     = Column(
+        Text().with_variant(MEDIUMTEXT(), "mysql", "mariadb"), nullable=False
+    )
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -739,6 +745,7 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_compatibility_columns)
         await conn.run_sync(_widen_credential_secret_ref)
+        await conn.run_sync(_widen_material_content)
     await _backfill_account_ownership()
     await _backfill_class_groups()
     await _backfill_disciplines()
@@ -928,6 +935,46 @@ def _widen_credential_secret_ref(sync_conn) -> None:
             )
             if getattr(current.get("type"), "length", None) is not None:
                 raise
+
+def _widen_material_content(sync_conn) -> None:
+    """Material didatico nao cabe em TEXT: 64 KB e menos de um capitulo.
+
+    A tabela nasceu com TEXT e o primeiro PDF de verdade ja voltou
+    "Data too long for column 'content'". Instalacao nova ja e criada como
+    MEDIUMTEXT pela variante do modelo; esta rotina cuida das bases que foram
+    criadas antes dela.
+    """
+    if sync_conn.dialect.name not in {"mysql", "mariadb"}:
+        return
+    inspector = inspect(sync_conn)
+    if "materials" not in inspector.get_table_names():
+        return
+    if _content_ja_e_grande(inspector):
+        return
+    try:
+        sync_conn.execute(
+            text("ALTER TABLE materials MODIFY COLUMN content MEDIUMTEXT NOT NULL")
+        )
+    except SQLAlchemyError:
+        # Outro worker pode ter aplicado o mesmo ALTER entre a inspecao e aqui.
+        if not _content_ja_e_grande(inspect(sync_conn)):
+            raise
+        logger.info("Coluna materials.content ja ampliada por outro worker")
+    else:
+        logger.info("Coluna materials.content ampliada para MEDIUMTEXT")
+
+
+def _content_ja_e_grande(inspector) -> bool:
+    """Diz se `materials.content` ja aguenta um material inteiro."""
+    column = next(
+        (item for item in inspector.get_columns("materials") if item["name"] == "content"),
+        None,
+    )
+    if column is None:
+        return True
+    tipo = str(column.get("type", "")).upper()
+    return "MEDIUMTEXT" in tipo or "LONGTEXT" in tipo
+
 
 def scoped_config_key(user_id: str, key: str) -> str:
     """Monta a chave de `ConfigModel` isolada por usuario.
