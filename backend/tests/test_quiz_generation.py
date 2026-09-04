@@ -711,3 +711,70 @@ def test_quiz_service_builds_reviewable_fallback_when_llm_returns_no_json(monkey
     assert len(result["questoes"]) >= 1
     assert result["questoes"][0]["fallback"] is True
     assert result["questoes"][0]["verificado"] is False
+
+
+def test_fallback_respeita_a_quantidade_pedida():
+    """O teto de 10 aqui ignorava o controle da tela, que aceita ate 50.
+
+    Pedir 20 devolvia 10 sem explicar, e a interface ainda ajustava o proprio
+    controle para 10 - parecia que o campo nao aceitava o valor.
+    """
+    from app.services.quiz_generator_service import _fallback_quiz_questions
+
+    conteudo = " ".join(
+        f"A aula explicou o conceito numero {i} com um exemplo pratico." 
+        for i in range(1, 31)
+    )
+
+    questoes = _fallback_quiz_questions(
+        conteudo,
+        quantidade_questoes=20,
+        tipos_questao=["multipla_escolha"],
+        dificuldade="media",
+    )
+
+    assert len(questoes) == 20
+
+
+def test_fallback_nao_inventa_pergunta_alem_do_conteudo():
+    """Com pouca aula, o limite passa a ser o conteudo, e nao o pedido."""
+    from app.services.quiz_generator_service import _fallback_quiz_questions
+
+    # Frases curtas nao viram pergunta: o extrator exige 45 caracteres para
+    # haver contexto suficiente. Estas tres passam.
+    conteudo = (
+        "A aula tratou de normalizacao de tabelas e formas normais. "
+        "O professor mostrou um exemplo de tabela com dados repetidos. "
+        "Depois discutiu chaves estrangeiras e integridade referencial."
+    )
+
+    questoes = _fallback_quiz_questions(
+        conteudo,
+        quantidade_questoes=20,
+        tipos_questao=["multipla_escolha"],
+        dificuldade="media",
+    )
+
+    assert 0 < len(questoes) <= 3
+
+
+def test_fallback_de_multipla_escolha_traz_alternativas():
+    """Pergunta de multipla escolha sem opcoes nao e respondivel."""
+    from app.services.quiz_generator_service import _fallback_quiz_questions
+
+    conteudo = " ".join(
+        f"A aula abordou o topico {i} em detalhe durante a explicacao."
+        for i in range(1, 8)
+    )
+
+    questoes = _fallback_quiz_questions(
+        conteudo,
+        quantidade_questoes=3,
+        tipos_questao=["multipla_escolha"],
+        dificuldade="media",
+    )
+
+    for questao in questoes:
+        assert questao["tipo"] == "multipla_escolha"
+        assert len(questao["opcoes"]) >= 2
+        assert any(op.get("correta") for op in questao["opcoes"])

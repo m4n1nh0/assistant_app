@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
+import 'quiz_preview_dialog.dart';
 
 typedef QuizPublishedCallback = void Function(
   String quizId,
@@ -39,6 +40,15 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   String? _generatedQuizId;
   bool _quizPublished = false;
   List<Map<String, dynamic>> _generatedQuestions = const [];
+
+  /// Quantas perguntas a menos vieram em relacao ao pedido.
+  int _generatedShortfall = 0;
+
+  /// Quantas foram efetivamente liberadas para os alunos.
+  int _publishedCount = 0;
+
+  /// Tentativas por modelo, para a revisao explicar por que caiu no template.
+  List<Map<String, dynamic>> _generationAttempts = const [];
   int _questionCount = 10;
   String _quizType = 'pratica';
   String _difficulty = 'mista';
@@ -124,14 +134,25 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                   ))
               .toList()
           : <Map<String, dynamic>>[];
-      final totalQuestions =
-          questionItems.isNotEmpty ? questionItems.length : _questionCount;
-
+      final rawAttempts = response.data['attempts'];
       setState(() {
         _generatedQuizId = quizId;
         _quizPublished = false;
         _generatedQuestions = questionItems;
-        _questionCount = totalQuestions.clamp(1, 50).toInt();
+        _generationAttempts = rawAttempts is List
+            ? rawAttempts
+                .whereType<Map>()
+                .map((item) =>
+                    item.map((k, v) => MapEntry(k.toString(), v)))
+                .toList()
+            : const [];
+        // O controle guarda o que foi *pedido*. Sobrescrever com o que voltou
+        // fazia o numero recuar sozinho e parecer que o campo nao aceitava o
+        // valor; a diferenca agora e dita em texto, no lugar de escondida.
+        _generatedShortfall = questionItems.isNotEmpty &&
+                questionItems.length < _questionCount
+            ? _questionCount - questionItems.length
+            : 0;
       });
     } catch (e) {
       setState(() {
@@ -170,7 +191,9 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
 
       setState(() {
         _quizPublished = true;
-        _questionCount = totalQuestions.clamp(1, 50).toInt();
+        // Campo proprio: `_questionCount` e o pedido do professor e nao pode
+        // ser reescrito pelo que saiu.
+        _publishedCount = totalQuestions.clamp(1, 50).toInt();
       });
 
       widget.onQuizPublished?.call(quizId, totalQuestions);
@@ -205,7 +228,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            Text('Questões liberadas: $_questionCount'),
+            Text('Questões liberadas: $_publishedCount'),
             const SizedBox(height: 16),
             const Text('Compartilhe o link com seus alunos:'),
             const SizedBox(height: 12),
@@ -509,6 +532,30 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                             '+ ${_generatedQuestions.length - 8} pergunta(s)',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
+                        if (_generatedShortfall > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              'Você pediu $_questionCount e vieram '
+                              '${_generatedQuestions.length}. Abra a revisão '
+                              'para ver o motivo.',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: Colors.orange),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () => showQuizPreviewDialog(
+                            context,
+                            questions: _generatedQuestions,
+                            requested: _questionCount,
+                            attempts: _generationAttempts,
+                          ),
+                          icon: const Icon(Icons.fact_check_outlined, size: 16),
+                          label: const Text('REVISAR PERGUNTAS'),
+                        ),
                         const SizedBox(height: 12),
                       ],
                       if (_quizPublished) ...[

@@ -401,7 +401,10 @@ def _fallback_quiz_questions(
         _normalize_question_type(tipo)
         for tipo in (tipos_questao or ["multipla_escolha"])
     ]
-    question_count = min(max(quantidade_questoes, 1), len(sentences), 10)
+    # Teto de 10 chumbado aqui ignorava o que o professor pediu no controle,
+    # que aceita ate 50: pedir 20 devolvia 10 sem dizer por que. O limite real e
+    # quantas frases a aula tem - de uma frase nao sai uma pergunta ancorada.
+    question_count = min(max(quantidade_questoes, 1), len(sentences))
     questions = []
 
     for index, sentence in enumerate(sentences[:question_count]):
