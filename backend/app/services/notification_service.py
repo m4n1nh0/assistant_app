@@ -23,8 +23,14 @@ def _telegram_error_message(status_code: int, description: str) -> str:
             "Chat ID nao encontrado. Abra a conversa com o bot no Telegram, "
             "envie /start e confira o Chat ID."
         )
-    if status_code == 403 or "bot was blocked" in lowered:
-        return "O bot foi bloqueado ou nao tem permissao para enviar a esse chat."
+    if "bot was blocked" in lowered:
+        return "Desbloqueie o bot no Telegram, envie /start e teste novamente."
+    if "bot can't initiate conversation" in lowered:
+        return "Abra a conversa com o bot no Telegram e envie /start antes de testar."
+    if "bot can't send messages to bots" in lowered:
+        return "O Chat ID aponta para um bot. Use o ID da sua conversa com o bot."
+    if status_code == 403:
+        return "O bot nao tem permissao para enviar a esse chat. Confira o Chat ID e as permissoes do chat."
     if status_code == 429 or "too many requests" in lowered:
         return (
             "O Telegram limitou os envios. Aguarde alguns instantes e "

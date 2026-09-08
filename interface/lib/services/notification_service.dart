@@ -118,8 +118,17 @@ class NotificationService {
     if (lowered.contains('chat not found')) {
       return 'Chat ID nao encontrado (envie /start para o bot e confira o ID)';
     }
-    if (statusCode == 403 || lowered.contains('bot was blocked')) {
-      return 'o bot foi bloqueado ou nao pode enviar nesse chat';
+    if (lowered.contains('bot was blocked')) {
+      return 'desbloqueie o bot no Telegram, envie /start e teste novamente';
+    }
+    if (lowered.contains("bot can't initiate conversation")) {
+      return 'abra a conversa com o bot no Telegram e envie /start antes de testar';
+    }
+    if (lowered.contains("bot can't send messages to bots")) {
+      return 'o Chat ID aponta para um bot; use o ID da sua conversa com o bot';
+    }
+    if (statusCode == 403) {
+      return 'o bot nao tem permissao para enviar a esse chat; confira o Chat ID e as permissoes do chat';
     }
     if (statusCode == 429 || lowered.contains('too many requests')) {
       return 'o Telegram limitou os envios; tente em instantes';
