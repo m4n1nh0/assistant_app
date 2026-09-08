@@ -265,6 +265,23 @@ class Settings(BaseSettings):
     # - o resumo fica melhor e gasta menos chamadas.
     local_llm_context_tokens: int = 8192
 
+    # OCR do material didatico, para apostila digitalizada e foto de quadro.
+    # Roda local, sobre o mesmo onnxruntime que o Whisper ja traz, entao nao ha
+    # chave nem envio do material do professor para servico de terceiro.
+    ocr_enabled: bool = True
+    # Teto de paginas por material. Medido nesta maquina, o OCR custa ~1,7s por
+    # pagina depois da primeira (que paga a carga do modelo), e o upload fica
+    # esperando o tempo todo: 20 paginas ja significam uns 35 segundos de
+    # espera. Sem teto, uma apostila digitalizada de duzentas paginas seguraria
+    # a requisicao por minutos ate o professor desistir.
+    ocr_max_pages: int = 20
+    # Resolucao da rasterizacao. Abaixo de 150 o reconhecimento cai junto; muito
+    # acima so gasta memoria e tempo sem melhorar o texto.
+    ocr_dpi: int = 200
+    # Linha reconhecida com confianca menor que isso e descartada. Texto errado
+    # e pior que texto faltando: o gerador de quiz nao tem como desconfiar dele.
+    ocr_min_score: float = 0.5
+
     whisper_model: str = "small"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"

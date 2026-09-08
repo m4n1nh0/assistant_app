@@ -321,7 +321,8 @@ class EducationService {
   /// e extrai pontuacoes extras citadas no trecho.
   /// Envia um material da disciplina e devolve o registro ja com o texto lido.
   ///
-  /// O servidor extrai o PDF em thread separada; aqui a espera e so de rede.
+  /// Que formatos valem quem decide e o servidor; aqui a espera e so de rede,
+  /// porque a extracao roda em thread separada do lado de la.
   Future<CourseMaterial> uploadMaterial({
     required List<int> bytes,
     required String filename,
@@ -351,8 +352,8 @@ class EducationService {
     return CourseMaterial.fromJson(jsonDecode(body) as Map<String, dynamic>);
   }
 
-  /// Mensagem do servidor em vez do corpo cru: 422 aqui costuma ser PDF
-  /// digitalizado, e o professor precisa entender que falta OCR.
+  /// Mensagem do servidor em vez do corpo cru: 422 aqui e formato recusado ou
+  /// PDF digitalizado, e so o servidor sabe dizer qual dos dois.
   String _uploadError(int status, String body) {
     try {
       final data = jsonDecode(body);
@@ -1736,4 +1737,29 @@ class CourseMaterial {
         truncated: json['truncated'] == true,
         createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       );
+
+  /// Como chamar a unidade contada em [pageCount], conforme o formato.
+  ///
+  /// PDF tem pagina e apresentacao tem slide; .docx nao tem nenhum dos dois,
+  /// porque a paginacao dele so existe depois que um editor o renderiza. Dizer
+  /// "1 pagina" para uma apostila de quarenta laudas confundiria o professor.
+  String get unitLabel {
+    switch (sourceType) {
+      case 'pdf':
+      case 'pdf-ocr':
+        return pageCount == 1 ? 'pagina' : 'paginas';
+      case 'pptx':
+        return pageCount == 1 ? 'slide' : 'slides';
+      case 'image-ocr':
+        return pageCount == 1 ? 'imagem' : 'imagens';
+      default:
+        return pageCount == 1 ? 'trecho' : 'trechos';
+    }
+  }
+
+  /// True quando o texto foi reconhecido de uma imagem, e nao lido do arquivo.
+  ///
+  /// Vale avisar: OCR erra, e um conceito trocado vira pergunta errada no quiz
+  /// sem que nada denuncie a origem do defeito.
+  bool get fromOcr => sourceType.endsWith('-ocr');
 }

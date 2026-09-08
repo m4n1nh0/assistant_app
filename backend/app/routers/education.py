@@ -2118,16 +2118,18 @@ async def upload_material(
 ):
     """Guarda um material da disciplina, ja com o texto extraido.
 
-    A extracao roda fora do event loop: ler um PDF grande e trabalho de CPU e
-    seguraria todas as outras requisicoes durante o upload.
+    Que formatos valem esta escrito no `material_service`, e nao aqui: quem
+    registra o extrator ja habilita o upload, sem uma segunda lista para
+    esquecer de atualizar.
+
+    A extracao roda fora do event loop: ler uma apostila grande e trabalho de
+    CPU e seguraria todas as outras requisicoes durante o upload.
     """
     nome = (file.filename or "material.pdf").strip()
-    if not nome.lower().endswith(".pdf"):
-        raise HTTPException(422, "Por enquanto so PDF.")
 
     data = await file.read()
     try:
-        extraido = await material_service.extract_pdf(data)
+        extraido = await material_service.extract(data, nome)
     except material_service.MaterialError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -2140,7 +2142,7 @@ async def upload_material(
         discipline=rotulo,
         title=(title.strip() or nome.rsplit(".", 1)[0]),
         filename=nome,
-        source_type="pdf",
+        source_type=extraido.source_type,
         page_count=extraido.page_count,
         char_count=extraido.char_count,
         truncated=extraido.truncated,

@@ -751,4 +751,61 @@ void main() {
       );
     });
   });
+
+  group('CourseMaterial', () {
+    CourseMaterial material(String sourceType, int pageCount) => CourseMaterial(
+          id: 'm1',
+          discipline: 'BANCO DE DADOS',
+          title: 'Apostila',
+          filename: 'apostila',
+          sourceType: sourceType,
+          pageCount: pageCount,
+        );
+
+    test('conta pagina no PDF e slide na apresentacao', () {
+      expect(material('pdf', 12).unitLabel, 'paginas');
+      expect(material('pptx', 12).unitLabel, 'slides');
+    });
+
+    test('formato sem paginacao propria e contado em trechos', () {
+      // .docx so ganha pagina quando um editor o renderiza: dizer "1 pagina"
+      // para uma apostila de quarenta laudas confundiria o professor.
+      expect(material('docx', 1).unitLabel, 'trecho');
+      expect(material('md', 3).unitLabel, 'trechos');
+    });
+
+    test('singular e plural acompanham a contagem', () {
+      expect(material('pdf', 1).unitLabel, 'pagina');
+      expect(material('pptx', 1).unitLabel, 'slide');
+    });
+
+    test('PDF digitalizado continua contado em paginas', () {
+      expect(material('pdf-ocr', 4).unitLabel, 'paginas');
+    });
+
+    test('texto vindo de OCR e sinalizado, texto lido do arquivo nao', () {
+      // OCR erra, e o quiz sai do texto: quem revisa precisa distinguir os dois.
+      expect(material('pdf-ocr', 4).fromOcr, isTrue);
+      expect(material('image-ocr', 1).fromOcr, isTrue);
+      expect(material('pdf', 4).fromOcr, isFalse);
+      expect(material('docx', 1).fromOcr, isFalse);
+    });
+
+    test('foto isolada e contada como imagem', () {
+      expect(material('image-ocr', 1).unitLabel, 'imagem');
+    });
+
+    test('material antigo, gravado antes dos outros formatos, segue como PDF', () {
+      final antigo = CourseMaterial.fromJson({
+        'id': 'm2',
+        'discipline': 'BD',
+        'title': 'Capitulo 3',
+        'filename': 'cap3.pdf',
+        'page_count': 8,
+      });
+
+      expect(antigo.sourceType, 'pdf');
+      expect(antigo.unitLabel, 'paginas');
+    });
+  });
 }

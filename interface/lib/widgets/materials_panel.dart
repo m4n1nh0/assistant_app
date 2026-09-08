@@ -14,6 +14,29 @@ import '../services/education_service.dart';
 import 'package:file_picker/file_picker.dart';
 import '../utils/theme.dart';
 
+/// O que o seletor de arquivo deixa escolher.
+///
+/// Espelha os extratores registrados no `material_service` do servidor - e la
+/// que a recusa de verdade acontece. Aqui a lista serve so para o professor nao
+/// perder tempo escolhendo um arquivo que voltaria com erro.
+///
+/// As imagens dependem do OCR estar ligado no servidor. Continuam na lista
+/// mesmo assim: se estiver desligado, a mensagem que volta explica isso, o que
+/// ajuda mais do que o arquivo simplesmente nao aparecer no seletor.
+const _extensoesAceitas = [
+  'pdf',
+  'docx',
+  'pptx',
+  'txt',
+  'md',
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'bmp',
+  'tiff',
+];
+
 class MaterialsPanel extends StatefulWidget {
   /// Avisa quem monta a tela que a lista mudou.
   final VoidCallback? onChanged;
@@ -70,6 +93,19 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
     });
   }
 
+  /// Se o arquivo pode acabar no OCR, e a espera ser longa.
+  ///
+  /// Imagem sempre passa por OCR; PDF so quando nao tem camada de texto, o que
+  /// nenhum dos dois lados sabe antes de tentar ler. Avisar a mais e melhor que
+  /// deixar o professor achando que a tela travou.
+  bool _podeExigirOcr(String filename) {
+    final nome = filename.toLowerCase();
+    return !nome.endsWith('.docx') &&
+        !nome.endsWith('.pptx') &&
+        !nome.endsWith('.txt') &&
+        !nome.endsWith('.md');
+  }
+
   Future<void> _upload() async {
     final escolhida = await _pickDiscipline();
     if (escolhida == null) return;
@@ -78,7 +114,7 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
     try {
       final selection = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const ['pdf'],
+        allowedExtensions: _extensoesAceitas,
         withData: true,
       );
       if (selection == null || selection.files.isEmpty) return;
@@ -91,6 +127,14 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
         return;
       }
 
+      // Material digitalizado passa por OCR no servidor, e isso leva dezenas de
+      // segundos. Sem dizer nada, a espera parece travamento.
+      _report(
+        _podeExigirOcr(file.name)
+            ? 'Lendo ${file.name}. Material digitalizado leva alguns segundos...'
+            : 'Enviando ${file.name}...',
+      );
+
       final material = await education.uploadMaterial(
         bytes: bytes,
         filename: file.name,
@@ -98,14 +142,16 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
         discipline: escolhida.label,
       );
       _report(
-        '${material.title} carregado: ${material.pageCount} pagina(s)'
+        '${material.title} carregado: '
+        '${material.pageCount} ${material.unitLabel}'
+        '${material.fromOcr ? ", lido por OCR" : ""}'
         '${material.truncated ? ", texto cortado no limite" : ""}.',
       );
       await _load();
       widget.onChanged?.call();
     } catch (e) {
-      // A mensagem do servidor explica o caso mais comum: PDF digitalizado, que
-      // e imagem e precisaria de OCR.
+      // A mensagem vem do servidor: so ele sabe se o caso foi formato recusado
+      // ou PDF digitalizado, que e imagem e precisaria de OCR.
       _report('$e', error: true);
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -248,7 +294,7 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.upload_file_outlined, size: 16),
-                label: Text(_uploading ? 'ENVIANDO...' : 'ENVIAR PDF'),
+                label: Text(_uploading ? 'ENVIANDO...' : 'ENVIAR MATERIAL'),
                 style: FilledButton.styleFrom(
                   backgroundColor: AssistantTheme.c3,
                   foregroundColor: AssistantTheme.bg,
@@ -294,7 +340,7 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
                     ? const Center(
                         child: Text(
                           'Nenhum material ainda.\n'
-                          'Envie um PDF para gerar quiz a partir dele.',
+                          'Envie apostila, slide, anotacao ou foto do quadro.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 12,
@@ -333,19 +379,39 @@ class _MaterialRow extends StatelessWidget {
 
   const _MaterialRow({required this.material, required this.onDelete});
 
+  /// Icone que deixa o formato reconhecivel de relance na lista.
+  IconData get _icone {
+    switch (material.sourceType) {
+      case 'pdf':
+      case 'pdf-ocr':
+        return Icons.picture_as_pdf_outlined;
+      case 'pptx':
+        return Icons.slideshow_outlined;
+      case 'docx':
+        return Icons.description_outlined;
+      case 'image-ocr':
+        return Icons.image_outlined;
+      default:
+        return Icons.notes_outlined;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final detalhes = [
       if (material.discipline.isNotEmpty) material.discipline,
-      '${material.pageCount} pagina(s)',
+      '${material.pageCount} ${material.unitLabel}',
       '${(material.charCount / 1000).toStringAsFixed(0)} mil caracteres',
+      // OCR erra, e o quiz sai do texto: quem revisa precisa saber que a fonte
+      // foi uma imagem reconhecida, e nao um arquivo lido.
+      if (material.fromOcr) 'lido por OCR',
       if (material.truncated) 'texto cortado no limite',
     ].join('  ·  ');
 
     return Row(
       children: [
-        const Icon(
-          Icons.picture_as_pdf_outlined,
+        Icon(
+          _icone,
           size: 18,
           color: AssistantTheme.textMuted,
         ),
