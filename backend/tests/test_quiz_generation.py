@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.routers import education
 from app.routers import quiz_play
 from app.routers import quiz_qrcode
-from app.models.schemas import LLMResponse
+from app.models.schemas import LLMResponse, QuizCreateRequest
 from app.services import quiz_generator_service
 
 
@@ -86,30 +86,121 @@ class QuizLiveDb(QuizCloseDb):
         return QuestionResult(self.questions)
 
 
-def _lesson(status="closed", summary="Resumo da aula"):
+def _lesson(
+    status="closed",
+    summary="Resumo da aula",
+    lesson_id="lesson-1",
+    title="Normalizacao",
+):
     return SimpleNamespace(
-        id="lesson-1",
+        id=lesson_id,
         tutor_id="tutor-1",
         discipline="Banco de Dados",
-        title="Normalizacao",
+        title=title,
         status=status,
         summary=summary,
     )
 
 
-def test_quiz_generation_requires_closed_lesson():
-    request = education.QuizCreateRequest(lesson_id="lesson-1")
+def _material(material_id="mat-1", title="Apostila", content="Conteudo do material"):
+    return SimpleNamespace(
+        id=material_id,
+        tutor_id="tutor-1",
+        discipline="Banco de Dados",
+        title=title,
+        filename=f"{title.lower()}.pdf",
+        content=content,
+    )
 
-    with pytest.raises(HTTPException) as error:
-        run(
-            education.generate_quiz_from_lesson(
-                request,
-                user={"tutor_id": "tutor-1"},
-                db=QuizDb(_lesson(status="recording")),
-            )
+
+class MultiSourceDb:
+    """Banco de mentira que resolve varias aulas e materiais de uma vez.
+
+    A consulta de segmentos devolve os da ultima aula buscada: no gerador ela
+    vem sempre logo depois do `get` daquela aula.
+    """
+
+    def __init__(self, lessons=(), materials=(), segments=None):
+        self.lessons = {lesson.id: lesson for lesson in lessons}
+        self.materials = {item.id: item for item in materials}
+        self.segments = dict(segments or {})
+        self.added = []
+        self.commits = 0
+        self._ultima_aula = None
+
+    async def get(self, model, item_id):
+        if model is education.LessonModel:
+            self._ultima_aula = item_id
+            return self.lessons.get(item_id)
+        if model is education.MaterialModel:
+            return self.materials.get(item_id)
+        return None
+
+    async def execute(self, _stmt):
+        trechos = [
+            SimpleNamespace(text=texto)
+            for texto in self.segments.get(self._ultima_aula, [])
+        ]
+        return QuestionResult(trechos)
+
+    def add(self, item):
+        self.added.append(item)
+
+    async def commit(self):
+        self.commits += 1
+
+    def fontes(self):
+        return [
+            item for item in self.added
+            if isinstance(item, education.QuizSourceModel)
+        ]
+
+
+def test_quiz_gera_de_aula_em_andamento(monkeypatch):
+    """Exigir aula encerrada matava o quiz relampago no meio da aula.
+
+    E ali que ele mais serve: o professor explica, aplica tres perguntas e ve na
+    hora quem nao acompanhou. O que decide se a aula entra e ter texto - resumo
+    ou transcricao ja gravada -, nao o status da gravacao.
+    """
+    capturado = {}
+
+    async def fake_generate_quiz(**kwargs):
+        capturado.update(kwargs)
+        return {
+            "tempo_estimado": 5,
+            "questoes": [
+                {
+                    "tipo": "multipla_escolha",
+                    "enunciado": "O que foi dito ate agora?",
+                    "opcoes": [
+                        {"label": "A", "texto": "Normalizacao", "correta": True},
+                        {"label": "B", "texto": "Indice"},
+                    ],
+                    "resposta_correta": "A",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        education.quiz_generator_service, "generate_quiz", fake_generate_quiz
+    )
+
+    db = MultiSourceDb(
+        lessons=[_lesson(status="recording", summary="")],
+        segments={"lesson-1": ["O professor explicou normalizacao de tabelas."]},
+    )
+    resposta = run(
+        education.generate_quiz_from_lesson(
+            education.QuizCreateRequest(lesson_id="lesson-1"),
+            user={"tutor_id": "tutor-1"},
+            db=db,
         )
+    )
 
-    assert error.value.status_code == 409
+    assert len(resposta.questoes) == 1
+    # Sem resumo ainda: o que vai para a IA e a transcricao do que foi gravado.
+    assert "TRANSCRIÇÃO DA AULA" in capturado["resumo"]
 
 
 def test_quiz_generation_uses_request_configuration(monkeypatch):
@@ -165,7 +256,8 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
     assert captured["tipos_questao"] == ["multipla_escolha"]
     assert captured["dificuldade"] == "dificil"
     assert captured["llm"] == "gpt-4.1"
-    assert captured["resumo"] == "Resumo da aula"
+    assert "=== AULA: Normalizacao ===" in captured["resumo"]
+    assert "Resumo da aula" in captured["resumo"]
     assert captured["disciplina"] == "Banco de Dados"
     quiz = next(item for item in db.added if isinstance(item, education.QuizModel))
     assert quiz.tipo_quiz == "diagnostico"
@@ -178,7 +270,6 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
     questao = response.questoes[0]
     assert [op.label for op in questao.opcoes] == ["A", "B"]
     assert [op.correta for op in questao.opcoes] == [True, False]
-    assert questao.fallback is False
     assert response.tempo_estimado_resposta == 7
     assert response.questoes[0].dificuldade == "dificil"
     assert response.questoes[0].grounding_score == 0.91
@@ -186,7 +277,8 @@ def test_quiz_generation_uses_request_configuration(monkeypatch):
     assert db.commits == 1
 
 
-def test_quiz_generation_requires_summary():
+def test_quiz_recusa_aula_sem_resumo_e_sem_transcricao():
+    """Sem texto nenhum nao ha de onde tirar pergunta ancorada."""
     request = education.QuizCreateRequest(lesson_id="lesson-1")
 
     with pytest.raises(HTTPException) as error:
@@ -199,6 +291,7 @@ def test_quiz_generation_requires_summary():
         )
 
     assert error.value.status_code == 400
+    assert "Normalizacao" in error.value.detail
 
 
 def test_quiz_generation_rejects_empty_question_set(monkeypatch):
@@ -693,41 +786,114 @@ def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
     assert result["questoes"][0]["verificado"] is False
 
 
-def test_quiz_service_builds_reviewable_fallback_when_llm_returns_no_json(monkeypatch):
+def _fake_quiz_llm(
+    chamadas,
+    *,
+    por_lote=None,
+    repetidas=False,
+    opcao_longa=None,
+    encurtamento=None,
+):
+    """Modelo de mentira que responde geracao, validacao e encurtamento.
+
+    `chamadas` recebe os prompts de geracao, para o teste conferir em quantos
+    lotes a geracao foi e o que foi pedido em cada um.
+    """
+
+    import json as _json
+    import re as _re
+
+    estado = {"indice": 0}
+
+    async def fake(_llm, prompt, _history, _system_prompt, *, max_tokens=None):
+        if "Valide as seguintes" in prompt:
+            return LLMResponse(llm="fake-llm", content='{"validacoes": []}')
+
+        if "Reescreva cada alternativa" in prompt:
+            return LLMResponse(
+                llm="fake-llm",
+                content=encurtamento or "sem json aqui",
+            )
+
+        chamadas.append(prompt)
+        pedido = int(_re.search(r"gere (\d+) quest", prompt).group(1))
+        quantidade = pedido if por_lote is None else min(por_lote, pedido)
+
+        questoes = []
+        for _ in range(quantidade):
+            if repetidas:
+                numero = 1
+            else:
+                estado["indice"] += 1
+                numero = estado["indice"]
+            questoes.append({
+                "tipo": "multipla_escolha",
+                "dificuldade": "medio",
+                "enunciado": f"Pergunta {numero} sobre a aula?",
+                "opcoes": [
+                    {
+                        "label": "A",
+                        "texto": opcao_longa or "Primeira forma normal",
+                        "correta": True,
+                    },
+                    {"label": "B", "texto": "Chave estrangeira"},
+                    {"label": "C", "texto": "Indice composto"},
+                    {"label": "D", "texto": "Gatilho"},
+                ],
+                "resposta_correta": "A",
+                "justificativa": "A aula trata disso.",
+            })
+
+        return LLMResponse(
+            llm="fake-llm",
+            content=_json.dumps(
+                {"questoes": questoes, "tempo_estimado": 12},
+                ensure_ascii=False,
+            ),
+        )
+
+    return fake
+
+
+def _usa_fake_llm(monkeypatch, fake):
     async def fake_candidates(_preferred=None):
-        return ["bad-llm"]
+        return ["fake-llm"]
 
     async def fake_resolve(_preferred=None):
-        return "bad-llm"
+        return "fake-llm"
+
+    monkeypatch.setattr(
+        quiz_generator_service, "_candidate_llms_for_quiz", fake_candidates
+    )
+    monkeypatch.setattr(
+        quiz_generator_service, "_resolve_llm_for_quiz", fake_resolve
+    )
+    monkeypatch.setattr(quiz_generator_service, "dispatch_single", fake)
+
+
+def test_quiz_sem_json_valido_falha_em_vez_de_usar_template(monkeypatch):
+    """Pergunta de quiz e escrita pela IA, ou nao existe.
+
+    Antes, modelo que nao entregava JSON derrubava a geracao em um montador por
+    template: o professor recebia frase recortada da aula com cara de pergunta,
+    sem gabarito que se sustentasse. Falhar dizendo o motivo e melhor - da para
+    tentar de novo; pergunta ruim liberada para a turma nao volta atras.
+    """
 
     async def fake_dispatch_single(
         _llm, _prompt, _history, _system_prompt, *, max_tokens=None
     ):
-        return LLMResponse(llm="bad-llm", content="Nao consegui montar o JSON solicitado.")
+        return LLMResponse(
+            llm="bad-llm", content="Nao consegui montar o JSON solicitado."
+        )
 
-    monkeypatch.setattr(
-        quiz_generator_service,
-        "_candidate_llms_for_quiz",
-        fake_candidates,
-    )
-    monkeypatch.setattr(
-        quiz_generator_service,
-        "_resolve_llm_for_quiz",
-        fake_resolve,
-    )
-    monkeypatch.setattr(
-        quiz_generator_service,
-        "dispatch_single",
-        fake_dispatch_single,
-    )
+    _usa_fake_llm(monkeypatch, fake_dispatch_single)
 
     result = run(
         quiz_generator_service.generate_quiz(
             resumo=(
                 "O modelo entidade relacionamento organiza dados em entidades, "
-                "atributos e relacionamentos para apoiar o planejamento do banco. "
-                "A aula destacou que atributos descrevem características das "
-                "entidades e que relacionamentos representam associações."
+                "atributos e relacionamentos para apoiar o planejamento do banco."
             ),
             disciplina="Banco de Dados",
             titulo_aula="DER",
@@ -735,104 +901,315 @@ def test_quiz_service_builds_reviewable_fallback_when_llm_returns_no_json(monkey
         )
     )
 
-    assert len(result["questoes"]) >= 1
-    assert result["questoes"][0]["fallback"] is True
-    assert result["questoes"][0]["verificado"] is False
+    assert result["questoes"] == []
+    assert result["error"]
+    assert result["attempts"]
 
 
-def test_fallback_respeita_a_quantidade_pedida():
-    """O teto de 10 aqui ignorava o controle da tela, que aceita ate 50.
+def test_geracao_vai_em_lotes_ate_completar_o_pedido(monkeypatch):
+    """Dez questoes em um JSON so voltavam cortadas do provedor.
 
-    Pedir 20 devolvia 10 sem explicar, e a interface ainda ajustava o proprio
-    controle para 10 - parecia que o campo nao aceitava o valor.
+    Em lote de quatro cada resposta fecha, e o que o professor pediu sai
+    inteiro - antes o corte no meio do array era o que levava tudo para o
+    template.
     """
-    from app.services.quiz_generator_service import _fallback_quiz_questions
+    chamadas = []
+    _usa_fake_llm(monkeypatch, _fake_quiz_llm(chamadas))
 
-    conteudo = " ".join(
-        f"A aula explicou o conceito numero {i} com um exemplo pratico." 
-        for i in range(1, 31)
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo da aula sobre normalizacao e chaves.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=6,
+        )
     )
 
-    questoes = _fallback_quiz_questions(
-        conteudo,
-        quantidade_questoes=20,
-        tipos_questao=["multipla_escolha"],
-        dificuldade="media",
+    assert len(result["questoes"]) == 6
+    assert len(chamadas) == 2
+    # Segundo lote pede so o que falta, e leva a lista do que ja saiu.
+    assert "gere 2 quest" in chamadas[1]
+    assert "Perguntas já geradas" in chamadas[1]
+
+
+def test_progresso_e_reportado_lote_a_lote(monkeypatch):
+    """A tela espera minutos: sem andamento, parece travada."""
+    _usa_fake_llm(monkeypatch, _fake_quiz_llm([]))
+    marcos = []
+
+    run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo da aula sobre normalizacao e chaves.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=6,
+            on_progress=lambda prontas, total: marcos.append((prontas, total)),
+        )
     )
 
-    assert len(questoes) == 20
+    assert marcos[0] == (0, 6)
+    assert marcos[-1] == (6, 6)
 
 
-def test_fallback_nao_inventa_pergunta_alem_do_conteudo():
-    """Com pouca aula, o limite passa a ser o conteudo, e nao o pedido."""
-    from app.services.quiz_generator_service import _fallback_quiz_questions
+def test_pergunta_repetida_no_lote_seguinte_nao_entra_duas_vezes(monkeypatch):
+    """Pedir mais questoes nao pode virar a mesma pergunta N vezes."""
+    _usa_fake_llm(monkeypatch, _fake_quiz_llm([], repetidas=True))
 
-    # Frases curtas nao viram pergunta: o extrator exige 45 caracteres para
-    # haver contexto suficiente. Estas tres passam.
-    conteudo = (
-        "A aula tratou de normalizacao de tabelas e formas normais. "
-        "O professor mostrou um exemplo de tabela com dados repetidos. "
-        "Depois discutiu chaves estrangeiras e integridade referencial."
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo da aula sobre normalizacao.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=6,
+        )
     )
 
-    questoes = _fallback_quiz_questions(
-        conteudo,
-        quantidade_questoes=20,
-        tipos_questao=["multipla_escolha"],
-        dificuldade="media",
-    )
-
-    assert 0 < len(questoes) <= 3
+    enunciados = [questao["enunciado"] for questao in result["questoes"]]
+    assert len(enunciados) == len(set(enunciados)) == 1
 
 
-def test_fallback_de_multipla_escolha_traz_alternativas():
-    """Pergunta de multipla escolha sem opcoes nao e respondivel."""
-    from app.services.quiz_generator_service import _fallback_quiz_questions
+def test_alternativa_longa_volta_para_o_modelo_encurtar(monkeypatch):
+    """Alternativa longa nao cabe na tela nem da para ler no tempo da pergunta.
 
-    conteudo = " ".join(
-        f"A aula abordou o topico {i} em detalhe durante a explicacao."
-        for i in range(1, 8)
-    )
-
-    questoes = _fallback_quiz_questions(
-        conteudo,
-        quantidade_questoes=3,
-        tipos_questao=["multipla_escolha"],
-        dificuldade="media",
-    )
-
-    for questao in questoes:
-        assert questao["tipo"] == "multipla_escolha"
-        assert len(questao["opcoes"]) >= 2
-        assert any(op.get("correta") for op in questao["opcoes"])
-
-
-def test_pergunta_por_template_chega_marcada_na_interface(monkeypatch):
-    """A marca de "gerada por template" morria na serializacao.
-
-    `QuestionResponse` nao tinha o campo, e o Pydantic descarta o que nao esta
-    no modelo: a interface recebia perguntas de template sem nenhum sinal de que
-    nao foram escritas pela IA.
+    Encurtar mantendo o sentido e trabalho de quem escreveu a alternativa,
+    entao a primeira tentativa e devolver ao modelo.
     """
-    from app.models.schemas import QuestionResponse
-
-    questao = QuestionResponse(
-        id="q1",
-        quiz_id="quiz-1",
-        tipo="multipla_escolha",
-        dificuldade="medio",
-        enunciado="De acordo com a aula, qual afirmacao se relaciona a X?",
-        opcoes=[{"label": "A", "texto": "Sim", "correta": True}],
-        resposta_correta="A",
-        justificativa="Preparada automaticamente; revise antes de liberar.",
-        grounding_score=0.55,
-        verificado=False,
-        fallback=True,
-        created_at=datetime.now(timezone.utc),
+    longa = (
+        "A organizacao das tabelas em formas normais para eliminar "
+        "redundancia de dados e dependencias parciais"
+    )
+    _usa_fake_llm(
+        monkeypatch,
+        _fake_quiz_llm(
+            [],
+            opcao_longa=longa,
+            encurtamento=(
+                '{"questoes": [{"indice": 0, "opcoes": '
+                '[{"label": "A", "texto": "Normalizacao de tabelas"}]}]}'
+            ),
+        ),
     )
 
-    assert questao.fallback is True
-    assert questao.model_dump()["fallback"] is True
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo da aula sobre normalizacao.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=1,
+        )
+    )
+
+    opcoes = result["questoes"][0]["opcoes"]
+    assert opcoes[0]["texto"] == "Normalizacao de tabelas"
+    # O gabarito e casado por label: encurtar texto nao muda a resposta.
+    assert opcoes[0]["correta"] is True
+
+
+def test_alternativa_que_o_modelo_nao_encurtou_sai_aparada(monkeypatch):
+    """Se a reescrita falha, a alternativa ainda tem que caber na tela."""
+    longa = (
+        "A organizacao das tabelas em formas normais para eliminar "
+        "redundancia de dados e dependencias parciais"
+    )
+    _usa_fake_llm(monkeypatch, _fake_quiz_llm([], opcao_longa=longa))
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo da aula sobre normalizacao.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=1,
+        )
+    )
+
+    for opcao in result["questoes"][0]["opcoes"]:
+        assert not quiz_generator_service._option_is_long(opcao["texto"])
+
+
+def test_aparo_corta_a_explicacao_pendurada_na_alternativa():
+    """O modelo alonga pendurando explicacao depois de travessao ou parenteses."""
+    from app.services.quiz_generator_service import _trim_option
+
+    assert (
+        _trim_option(
+            "Terceira forma normal — quando nenhum atributo depende de outro "
+            "atributo nao chave"
+        )
+        == "Terceira forma normal"
+    )
+    assert (
+        _trim_option("Chave estrangeira (referencia a chave primaria de outra tabela)")
+        == "Chave estrangeira"
+    )
+
+
+def test_aparo_nao_deixa_palavra_solta_no_fim():
+    """Alternativa terminada em "de" sugere que falta texto."""
+    from app.services.quiz_generator_service import _trim_option
+
+    aparada = _trim_option(
+        "Conjunto de regras de integridade referencial aplicadas entre tabelas de "
+        "um mesmo banco"
+    )
+
+    assert not aparada.split()[-1].lower() in {"de", "da", "do", "e", "entre"}
+    assert not quiz_generator_service._option_is_long(aparada)
+
+
+# --- Geracao em segundo plano ---------------------------------------------
+
+
+async def _aguarda_job(job):
+    for _ in range(500):
+        if job.finished_at is not None:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("o job não terminou")
+
+
+def test_job_guarda_o_quiz_pronto_e_avisa_no_fim():
+    """Gerar leva minutos: a rota devolve o job e o aviso fecha o ciclo."""
+    from app.services import quiz_job_service
+
+    quiz_job_service.reset()
+    avisos = []
+
+    async def runner(job):
+        job.report(2, 2)
+        return {"quiz_id": "quiz-1", "questoes": [{"id": "a"}, {"id": "b"}]}
+
+    async def notify(job):
+        avisos.append((job.status, job.prontas))
+
+    async def cenario():
+        job = quiz_job_service.submit(
+            tutor_id="tutor-1",
+            total=2,
+            titulo="Quiz: Aula",
+            runner=runner,
+            notify=notify,
+        )
+        await _aguarda_job(job)
+        return job
+
+    job = run(cenario())
+
+    assert job.status == "done"
+    assert job.result["quiz_id"] == "quiz-1"
+    assert job.prontas == 2
+    assert avisos == [("done", 2)]
+    assert quiz_job_service.get_job(job.id, "tutor-1") is job
+
+
+def test_job_que_falha_guarda_a_frase_escrita_para_o_professor():
+    """`repr` de excecao nao diz nada a quem esta esperando o quiz."""
+    from app.services import quiz_job_service
+
+    quiz_job_service.reset()
+    avisos = []
+
+    async def runner(_job):
+        raise HTTPException(status_code=502, detail="A IA não gerou perguntas válidas.")
+
+    async def notify(job):
+        avisos.append(job.error)
+
+    async def cenario():
+        job = quiz_job_service.submit(
+            tutor_id="tutor-1",
+            total=3,
+            titulo="Quiz: Aula",
+            runner=runner,
+            notify=notify,
+        )
+        await _aguarda_job(job)
+        return job
+
+    job = run(cenario())
+
+    assert job.status == "error"
+    assert job.error == "A IA não gerou perguntas válidas."
+    assert avisos == ["A IA não gerou perguntas válidas."]
+
+
+def test_job_de_outro_professor_nao_e_visivel():
+    """Quiz em preparo e material de prova: nao vaza entre contas."""
+    from app.services import quiz_job_service
+
+    quiz_job_service.reset()
+
+    async def runner(_job):
+        return {"quiz_id": "quiz-1", "questoes": []}
+
+    async def cenario():
+        job = quiz_job_service.submit(
+            tutor_id="tutor-1",
+            total=1,
+            titulo="Quiz: Aula",
+            runner=runner,
+        )
+        await _aguarda_job(job)
+        return job
+
+    job = run(cenario())
+
+    assert quiz_job_service.get_job(job.id, "tutor-2") is None
+
+
+def test_rota_assincrona_devolve_o_job_sem_esperar_a_ia(monkeypatch):
+    """A fonte e validada na hora; so a parte demorada vai para a task."""
+    from app.services import quiz_job_service
+
+    capturado = {}
+
+    def fake_submit(*, tutor_id, total, titulo, runner, notify):
+        capturado.update(tutor_id=tutor_id, total=total, titulo=titulo)
+        return quiz_job_service.QuizJob(
+            id="job-1", tutor_id=tutor_id, total=total, titulo=titulo
+        )
+
+    monkeypatch.setattr(education.quiz_job_service, "submit", fake_submit)
+
+    resposta = run(
+        education.generate_quiz_in_background(
+            education.QuizCreateRequest(lesson_id="lesson-1", quantidade_questoes=7),
+            user={"tutor_id": "tutor-1", "uid": "user-1"},
+            db=QuizDb(_lesson()),
+        )
+    )
+
+    assert resposta["job_id"] == "job-1"
+    assert resposta["status"] == "pending"
+    assert capturado == {
+        "tutor_id": "tutor-1",
+        "total": 7,
+        "titulo": "Quiz: Normalizacao",
+    }
+
+
+def test_rota_assincrona_recusa_aula_sem_resumo():
+    """Job aceito que falha minutos depois e pior que um 400 imediato."""
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.generate_quiz_in_background(
+                education.QuizCreateRequest(lesson_id="lesson-1"),
+                user={"tutor_id": "tutor-1", "uid": "user-1"},
+                db=QuizDb(_lesson(summary="")),
+            )
+        )
+
+    assert error.value.status_code == 400
+
+
+def test_andamento_de_job_inexistente_responde_404():
+    from app.services import quiz_job_service
+
+    quiz_job_service.reset()
+
+    with pytest.raises(HTTPException) as error:
+        run(education.get_quiz_job("nao-existe", user={"tutor_id": "tutor-1"}))
+
+    assert error.value.status_code == 404
 
 
 def test_teto_de_tokens_acompanha_o_tamanho_do_quiz():
@@ -968,19 +1345,245 @@ def test_questao_sem_gabarito_e_marcada_para_revisao():
     assert questao["chave_ambigua"] is True
 
 
-def test_quiz_exige_uma_fonte_e_so_uma():
-    """Aula e material sao exclusivos: dois quizzes de origem ambigua seriam
-    impossiveis de rastrear na hora de revisar a pergunta."""
-    from app.models.schemas import QuizCreateRequest
-
-    for payload in (
-        QuizCreateRequest(),
-        QuizCreateRequest(lesson_id="aula-1", material_id="mat-1"),
-    ):
-        with pytest.raises(HTTPException) as error:
-            run(education.generate_quiz_from_lesson(
-                payload,
+def test_quiz_exige_ao_menos_uma_fonte():
+    """Sem fonte nao ha conteudo: o pedido e recusado antes de chamar a IA."""
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.generate_quiz_from_lesson(
+                QuizCreateRequest(),
                 user={"tutor_id": "tutor-1"},
                 db=QuizDb(_lesson()),
-            ))
-        assert error.value.status_code == 422
+            )
+        )
+
+    assert error.value.status_code == 422
+
+
+def _fake_generate(capturado, questoes=1):
+    async def fake_generate_quiz(**kwargs):
+        capturado.update(kwargs)
+        return {
+            "tempo_estimado": 8,
+            "questoes": [
+                {
+                    "tipo": "multipla_escolha",
+                    "enunciado": f"Pergunta {indice + 1}?",
+                    "opcoes": [
+                        {"label": "A", "texto": "Certa", "correta": True},
+                        {"label": "B", "texto": "Errada"},
+                    ],
+                    "resposta_correta": "A",
+                }
+                for indice in range(questoes)
+            ],
+        }
+
+    return fake_generate_quiz
+
+
+def test_quiz_junta_varias_aulas_com_material(monkeypatch):
+    """Revisao de prova junta as aulas do bimestre com a apostila.
+
+    Era o que a regra de "uma fonte so" impedia: o professor tinha de gerar um
+    quiz por aula e aplicar tres QR Codes seguidos.
+    """
+    capturado = {}
+    monkeypatch.setattr(
+        education.quiz_generator_service,
+        "generate_quiz",
+        _fake_generate(capturado),
+    )
+
+    db = MultiSourceDb(
+        lessons=[
+            _lesson(lesson_id="aula-1", title="Normalizacao"),
+            _lesson(lesson_id="aula-2", title="Chaves", summary="Resumo de chaves"),
+        ],
+        materials=[_material(content="Texto da apostila sobre SQL")],
+        segments={"aula-1": ["Transcricao da primeira aula."]},
+    )
+
+    resposta = run(
+        education.generate_quiz_from_lesson(
+            QuizCreateRequest(
+                lesson_ids=["aula-1", "aula-2"],
+                material_ids=["mat-1"],
+            ),
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    contexto = capturado["resumo"]
+    assert "=== AULA: Normalizacao ===" in contexto
+    assert "=== AULA: Chaves ===" in contexto
+    assert "=== MATERIAL DA DISCIPLINA: Apostila ===" in contexto
+
+    # Uma linha por fonte: e o que deixa rastrear de onde a pergunta saiu.
+    fontes = db.fontes()
+    assert [fonte.source_type for fonte in fontes] == [
+        "lesson",
+        "lesson",
+        "material",
+    ]
+    assert [fonte.source_id for fonte in fontes] == ["aula-1", "aula-2", "mat-1"]
+
+    quiz = next(item for item in db.added if isinstance(item, education.QuizModel))
+    assert quiz.titulo == "Quiz: Normalizacao + 2 fonte(s)"
+    # A coluna e NOT NULL: fica a primeira aula, e a origem completa esta acima.
+    assert quiz.lesson_id == "aula-1"
+    assert "3 fonte(s)" in resposta.message
+
+
+def test_quiz_aceita_atalho_singular_junto_com_a_lista(monkeypatch):
+    """`lesson_id` e o que cliente antigo manda, e soma com os plurais."""
+    capturado = {}
+    monkeypatch.setattr(
+        education.quiz_generator_service,
+        "generate_quiz",
+        _fake_generate(capturado),
+    )
+
+    db = MultiSourceDb(
+        lessons=[_lesson(lesson_id="aula-1")],
+        materials=[_material()],
+    )
+
+    run(
+        education.generate_quiz_from_lesson(
+            QuizCreateRequest(lesson_id="aula-1", material_id="mat-1"),
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert len(db.fontes()) == 2
+
+
+def test_fonte_repetida_entra_uma_vez_so(monkeypatch):
+    """Marcar a aula atual e a mesma aula na lista nao duplica o conteudo."""
+    capturado = {}
+    monkeypatch.setattr(
+        education.quiz_generator_service,
+        "generate_quiz",
+        _fake_generate(capturado),
+    )
+
+    db = MultiSourceDb(lessons=[_lesson(lesson_id="aula-1")])
+
+    run(
+        education.generate_quiz_from_lesson(
+            QuizCreateRequest(lesson_id="aula-1", lesson_ids=["aula-1"]),
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert len(db.fontes()) == 1
+    assert capturado["resumo"].count("=== AULA: Normalizacao ===") == 1
+
+
+def test_fonte_sem_texto_e_ignorada_e_dita_na_mensagem(monkeypatch):
+    """Fonte marcada que nao entrou precisa aparecer.
+
+    Sem isso o professor acha que a aula de hoje virou pergunta quando ela
+    estava vazia, e so descobre lendo as perguntas uma por uma.
+    """
+    capturado = {}
+    monkeypatch.setattr(
+        education.quiz_generator_service,
+        "generate_quiz",
+        _fake_generate(capturado),
+    )
+
+    db = MultiSourceDb(
+        lessons=[
+            _lesson(lesson_id="aula-1"),
+            _lesson(lesson_id="aula-2", title="Aula vazia", summary=""),
+        ],
+    )
+
+    resposta = run(
+        education.generate_quiz_from_lesson(
+            QuizCreateRequest(lesson_ids=["aula-1", "aula-2"]),
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    assert len(db.fontes()) == 1
+    assert "Aula vazia" in resposta.message
+    assert "=== AULA: Aula vazia ===" not in capturado["resumo"]
+
+
+def test_quiz_recusa_quando_nenhuma_fonte_tem_texto():
+    db = MultiSourceDb(
+        lessons=[_lesson(lesson_id="aula-1", summary="")],
+        materials=[_material(content="   ")],
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.generate_quiz_from_lesson(
+                QuizCreateRequest(lesson_ids=["aula-1"], material_ids=["mat-1"]),
+                user={"tutor_id": "tutor-1"},
+                db=db,
+            )
+        )
+
+    assert error.value.status_code == 400
+    assert "Apostila" in error.value.detail
+
+
+def test_aula_de_outro_professor_nao_entra_como_fonte():
+    """Marcar id alheio na lista nao pode virar pergunta com conteudo de outro."""
+    alheia = _lesson(lesson_id="aula-2")
+    alheia.tutor_id = "tutor-2"
+    db = MultiSourceDb(lessons=[_lesson(lesson_id="aula-1"), alheia])
+
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.generate_quiz_from_lesson(
+                QuizCreateRequest(lesson_ids=["aula-1", "aula-2"]),
+                user={"tutor_id": "tutor-1"},
+                db=db,
+            )
+        )
+
+    assert error.value.status_code == 404
+
+
+def test_muitas_fontes_dividem_o_teto_de_contexto(monkeypatch):
+    """Janela de modelo nao cresce porque o professor marcou mais aulas.
+
+    Quatro aulas inteiras passariam do que o provedor aceita, e a resposta
+    voltaria cortada - o defeito que fazia a geracao devolver quiz vazio.
+    """
+    capturado = {}
+    monkeypatch.setattr(
+        education.quiz_generator_service,
+        "generate_quiz",
+        _fake_generate(capturado),
+    )
+
+    enorme = "Frase longa da aula repetida muitas vezes. " * 3_000
+    db = MultiSourceDb(
+        lessons=[
+            _lesson(lesson_id=f"aula-{indice}", title=f"Aula {indice}", summary=enorme)
+            for indice in range(1, 5)
+        ],
+    )
+
+    run(
+        education.generate_quiz_from_lesson(
+            QuizCreateRequest(lesson_ids=[f"aula-{i}" for i in range(1, 5)]),
+            user={"tutor_id": "tutor-1"},
+            db=db,
+        )
+    )
+
+    contexto = capturado["resumo"]
+    assert all(f"=== AULA: Aula {i} ===" in contexto for i in range(1, 5))
+    # Quatro fontes, cada uma com a sua cota do teto - mais a moldura dos
+    # rotulos, que e curta.
+    assert len(contexto) <= education.QUIZ_CONTEXT_CHAR_BUDGET + 1_000

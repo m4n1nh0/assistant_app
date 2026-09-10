@@ -42,10 +42,9 @@ class _QuizPreview extends StatelessWidget {
     required this.attempts,
   });
 
-  /// Modelos que falharam, com o motivo. Explica por que as perguntas sairam
-  /// com cara de modelo: quando nenhum LLM entrega JSON valido, o servidor cai
-  /// para um gerador por template, e sem isso aqui o professor so ve o
-  /// resultado ruim, nao a causa.
+  /// Modelos que falharam, com o motivo. Explica por que vieram menos
+  /// perguntas do que o pedido: sem isso aqui o professor so ve o numero
+  /// menor, nao a causa.
   List<String> get _failures => [
         for (final attempt in attempts)
           if (attempt['success'] != true)
@@ -57,8 +56,6 @@ class _QuizPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final faltando = requested - questions.length;
-    final porTemplate =
-        questions.where((q) => q['fallback'] == true).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,12 +88,11 @@ class _QuizPreview extends StatelessWidget {
             ],
           ),
         ),
-        if (faltando > 0 || porTemplate > 0)
+        if (faltando > 0 || _failures.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: _AvisoGeracao(
               faltando: faltando,
-              porTemplate: porTemplate,
               failures: _failures,
             ),
           ),
@@ -122,20 +118,16 @@ class _QuizPreview extends StatelessWidget {
 /// Diz por que o resultado veio diferente do pedido.
 class _AvisoGeracao extends StatelessWidget {
   final int faltando;
-  final int porTemplate;
   final List<String> failures;
 
   const _AvisoGeracao({
     required this.faltando,
-    required this.porTemplate,
     required this.failures,
   });
 
   @override
   Widget build(BuildContext context) {
     final linhas = [
-      if (porTemplate > 0)
-        '$porTemplate pergunta(s) foram montadas por template, não pela IA.',
       if (faltando > 0)
         'Vieram $faltando a menos que o pedido: a aula pode não ter '
             'conteúdo suficiente, ou perguntas frágeis foram descartadas.',
@@ -213,10 +205,7 @@ class _QuestionCard extends StatelessWidget {
               _Etiqueta(_tipoLabel(tipo)),
               if (question['dificuldade'] != null)
                 _Etiqueta('${question['dificuldade']}'),
-              if (question['fallback'] == true)
-                const _Etiqueta('TEMPLATE', color: Colors.orange),
-              if (question['verificado'] == false &&
-                  question['fallback'] != true)
+              if (question['verificado'] == false)
                 const _Etiqueta('NÃO VERIFICADA', color: Colors.orange),
             ],
           ),

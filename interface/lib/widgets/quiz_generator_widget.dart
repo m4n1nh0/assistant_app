@@ -38,6 +38,9 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   bool _isGenerating = false;
   bool _isPublishing = false;
   String? _error;
+
+  /// O que o servidor esta fazendo agora, para a espera nao ser uma tela parada.
+  String _progress = '';
   String? _generatedQuizId;
   bool _quizPublished = false;
   List<Map<String, dynamic>> _generatedQuestions = const [];
@@ -45,15 +48,27 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   /// Quantas perguntas a menos vieram em relacao ao pedido.
   int _generatedShortfall = 0;
 
+  /// Resumo do servidor: de quantas fontes o quiz saiu e o que ficou de fora
+  /// por nao ter texto. Fonte marcada que nao entrou precisa aparecer aqui.
+  String _generatedMessage = '';
+
   /// Quantas foram efetivamente liberadas para os alunos.
   int _publishedCount = 0;
 
-  /// Tentativas por modelo, para a revisao explicar por que caiu no template.
+  /// Tentativas por modelo, para a revisao explicar por que vieram menos
+  /// perguntas do que o pedido.
   List<Map<String, dynamic>> _generationAttempts = const [];
 
-  /// Material escolhido como fonte. Nulo usa a aula gravada.
-  String? _materialId;
+  /// Fontes marcadas. Aulas e materiais se somam, em qualquer combinacao: a
+  /// revisao de prova junta as aulas do bimestre com a apostila.
+  late final Set<String> _lessonIds = {widget.lessonId};
+  final Set<String> _materialIds = {};
+
   List<CourseMaterial> _materials = const [];
+
+  /// Outras aulas da disciplina, para servirem de fonte junto com esta.
+  List<Lesson> _lessons = const [];
+
   int _questionCount = 10;
   String _quizType = 'pratica';
   String _difficulty = 'mista';
@@ -63,19 +78,27 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   @override
   void initState() {
     super.initState();
-    _loadMaterials();
+    _loadSources();
   }
 
-  /// Materiais da disciplina desta aula, para servirem de fonte alternativa.
+  /// Aulas e materiais da disciplina que podem entrar como fonte.
   ///
-  /// Falha em silencio de proposito: sem material a tela continua igual ao que
-  /// era, gerando a partir da aula.
-  Future<void> _loadMaterials() async {
+  /// Falha em silencio de proposito: sem a lista a tela continua utilizavel,
+  /// gerando a partir da aula atual, que ja vem marcada.
+  Future<void> _loadSources() async {
     try {
       final items = await education.listMaterials(
         discipline: widget.disciplineName,
       );
       if (mounted) setState(() => _materials = items);
+    } catch (_) {}
+
+    try {
+      final aulas = await education.listLessons(
+        discipline: widget.disciplineName,
+        limit: 30,
+      );
+      if (mounted) setState(() => _lessons = aulas);
     } catch (_) {}
   }
   final List<String> _difficulties = ['facil', 'medio', 'dificil', 'mista'];
@@ -121,23 +144,35 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     }
   }
 
+  /// Pede a geracao e acompanha ate terminar.
+  ///
+  /// Escrever as perguntas com a IA passa dos 30s que o cliente HTTP espera, e
+  /// o timeout fazia parecer que a geracao tinha falhado quando ela seguia
+  /// rodando no servidor. Agora o servidor devolve um `job_id` na hora e a tela
+  /// pergunta o andamento; quando termina, o professor tambem e avisado pelos
+  /// canais que ele configurou, para poder sair desta tela enquanto espera.
   Future<void> _generateQuiz() async {
+    if (_lessonIds.isEmpty && _materialIds.isEmpty) {
+      setState(() => _error = 'Marque ao menos uma aula ou material como fonte.');
+      _showErrorSnackbar(_error!);
+      return;
+    }
+
     setState(() {
       _isGenerating = true;
       _error = null;
+      _progress = 'Enviando o conteúdo para a IA...';
     });
 
     try {
-      // Chama endpoint para gerar quiz
       final response = await api.post(
-        '/education/quiz/generate',
+        '/education/quiz/generate/async',
         body: {
-          // Fonte unica: aula OU material. O servidor recusa os dois juntos,
-          // porque quiz de origem ambigua nao da para rastrear na revisao.
-          if (_materialId == null)
-            'lesson_id': widget.lessonId
-          else
-            'material_id': _materialId,
+          // Quantas fontes o professor marcar: o servidor junta os textos e
+          // grava uma linha por fonte, para a revisao saber de onde cada
+          // pergunta saiu.
+          'lesson_ids': _lessonIds.toList(),
+          'material_ids': _materialIds.toList(),
           'tipo_quiz': _quizType,
           'quantidade_questoes': _questionCount,
           'tipos_questao': ['multipla_escolha'],
@@ -150,39 +185,13 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
         throw Exception(response.error ?? 'Erro ao gerar quiz');
       }
 
-      final quizId = response.data['quiz_id']?.toString() ?? '';
-      if (quizId.isEmpty) {
-        throw Exception('Resposta sem identificador do quiz');
+      final jobId = response.data['job_id']?.toString() ?? '';
+      if (jobId.isEmpty) {
+        throw Exception('Resposta sem identificador da geração');
       }
-      final questions = response.data['questoes'];
-      final questionItems = questions is List
-          ? questions
-              .whereType<Map>()
-              .map((item) => item.map(
-                    (key, value) => MapEntry(key.toString(), value),
-                  ))
-              .toList()
-          : <Map<String, dynamic>>[];
-      final rawAttempts = response.data['attempts'];
-      setState(() {
-        _generatedQuizId = quizId;
-        _quizPublished = false;
-        _generatedQuestions = questionItems;
-        _generationAttempts = rawAttempts is List
-            ? rawAttempts
-                .whereType<Map>()
-                .map((item) =>
-                    item.map((k, v) => MapEntry(k.toString(), v)))
-                .toList()
-            : const [];
-        // O controle guarda o que foi *pedido*. Sobrescrever com o que voltou
-        // fazia o numero recuar sozinho e parecer que o campo nao aceitava o
-        // valor; a diferenca agora e dita em texto, no lugar de escondida.
-        _generatedShortfall = questionItems.isNotEmpty &&
-                questionItems.length < _questionCount
-            ? _questionCount - questionItems.length
-            : 0;
-      });
+
+      final quiz = await _waitForQuiz(jobId);
+      _applyGeneratedQuiz(quiz);
     } catch (e) {
       setState(() {
         _error = 'Erro ao gerar quiz: $e';
@@ -191,8 +200,92 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     } finally {
       setState(() {
         _isGenerating = false;
+        _progress = '';
       });
     }
+  }
+
+  /// Pergunta o andamento ate o quiz ficar pronto.
+  ///
+  /// O teto de espera e generoso de proposito: cinquenta perguntas em lotes,
+  /// com reescrita de alternativa longa, levam minutos em modelo local.
+  Future<Map<String, dynamic>> _waitForQuiz(String jobId) async {
+    const intervalo = Duration(seconds: 3);
+    const limite = Duration(minutes: 20);
+    final comeco = DateTime.now();
+
+    while (DateTime.now().difference(comeco) < limite) {
+      await Future<void>.delayed(intervalo);
+      if (!mounted) return const {};
+
+      final status = await api.get('/education/quiz/jobs/$jobId');
+      if (!status.success) {
+        throw Exception(status.error ?? 'Não foi possível acompanhar a geração');
+      }
+
+      final estado = status.data['status']?.toString() ?? '';
+      final mensagem = status.data['message']?.toString() ?? '';
+      if (mensagem.isNotEmpty && mensagem != _progress) {
+        setState(() => _progress = mensagem);
+      }
+
+      if (estado == 'done') {
+        final quiz = status.data['quiz'];
+        if (quiz is Map) {
+          return quiz.map((key, value) => MapEntry(key.toString(), value));
+        }
+        throw Exception('Geração terminou sem devolver o quiz');
+      }
+      if (estado == 'error') {
+        throw Exception(
+          status.data['error']?.toString() ?? 'A IA não gerou as perguntas',
+        );
+      }
+    }
+
+    throw Exception(
+      'A geração passou de 20 minutos. Ela continua no servidor: '
+      'você será avisado quando terminar.',
+    );
+  }
+
+  void _applyGeneratedQuiz(Map<String, dynamic> quiz) {
+    final quizId = quiz['quiz_id']?.toString() ?? '';
+    if (quizId.isEmpty) {
+      throw Exception('Resposta sem identificador do quiz');
+    }
+
+    final questions = quiz['questoes'];
+    final questionItems = questions is List
+        ? questions
+            .whereType<Map>()
+            .map((item) => item.map(
+                  (key, value) => MapEntry(key.toString(), value),
+                ))
+            .toList()
+        : <Map<String, dynamic>>[];
+
+    final rawAttempts = quiz['attempts'];
+
+    setState(() {
+      _generatedQuizId = quizId;
+      _quizPublished = false;
+      _generatedMessage = quiz['message']?.toString() ?? '';
+      _generatedQuestions = questionItems;
+      _generationAttempts = rawAttempts is List
+          ? rawAttempts
+              .whereType<Map>()
+              .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
+              .toList()
+          : const [];
+      // O controle guarda o que foi *pedido*. Sobrescrever com o que voltou
+      // fazia o numero recuar sozinho e parecer que o campo nao aceitava o
+      // valor; a diferenca agora e dita em texto, no lugar de escondida.
+      _generatedShortfall =
+          questionItems.isNotEmpty && questionItems.length < _questionCount
+              ? _questionCount - questionItems.length
+              : 0;
+    });
   }
 
   Future<void> _publishQuiz() async {
@@ -344,8 +437,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   }
 
   bool get _hasReviewWarnings => _generatedQuestions.any(
-        (question) =>
-            question['verificado'] == false || question['fallback'] == true,
+        (question) => question['verificado'] == false,
       );
 
   @override
@@ -476,6 +568,18 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
               ),
             ),
 
+            // Andamento: a geracao leva minutos, e barra parada sem texto
+            // parece travamento.
+            if (_isGenerating && _progress.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '$_progress Você pode fechar esta tela: o aviso chega '
+                  'quando o quiz ficar pronto.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+
             // Se quiz foi gerado, mostra perguntas antes de liberar o QR Code.
             if (_generatedQuizId != null)
               Padding(
@@ -504,6 +608,13 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                         ],
                       ),
                       const SizedBox(height: 8),
+                      if (_generatedMessage.isNotEmpty) ...[
+                        Text(
+                          _generatedMessage,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       if (_generatedQuestions.isNotEmpty) ...[
                         Text(
                           'Confira as perguntas antes de liberar o QR Code:',
@@ -682,12 +793,14 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     );
   }
 
-  /// Escolha da fonte do quiz: a aula gravada ou um material da disciplina.
+  /// Fontes do quiz: aulas da disciplina e materiais importados.
   ///
-  /// So aparece quando ha material: sem isso a tela ganharia um controle com
-  /// uma opcao so, e a aula continua sendo o caminho comum.
+  /// Multipla escolha de proposito. A aula atual ja vem marcada, porque e o
+  /// caminho comum, mas a revisao de prova precisa somar varias aulas com a
+  /// apostila - e antes isso obrigava a gerar um quiz por fonte e aplicar tres
+  /// QR Codes seguidos.
   Widget _buildSourcePicker() {
-    if (_materials.isEmpty) return const SizedBox.shrink();
+    final selecionadas = _lessonIds.length + _materialIds.length;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -695,42 +808,126 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Gerar a partir de:',
-            style: Theme.of(context).textTheme.bodySmall,
+            'Fontes do quiz: $selecionadas marcada(s)',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          Text(
+            'Aulas encerradas ou em andamento, e materiais importados. '
+            'Pode marcar quantas quiser.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[700],
+                ),
           ),
           const SizedBox(height: 6),
-          DropdownButtonFormField<String?>(
-            initialValue: _materialId,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              isDense: true,
-              contentPadding:
-                  EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade400),
+              borderRadius: BorderRadius.circular(8),
             ),
-            items: [
-              DropdownMenuItem<String?>(
-                value: null,
-                child: Text(
-                  'Aula: ${widget.lessonTitle}',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              for (final material in _materials)
-                DropdownMenuItem<String?>(
-                  value: material.id,
-                  child: Text(
-                    'Material: ${material.title.isEmpty ? material.filename : material.title}'
-                    ' (${material.pageCount}p)',
-                    overflow: TextOverflow.ellipsis,
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: ListView(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              children: [
+                for (final aula in _sourceLessons())
+                  _buildSourceTile(
+                    titulo: aula.id == widget.lessonId
+                        ? 'Aula atual: ${_lessonLabel(aula)}'
+                        : 'Aula: ${_lessonLabel(aula)}',
+                    detalhe: _lessonHint(aula),
+                    marcada: _lessonIds.contains(aula.id),
+                    onChanged: (marcar) => setState(() {
+                      if (marcar) {
+                        _lessonIds.add(aula.id);
+                      } else {
+                        _lessonIds.remove(aula.id);
+                      }
+                    }),
                   ),
-                ),
-            ],
-            onChanged: (value) => setState(() => _materialId = value),
+                for (final material in _materials)
+                  _buildSourceTile(
+                    titulo: 'Material: '
+                        '${material.title.isEmpty ? material.filename : material.title}',
+                    detalhe: '${material.pageCount} página(s)',
+                    marcada: _materialIds.contains(material.id),
+                    onChanged: (marcar) => setState(() {
+                      if (marcar) {
+                        _materialIds.add(material.id);
+                      } else {
+                        _materialIds.remove(material.id);
+                      }
+                    }),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildSourceTile({
+    required String titulo,
+    required String detalhe,
+    required bool marcada,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return CheckboxListTile(
+      value: marcada,
+      dense: true,
+      controlAffinity: ListTileControlAffinity.leading,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+      title: Text(
+        titulo,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      subtitle: Text(
+        detalhe,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 10,
+              color: Colors.grey[700],
+            ),
+      ),
+      onChanged: (valor) => onChanged(valor ?? false),
+    );
+  }
+
+  /// A aula atual primeiro, depois as outras da disciplina.
+  ///
+  /// A atual entra mesmo quando a listagem nao a trouxe (filtro de semestre,
+  /// limite de itens): sem ela a tela abriria sem nenhuma fonte marcada.
+  List<Lesson> _sourceLessons() {
+    final outras = _lessons.where((aula) => aula.id != widget.lessonId);
+    final atual = _lessons.where((aula) => aula.id == widget.lessonId);
+
+    return [
+      if (atual.isNotEmpty)
+        atual.first
+      else
+        Lesson(
+          id: widget.lessonId,
+          discipline: widget.disciplineName,
+          title: widget.lessonTitle,
+          classGroup: '',
+          status: 'closed',
+        ),
+      ...outras,
+    ];
+  }
+
+  String _lessonLabel(Lesson aula) =>
+      aula.title.isEmpty ? 'sem título' : aula.title;
+
+  /// O que decide se vale marcar a aula: ela tem texto?
+  String _lessonHint(Lesson aula) {
+    final temResumo = (aula.summary ?? '').trim().isNotEmpty;
+    return [
+      aula.isClosed ? 'encerrada' : 'em andamento',
+      temResumo ? 'com resumo' : 'sem resumo',
+      '${aula.transcriptChars} caracteres transcritos',
+    ].join(' · ');
   }
 
   Widget _buildSlider({

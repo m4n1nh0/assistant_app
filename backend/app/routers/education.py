@@ -5,7 +5,7 @@ from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import json
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from loguru import logger
@@ -27,6 +27,7 @@ from ..core.database import (
     QuizModel,
     QuestionModel,
     StudentAnswerModel,
+    AsyncSessionLocal,
     current_semester_code,
     get_db,
 )
@@ -86,7 +87,9 @@ from ..services import (
 )
 from ..services.voice_service import transcribe_audio, trim_transcript_overlap
 from ..services.user_llm_config_service import user_llm_context
-from ..services import material_service, quiz_generator_service
+from ..services import material_service, quiz_generator_service, quiz_job_service
+from ..services.notification_service import send_notification
+from ..services.runtime_config_service import load_notif_config
 
 settings = get_settings()
 
@@ -2241,89 +2244,36 @@ def _material_response(material: MaterialModel) -> MaterialResponse:
     )
 
 
-async def _generate_quiz_from_material(
-    request: QuizCreateRequest,
-    user: dict,
+#: Teto de caracteres do contexto que vai no prompt, somando todas as fontes.
+#: A janela do modelo nao cresce porque o professor marcou mais aulas: quatro
+#: aulas inteiras passariam do que o provedor aceita e a resposta voltaria
+#: cortada - que e o defeito que fazia a geracao devolver quiz vazio.
+QUIZ_CONTEXT_CHAR_BUDGET = 60_000
+
+#: Piso por fonte. Abaixo disso a fonte entra sem contexto suficiente para uma
+#: pergunta ancorada, e e melhor estourar um pouco o teto do que incluir sobra.
+QUIZ_SOURCE_MIN_CHARS = 3_000
+
+
+async def _lesson_source_text(
+    lesson: LessonModel,
+    tutor_id: str,
     db: AsyncSession,
-):
-    """Gera o quiz a partir de um material da disciplina.
+    limite: int,
+) -> str:
+    """Texto de uma aula para o prompt: resumo validado e o que foi transcrito.
 
-    Mesmo gerador da aula: o que muda e a fonte do texto. O recorte existe
-    porque material inteiro estoura a janela do modelo, e resposta cortada e o
-    que derruba o quiz no gerador por template.
+    O resumo vem primeiro e inteiro - e o texto que o professor conferiu. A
+    transcricao ocupa o que sobrou da cota, porque e a parte que cresce sem
+    limite e a que da para cortar sem perder o fio da aula.
     """
-    material = await db.get(MaterialModel, request.material_id)
-    if not material or material.tutor_id != user["tutor_id"]:
-        raise HTTPException(status_code=404, detail="Material não encontrado")
-
-    contexto = material_service.summary_for_quiz(material.content or "")
-    if not contexto.strip():
-        raise HTTPException(status_code=400, detail="Material sem texto.")
-
-    quiz_data = await quiz_generator_service.generate_quiz(
-        resumo="MATERIAL DA DISCIPLINA:\n" + contexto,
-        disciplina=material.discipline or "Geral",
-        titulo_aula=material.title or material.filename or "Material",
-        tipo_quiz=request.tipo_quiz,
-        quantidade_questoes=request.quantidade_questoes,
-        tipos_questao=["multipla_escolha"],
-        dificuldade=request.dificuldade,
-        llm=request.llm,
-    )
-    return await _persist_generated_quiz(
-        quiz_data,
-        request=request,
-        tutor_id=user["tutor_id"],
-        titulo=f"Quiz: {material.title or material.filename or 'Material'}",
-        source_type="material",
-        source_id=material.id,
-        source_label=material.title or material.filename,
-        db=db,
-    )
-
-
-@router.post("/quiz/generate")
-async def generate_quiz_from_lesson(
-    request: QuizCreateRequest,
-    user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Gera quiz automaticamente baseado no resumo de uma aula."""
-
-    tutor_id = user["tutor_id"]
-    lesson_id = request.lesson_id
-
-    if bool(request.lesson_id) == bool(request.material_id):
-        raise HTTPException(
-            status_code=422,
-            detail="Informe uma aula OU um material como fonte do quiz.",
-        )
-
-    if request.material_id:
-        return await _generate_quiz_from_material(request, user, db)
-
-    # Valida que a aula existe e pertence ao professor
-    lesson = await db.get(LessonModel, lesson_id)
-    if not lesson or lesson.tutor_id != tutor_id:
-        raise HTTPException(status_code=404, detail="Aula não encontrada")
-
-    if lesson.status != "closed":
-        raise HTTPException(
-            status_code=409,
-            detail="Encerre a gravação da aula antes de criar o quiz.",
-        )
-
-    resumo_completo = (lesson.summary or "").strip()
-    if not resumo_completo:
-        raise HTTPException(
-            status_code=400,
-            detail="Aula sem resumo. Gere um resumo antes de criar o quiz."
-        )
+    espaco = max(limite, QUIZ_SOURCE_MIN_CHARS)
+    resumo = (lesson.summary or "").strip()
 
     stmt = (
         select(LessonSegmentModel)
         .where(
-            LessonSegmentModel.lesson_id == lesson_id,
+            LessonSegmentModel.lesson_id == lesson.id,
             LessonSegmentModel.tutor_id == tutor_id,
         )
         .order_by(LessonSegmentModel.sequence, LessonSegmentModel.created_at)
@@ -2334,39 +2284,283 @@ async def generate_quiz_from_lesson(
         for segment in segments
         if (segment.text or "").strip()
     )
-    if transcript:
-        contexto_quiz = (
-            f"RESUMO VALIDADO DA AULA:\n{resumo_completo}\n\n"
-            f"TRANSCRIÇÃO DA AULA:\n{transcript[:60000]}"
+
+    blocos = []
+    if resumo:
+        blocos.append(f"RESUMO VALIDADO DA AULA:\n{resumo[:espaco]}")
+        espaco -= min(len(resumo), espaco)
+    if transcript and espaco > 500:
+        blocos.append(f"TRANSCRIÇÃO DA AULA:\n{transcript[:espaco]}")
+    return "\n\n".join(blocos)
+
+
+async def _quiz_generation_context(
+    request: QuizCreateRequest,
+    tutor_id: str,
+    db: AsyncSession,
+) -> Dict[str, Any]:
+    """Junta as fontes escolhidas em um contexto so para o gerador.
+
+    Aulas e materiais se somam, em qualquer combinacao: uma aula, tres aulas,
+    duas aulas com a apostila. O que decide se uma fonte entra e ter texto -
+    resumo validado ou a transcricao ja gravada -, nao a aula estar encerrada:
+    exigir encerramento impedia o quiz relampago no meio da aula, que e onde ele
+    mais serve.
+
+    Roda na requisicao, antes de o job existir, para fonte invalida responder
+    404/400 na hora: job aceito que falha minutos depois com "aula nao
+    encontrada" e muito pior de entender.
+    """
+
+    lesson_ids = request.lesson_sources()
+    material_ids = request.material_sources()
+    if not lesson_ids and not material_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe ao menos uma aula ou um material como fonte do quiz.",
         )
-    else:
-        contexto_quiz = resumo_completo
 
-    disciplina_nome = lesson.discipline or "Geral"
+    cota = max(
+        QUIZ_CONTEXT_CHAR_BUDGET // (len(lesson_ids) + len(material_ids)),
+        QUIZ_SOURCE_MIN_CHARS,
+    )
 
-    # Gera quiz via serviço
+    blocos: List[str] = []
+    fontes: List[Dict[str, str]] = []
+    disciplinas: List[str] = []
+    sem_texto: List[str] = []
+    primeira_aula = ""
+
+    for lesson_id in lesson_ids:
+        lesson = await db.get(LessonModel, lesson_id)
+        if not lesson or lesson.tutor_id != tutor_id:
+            raise HTTPException(status_code=404, detail="Aula não encontrada")
+
+        rotulo = lesson.title or "Aula"
+        texto = await _lesson_source_text(lesson, tutor_id, db, cota)
+        if not texto:
+            sem_texto.append(f'aula "{rotulo}"')
+            continue
+
+        blocos.append(f"=== AULA: {rotulo} ===\n{texto}")
+        fontes.append({"type": "lesson", "id": lesson.id, "label": rotulo})
+        if lesson.discipline:
+            disciplinas.append(lesson.discipline)
+        primeira_aula = primeira_aula or lesson.id
+
+    for material_id in material_ids:
+        material = await db.get(MaterialModel, material_id)
+        if not material or material.tutor_id != tutor_id:
+            raise HTTPException(status_code=404, detail="Material não encontrado")
+
+        rotulo = material.title or material.filename or "Material"
+        texto = material_service.summary_for_quiz(
+            material.content or "",
+            limit=cota,
+        ).strip()
+        if not texto:
+            sem_texto.append(f'material "{rotulo}"')
+            continue
+
+        blocos.append(f"=== MATERIAL DA DISCIPLINA: {rotulo} ===\n{texto}")
+        fontes.append({"type": "material", "id": material.id, "label": rotulo})
+        if material.discipline:
+            disciplinas.append(material.discipline)
+
+    if not blocos:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Nenhuma das fontes escolhidas tem texto: "
+                f"{', '.join(sem_texto)}. Grave ou resuma a aula, ou importe o "
+                "material, antes de gerar o quiz."
+            ),
+        )
+
+    rotulos = [fonte["label"] for fonte in fontes]
+    titulo = (
+        f"Quiz: {rotulos[0]}" if len(rotulos) == 1
+        else f"Quiz: {rotulos[0]} + {len(rotulos) - 1} fonte(s)"
+    )
+
+    return {
+        "resumo": "\n\n".join(blocos),
+        "disciplina": ", ".join(dict.fromkeys(disciplinas)) or "Geral",
+        "titulo_aula": rotulos[0],
+        "titulo": titulo,
+        "fontes": fontes,
+        "ignoradas": sem_texto,
+        # Quiz pode nao ter aula nenhuma, e a coluna e NOT NULL: fica a primeira
+        # aula que entrou, e a origem completa vive em `quiz_sources`.
+        "lesson_id": primeira_aula,
+    }
+
+
+async def _run_quiz_generation(
+    context: Dict[str, Any],
+    *,
+    request: QuizCreateRequest,
+    tutor_id: str,
+    db: AsyncSession,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> QuizGenerateResponse:
+    """Gera as perguntas com a IA e grava o quiz para revisao."""
+
     quiz_data = await quiz_generator_service.generate_quiz(
-        resumo=contexto_quiz,
-        disciplina=disciplina_nome,
-        titulo_aula=lesson.title or "Aula",
+        resumo=context["resumo"],
+        disciplina=context["disciplina"],
+        titulo_aula=context["titulo_aula"],
         tipo_quiz=request.tipo_quiz,
         quantidade_questoes=request.quantidade_questoes,
         tipos_questao=["multipla_escolha"],
         dificuldade=request.dificuldade,
         llm=request.llm,
+        on_progress=on_progress,
     )
 
     return await _persist_generated_quiz(
         quiz_data,
         request=request,
         tutor_id=tutor_id,
-        titulo=f"Quiz: {lesson.title or 'Aula'}",
-        source_type="lesson",
-        source_id=lesson.id,
-        source_label=lesson.title or "Aula",
+        titulo=context["titulo"],
+        fontes=context["fontes"],
+        ignoradas=context["ignoradas"],
         db=db,
-        lesson_id=lesson.id,
+        lesson_id=context["lesson_id"],
     )
+
+
+@router.post("/quiz/generate")
+async def generate_quiz_from_lesson(
+    request: QuizCreateRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gera o quiz e so responde quando ele esta pronto.
+
+    A tela usa `/quiz/generate/async`: escrever dez perguntas com a IA passa do
+    tempo que o cliente espera por uma resposta HTTP. Esta rota fica para
+    integracao e teste, onde esperar e aceitavel.
+    """
+
+    tutor_id = user["tutor_id"]
+    context = await _quiz_generation_context(request, tutor_id, db)
+    return await _run_quiz_generation(
+        context,
+        request=request,
+        tutor_id=tutor_id,
+        db=db,
+    )
+
+
+def _quiz_job_notifier(user_id: str):
+    """Aviso de fim de geracao pelos canais que o professor ja configurou.
+
+    O professor pede o quiz e sai da tela - e o objetivo de gerar em segundo
+    plano. Sem o aviso, ele so descobre que ficou pronto voltando para olhar.
+    """
+
+    async def notify(job) -> None:
+        if not user_id:
+            return
+        async with AsyncSessionLocal() as session:
+            config = await load_notif_config(session, user_id=user_id)
+
+        if job.status == "done":
+            mensagem = (
+                f'Quiz "{job.titulo}" pronto: {job.prontas} pergunta(s) '
+                "escritas pela IA, esperando sua revisão."
+            )
+        else:
+            mensagem = (
+                f'A geração do quiz "{job.titulo}" não terminou: '
+                f"{job.error or 'falha desconhecida'}"
+            )
+
+        await send_notification(mensagem, config, assistant_name="Modo Educação")
+
+    return notify
+
+
+@router.post("/quiz/generate/async", status_code=202)
+async def generate_quiz_in_background(
+    request: QuizCreateRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Registra a geracao e devolve o `job_id` na hora.
+
+    A fonte e validada aqui, ainda na requisicao: aula inexistente ou material
+    sem texto responde 404/400 imediato, em vez de virar um job que falha
+    minutos depois. O que vai para segundo plano e so o que demora - as
+    chamadas de IA e a gravacao.
+    """
+
+    tutor_id = user["tutor_id"]
+    user_id = str(user.get("uid") or "")
+    context = await _quiz_generation_context(request, tutor_id, db)
+
+    async def runner(job) -> Dict[str, Any]:
+        # Sessao propria: a da requisicao fecha assim que o 202 sai.
+        async with AsyncSessionLocal() as session:
+            response = await _run_quiz_generation(
+                context,
+                request=request,
+                tutor_id=tutor_id,
+                db=session,
+                on_progress=job.report,
+            )
+        return response.model_dump(mode="json")
+
+    job = quiz_job_service.submit(
+        tutor_id=tutor_id,
+        total=request.quantidade_questoes,
+        titulo=context["titulo"],
+        runner=runner,
+        notify=_quiz_job_notifier(user_id),
+    )
+    return job.to_dict()
+
+
+@router.get("/quiz/jobs/{job_id}")
+async def get_quiz_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Andamento de uma geracao em segundo plano."""
+
+    job = quiz_job_service.get_job(job_id, user["tutor_id"])
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Geração não encontrada. Ela é descartada algumas horas depois "
+                "de terminar, e também quando o servidor reinicia."
+            ),
+        )
+    return job.to_dict()
+
+
+def _mensagem_do_quiz(
+    total_questoes: int,
+    fontes: Sequence[Dict[str, str]],
+    ignoradas: Sequence[str],
+) -> str:
+    """Diz de onde o quiz saiu e o que ficou de fora.
+
+    Fonte marcada que nao entrou tem de aparecer: sem isso o professor acha que
+    a aula de hoje virou pergunta quando ela estava vazia, e so descobre o
+    contrario lendo as perguntas uma por uma.
+    """
+    partes = [
+        f"{total_questoes} questões preparadas para revisão",
+        f"de {len(fontes)} fonte(s)" if len(fontes) > 1 else "",
+        ". Libere o QR Code quando estiver pronto para aplicar.",
+    ]
+    mensagem = " ".join(parte for parte in partes[:2] if parte) + partes[2]
+    if ignoradas:
+        mensagem += f" Ficou de fora por não ter texto: {', '.join(ignoradas)}."
+    return mensagem
 
 
 async def _persist_generated_quiz(
@@ -2375,20 +2569,20 @@ async def _persist_generated_quiz(
     request: QuizCreateRequest,
     tutor_id: str,
     titulo: str,
-    source_type: str,
-    source_id: str,
-    source_label: str,
+    fontes: Sequence[Dict[str, str]],
     db: AsyncSession,
+    ignoradas: Sequence[str] = (),
     lesson_id: str = "",
 ):
-    """Valida, grava e devolve o quiz gerado, venha ele de aula ou de material.
+    """Valida, grava e devolve o quiz gerado, vindo de quantas fontes forem.
 
-    Compartilhado pelos dois caminhos de proposito: filtro de questao invalida,
-    serializacao das alternativas e resposta sao regra de quiz, nao de fonte -
-    duplicar isso deixaria os dois divergindo na primeira correcao.
+    Compartilhado por todos os caminhos de proposito: filtro de questao
+    invalida, serializacao das alternativas e resposta sao regra de quiz, nao de
+    fonte - duplicar isso deixaria os caminhos divergindo na primeira correcao.
 
     `lesson_id` vazio marca quiz sem aula. A coluna e NOT NULL e nao ha
-    migracao aqui, entao a origem real fica em `quiz_sources`.
+    migracao aqui, entao a origem real fica em `quiz_sources`, uma linha por
+    fonte.
     """
     if quiz_data.get("error"):
         raise HTTPException(
@@ -2422,12 +2616,13 @@ async def _persist_generated_quiz(
         total_questoes=len(questoes_geradas),
         tempo_estimado=quiz_data.get("tempo_estimado", 15),
     ))
-    db.add(QuizSourceModel(
-        quiz_id=quiz_id,
-        source_type=source_type,
-        source_id=source_id,
-        label=source_label or "",
-    ))
+    for fonte in fontes:
+        db.add(QuizSourceModel(
+            quiz_id=quiz_id,
+            source_type=fonte.get("type") or "lesson",
+            source_id=fonte.get("id") or "",
+            label=(fonte.get("label") or "")[:255],
+        ))
 
     questoes_responses = []
     for q_data in questoes_geradas:
@@ -2468,7 +2663,6 @@ async def _persist_generated_quiz(
             topico_origem=q_data.get("topico_origem"),
             grounding_score=q_data.get("grounding_score", 0.8),
             verificado=q_data.get("verificado", True),
-            fallback=q_data.get("fallback", False),
             created_at=datetime.now(timezone.utc),
         ))
 
@@ -2480,10 +2674,8 @@ async def _persist_generated_quiz(
         questoes=questoes_responses,
         tempo_estimado_resposta=quiz_data.get("tempo_estimado", 15),
         status="draft",
-        message=(
-            f"{len(questoes_responses)} questões preparadas para revisão. "
-            "Libere o QR Code quando estiver pronto para aplicar."
-        )
+        message=_mensagem_do_quiz(len(questoes_responses), fontes, ignoradas),
+        attempts=quiz_data.get("attempts", []),
     )
 
 

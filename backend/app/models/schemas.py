@@ -1416,10 +1416,6 @@ class QuestionResponse(QuestionCreate):
     quiz_id: str
     grounding_score: float = 0.0
     verificado: bool = False
-    #: True quando a pergunta saiu do gerador por template, e nao do modelo.
-    #: Sem isso na resposta, a interface nao tinha como avisar que aquelas
-    #: perguntas nao foram escritas pela IA - a informacao morria no servidor.
-    fallback: bool = False
     created_at: datetime
 
 
@@ -1437,15 +1433,31 @@ class MaterialResponse(BaseModel):
     created_at: datetime
 
 
-class QuizCreateRequest(BaseModel):
-    """Criacao de um quiz a partir de uma aula, de um material ou de perguntas.
+def _quiz_source_ids(values: List[Optional[str]]) -> List[str]:
+    """Limpa e desduplica ids de fonte, preservando a ordem de escolha."""
+    resultado: List[str] = []
+    for value in values:
+        item = (value or "").strip()
+        if item and item not in resultado:
+            resultado.append(item)
+    return resultado
 
-    `lesson_id` e `material_id` sao exclusivos: um quiz vem de uma fonte so, e
-    aceitar as duas deixaria ambiguo de onde o conteudo saiu na hora de revisar
-    a pergunta.
+
+class QuizCreateRequest(BaseModel):
+    """Criacao de um quiz a partir de aulas, de materiais ou dos dois juntos.
+
+    As fontes se somam. Revisao de prova junta tres aulas com a apostila, e era
+    isso que a regra antiga - uma fonte so, aula XOR material - impedia; de onde
+    cada pergunta saiu continua rastreavel porque `quiz_sources` guarda uma
+    linha por fonte.
+
+    `lesson_id` e `material_id` seguem valendo como atalho de fonte unica: e o
+    que cliente antigo manda, e entram na lista junto com os plurais.
     """
     lesson_id: Optional[str] = None
     material_id: Optional[str] = None
+    lesson_ids: List[str] = Field(default_factory=list)
+    material_ids: List[str] = Field(default_factory=list)
     tipo_quiz: Literal["revisao", "diagnostico", "pratica"] = "pratica"
     quantidade_questoes: int = Field(default=10, ge=1, le=50)
     tipos_questao: List[
@@ -1453,6 +1465,14 @@ class QuizCreateRequest(BaseModel):
     ] = Field(default_factory=lambda: ["multipla_escolha"])
     dificuldade: Literal["mista", "facil", "medio", "dificil"] = "mista"
     llm: Optional[str] = None
+
+    def lesson_sources(self) -> List[str]:
+        """Aulas escolhidas, do atalho singular e da lista, sem repetir."""
+        return _quiz_source_ids([self.lesson_id, *self.lesson_ids])
+
+    def material_sources(self) -> List[str]:
+        """Materiais escolhidos, do atalho singular e da lista, sem repetir."""
+        return _quiz_source_ids([self.material_id, *self.material_ids])
 
 
 class QuizResponse(BaseModel):
@@ -1480,6 +1500,10 @@ class QuizGenerateResponse(BaseModel):
     tempo_estimado_resposta: int
     status: str = "draft"
     message: str = ""
+    #: Uma entrada por chamada de modelo, com o erro quando houve. E o que
+    #: explica na revisao por que vieram menos perguntas do que o pedido; sem
+    #: o campo aqui o Pydantic descartava a lista e o professor so via o numero.
+    attempts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class StudentAnswerRequest(BaseModel):

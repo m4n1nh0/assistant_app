@@ -146,13 +146,28 @@ http://seu-dominio.com/education/quiz/quiz-abc123/play?lang=pt
 
 ### Gerar Quiz (Autenticado)
 
+As fontes se somam, em qualquer combinação: uma aula, três aulas, duas aulas
+com a apostila. `lesson_id` e `material_id` (singulares) continuam valendo como
+atalho de fonte única e entram junto com as listas.
+
+A aula **não precisa estar encerrada** — o que decide se ela entra é ter texto,
+seja o resumo validado ou a transcrição já gravada, o que permite o quiz
+relâmpago no meio da aula. Fonte marcada que está sem texto é ignorada e
+aparece nomeada no `message` da resposta; se nenhuma tem texto, a resposta é
+400. O contexto de todas as fontes soma no máximo 60 mil caracteres, dividido
+entre elas, porque a janela do modelo não cresce com o número de fontes.
+
+Cada fonte que entrou vira uma linha em `quiz_sources`, então dá para rastrear
+de onde cada pergunta saiu.
+
 ```
 POST /education/quiz/generate
 Content-Type: application/json
 Authorization: Bearer {token}
 
 {
-  "lesson_id": "aula-123",
+  "lesson_ids": ["aula-123", "aula-124"],
+  "material_ids": ["mat-1"],
   "tipo_quiz": "pratica|revisao|diagnostico",
   "quantidade_questoes": 10,
   "tipos_questao": ["multipla_escolha", "verdadeiro_falso", "aberta"],
@@ -178,6 +193,54 @@ Response:
   "status": "success"
 }
 ```
+
+### Gerar Quiz em Segundo Plano (Autenticado)
+
+Escrever as perguntas com a IA passa do tempo que o cliente HTTP espera, então
+a tela usa este caminho: a fonte é validada na hora e o trabalho segue em uma
+task própria. Ao terminar, o professor também é avisado pelos canais de
+notificação que ele já configurou (Telegram/WhatsApp).
+
+```
+POST /education/quiz/generate/async
+Content-Type: application/json
+Authorization: Bearer {token}
+
+(mesmo corpo de /education/quiz/generate)
+
+Response 202:
+{
+  "job_id": "job-abc123",
+  "status": "pending",
+  "total": 10,
+  "prontas": 0,
+  "titulo": "Quiz: Tema",
+  "message": "Lendo o conteúdo e preparando as perguntas...",
+  "quiz": null,
+  "error": null
+}
+```
+
+Andamento:
+
+```
+GET /education/quiz/jobs/{job_id}
+Authorization: Bearer {token}
+
+Response:
+{
+  "job_id": "job-abc123",
+  "status": "pending|running|done|error",
+  "total": 10,
+  "prontas": 6,
+  "message": "Escrevendo perguntas com a IA (6/10)...",
+  "quiz": { ...mesma resposta de /quiz/generate, quando status=done... },
+  "error": null
+}
+```
+
+O job vive no processo: reinício do backend descarta os que estavam em
+andamento, e os terminados saem depois de algumas horas.
 
 ### Responder Quiz (Público)
 
