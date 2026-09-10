@@ -191,17 +191,23 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
       }
 
       final quiz = await _waitForQuiz(jobId);
+      // Tela fechada no meio da espera: a geracao segue no servidor e o aviso
+      // chega pelos canais do professor. Mexer no estado aqui so quebraria.
+      if (quiz == null) return;
       _applyGeneratedQuiz(quiz);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = 'Erro ao gerar quiz: $e';
       });
       _showErrorSnackbar(_error!);
     } finally {
-      setState(() {
-        _isGenerating = false;
-        _progress = '';
-      });
+      if (mounted) {
+        setState(() {
+          _isGenerating = false;
+          _progress = '';
+        });
+      }
     }
   }
 
@@ -209,14 +215,14 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
   ///
   /// O teto de espera e generoso de proposito: cinquenta perguntas em lotes,
   /// com reescrita de alternativa longa, levam minutos em modelo local.
-  Future<Map<String, dynamic>> _waitForQuiz(String jobId) async {
+  Future<Map<String, dynamic>?> _waitForQuiz(String jobId) async {
     const intervalo = Duration(seconds: 3);
     const limite = Duration(minutes: 20);
     final comeco = DateTime.now();
 
     while (DateTime.now().difference(comeco) < limite) {
       await Future<void>.delayed(intervalo);
-      if (!mounted) return const {};
+      if (!mounted) return null;
 
       final status = await api.get('/education/quiz/jobs/$jobId');
       if (!status.success) {

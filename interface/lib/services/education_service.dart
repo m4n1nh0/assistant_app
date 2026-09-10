@@ -309,6 +309,20 @@ class EducationService {
     );
   }
 
+  /// Troca o status da aula na mao: `closed` encerra, `recording` reabre.
+  ///
+  /// Encerrar pela tela de gravacao passa pelo resumo, e resumo depende do
+  /// modelo responder. Quando ele falha a aula fica gravando para sempre, e e
+  /// por aqui que o professor conserta sem gerar resumo nenhum.
+  Future<Lesson> setLessonStatus(String lessonId, String status) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/lessons/$lessonId/status'),
+      headers: _headers,
+      body: jsonEncode({'status': status}),
+    );
+    return Lesson.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
   Future<Lesson> closeLesson(String lessonId) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/lessons/$lessonId/close'),

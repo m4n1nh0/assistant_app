@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.models.schemas import LessonSegmentUpdate
 from app.models.schemas import SemesterUpdate
@@ -339,3 +340,119 @@ def test_external_summary_belongs_to_the_tutor_that_owns_the_lesson():
         )
 
     assert error.value.status_code == 404
+
+
+# --- Status manual da aula -------------------------------------------------
+
+
+class StatusDb:
+    """Banco do caminho de status: pega a aula, grava e lista turmas."""
+
+    def __init__(self, lesson):
+        self.lesson = lesson
+        self.commits = 0
+
+    async def get(self, _model, item_id):
+        return self.lesson if item_id == self.lesson.id else None
+
+    async def execute(self, _query):
+        return _Result([])
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _item):
+        pass
+
+
+def _gravando():
+    lesson = _lesson()
+    lesson.status = "recording"
+    lesson.ended_at = None
+    lesson.teacher = "Mariano"
+    lesson.semester = "2026.2"
+    lesson.summary_style = "standard"
+    lesson.segment_count = 3
+    lesson.metadata_ = {}
+    return lesson
+
+
+def test_aula_encerra_na_mao_sem_passar_pelo_resumo():
+    lesson = _gravando()
+    db = StatusDb(lesson)
+
+    response = run(
+        education.set_lesson_status(
+            "l1",
+            education.LessonStatusUpdate(status="closed"),
+            user={"tutor_id": "t1"},
+            db=db,
+        )
+    )
+
+    # Encerrar pelo resumo depende do modelo responder; a aula que ficou aberta
+    # porque o resumo falhou se conserta por aqui, sem chamar LLM nenhum.
+    assert response.status == "closed"
+    assert lesson.ended_at is not None
+    assert db.commits == 1
+
+
+def test_aula_reaberta_perde_a_data_de_fim():
+    lesson = _gravando()
+    lesson.status = "closed"
+    lesson.ended_at = datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)
+    db = StatusDb(lesson)
+
+    response = run(
+        education.set_lesson_status(
+            "l1",
+            education.LessonStatusUpdate(status="recording"),
+            user={"tutor_id": "t1"},
+            db=db,
+        )
+    )
+
+    # Data de fim antiga em aula reaberta faz a aula parecer encerrada para
+    # tudo que le a data em vez do status.
+    assert response.status == "recording"
+    assert response.ended_at is None
+    assert lesson.ended_at is None
+
+
+def test_status_repetido_nao_regrava_a_aula():
+    lesson = _gravando()
+    db = StatusDb(lesson)
+
+    run(
+        education.set_lesson_status(
+            "l1",
+            education.LessonStatusUpdate(status="recording"),
+            user={"tutor_id": "t1"},
+            db=db,
+        )
+    )
+
+    assert db.commits == 0
+
+
+def test_status_fora_dos_dois_estados_e_recusado():
+    with pytest.raises(ValidationError):
+        education.LessonStatusUpdate(status="pausada")
+
+
+def test_aula_de_outro_professor_nao_muda_de_status():
+    lesson = _gravando()
+    db = StatusDb(lesson)
+
+    with pytest.raises(HTTPException) as error:
+        run(
+            education.set_lesson_status(
+                "l1",
+                education.LessonStatusUpdate(status="closed"),
+                user={"tutor_id": "outro"},
+                db=db,
+            )
+        )
+
+    assert error.value.status_code == 404
+    assert lesson.status == "recording"

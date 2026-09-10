@@ -695,6 +695,25 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     }
   }
 
+  /// Encerra a aula sem passar pelo resumo.
+  ///
+  /// O ENCERRAR ao lado gera o resumo e so entao fecha: quando o modelo nao
+  /// responde, o resumo falha e a aula fica gravando para sempre. Este caminho
+  /// so mexe no status, que e o que a tela de quiz e o historico leem.
+  Future<void> _closeWithoutSummary() async {
+    final lesson = _lesson;
+    if (lesson == null) return;
+    try {
+      final atualizada = await education.setLessonStatus(lesson.id, 'closed');
+      if (!mounted) return;
+      setState(() => _lesson = atualizada);
+      _setStatus('Aula encerrada sem resumo. O quiz aceita a transcricao.');
+      widget.onLessonClosedForQuiz?.call(atualizada);
+    } catch (e) {
+      _setStatus('Falha ao encerrar a aula: $e');
+    }
+  }
+
   // --- UI ------------------------------------------------------------------
 
   @override
@@ -999,6 +1018,13 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           ),
         ),
         const SizedBox(width: 8),
+        if (!lesson.isClosed)
+          IconButton(
+            tooltip: 'Encerrar sem gerar resumo',
+            icon: const Icon(Icons.stop_circle_outlined, size: 18),
+            color: AssistantTheme.textMuted,
+            onPressed: _summarising ? null : _closeWithoutSummary,
+          ),
         if (!lesson.isClosed)
           FilledButton.icon(
             onPressed:
@@ -1603,9 +1629,11 @@ class _QuizTabState extends State<_QuizTab> {
       _status = '';
     });
     try {
-      final lessons = (await education.listLessons(limit: 200))
-          .where((lesson) => lesson.isClosed)
-          .toList();
+      // Aula em andamento tambem serve de fonte: o quiz relampago no meio da
+      // aula e o caso que mais aparece, e filtrar por encerrada escondia
+      // justamente a aula de hoje - inclusive a que ficou aberta porque o
+      // resumo falhou na hora de encerrar.
+      final lessons = await education.listLessons(limit: 200);
       if (!mounted) return;
       final wanted = keepId ?? _selected?.id;
       final selected = wanted == null ? null : _findLesson(wanted, lessons);
@@ -1660,7 +1688,7 @@ class _QuizTabState extends State<_QuizTab> {
 
   Widget _buildList() {
     return _Panel(
-      title: 'AULAS ENCERRADAS',
+      title: 'AULAS',
       trailing: IconButton(
         tooltip: 'Atualizar aulas',
         visualDensity: VisualDensity.compact,
@@ -1673,7 +1701,7 @@ class _QuizTabState extends State<_QuizTab> {
           : _lessons.isEmpty
               ? const _EmptyState(
                   icon: Icons.quiz_outlined,
-                  text: 'Encerre uma gravacao para criar o quiz da aula.',
+                  text: 'Grave uma aula para criar o quiz dela.',
                 )
               : ListView.separated(
                   itemCount: _lessons.length,
@@ -1684,6 +1712,9 @@ class _QuizTabState extends State<_QuizTab> {
                     final selected = lesson.id == _selected?.id;
                     final hasSummary =
                         lesson.summary != null && lesson.summary!.isNotEmpty;
+                    // O que decide se a aula vira quiz e ter texto, nao estar
+                    // encerrada: resumo validado ou transcricao ja gravada.
+                    final temTexto = hasSummary || lesson.transcriptChars > 0;
                     final turmas = lesson.classLabels.isEmpty
                         ? (lesson.classGroup.isEmpty
                             ? 'sem turma'
@@ -1697,11 +1728,11 @@ class _QuizTabState extends State<_QuizTab> {
                         child: Row(
                           children: [
                             Icon(
-                              hasSummary
+                              temTexto
                                   ? Icons.quiz_outlined
                                   : Icons.summarize_outlined,
                               size: 14,
-                              color: hasSummary
+                              color: temTexto
                                   ? AssistantTheme.c3
                                   : AssistantTheme.textMuted,
                             ),
@@ -1722,7 +1753,10 @@ class _QuizTabState extends State<_QuizTab> {
                                   ),
                                   Text(
                                     '$turmas'
-                                    '${lesson.title.isEmpty ? "" : "  -  ${lesson.title}"}',
+                                    '${lesson.title.isEmpty ? "" : "  -  ${lesson.title}"}'
+                                    '  -  '
+                                    '${lesson.isClosed ? "encerrada" : "em andamento"}'
+                                    '${hasSummary ? ", com resumo" : ""}',
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                       fontSize: 10,
@@ -1748,19 +1782,21 @@ class _QuizTabState extends State<_QuizTab> {
         title: 'QUIZ DA AULA',
         child: _EmptyState(
           icon: Icons.quiz_outlined,
-          text: 'Escolha uma aula encerrada para preparar o quiz.',
+          text: 'Escolha uma aula para preparar o quiz.',
         ),
       );
     }
 
     final hasSummary = lesson.summary != null && lesson.summary!.isNotEmpty;
-    if (!hasSummary) {
+    // O gerador aceita resumo ou transcricao, e a aula nao precisa estar
+    // encerrada. So aula sem texto nenhum nao tem de onde tirar pergunta.
+    if (!hasSummary && lesson.transcriptChars == 0) {
       return const _Panel(
         title: 'QUIZ DA AULA',
         child: _EmptyState(
           icon: Icons.summarize_outlined,
-          text: 'Esta aula ja foi encerrada, mas ainda nao tem resumo. '
-              'Gere o resumo no historico antes de criar o quiz.',
+          text: 'Esta aula ainda nao tem texto: sem resumo e sem transcricao '
+              'gravada, nao ha de onde tirar as perguntas.',
         ),
       );
     }
@@ -1798,7 +1834,9 @@ class _QuizTabState extends State<_QuizTab> {
             ),
             const SizedBox(height: 4),
             Text(
-              '${_when(lesson)}  -  ${lesson.segmentCount} trecho(s), '
+              '${_when(lesson)}  -  '
+              '${lesson.isClosed ? "encerrada" : "em andamento"}  -  '
+              '${lesson.segmentCount} trecho(s), '
               '${lesson.transcriptChars} caracteres',
               style: const TextStyle(
                   fontSize: 11, color: AssistantTheme.textMuted),
@@ -3204,6 +3242,25 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
     titleCtrl.dispose();
   }
 
+  /// Encerra ou reabre a aula na mao.
+  ///
+  /// O ENCERRAR da gravacao passa pelo resumo: quando o modelo falha, a aula
+  /// fica gravando para sempre e some das telas que so olham aula encerrada.
+  /// Aqui o professor corrige o status sem depender de modelo nenhum.
+  Future<void> _toggleStatus(Lesson lesson) async {
+    final novo = lesson.isClosed ? 'recording' : 'closed';
+    try {
+      await education.setLessonStatus(lesson.id, novo);
+      if (!mounted) return;
+      setState(() => _status = novo == 'closed'
+          ? 'Aula encerrada.'
+          : 'Aula reaberta: da para continuar gravando nela.');
+      await _load(keepId: lesson.id);
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Falha ao mudar o status: $e');
+    }
+  }
+
   Future<void> _delete(Lesson lesson) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -3575,6 +3632,19 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
                           icon: const Icon(Icons.edit_outlined, size: 14),
                           color: AssistantTheme.textMuted,
                           onPressed: () => _edit(lesson),
+                        ),
+                        IconButton(
+                          tooltip: lesson.isClosed
+                              ? 'Reabrir aula para continuar gravando'
+                              : 'Encerrar aula sem gerar resumo',
+                          icon: Icon(
+                            lesson.isClosed
+                                ? Icons.lock_open_outlined
+                                : Icons.stop_circle_outlined,
+                            size: 14,
+                          ),
+                          color: AssistantTheme.textMuted,
+                          onPressed: () => _toggleStatus(lesson),
                         ),
                         IconButton(
                           tooltip: 'Apagar aula',

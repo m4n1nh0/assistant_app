@@ -1162,6 +1162,16 @@ class LessonUpdate(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class LessonStatusUpdate(BaseModel):
+    """Troca manual do status da aula.
+
+    `closed` encerra, `recording` reabre para continuar gravando. Sao os dois
+    unicos estados que a gravacao conhece; aceitar texto livre aqui deixaria a
+    aula em um status que nenhuma tela sabe ler.
+    """
+    status: Literal["recording", "closed"]
+
+
 class LessonSegmentResponse(BaseModel):
     """Um trecho transcrito da aula, na ordem em que foi gravado."""
     id: str

@@ -183,6 +183,24 @@ nada.
 Corrigir um trecho da transcrição continua invalidando o resumo, qualquer que
 seja o formato — ele precisa ser gerado de novo.
 
+## Status da aula
+
+Uma aula está **em andamento** ou **encerrada**. O botão **ENCERRAR** de
+`2. Gravar Aula` gera o resumo e só então encerra — quando o modelo não
+responde, o resumo falha e a aula continua em andamento.
+
+Para não depender disso, o status também se muda na mão:
+
+- em `2. Gravar Aula`, o ícone **Encerrar sem gerar resumo**, ao lado do
+  ENCERRAR, fecha a aula direto;
+- em `4. Histórico`, o ícone na linha da aula encerra a que ficou aberta ou
+  reabre a que encerrou antes da hora, para continuar gravando no mesmo
+  registro. Reabrir limpa a data de fim.
+
+O status não decide mais quem vira quiz: `3. Quiz` lista as aulas em andamento
+junto com as encerradas, porque o que o gerador precisa é texto — resumo
+validado ou transcrição já gravada.
+
 ## Segurança da chamada
 
 Cada QR Code usa um token temporário aleatório e o banco armazena apenas seu

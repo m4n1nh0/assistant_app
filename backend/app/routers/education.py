@@ -58,6 +58,7 @@ from ..models.schemas import (
     LessonSummaryRequest,
     LessonSummaryResponse,
     LessonUpdate,
+    LessonStatusUpdate,
     PointsReportEntry,
     PointsReportResponse,
     StudentBulkDeleteRequest,
@@ -1880,6 +1881,35 @@ async def close_lesson(
         await db.commit()
         await db.refresh(lesson)
     return _lesson_response(lesson)
+
+
+@router.post("/lessons/{lesson_id}/status", response_model=LessonResponse)
+async def set_lesson_status(
+    lesson_id: str,
+    body: LessonStatusUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Troca o status da aula na mao, sem depender do resumo.
+
+    Encerrar pela tela de gravacao passa pelo resumo, e o resumo depende de o
+    modelo responder: quando ele falha, a aula fica gravando para sempre. Aqui o
+    professor encerra a aula que ficou aberta, ou reabre a que encerrou antes da
+    hora para continuar gravando no mesmo registro.
+    """
+    lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
+    if lesson.status != body.status:
+        lesson.status = body.status
+        # `ended_at` acompanha o status: aula reaberta com data de fim antiga
+        # aparece encerrada em tudo que le a data em vez do status.
+        lesson.ended_at = (
+            datetime.now(timezone.utc) if body.status == "closed" else None
+        )
+        await db.commit()
+        await db.refresh(lesson)
+
+    classes = (await _classes_of([lesson.id], db)).get(lesson.id, [])
+    return _lesson_response(lesson, classes)
 
 
 # --- Pontuacao extra -------------------------------------------------------
