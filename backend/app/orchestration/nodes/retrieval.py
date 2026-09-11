@@ -12,6 +12,7 @@ encosta neste arquivo.
 from __future__ import annotations
 
 from typing import Any
+import unicodedata
 
 from langgraph.runtime import Runtime
 
@@ -28,6 +29,61 @@ _PREAMBLE = (
     "responder. Se nao responderem o que foi perguntado, diga isso em vez "
     "de completar com suposicao.\n"
 )
+
+_DISCIPLINE_PREAMBLE = (
+    "\n\nCatalogo educacional validado no banco relacional para este professor. "
+    "Se a pergunta tratar de uma disciplina, confirme se ela aparece neste "
+    "catalogo e use os trechos vetoriais somente quando forem da disciplina "
+    "correspondente. Se nao houver disciplina cadastrada ou nao houver trecho "
+    "relevante, informe isso claramente e nao invente conteudo de aula.\n"
+)
+
+
+def _normalize(value: str) -> str:
+    value = unicodedata.normalize("NFKD", value or "").lower()
+    return "".join(c for c in value if not unicodedata.combining(c))
+
+
+async def _education_catalog(tenant_id: str, message: str) -> str:
+    """Valida disciplinas no SQL antes de consultar/usar o RAG.
+
+    A consulta e propositalmente tolerante: se o banco estiver indisponivel,
+    o RAG continua funcionando e registra a falha no fluxo principal.
+    """
+    from ...core.database import AsyncSessionLocal, DisciplineModel
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(DisciplineModel)
+            .where(
+                DisciplineModel.tutor_id == tenant_id,
+                DisciplineModel.active.is_(True),
+            )
+            .order_by(DisciplineModel.name)
+        )
+        disciplines = result.scalars().all()
+
+    normalized_message = _normalize(message)
+    entries = []
+    matched = []
+    for item in disciplines:
+        name = str(item.name or "").strip()
+        code = str(item.code or "").strip()
+        if not name and not code:
+            continue
+        label = " - ".join(part for part in (code, name) if part)
+        entries.append(label)
+        if any(value and _normalize(value) in normalized_message for value in (name, code)):
+            matched.append(label)
+
+    catalog = ", ".join(entries) if entries else "nenhuma disciplina ativa cadastrada"
+    validation = (
+        f"Disciplina identificada na pergunta: {', '.join(matched)}."
+        if matched
+        else "Nenhum nome/codigo de disciplina foi identificado explicitamente na pergunta."
+    )
+    return _DISCIPLINE_PREAMBLE + f"Disciplinas: {catalog}\n{validation}\n"
 
 
 def format_context(chunks: list[RetrievedChunk]) -> str:
@@ -67,6 +123,18 @@ def build_retrieve_context(retrieval: RetrievalGateway | None = None):
             return update
 
         async with span("graph.retrieve_context", "rag", task=task) as observed:
+            catalog_context = ""
+            try:
+                catalog_context = await _education_catalog(
+                    tenant_id, state["message"]
+                )
+            except Exception as exc:
+                # O catalogo e uma validação adicional. Se o SQL estiver
+                # indisponivel, ainda tentamos responder com o indice vetorial.
+                observed.fail(exc)
+                update["errors"] = list(state.get("errors") or []) + [
+                    f"validacao de disciplina falhou: {exc}"
+                ]
             try:
                 gateway = retrieval or _default_gateway()
                 chunks = await _search(gateway, state["message"], tenant_id)
@@ -81,7 +149,7 @@ def build_retrieve_context(retrieval: RetrievalGateway | None = None):
                 }
             observed.set(chunks=len(chunks))
 
-        context = format_context(chunks)
+        context = catalog_context + format_context(chunks)
         if context:
             update["system_prompt"] = state["system_prompt"] + context
         return update

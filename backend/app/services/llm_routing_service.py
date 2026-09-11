@@ -49,6 +49,7 @@ _STUDY_PATTERNS = (
     r"\bconteud\w+\b", r"\bprova\b", r"\bavaliacao\b", r"\bexercici\w+",
     r"\btrabalho\s+da\s+\w+", r"\banotac\w+", r"\bresumo\s+da\s+aula\b",
     r"\bna\s+ultima\s+aula\b", r"\bo\s+que\s+(?:foi|vimos|estudamos)\b",
+    r"\bministr\w*\b", r"\bensin\w*\b",
 )
 
 _CALENDAR_PATTERNS = (
