@@ -49,6 +49,7 @@ from ..models.schemas import (
     AuthResponse, AuthStatusResponse, RegistrationTokenResponse,
     PasswordRecoveryRequest, PasswordRecoveryConfirmRequest,
     PublicMessageResponse,
+    TelegramLinkRequest,
 )
 from ..services.registration_invite_service import (
     RegistrationDeliveryError,
@@ -1891,6 +1892,32 @@ async def test_telegram(
     cfg = body or await _notif_cfg(db, user["uid"])
     ok, message = await test_telegram_connection(cfg)
     return {"ok": ok, "message": message}
+
+
+@router_notif.post("/telegram/connect")
+async def begin_telegram_link(
+    body: TelegramLinkRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.telegram_link_service import begin_link
+    try:
+        return await begin_link(db, user["uid"], body.telegram_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router_notif.post("/telegram/connect/confirm")
+async def confirm_telegram_link(
+    body: TelegramLinkRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.telegram_link_service import confirm_link
+    try:
+        return await confirm_link(db, user["uid"], body.telegram_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router_notif.post("/test/whatsapp")

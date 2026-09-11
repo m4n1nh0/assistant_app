@@ -464,6 +464,8 @@ que geram a ação `education_open` estão em
 | PUT | `/notifications/config` | Persistir configuração de Telegram e WhatsApp |
 | POST | `/notifications/send` | Enviar notificação |
 | POST | `/notifications/test/telegram` | Testar Telegram |
+| POST | `/notifications/telegram/connect` | Criar link temporário para conectar a conversa |
+| POST | `/notifications/telegram/connect/confirm` | Identificar e salvar a conversa confirmada pelo usuário |
 | POST | `/notifications/test/whatsapp` | Testar WhatsApp |
 
 `reminder_minutes` define a antecedência dos eventos entre 5 e 1.440 minutos

@@ -1165,6 +1165,37 @@ class ApiService {
     return NotificationTestResult.fromJson(data);
   }
 
+  Future<Map<String, dynamic>> _telegramLinkRequest(
+      String path, String token) async {
+    final r = await http
+        .post(
+          Uri.parse('$baseUrl/notifications/telegram/$path'),
+          headers: _headers,
+          body: jsonEncode({'telegram_token': token.trim()}),
+        )
+        .timeout(const Duration(seconds: 40));
+    final data = jsonDecode(r.body) as Map<String, dynamic>;
+    _throwIfHttpError(r, data: data, fallback: 'Falha ao conectar o Telegram');
+    return data;
+  }
+
+  Future<TelegramConnectLink> beginTelegramLink(String token) async {
+    final data = await _telegramLinkRequest('connect', token);
+    return TelegramConnectLink(
+      url: data['url'] as String,
+      botUsername: data['bot_username'] as String,
+    );
+  }
+
+  Future<TelegramConnectResult> confirmTelegramLink(String token) async {
+    final data = await _telegramLinkRequest('connect/confirm', token);
+    return TelegramConnectResult(
+      ok: data['ok'] == true,
+      chatId: data['chat_id']?.toString() ?? '',
+      message: data['message']?.toString() ?? '',
+    );
+  }
+
   Future<bool> testWhatsApp() async {
     final r = await http.post(Uri.parse('$baseUrl/notifications/test/whatsapp'),
         headers: _headers);
@@ -1370,6 +1401,25 @@ class GenericApiResponse {
     required this.statusCode,
     required this.data,
     this.error,
+  });
+}
+
+class TelegramConnectLink {
+  final String url;
+  final String botUsername;
+
+  const TelegramConnectLink({required this.url, required this.botUsername});
+}
+
+class TelegramConnectResult {
+  final bool ok;
+  final String chatId;
+  final String message;
+
+  const TelegramConnectResult({
+    required this.ok,
+    required this.chatId,
+    required this.message,
   });
 }
 

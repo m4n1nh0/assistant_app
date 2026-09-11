@@ -746,6 +746,22 @@ interface usa esses temporizadores apenas para o aviso visual; Telegram e
 WhatsApp ficam a cargo do scheduler do backend, inclusive com o app fechado,
 evitando que os dois lados enviem a mesma mensagem.
 
+Para receber no Telegram, informe o token do BotFather em
+`Configuracoes > Notificacoes` e clique em **Conectar meu Telegram**. No bot,
+toque em **Iniciar**, volte ao app e confirme a conexao. A conversa fica salva
+na sua conta sem precisar procurar o Chat ID. O link expira em dez minutos;
+tambem pode ser copiado para abrir no celular. O fluxo usa os
+[links de inicio do Telegram](https://core.telegram.org/bots/features#deep-linking)
+com um codigo aleatorio por conta. O `@nome` do bot identifica o bot, e nao a
+conversa que recebera suas notificacoes.
+
+A configuracao manual continua disponivel para grupos, canais e bots ligados
+a outro servico. A conexao automatica exige um bot sem webhook e consulta ate
+100 atualizacoes pendentes, sem confirma-las ou descarta-las. Se outro servico
+consumir o comando de inicio ou houver mais mensagens pendentes, use o Chat ID
+manual. Publique o backend com as duas rotas de conexao antes de distribuir a
+interface atualizada.
+
 O relatorio educacional em PDF passa por uma tela de preview e consolida tres
 quadros: horarios de aula por dia e disciplina, presencas/ausencias no periodo e
 listagem de disciplinas, turmas e alunos. O documento usa os mesmos dados do

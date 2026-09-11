@@ -262,6 +262,10 @@ class NotifConfig(BaseModel):
     include_link: bool = True
 
 
+class TelegramLinkRequest(BaseModel):
+    telegram_token: str = Field(min_length=1, max_length=256)
+
+
 class CalendarConfig(BaseModel):
     """Credenciais e estado de conexao dos calendarios Google e Microsoft."""
     google_client_id: str = ""

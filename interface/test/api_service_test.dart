@@ -312,6 +312,48 @@ void main() {
     expect(saved.reminderMinutes, 30);
   });
 
+  test('conexao do Telegram usa a sessao e descobre a conversa pelo backend',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    svc.setToken('account-session');
+    final client = MockClient((request) async {
+      expect(request.headers['authorization'], 'Bearer account-session');
+      expect(jsonDecode(request.body), {'telegram_token': '123:bot-token'});
+      if (request.url.path == '/notifications/telegram/connect') {
+        return http.Response(
+            '{"url":"https://t.me/ExampleBot?start=nonce",'
+            '"bot_username":"ExampleBot"}',
+            200);
+      }
+      expect(request.url.path, '/notifications/telegram/connect/confirm');
+      return http.Response(
+          '{"ok":true,"chat_id":"42",'
+          '"message":"Telegram conectado!"}',
+          200);
+    });
+    await http.runWithClient(() async {
+      final link = await svc.beginTelegramLink(' 123:bot-token ');
+      expect(link.url, 'https://t.me/ExampleBot?start=nonce');
+      expect(link.botUsername, 'ExampleBot');
+      final result = await svc.confirmTelegramLink('123:bot-token');
+      expect(result.ok, isTrue);
+      expect(result.chatId, '42');
+    }, () => client);
+  });
+
+  test('conexao pendente preserva a orientacao sem inventar um Chat ID',
+      () async {
+    final svc = ApiService(backendUrl: 'https://backend.test');
+    final result = await http.runWithClient(
+      () => svc.confirmTelegramLink('123:token'),
+      () => MockClient((_) async => http.Response(
+          '{"ok":false,"message":"Toque em Iniciar no Telegram."}', 200)),
+    );
+    expect(result.ok, isFalse);
+    expect(result.chatId, isEmpty);
+    expect(result.message, contains('Iniciar'));
+  });
+
   test('teste do Telegram passa pelo backend e preserva o diagnostico',
       () async {
     final svc = ApiService(backendUrl: 'https://backend.test');

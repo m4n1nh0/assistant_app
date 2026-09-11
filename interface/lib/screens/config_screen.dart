@@ -55,6 +55,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   final _backendUrlCtrl = TextEditingController();
   bool _backendTestBusy = false;
   bool _telegramTestBusy = false;
+  bool _telegramLinkBusy = false;
+  TelegramConnectLink? _telegramLink;
+  String _telegramLinkToken = '';
   final _voicePreviewPlayer = NeuralAudioPlayer();
   bool _voiceTestBusy = false;
   final _microphoneRecorder = AudioRecorder();
@@ -133,9 +136,17 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   }
 
   Future<void> _loadNotificationConfig() async {
+    final tokenBefore = _tgTokenCtrl.text;
+    final chatBefore = _tgChatCtrl.text;
     try {
       final notif = await api.getNotificationConfig();
-      if (!mounted) return;
+      if (!mounted ||
+          _telegramLinkBusy ||
+          _telegramLink != null ||
+          _tgTokenCtrl.text != tokenBefore ||
+          _tgChatCtrl.text != chatBefore) {
+        return;
+      }
       setState(() {
         _draft.notif = notif;
         _populateNotifFields();
@@ -455,6 +466,67 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       );
     } finally {
       if (mounted) setState(() => _telegramTestBusy = false);
+    }
+  }
+
+  Future<void> _connectTelegram() async {
+    if (_telegramLinkBusy) return;
+    final token = _tgTokenCtrl.text.trim();
+    if (token.isEmpty) {
+      _showSnack('Preencha o token do bot fornecido pelo BotFather.');
+      return;
+    }
+    setState(() => _telegramLinkBusy = true);
+    try {
+      final link = await api.beginTelegramLink(token);
+      if (!mounted) return;
+      setState(() {
+        _telegramLink = link;
+        _telegramLinkToken = token;
+      });
+      await ExternalLauncherService.openUrl(link.url);
+    } catch (e) {
+      if (mounted) {
+        _showSnack(
+            'Nao foi possivel abrir a conexao: ${api.friendlyNetworkError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _telegramLinkBusy = false);
+    }
+  }
+
+  Future<void> _confirmTelegram() async {
+    if (_telegramLinkBusy) return;
+    if (_tgTokenCtrl.text.trim() != _telegramLinkToken) {
+      setState(() => _telegramLink = null);
+      _showSnack('O token mudou. Clique em Conectar meu Telegram novamente.');
+      return;
+    }
+    setState(() => _telegramLinkBusy = true);
+    try {
+      final result = await api.confirmTelegramLink(_telegramLinkToken);
+      if (!mounted) return;
+      if (result.ok) {
+        setState(() {
+          _tgChatCtrl.text = result.chatId;
+          _tgTokenCtrl.text = _telegramLinkToken;
+          _draft.notif.tgToken = _telegramLinkToken;
+          _draft.notif.tgChatId = result.chatId;
+          _draft.notif.tgEnabled = true;
+          _telegramLink = null;
+        });
+        await StorageService.saveConfig(_draft);
+        if (!mounted) return;
+        ref.read(configProvider.notifier).replaceInMemory(_draft);
+      }
+      if (mounted) _showSnack(result.message);
+    } catch (e) {
+      if (mounted) {
+        _showSnack(
+            'Nao foi possivel confirmar: ${api.friendlyNetworkError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _telegramLinkBusy = false);
     }
   }
 
@@ -1300,15 +1372,51 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         _SectionCard(title: '✈️ TELEGRAM', children: [
           _Field('BOT TOKEN', _tgTokenCtrl,
               hint: '123456789:AABBcc...', obscure: true),
-          _Field('CHAT ID', _tgChatCtrl,
-              hint: 'Seu chat ID (use @userinfobot)'),
+          _ActionBtn(
+              label: _telegramLinkBusy
+                  ? '⏳ CONECTANDO...'
+                  : '✈️ Conectar meu Telegram',
+              onTap: _telegramLinkBusy || _telegramTestBusy
+                  ? null
+                  : _connectTelegram),
+          if (_telegramLink != null) ...[
+            _InfoBox(
+                'No Telegram, toque em Iniciar no @${_telegramLink!.botUsername}. '
+                'Depois volte aqui e confirme. O link vale por 10 minutos.'),
+            _ActionBtn(
+                label: 'Copiar link para abrir no celular',
+                onTap: () async {
+                  await Clipboard.setData(
+                      ClipboardData(text: _telegramLink!.url));
+                  if (mounted) {
+                    _showSnack('Link copiado. Abra no seu Telegram.');
+                  }
+                }),
+            _ActionBtn(
+                label: 'Ja toquei em Iniciar — confirmar conexao',
+                onTap: _telegramLinkBusy ? null : _confirmTelegram),
+          ],
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text('Configuracao manual (opcional)'),
+            children: [
+              _Field('CHAT ID DA CONVERSA', _tgChatCtrl,
+                  hint: 'ID numerico da conversa ou @canal'),
+              _InfoBox(
+                  'Para receber no seu Telegram pessoal, use Conectar meu Telegram. '
+                  'O @nome do bot nao identifica sua conversa.'),
+            ],
+          ),
           _ActionBtn(
               label: _telegramTestBusy
                   ? '⏳ TESTANDO TELEGRAM...'
                   : '📨 Testar Telegram',
-              onTap: _telegramTestBusy ? null : _testTelegram),
+              onTap: _telegramTestBusy || _telegramLinkBusy
+                  ? null
+                  : _testTelegram),
           _InfoBox(
-              'Obtenha o token em @BotFather e o Chat ID em @userinfobot no Telegram.'),
+              'Obtenha o token em @BotFather. Conecte sua conversa pelo bot, '
+              'sem precisar procurar o Chat ID.'),
         ]),
         _SectionCard(title: '💬 WHATSAPP', children: [
           _Label('PROVEDOR'),
