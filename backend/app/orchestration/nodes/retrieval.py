@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 import unicodedata
+from datetime import datetime, timedelta, timezone
 
 from langgraph.runtime import Runtime
 
@@ -86,6 +87,46 @@ async def _education_catalog(tenant_id: str, message: str) -> str:
     return _DISCIPLINE_PREAMBLE + f"Disciplinas: {catalog}\n{validation}\n"
 
 
+async def _lesson_sql_fallback(tenant_id: str, message: str) -> list[RetrievedChunk]:
+    """Recupera a aula por disciplina/data quando o vetor nao retornar nada."""
+    text = _normalize(message)
+    if "ontem" not in text:
+        return []
+    from ...core.database import AsyncSessionLocal, LessonModel, LessonSegmentModel
+    from sqlalchemy import func, select
+
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    async with AsyncSessionLocal() as db:
+        lessons = await db.scalars(
+            select(LessonModel).where(
+                LessonModel.tutor_id == tenant_id,
+                func.date(LessonModel.started_at) == yesterday,
+                LessonModel.discipline != "",
+            )
+        )
+        lesson_rows = list(lessons.all())
+        if not lesson_rows:
+            return []
+        segments = await db.scalars(
+            select(LessonSegmentModel)
+            .where(LessonSegmentModel.lesson_id.in_([item.id for item in lesson_rows]))
+            .order_by(LessonSegmentModel.lesson_id, LessonSegmentModel.sequence)
+            .limit(6)
+        )
+    by_id = {item.id: item for item in lesson_rows}
+    return [
+        RetrievedChunk(
+            content=str(segment.text or "").strip(),
+            score=1.0,
+            source=by_id[segment.lesson_id].discipline,
+            reference=f"{by_id[segment.lesson_id].discipline}, ontem",
+            metadata={"lesson_id": segment.lesson_id, "lesson_date": str(yesterday)},
+        )
+        for segment in segments.all()
+        if str(segment.text or "").strip()
+    ]
+
+
 def format_context(chunks: list[RetrievedChunk]) -> str:
     """Transforma os trechos recuperados no bloco que entra no prompt."""
     if not chunks:
@@ -149,6 +190,13 @@ def build_retrieve_context(retrieval: RetrievalGateway | None = None):
                 }
             observed.set(chunks=len(chunks))
 
+        if not chunks:
+            try:
+                chunks = await _lesson_sql_fallback(tenant_id, state["message"])
+            except Exception as exc:
+                update["errors"] = list(update.get("errors") or []) + [
+                    f"fallback relacional de aula falhou: {exc}"
+                ]
         context = catalog_context + format_context(chunks)
         if context:
             update["system_prompt"] = state["system_prompt"] + context
