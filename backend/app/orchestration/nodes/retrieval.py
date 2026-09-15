@@ -1,19 +1,27 @@
-"""No de RAG: classifica a tarefa e busca material de aula quando for estudo.
+"""No de RAG: ancora a pergunta no cadastro de aulas e so entao busca material.
 
-A busca vetorial so roda no ramo de conversa e so quando o pedido e de estudo.
-Acao local e consulta de agenda ja tem resposta propria, e pagar uma busca em
-toda mensagem encareceria o caminho mais comum sem melhorar resposta nenhuma.
+A ordem importa. Antes de perguntar ao indice vetorial "qual trecho parece com
+isso?", o no pergunta ao banco relacional "essa disciplina existe? houve aula
+nessa data? ela tem transcricao?". Sem essa ancora o vector store sempre devolve
+o trecho mais parecido que tiver - mesmo que seja de outra disciplina ou de
+outra semana - e a resposta sai confiante e errada.
 
-O no nao conhece Qdrant nem o servico de educacao: ele recebe um
-`RetrievalGateway`. Trocar o vector store, ou testar o no com um fake, nao
-encosta neste arquivo.
+Com a ancora, tres coisas mudam:
+
+- a busca vetorial e restrita as aulas identificadas, em vez de varrer o
+  semestre inteiro;
+- quando a aula existe mas o indice esta atrasado, a transcricao e lida direto
+  do banco, que e a fonte;
+- quando nao ha aula, o modelo recebe isso escrito e responde "nao houve aula
+  registrada nessa data" em vez de inventar conteudo.
+
+O no nao conhece Qdrant: ele recebe um `RetrievalGateway`. Trocar o vector
+store, ou testar o no com um fake, nao encosta neste arquivo.
 """
 
 from __future__ import annotations
 
-from typing import Any
-import unicodedata
-from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
 
 from langgraph.runtime import Runtime
 
@@ -21,8 +29,17 @@ from ...core.observability import span
 from ...ports.retrieval import RetrievalGateway, RetrievedChunk
 from ..state import NON_CHAT_KINDS, ChatGraphState, ChatRuntimeContext
 
+if TYPE_CHECKING:  # pragma: no cover - o import real e tardio, como o do banco
+    from ...services.lesson_context_service import LessonScope
+
 _STUDY_LIMIT = 6
 _STUDY_MIN_SCORE = 0.25
+# Com a aula ja identificada por disciplina e data, o corte pode ser mais baixo:
+# o risco de colar trecho de outro assunto e o filtro por aula que resolve, nao
+# o score. Exigir 0.25 aqui descartaria a propria aula pedida.
+_ANCHORED_MIN_SCORE = 0.1
+# Resumo cobre a aula inteira e come prompt; dois ja dao a visao geral.
+_SUMMARY_LIMIT = 2
 
 _PREAMBLE = (
     "\n\nTrechos das aulas gravadas pelo usuario que podem responder a "
@@ -30,101 +47,6 @@ _PREAMBLE = (
     "responder. Se nao responderem o que foi perguntado, diga isso em vez "
     "de completar com suposicao.\n"
 )
-
-_DISCIPLINE_PREAMBLE = (
-    "\n\nCatalogo educacional validado no banco relacional para este professor. "
-    "Se a pergunta tratar de uma disciplina, confirme se ela aparece neste "
-    "catalogo e use os trechos vetoriais somente quando forem da disciplina "
-    "correspondente. Se nao houver disciplina cadastrada ou nao houver trecho "
-    "relevante, informe isso claramente e nao invente conteudo de aula.\n"
-)
-
-
-def _normalize(value: str) -> str:
-    value = unicodedata.normalize("NFKD", value or "").lower()
-    return "".join(c for c in value if not unicodedata.combining(c))
-
-
-async def _education_catalog(tenant_id: str, message: str) -> str:
-    """Valida disciplinas no SQL antes de consultar/usar o RAG.
-
-    A consulta e propositalmente tolerante: se o banco estiver indisponivel,
-    o RAG continua funcionando e registra a falha no fluxo principal.
-    """
-    from ...core.database import AsyncSessionLocal, DisciplineModel
-    from sqlalchemy import select
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(DisciplineModel)
-            .where(
-                DisciplineModel.tutor_id == tenant_id,
-                DisciplineModel.active.is_(True),
-            )
-            .order_by(DisciplineModel.name)
-        )
-        disciplines = result.scalars().all()
-
-    normalized_message = _normalize(message)
-    entries = []
-    matched = []
-    for item in disciplines:
-        name = str(item.name or "").strip()
-        code = str(item.code or "").strip()
-        if not name and not code:
-            continue
-        label = " - ".join(part for part in (code, name) if part)
-        entries.append(label)
-        if any(value and _normalize(value) in normalized_message for value in (name, code)):
-            matched.append(label)
-
-    catalog = ", ".join(entries) if entries else "nenhuma disciplina ativa cadastrada"
-    validation = (
-        f"Disciplina identificada na pergunta: {', '.join(matched)}."
-        if matched
-        else "Nenhum nome/codigo de disciplina foi identificado explicitamente na pergunta."
-    )
-    return _DISCIPLINE_PREAMBLE + f"Disciplinas: {catalog}\n{validation}\n"
-
-
-async def _lesson_sql_fallback(tenant_id: str, message: str) -> list[RetrievedChunk]:
-    """Recupera a aula por disciplina/data quando o vetor nao retornar nada."""
-    text = _normalize(message)
-    if "ontem" not in text:
-        return []
-    from ...core.database import AsyncSessionLocal, LessonModel, LessonSegmentModel
-    from sqlalchemy import func, select
-
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-    async with AsyncSessionLocal() as db:
-        lessons = await db.scalars(
-            select(LessonModel).where(
-                LessonModel.tutor_id == tenant_id,
-                func.date(LessonModel.started_at) == yesterday,
-                LessonModel.discipline != "",
-            )
-        )
-        lesson_rows = list(lessons.all())
-        if not lesson_rows:
-            return []
-        segments = await db.scalars(
-            select(LessonSegmentModel)
-            .where(LessonSegmentModel.lesson_id.in_([item.id for item in lesson_rows]))
-            .order_by(LessonSegmentModel.lesson_id, LessonSegmentModel.sequence)
-            .limit(6)
-        )
-    by_id = {item.id: item for item in lesson_rows}
-    return [
-        RetrievedChunk(
-            content=str(segment.text or "").strip(),
-            score=1.0,
-            source=by_id[segment.lesson_id].discipline,
-            reference=f"{by_id[segment.lesson_id].discipline}, ontem",
-            metadata={"lesson_id": segment.lesson_id, "lesson_date": str(yesterday)},
-        )
-        for segment in segments.all()
-        if str(segment.text or "").strip()
-    ]
 
 
 def format_context(chunks: list[RetrievedChunk]) -> str:
@@ -158,72 +80,132 @@ def build_retrieve_context(retrieval: RetrievalGateway | None = None):
 
         task = detect_task(state["message"])
         update: dict[str, Any] = {"task_kind": task}
+        errors: list[str] = list(state.get("errors") or [])
 
         tenant_id = runtime.context.tutor_id
-        if task != "study" or not tenant_id:
+        if not tenant_id:
             return update
 
-        async with span("graph.retrieve_context", "rag", task=task) as observed:
-            catalog_context = ""
-            try:
-                catalog_context = await _education_catalog(
-                    tenant_id, state["message"]
-                )
-            except Exception as exc:
-                # O catalogo e uma validação adicional. Se o SQL estiver
-                # indisponivel, ainda tentamos responder com o indice vetorial.
-                observed.fail(exc)
-                update["errors"] = list(state.get("errors") or []) + [
-                    f"validacao de disciplina falhou: {exc}"
-                ]
+        # A checagem relacional roda mesmo fora do ramo de estudo: e uma
+        # consulta indexada numa tabela pequena, e e ela que descobre que
+        # "banco de dados" na frase e uma disciplina cadastrada - coisa que a
+        # heuristica de tarefa, que so olha palavra, nao tem como saber.
+        scope, scope_error = await _scope(
+            tenant_id, state["message"], runtime.context.timezone
+        )
+        if scope_error:
+            errors.append(scope_error)
+
+        if task != "study" and not scope.disciplines and not scope.lessons:
+            return _with_errors(update, errors, state)
+
+        async with span(
+            "graph.retrieve_context",
+            "rag",
+            task=task,
+            lessons=len(scope.lessons),
+        ) as observed:
             try:
                 gateway = retrieval or _default_gateway()
-                chunks = await _search(gateway, state["message"], tenant_id)
+                chunks = await _search(gateway, state["message"], tenant_id, scope)
             except Exception as exc:
                 # Falha de indice nao pode calar a resposta: o modelo responde
-                # do conhecimento geral, que e degradacao aceitavel.
+                # do que foi confirmado no banco, que e degradacao aceitavel.
                 observed.fail(exc)
-                return {
-                    **update,
-                    "errors": list(state.get("errors") or [])
-                    + [f"busca de aula falhou: {exc}"],
-                }
+                errors.append(f"busca de aula falhou: {exc}")
+                chunks = []
+            if not chunks and scope.transcribed:
+                # A aula esta no banco e faltou no indice. Ler a transcricao
+                # direto da fonte responde melhor do que nao responder.
+                try:
+                    chunks = await _transcript_fallback(scope)
+                except Exception as exc:
+                    observed.fail(exc)
+                    errors.append(f"leitura da transcricao falhou: {exc}")
+            chunks = _summaries(scope) + chunks
             observed.set(chunks=len(chunks))
 
-        if not chunks:
-            try:
-                chunks = await _lesson_sql_fallback(tenant_id, state["message"])
-            except Exception as exc:
-                update["errors"] = list(update.get("errors") or []) + [
-                    f"fallback relacional de aula falhou: {exc}"
-                ]
-        context = catalog_context + format_context(chunks)
+        from ...services.lesson_context_service import describe
+
+        context = describe(scope) + format_context(chunks)
         if context:
             update["system_prompt"] = state["system_prompt"] + context
-        return update
+        return _with_errors(update, errors, state)
 
     return retrieve_context
+
+
+def _with_errors(
+    update: dict[str, Any],
+    errors: list[str],
+    state: ChatGraphState,
+) -> dict[str, Any]:
+    """Anexa as falhas nao fatais acumuladas, quando houver alguma nova."""
+    if errors and errors != list(state.get("errors") or []):
+        update["errors"] = errors
+    return update
+
+
+async def _scope(
+    tenant_id: str,
+    message: str,
+    timezone_name: str,
+) -> tuple["LessonScope", str]:
+    """Confere disciplina, data e transcricao no banco relacional.
+
+    A consulta e propositalmente tolerante: com o SQL indisponivel o RAG
+    continua funcionando sem ancora, e a falha viaja no estado em vez de
+    derrubar a conversa.
+    """
+    from ...core.database import AsyncSessionLocal
+    from ...services import lesson_context_service
+
+    try:
+        async with AsyncSessionLocal() as db:
+            scope = await lesson_context_service.resolve(
+                db,
+                tutor_id=tenant_id,
+                message=message,
+                timezone_name=timezone_name,
+            )
+        return scope, ""
+    except Exception as exc:
+        return lesson_context_service.LessonScope(), f"validacao de aula falhou: {exc}"
+
+
+async def _transcript_fallback(scope: "LessonScope") -> list[RetrievedChunk]:
+    from ...core.database import AsyncSessionLocal
+    from ...services import lesson_context_service
+
+    async with AsyncSessionLocal() as db:
+        return await lesson_context_service.transcript_chunks(
+            db, scope, limit=_STUDY_LIMIT
+        )
+
+
+def _summaries(scope: "LessonScope") -> list[RetrievedChunk]:
+    from ...services.lesson_context_service import summary_chunks
+
+    return summary_chunks(scope)[:_SUMMARY_LIMIT]
 
 
 async def _search(
     retrieval: RetrievalGateway,
     message: str,
     tenant_id: str,
+    scope: "LessonScope",
 ) -> list[RetrievedChunk]:
     """Busca com reindexacao de recuperacao, quando o gateway oferecer."""
+    lesson_ids = scope.lesson_ids
+    min_score = _ANCHORED_MIN_SCORE if lesson_ids else _STUDY_MIN_SCORE
     catch_up = getattr(retrieval, "search_with_catch_up", None)
-    if catch_up is not None:
-        return await catch_up(
-            message,
-            tenant_id=tenant_id,
-            limit=_STUDY_LIMIT,
-            min_score=_STUDY_MIN_SCORE,
-        )
-    return await retrieval.search(
+    search = catch_up or retrieval.search
+    return await search(
         message,
         tenant_id=tenant_id,
         limit=_STUDY_LIMIT,
-        min_score=_STUDY_MIN_SCORE,
+        min_score=min_score,
+        lesson_ids=lesson_ids,
     )
 
 

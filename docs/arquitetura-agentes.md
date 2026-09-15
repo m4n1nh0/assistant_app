@@ -45,6 +45,7 @@ flowchart TB
 
     SUB -.->|ToolGateway| TG[Tool Service<br/>Registry · Executor]
     N3 -.->|RetrievalGateway| RAG[RAG<br/>LessonRetrievalGateway]
+    N3 -.->|lesson_context_service| REL[(MySQL<br/>disciplinas · aulas · transcricao)]
 
     TG -.->|MCPGateway| MCP[mcp-service<br/>Model Context Protocol]
     MCP --> EXT[(Sistemas externos)]
@@ -147,7 +148,7 @@ o VS Code.
 |---|---|---|
 | `detect_action` | Classifica em acao, consulta de agenda ou conversa | `RetryPolicy` |
 | `resolve_shortcut` | Casa a mensagem com atalho cadastrado | Degrada para conversa |
-| `retrieve_context` | Classifica a tarefa e busca aula quando for estudo | Degrada sem contexto |
+| `retrieve_context` | Ancora a pergunta no cadastro (disciplina, data, transcricao) e busca a aula com esse escopo | Degrada sem contexto |
 | `acknowledge_action` | Confirma a acao ao usuario | — |
 | `query_calendar` | Executa a consulta de agenda | Mensagem de erro controlada |
 | `dispatch_single` | Entrega ao subgrafo de agente | Fallback entre provedores |
@@ -354,13 +355,45 @@ POST /mcp/reset                   descarta cache e fecha o disjuntor
 ## 7. RAG
 
 ```
-retrieve_context (no) → RetrievalGateway → LessonRetrievalGateway
-                                         → qdrant_service → Qdrant
-                                         → embedding_service (cascata)
+retrieve_context (no) → lesson_context_service → MySQL (disciplina · aula · transcricao)
+                      → RetrievalGateway  → LessonRetrievalGateway
+                                          → qdrant_service → Qdrant (filtrado por lesson_id)
+                                          → embedding_service (cascata)
 ```
 
-- A busca so roda **no ramo de conversa** e **so quando a tarefa e estudo**.
-  Pagar busca vetorial em toda mensagem encareceria o caminho mais comum.
+### 7.1 Ancoragem antes da busca
+
+O vector store nao sabe dizer "essa disciplina nao existe" nem "nao houve aula
+nesse dia": ele devolve sempre o trecho mais parecido que tiver. Quem sabe disso
+e o banco relacional. Por isso a pergunta passa primeiro por
+`lesson_context_service.resolve`, que responde tres coisas:
+
+1. **a disciplina citada esta no cadastro deste professor?** O casamento e
+   tolerante - "banco de dados" acha `ARA0040 - BANCO DE DADOS`, por texto ou
+   por conjunto de palavras, e o codigo tambem vale;
+2. **houve aula na data pedida?** "hoje", "ontem", "14/09", "dia 11" e dia da
+   semana viram data no fuso do professor, e a data escrita em numero ganha da
+   palavra. A data da aula e comparada no fuso local, senao a aula da noite cai
+   no dia seguinte em UTC;
+3. **essa aula tem transcricao?** A contagem sai de `lesson_segments`.
+
+O resultado vira duas coisas: o escopo (`lesson_ids`) que restringe a busca
+vetorial aa aula certa, e um bloco de fatos confirmados no prompt - inclusive o
+"nao ha aula registrada nessa data", que e justamente o que o modelo nao tinha
+como saber.
+
+### 7.2 Regras
+
+- A verificacao relacional roda no ramo de conversa (uma consulta indexada em
+  tabela pequena). A **busca vetorial** so roda quando a tarefa e estudo ou
+  quando uma disciplina cadastrada foi reconhecida na frase - pagar vetor em
+  toda mensagem encareceria o caminho mais comum.
+- Com a aula identificada, o corte de similaridade cai (`0.1` em vez de `0.25`):
+  quem separa assunto errado ali e o filtro por aula, nao o score.
+- Aula ancorada entra no prompt com o **resumo ja gerado** junto dos trechos: o
+  resumo cobre a aula inteira, o trecho cobre um ponto dela.
+- Indice vazio com aula transcrita no banco **le a transcricao direto do MySQL**,
+  que e a fonte; o Qdrant e indice derivado e pode estar atrasado.
 - `tenant_id` e obrigatorio no contrato: a colecao e compartilhada e o
   isolamento e feito no filtro.
 - Sem resultado, uma reindexacao de recuperacao roda **uma vez**, com intervalo

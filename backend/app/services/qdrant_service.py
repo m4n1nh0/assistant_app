@@ -17,7 +17,7 @@ import asyncio
 import hashlib
 import math
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 from qdrant_client import QdrantClient
@@ -25,6 +25,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    MatchAny,
     MatchValue,
     PointStruct,
     Range,
@@ -397,6 +398,7 @@ def _lesson_filter(
     lesson_id: Optional[str],
     ts_from: Optional[int],
     ts_to: Optional[int],
+    lesson_ids: Sequence[str] = (),
 ) -> Filter:
     must: List[Any] = [
         FieldCondition(key="tutor_id", match=MatchValue(value=tutor_id))
@@ -405,6 +407,13 @@ def _lesson_filter(
         must.append(FieldCondition(key="discipline", match=MatchValue(value=discipline)))
     if lesson_id:
         must.append(FieldCondition(key="lesson_id", match=MatchValue(value=lesson_id)))
+    elif lesson_ids:
+        # Uma pergunta ancorada em disciplina e data ja sabe de quais aulas a
+        # resposta pode sair; sem este filtro a busca traz a aula mais parecida
+        # do semestre inteiro e a resposta fala do dia errado.
+        must.append(
+            FieldCondition(key="lesson_id", match=MatchAny(any=list(lesson_ids)))
+        )
     if ts_from is not None or ts_to is not None:
         # Epoch inteiro em vez de data textual: o Qdrant exige RFC3339 completo
         # em DatetimeRange, e "2026-08-04" sozinho nao passa na validacao.
@@ -422,6 +431,7 @@ async def search_lesson_transcripts(
     lesson_id: Optional[str] = None,
     ts_from: Optional[int] = None,
     ts_to: Optional[int] = None,
+    lesson_ids: Sequence[str] = (),
     limit: int = 8,
 ) -> List[Dict[str, Any]]:
     """Busca semantica nos trechos de aula de um usuario.
@@ -431,6 +441,8 @@ async def search_lesson_transcripts(
         query: pergunta em linguagem natural.
         discipline: restringe a uma disciplina.
         lesson_id: restringe a uma aula.
+        lesson_ids: restringe a um conjunto de aulas, quando a pergunta ja foi
+            ancorada em disciplina e data no banco relacional.
         ts_from: inicio da janela de tempo dentro da aula, em segundos.
         ts_to: fim da janela de tempo dentro da aula, em segundos.
         limit: maximo de trechos devolvidos.
@@ -440,7 +452,9 @@ async def search_lesson_transcripts(
     """
     await ensure_lesson_collection()
     vector = await embedding_service.embed_text(query)
-    query_filter = _lesson_filter(tutor_id, discipline, lesson_id, ts_from, ts_to)
+    query_filter = _lesson_filter(
+        tutor_id, discipline, lesson_id, ts_from, ts_to, lesson_ids
+    )
 
     try:
         hits = await asyncio.to_thread(

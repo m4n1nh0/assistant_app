@@ -15,7 +15,7 @@ ganhar compatibilidade com cadeias que o projeto nao usa.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from loguru import logger
 
@@ -33,6 +33,7 @@ class LessonRetrievalGateway:
         tenant_id: str,
         limit: int = 6,
         min_score: float = 0.0,
+        lesson_ids: Sequence[str] = (),
     ) -> list[RetrievedChunk]:
         """Trechos de aula mais proximos da pergunta.
 
@@ -45,6 +46,8 @@ class LessonRetrievalGateway:
             tenant_id: perfil dono das aulas.
             limit: maximo de trechos.
             min_score: corte de similaridade.
+            lesson_ids: aulas as quais restringir a busca, quando a pergunta ja
+                foi ancorada em disciplina e data.
 
         Returns:
             Os trechos relevantes, ja filtrados por score.
@@ -55,13 +58,18 @@ class LessonRetrievalGateway:
         from ...services import qdrant_service
 
         async with span(
-            "rag.lesson_search", "rag", limit=limit, min_score=min_score
+            "rag.lesson_search",
+            "rag",
+            limit=limit,
+            min_score=min_score,
+            lessons=len(lesson_ids),
         ) as observed:
             try:
                 hits = await qdrant_service.search_lesson_transcripts(
                     tutor_id=tenant_id,
                     query=query,
                     limit=limit,
+                    lesson_ids=tuple(lesson_ids),
                 )
             except Exception as exc:
                 observed.fail(exc)
@@ -80,6 +88,7 @@ class LessonRetrievalGateway:
         tenant_id: str,
         limit: int = 6,
         min_score: float = 0.0,
+        lesson_ids: Sequence[str] = (),
     ) -> list[RetrievedChunk]:
         """Busca e, se nao achar nada, reindexa uma vez antes de desistir.
 
@@ -89,7 +98,11 @@ class LessonRetrievalGateway:
         reindexacao em loop.
         """
         found = await self.search(
-            query, tenant_id=tenant_id, limit=limit, min_score=min_score
+            query,
+            tenant_id=tenant_id,
+            limit=limit,
+            min_score=min_score,
+            lesson_ids=lesson_ids,
         )
         if found:
             return found
@@ -102,7 +115,11 @@ class LessonRetrievalGateway:
         if not outcome.get("indexed"):
             return []
         return await self.search(
-            query, tenant_id=tenant_id, limit=limit, min_score=min_score
+            query,
+            tenant_id=tenant_id,
+            limit=limit,
+            min_score=min_score,
+            lesson_ids=lesson_ids,
         )
 
 

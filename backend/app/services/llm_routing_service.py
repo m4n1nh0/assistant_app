@@ -50,6 +50,9 @@ _STUDY_PATTERNS = (
     r"\btrabalho\s+da\s+\w+", r"\banotac\w+", r"\bresumo\s+da\s+aula\b",
     r"\bna\s+ultima\s+aula\b", r"\bo\s+que\s+(?:foi|vimos|estudamos)\b",
     r"\bministr\w*\b", r"\bensin\w*\b",
+    # A transcricao e a fonte do RAG de aula: quem a cita esta pedindo material
+    # gravado, e nao pode cair na rota generica so por nao ter escrito "aula".
+    r"\btranscric\w+", r"\bturma\b",
 )
 
 _CALENDAR_PATTERNS = (

@@ -325,7 +325,7 @@ flowchart TD
     Health[Health paralelo: endpoint, saldo e modelo] --> Start([START])
     Start --> Detect[detect_action]
     Detect --> Shortcut[resolve_shortcut]
-    Shortcut --> Ctx[retrieve_context: classifica tarefa e busca RAG]
+    Shortcut --> Ctx[retrieve_context: classifica tarefa, valida aula e busca RAG]
     Ctx --> Route{Rota}
     Route -->|acao local| Ack[acknowledge_action]
     Route -->|consulta agenda| Cal[query_calendar]
@@ -360,10 +360,25 @@ expressa a transferencia entre agentes como transicao do grafo, e `RetryPolicy`
 cobre a falha do no. O estado do grafo guarda so o que decide o fluxo; prompt,
 provedores e tetos viajam em `context_schema`, fora do estado persistido.
 
-O no `retrieve_context` faz duas coisas antes de qualquer provedor ser
-escolhido: classifica o pedido (`code`, `study`, `calendar`, `general`) e, so
-quando e estudo, busca trechos das aulas gravadas no Qdrant e os anexa ao
-prompt. A busca vetorial nao roda no caminho comum de conversa.
+O no `retrieve_context` faz tres coisas antes de qualquer provedor ser
+escolhido: classifica o pedido (`code`, `study`, `calendar`, `general`),
+**confere a pergunta contra o cadastro de aulas** e so entao busca material.
+
+A conferencia e o que separa resposta fundamentada de resposta inventada. Antes
+de perguntar ao Qdrant "qual trecho parece com isso?", o no pergunta ao banco
+relacional: a disciplina citada existe para este professor? houve aula na data
+pedida ("hoje", "ontem", "14/09", "na segunda", ja no fuso do usuario)? essa
+aula tem transcricao? Com a aula identificada, a busca vetorial e restrita a
+ela - em vez de varrer o semestre atras de parafrase - e o resumo ja gerado da
+aula entra junto dos trechos. Se a transcricao existe no banco mas falta no
+indice, o texto e lido direto da fonte. E se nao houve aula naquela data, isso
+vai escrito no prompt, com a data da ultima aula da disciplina, para o
+assistente dizer "nao houve aula registrada em 15/09" em vez de descrever uma
+aula que nao aconteceu.
+
+A verificacao relacional e uma consulta indexada e roda no ramo de conversa; a
+busca vetorial, que e a cara, so roda quando o pedido e de estudo ou quando uma
+disciplina cadastrada aparece na frase.
 
 O no `detect_action` so desvia do chat quando a frase pede mesmo uma acao
 local. No cadastro de atalho, "cadastre" e "registre" bastam, porque aqui so

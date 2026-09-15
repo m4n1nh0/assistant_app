@@ -12,7 +12,7 @@ entre usuarios.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,12 @@ class RetrievalGateway(Protocol):
         tenant_id: str,
         limit: int = 6,
         min_score: float = 0.0,
+        lesson_ids: Sequence[str] = (),
     ) -> list[RetrievedChunk]:
-        """Trechos mais proximos da pergunta, ja filtrados por score."""
+        """Trechos mais proximos da pergunta, ja filtrados por score.
+
+        `lesson_ids` restringe a busca a um conjunto de aulas ja identificado
+        fora daqui. E opcional de proposito: quem pergunta "o que vimos sobre
+        indices?" nao tem aula definida, e a busca varre tudo do usuario.
+        """
         ...
