@@ -87,7 +87,12 @@ from ..services import (
     qdrant_service,
 )
 from ..services.voice_service import transcribe_audio, trim_transcript_overlap
-from ..services.user_llm_config_service import user_llm_context
+from ..services.user_llm_config_service import (
+    activate_user_llms,
+    current_user_llms,
+    reset_user_llms,
+    user_llm_context,
+)
 from ..services import material_service, quiz_generator_service, quiz_job_service
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
@@ -2470,6 +2475,7 @@ async def generate_quiz_from_lesson(
     request: QuizCreateRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
 ):
     """Gera o quiz e so responde quando ele esta pronto.
 
@@ -2522,6 +2528,7 @@ async def generate_quiz_in_background(
     request: QuizCreateRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
 ):
     """Registra a geracao e devolve o `job_id` na hora.
 
@@ -2534,17 +2541,28 @@ async def generate_quiz_in_background(
     tutor_id = user["tutor_id"]
     user_id = str(user.get("uid") or "")
     context = await _quiz_generation_context(request, tutor_id, db)
+    # Os provedores do professor vivem em ContextVar desfeita no fim da
+    # requisicao, e o 202 sai antes da geracao comecar. Guardar aqui e reativar
+    # dentro da task e o que faz o quiz enxergar as chaves de nuvem da conta;
+    # sem isso so sobrava a infraestrutura local e a geracao morria em
+    # "Nenhum modelo gerou o quiz".
+    llm_runtime = current_user_llms()
 
     async def runner(job) -> Dict[str, Any]:
-        # Sessao propria: a da requisicao fecha assim que o 202 sai.
-        async with AsyncSessionLocal() as session:
-            response = await _run_quiz_generation(
-                context,
-                request=request,
-                tutor_id=tutor_id,
-                db=session,
-                on_progress=job.report,
-            )
+        token = activate_user_llms(llm_runtime) if llm_runtime else None
+        try:
+            # Sessao propria: a da requisicao fecha assim que o 202 sai.
+            async with AsyncSessionLocal() as session:
+                response = await _run_quiz_generation(
+                    context,
+                    request=request,
+                    tutor_id=tutor_id,
+                    db=session,
+                    on_progress=job.report,
+                )
+        finally:
+            if token is not None:
+                reset_user_llms(token)
         return response.model_dump(mode="json")
 
     job = quiz_job_service.submit(

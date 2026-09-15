@@ -17,6 +17,7 @@ def _base_settings():
         openai_api_key="global-must-not-leak",
         localai_base_url="http://localai:8080",
         localai_model="local-model",
+        ollama_base_url="http://ollama:11434",
         ollama_model="llama3",
         llm_labels={
             "localai": "LocalAI (local-model)",
@@ -54,6 +55,37 @@ def test_cloud_credentials_are_scoped_while_local_agents_are_fixed(monkeypatch):
         service.reset_user_llms(token)
 
     assert service.runtime_settings.claude_api_key == ""
+
+
+def test_unconfigured_local_agents_stay_out_of_active_llms(monkeypatch):
+    """Provedor local sem endereco nao pode ser oferecido ao roteamento.
+
+    Ollama entrava na lista sempre. Numa instalacao sem ele, o roteamento o
+    escolhia por ser local (mais barato) e a chamada morria em
+    "OLLAMA_BASE_URL nao configurada" - e, fora de requisicao, ele era a unica
+    opcao restante, entao o quiz falhava dizendo que nenhum modelo respondeu.
+    """
+    def _sem_locais():
+        base = _base_settings()
+        base.localai_base_url = ""
+        base.ollama_base_url = ""
+        return base
+
+    monkeypatch.setattr(service, "get_settings", _sem_locais)
+
+    assert service.runtime_settings.active_llms == []
+
+    runtime = service.UserLLMRuntime(
+        scope="tutor:one",
+        providers={
+            "gpt": {"api_key": "k", "model": "gpt-4o", "enabled": True}
+        },
+    )
+    token = service.activate_user_llms(runtime)
+    try:
+        assert service.runtime_settings.active_llms == ["gpt"]
+    finally:
+        service.reset_user_llms(token)
 
 
 def test_public_user_config_never_serializes_api_key(monkeypatch):

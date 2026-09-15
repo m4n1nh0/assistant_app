@@ -1187,6 +1187,57 @@ def test_rota_assincrona_devolve_o_job_sem_esperar_a_ia(monkeypatch):
     }
 
 
+def test_job_em_segundo_plano_enxerga_as_chaves_do_professor(monkeypatch):
+    """A geracao roda depois do 202, e precisa levar o contexto do professor.
+
+    As credenciais de nuvem vivem numa ContextVar desfeita no fim da
+    requisicao. Sem reativa-la dentro da task, `active_llms` so devolvia a
+    infraestrutura local e o quiz morria em "Nenhum modelo gerou o quiz" mesmo
+    com a chave salva na conta.
+    """
+    from app.services import quiz_job_service, user_llm_config_service
+
+    capturado = {}
+
+    def fake_submit(*, tutor_id, total, titulo, runner, notify):
+        capturado["runner"] = runner
+        return quiz_job_service.QuizJob(
+            id="job-ctx", tutor_id=tutor_id, total=total, titulo=titulo
+        )
+
+    async def fake_generation(*_args, **_kwargs):
+        capturado["provedores"] = list(
+            user_llm_config_service.runtime_settings.active_llms
+        )
+        return SimpleNamespace(model_dump=lambda mode="json": {"questoes": []})
+
+    monkeypatch.setattr(education.quiz_job_service, "submit", fake_submit)
+    monkeypatch.setattr(education, "_run_quiz_generation", fake_generation)
+
+    runtime = user_llm_config_service.UserLLMRuntime(
+        scope="tutor:1",
+        providers={
+            "claude": {"api_key": "k", "model": "claude-x", "enabled": True}
+        },
+    )
+    token = user_llm_config_service.activate_user_llms(runtime)
+    try:
+        run(
+            education.generate_quiz_in_background(
+                QuizCreateRequest(lesson_id="lesson-1", quantidade_questoes=2),
+                user={"tutor_id": "tutor-1", "uid": "user-1"},
+                db=QuizDb(_lesson()),
+            )
+        )
+    finally:
+        # O contexto some antes da task rodar, como na requisicao real.
+        user_llm_config_service.reset_user_llms(token)
+
+    assert user_llm_config_service.current_user_llms() is None
+    run(capturado["runner"](quiz_job_service.QuizJob(id="j", tutor_id="t", total=2)))
+    assert "claude" in capturado["provedores"]
+
+
 def test_rota_assincrona_recusa_aula_sem_resumo():
     """Job aceito que falha minutos depois e pior que um 400 imediato."""
     with pytest.raises(HTTPException) as error:

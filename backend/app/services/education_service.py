@@ -64,7 +64,14 @@ async def resolve_llm(preferred: Optional[str] = None) -> str:
     """
     if preferred and preferred not in {"auto", ""}:
         return preferred
-    return await pick_auto_llm(settings.active_llms) or "llama"
+    configurados = list(settings.active_llms or [])
+    # Ultimo recurso e o primeiro provedor configurado, nao "llama" fixo: numa
+    # instalacao sem Ollama esse nome so adiava a falha para dentro da chamada,
+    # com mensagem pior ("OLLAMA_BASE_URL nao configurada") do que a de nao
+    # haver provedor algum.
+    return await pick_auto_llm(configurados) or (
+        configurados[0] if configurados else ""
+    )
 
 
 # --- Casamento de nomes contra a turma ------------------------------------

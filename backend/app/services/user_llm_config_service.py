@@ -126,6 +126,18 @@ def reset_user_llms(token: Token) -> None:
     _runtime.reset(token)
 
 
+def current_user_llms() -> UserLLMRuntime | None:
+    """Devolve o contexto de provedores ativo, ou `None` fora de requisicao.
+
+    Existe para trabalho que continua depois da resposta HTTP - geracao de quiz
+    em segundo plano, por exemplo - poder guardar o contexto do professor e
+    reativa-lo na sua propria task. Sem isso, a task roda sem contexto, so a
+    infraestrutura local aparece em `active_llms` e o trabalho falha dizendo que
+    nao ha modelo, mesmo com as chaves de nuvem salvas na conta.
+    """
+    return _runtime.get()
+
+
 class RuntimeSettingsProxy:
     """Settings facade that masks global cloud keys outside a user context."""
 
@@ -163,9 +175,18 @@ class RuntimeSettingsProxy:
             if current.providers.get(provider, {}).get("enabled")
             and current.providers.get(provider, {}).get("api_key")
         ]
-        if base.localai_base_url:
+        # `getattr` com padrao: AttributeError levantada dentro de uma property
+        # e engolida pelo `__getattr__` desta classe e reaparece como "objeto
+        # nao tem active_llms", que nao diz nada sobre o campo que faltou.
+        if getattr(base, "localai_base_url", ""):
             cloud.append("localai")
-        cloud.append("llama")
+        # Ollama entra pela mesma regra do LocalAI: so quando ha endereco. Antes
+        # ele era anexado sempre, entao numa instalacao sem Ollama o roteamento
+        # continuava oferecendo o provedor, escolhia ele por ser local (tier 0) e
+        # a chamada morria em "OLLAMA_BASE_URL nao configurada" - com o agravante
+        # de ser a unica opcao quando nenhuma chave de nuvem estava em contexto.
+        if getattr(base, "ollama_base_url", ""):
+            cloud.append("llama")
         return cloud
 
     @property
@@ -277,7 +298,7 @@ async def list_provider_config(tutor_id: str) -> list[dict[str, Any]]:
     base = get_settings()
     result.extend([
         {"id": "localai", "label": "LocalAI", "kind": "local", "enabled": bool(base.localai_base_url), "configured": bool(base.localai_base_url), "model": base.localai_model or "automático"},
-        {"id": "llama", "label": "Ollama", "kind": "local", "enabled": True, "configured": True, "model": base.ollama_model},
+        {"id": "llama", "label": "Ollama", "kind": "local", "enabled": bool(base.ollama_base_url), "configured": bool(base.ollama_base_url), "model": base.ollama_model},
     ])
     return result
 
