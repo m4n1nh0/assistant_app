@@ -15,7 +15,7 @@ HEADERS = (
 )
 
 
-def parse_study_time_xlsx(content: bytes) -> list[dict]:
+def parse_study_time_xlsx(content: bytes) -> tuple[list[dict], int]:
     workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     sheet = workbook.active
     iterator = sheet.values
@@ -27,6 +27,7 @@ def parse_study_time_xlsx(content: bytes) -> list[dict]:
     if missing:
         raise ValueError("Colunas ausentes: " + ", ".join(missing))
     result = []
+    skipped_blank_minutes = 0
     seen = set()
     for line, cells in enumerate(iterator, start=2):
         def cell(name):
@@ -42,6 +43,9 @@ def parse_study_time_xlsx(content: bytes) -> list[dict]:
         raw_minutes = cell("TEMPO DE ESTUDO (MINUTOS)")
         if not all((code, group, semester, course)):
             raise ValueError(f"Linha {line}: identificacao incompleta")
+        if raw_minutes is None or str(raw_minutes).strip() == "":
+            skipped_blank_minutes += 1
+            continue
         try:
             minutes = int(raw_minutes)
             if minutes < 0 or float(raw_minutes) != minutes:
@@ -57,7 +61,7 @@ def parse_study_time_xlsx(content: bytes) -> list[dict]:
                            course=course, minutes=minutes))
     if not result:
         raise ValueError("Nenhum registro de tempo de estudo encontrado")
-    return result
+    return result, skipped_blank_minutes
 
 
 async def import_study_times(db, tutor_id: str, rows: list[dict]) -> dict:

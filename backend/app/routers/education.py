@@ -121,10 +121,11 @@ async def import_study_time_file(
     if len(content) > 10_000_000:
         raise HTTPException(413, "Planilha maior que 10 MB")
     try:
-        rows = parse_study_time_xlsx(content)
+        rows, skipped_blank_minutes = parse_study_time_xlsx(content)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    return await import_study_times(db, user["tutor_id"], rows)
+    result = await import_study_times(db, user["tutor_id"], rows)
+    return {**result, "skipped_blank_minutes": skipped_blank_minutes}
 
 
 @router.get("/study-times")

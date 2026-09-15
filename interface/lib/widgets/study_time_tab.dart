@@ -50,7 +50,8 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
       if (mounted) {
         setState(() => message =
             '${result['created']} novos, ${result['updated']} corrigidos, '
-            '${result['linked']} vinculados, ${result['pending']} pendentes.');
+            '${result['linked']} vinculados, ${result['pending']} pendentes, '
+            '${result['skipped_blank_minutes']} sem minutos ignorados.');
       }
     } catch (e) {
       if (mounted) {
