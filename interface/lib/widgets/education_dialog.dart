@@ -34,6 +34,7 @@ import 'quiz_generator_widget.dart';
 import 'materials_panel.dart';
 import 'quiz_qrcode_monitor.dart';
 import 'sia_attendance_importer.dart';
+import 'study_time_tab.dart';
 
 /// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
 /// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
@@ -130,7 +131,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 8,
+                  length: 9,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -167,6 +168,8 @@ class _EducationDialogState extends State<EducationDialog> {
                                 icon: Icon(Icons.folder_open_outlined,
                                     size: 17),
                                 text: '7. MATERIAL'),
+                            Tab(icon: Icon(Icons.timer_outlined, size: 17),
+                                text: '8. TEMPO DE ESTUDO'),
                           ],
                         ),
                         Expanded(
@@ -206,6 +209,7 @@ class _EducationDialogState extends State<EducationDialog> {
                               AttendanceTab(classes: _classes),
                               _QuizTab(selectedLessonId: _quizLessonId),
                               const MaterialsPanel(),
+                              const StudyTimeTab(),
                             ],
                           ),
                         ),

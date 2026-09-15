@@ -480,6 +480,22 @@ class StudentModel(Base):
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class StudyTimeModel(Base):
+    """Tempo de estudo importado por matricula, disciplina, turma e semestre."""
+
+    __tablename__ = "study_times"
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id = Column(String(64), nullable=False, index=True)
+    student_id = Column(String(64), nullable=True, index=True)
+    enrollment = Column(String(80), nullable=False, index=True)
+    discipline_code = Column(String(80), nullable=False, index=True)
+    group_sequence = Column(String(80), nullable=False, index=True)
+    course = Column(String(180), nullable=False, index=True)
+    semester = Column(String(20), nullable=False, index=True)
+    minutes = Column(Integer, nullable=False)
+    imported_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class AttendanceSessionModel(Base):
     """Janela temporaria de chamada com um QR para uma ou mais turmas."""
 

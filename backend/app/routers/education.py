@@ -23,6 +23,7 @@ from ..core.database import (
     MaterialModel,
     QuizSourceModel,
     StudentModel,
+    StudyTimeModel,
     DisciplineModel,
     QuizModel,
     QuestionModel,
@@ -98,13 +99,81 @@ from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
 
 settings = get_settings()
-
 router = APIRouter(
     prefix="/education",
     tags=["Education"],
     dependencies=[Depends(get_current_user)],
 )
 
+
+@router.post("/study-times/import")
+async def import_study_time_file(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reimportar a mesma chave substitui os minutos e corrige o registro."""
+    from ..services.study_time_service import import_study_times, parse_study_time_xlsx
+
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(422, "Selecione uma planilha .xlsx")
+    content = await file.read()
+    if len(content) > 10_000_000:
+        raise HTTPException(413, "Planilha maior que 10 MB")
+    try:
+        rows = parse_study_time_xlsx(content)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return await import_study_times(db, user["tutor_id"], rows)
+
+
+@router.get("/study-times")
+async def list_study_times(
+    discipline: Optional[str] = None,
+    group: Optional[str] = None,
+    course: Optional[str] = None,
+    pending_only: bool = False,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(StudyTimeModel, StudentModel.name).outerjoin(
+        StudentModel, (StudentModel.id == StudyTimeModel.student_id)
+        & (StudentModel.tutor_id == user["tutor_id"])
+    ).where(StudyTimeModel.tutor_id == user["tutor_id"])
+    if discipline:
+        query = query.where(StudyTimeModel.discipline_code == discipline)
+    if group:
+        query = query.where(StudyTimeModel.group_sequence == group)
+    if course:
+        query = query.where(StudyTimeModel.course == course)
+    if pending_only:
+        query = query.where(StudyTimeModel.student_id.is_(None))
+    records = (await db.execute(query.order_by(
+        StudyTimeModel.discipline_code, StudyTimeModel.group_sequence,
+        StudyTimeModel.enrollment
+    ))).all()
+    return [dict(id=item.id, enrollment=item.enrollment, student_id=item.student_id,
+                 student_name=name, discipline_code=item.discipline_code,
+                 group_sequence=item.group_sequence, course=item.course,
+                 semester=item.semester, minutes=item.minutes)
+            for item, name in records]
+
+
+@router.delete("/study-times/{record_id}")
+async def delete_study_time(
+    record_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    item = (await db.execute(select(StudyTimeModel).where(
+        StudyTimeModel.id == record_id,
+        StudyTimeModel.tutor_id == user["tutor_id"]
+    ))).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(404, "Registro nao encontrado")
+    await db.delete(item)
+    await db.commit()
+    return {"success": True}
 
 # --- Mapeadores ------------------------------------------------------------
 

@@ -38,6 +38,36 @@ class EducationService {
         if (_api.token != null) 'Authorization': 'Bearer ${_api.token}',
       };
 
+  Future<Map<String, dynamic>> importStudyTimes(List<int> bytes, String filename) async {
+    final request = http.MultipartRequest(
+      'POST', Uri.parse('$_baseUrl/education/study-times/import'));
+    if (_api.token != null) request.headers['Authorization'] = 'Bearer ${_api.token}';
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    return _decode(response) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> listStudyTimes({
+    String? discipline, String? group, String? course, bool pendingOnly = false,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/study-times').replace(queryParameters: {
+      if (discipline != null) 'discipline': discipline,
+      if (group != null) 'group': group,
+      if (course != null) 'course': course,
+      if (pendingOnly) 'pending_only': 'true',
+    });
+    final response = await http.get(uri, headers: _headers);
+    return (_decode(response) as List)
+        .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  Future<void> deleteStudyTime(String id) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/study-times/$id'), headers: _headers);
+    _decode(response);
+  }
+
   Never _fail(http.Response response) {
     String detail = response.body;
     try {
