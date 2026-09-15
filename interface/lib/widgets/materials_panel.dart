@@ -398,8 +398,13 @@ class _MaterialRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // O material passou a ser nomeado pelo titulo de dentro do documento. Sem
+    // o arquivo aqui, nao da mais para saber qual dos tres PDFs da pasta virou
+    // "Modelagem Conceitual de Dados".
+    final arquivo = material.filename;
     final detalhes = [
       if (material.discipline.isNotEmpty) material.discipline,
+      if (arquivo.isNotEmpty && arquivo != material.title) arquivo,
       '${material.pageCount} ${material.unitLabel}',
       '${(material.charCount / 1000).toStringAsFixed(0)} mil caracteres',
       // OCR erra, e o quiz sai do texto: quem revisa precisa saber que a fonte

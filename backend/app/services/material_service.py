@@ -10,6 +10,12 @@ texto; dai para frente o caminho e um so (`from_blocks`): limpeza, juncao, teto
 e piso. Adicionar um formato e escrever o extrator e registra-lo em
 `_EXTRACTORS` - nada mais no modulo precisa saber que ele existe.
 
+Alem do texto, cada extrator devolve o **titulo que o documento carrega por
+dentro**: o nome do livro no metadado do PDF, o paragrafo com estilo de titulo
+no DOCX, o tema do slide de abertura no PPTX. E o que permite nomear o material
+por aquilo que ele e, e nao por "doc1 (2) final.pdf". Quando nada confiavel
+aparece, o campo volta vazio e quem nomeia continua sendo o nome do arquivo.
+
 O que chega como imagem - apostila digitalizada, foto do quadro - passa antes
 pelo `ocr_service`. O OCR e opcional: se estiver desligado ou nao instalado, o
 arquivo volta a ser recusado com o motivo de sempre, e nenhum outro formato
@@ -25,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import io
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -51,6 +58,32 @@ SCANNED_HINT = (
 #: falar de OCR num .docx so confundiria.
 EMPTY_HINT = "O arquivo nao tem texto suficiente para virar material."
 
+#: Limites do titulo detectado. Linha curta demais nao identifica nada; linha
+#: longa demais e paragrafo, nao titulo.
+TITLE_MIN_CHARS = 3
+TITLE_MAX_CHARS = 120
+
+#: Quantas linhas do inicio do texto sao olhadas atras de um titulo. Passar
+#: disso e ja estar no corpo do documento.
+_TITLE_SCAN_LINES = 12
+
+#: Titulo que o proprio editor inventa quando ninguem preencheu. Aceitar isso
+#: seria trocar o nome do arquivo - que ao menos o professor escolheu - por
+#: "Apresentacao do PowerPoint".
+_TITLE_NOISE = frozenset({
+    "untitled", "sem titulo", "sem nome", "documento", "documento1",
+    "document", "document1", "apresentacao", "apresentacao1",
+    "apresentacao do powerpoint", "powerpoint presentation", "presentation",
+    "presentation1", "slide", "slide 1", "titulo", "title", "nome",
+    "pdf document", "microsoft word", "microsoft powerpoint", "aula",
+})
+
+#: Prefixo que o Word e o PowerPoint carimbam ao exportar PDF. O que vem depois
+#: costuma ser o nome do arquivo de origem, que ainda diz mais que nada.
+_TITLE_PREFIXES = (
+    "microsoft word -", "microsoft powerpoint -", "microsoft excel -",
+)
+
 
 class MaterialError(ValueError):
     """Arquivo que nao da para aproveitar como material."""
@@ -66,10 +99,75 @@ class ExtractedMaterial:
     #: De que formato o texto saiu. Vai para o banco e permite a interface
     #: dizer "12 slides" em vez de "12 paginas".
     source_type: str = "pdf"
+    #: Como o documento se chama por dentro: titulo do arquivo, nome do livro,
+    #: tema do slide. Vazio quando nada confiavel foi encontrado - ai quem
+    #: nomeia o material continua sendo o nome do arquivo.
+    title: str = ""
 
     @property
     def char_count(self) -> int:
         return len(self.text)
+
+
+# --- Titulo do documento -----------------------------------------------------
+#
+# O nome do arquivo raramente diz o que o material e: "doc1.pdf", "aula3 (2)
+# final.pptx", "scan_20260914.pdf". O documento, esse, quase sempre se apresenta
+# - na capa, no slide de abertura, no campo de titulo que o editor grava. E esse
+# nome que o professor reconhece na lista de materiais.
+#
+# A deteccao e conservadora de proposito: na duvida devolve vazio e o nome do
+# arquivo continua valendo. Trocar um nome ruim escolhido pelo professor por um
+# nome pior inventado pelo editor seria piorar.
+
+
+def clean_title(raw: str) -> str:
+    """Normaliza um candidato a titulo, ou devolve vazio se ele nao servir.
+
+    Recusa o que nao identifica material nenhum: o titulo automatico do editor,
+    numero de pagina solto, linha longa demais para ser titulo e curta demais
+    para ser nome.
+    """
+    text = re.sub(r"\s+", " ", (raw or "").replace(" ", " ")).strip()
+    text = text.strip("#*•-–—_=~ \t")
+    for prefix in _TITLE_PREFIXES:
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):].strip()
+    # Extensao no fim e sinal de nome de arquivo, nao de titulo.
+    text = re.sub(r"\.(?:pdf|docx?|pptx?|xlsx?|txt|md|odt|rtf)$", "", text, flags=re.I)
+    text = text.rstrip(":;,").strip()
+
+    if not (TITLE_MIN_CHARS <= len(text) <= TITLE_MAX_CHARS):
+        return ""
+    if not re.search(r"[A-Za-zÀ-ÿ]", text):
+        # So numero, so pontuacao: numero de pagina, codigo de rodape.
+        return ""
+    normalized = re.sub(r"[^a-z0-9 ]", "", _fold(text)).strip()
+    if normalized in _TITLE_NOISE:
+        return ""
+    return text
+
+
+def _fold(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", (value or "").lower())
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def title_from_text(text: str) -> str:
+    """Titulo deduzido das primeiras linhas do proprio texto extraido.
+
+    Ultimo recurso, usado quando o formato nao guarda titulo em lugar nenhum -
+    TXT e PDF sem metadado. Vale porque a primeira linha aproveitavel de uma
+    apostila ou de um capitulo costuma ser exatamente o nome dele.
+    """
+    for line in (text or "").split("\n")[:_TITLE_SCAN_LINES]:
+        if len(line.split()) > 20:
+            # Paragrafo de corpo: o documento comecou sem titulo.
+            return ""
+        candidate = clean_title(line)
+        if candidate:
+            return candidate
+    return ""
 
 
 # --- Caminho comum a todos os formatos --------------------------------------
@@ -81,12 +179,18 @@ def from_blocks(
     source_type: str,
     rewrap: bool = True,
     empty_hint: str = EMPTY_HINT,
+    title: str = "",
 ) -> ExtractedMaterial:
     """Junta os blocos de um material em texto limpo.
 
     Bloco e a unidade natural do formato: pagina no PDF, slide no PPTX, o
     documento inteiro no DOCX - que nao tem pagina antes de ser renderizado.
     E por isso que `page_count` conta blocos, e nao paragrafos.
+
+    Args:
+        title: titulo que o formato soube informar - metadado do arquivo,
+            placeholder do slide de abertura, paragrafo com estilo de titulo.
+            Vazio cai para a deducao pelas primeiras linhas do texto.
 
     Raises:
         MaterialError: quando sobra texto de menos para virar material.
@@ -106,6 +210,7 @@ def from_blocks(
         page_count=len(parts),
         truncated=len(text) > MAX_CHARS,
         source_type=source_type,
+        title=clean_title(title) or title_from_text(text),
     )
 
 
@@ -177,16 +282,28 @@ def extract_pdf_sync(data: bytes) -> ExtractedMaterial:
     except Exception as exc:
         raise MaterialError(f"Nao consegui ler o PDF: {exc}") from exc
 
+    # Livro e apostila costumam trazer o titulo no metadado; a capa, quando
+    # existe, e a primeira pagina e entra pela deducao do texto.
+    titulo = _pdf_metadata_title(reader)
     try:
-        return from_pages(reader.pages)
+        return from_pages(reader.pages, title=titulo)
     except MaterialError:
         if not ocr_service.is_available():
             raise
         logger.info("PDF sem texto extraivel; tentando OCR")
-        return _pdf_via_ocr(data)
+        return _pdf_via_ocr(data, title=titulo)
 
 
-def _pdf_via_ocr(data: bytes) -> ExtractedMaterial:
+def _pdf_metadata_title(reader: Any) -> str:
+    """Titulo gravado no PDF, quando houver um que sirva."""
+    try:
+        return str((reader.metadata or {}).get("/Title") or "")
+    except Exception as exc:  # pragma: no cover - metadado corrompido
+        logger.warning(f"Metadado do PDF ilegivel: {exc}")
+        return ""
+
+
+def _pdf_via_ocr(data: bytes, *, title: str = "") -> ExtractedMaterial:
     """Le um PDF digitalizado pelas imagens das paginas.
 
     Mantem `rewrap`: pagina escaneada e documento corrido, e o OCR devolve uma
@@ -198,7 +315,9 @@ def _pdf_via_ocr(data: bytes) -> ExtractedMaterial:
         # Sem texto nem por OCR: o motivo honesto continua sendo o original.
         raise MaterialError(SCANNED_HINT)
 
-    extraido = from_blocks(blocos, source_type="pdf-ocr", empty_hint=SCANNED_HINT)
+    extraido = from_blocks(
+        blocos, source_type="pdf-ocr", empty_hint=SCANNED_HINT, title=title
+    )
     if cortado:
         # O teto de paginas cortou o material tanto quanto MAX_CHARS cortaria, e
         # a interface ja sabe avisar sobre isso.
@@ -228,7 +347,7 @@ def extract_image_sync(data: bytes) -> ExtractedMaterial:
     return from_blocks([texto], source_type="image-ocr", rewrap=False)
 
 
-def from_pages(pages: Any) -> ExtractedMaterial:
+def from_pages(pages: Any, *, title: str = "") -> ExtractedMaterial:
     """Adapta as paginas do pypdf para o caminho comum.
 
     O `try` por pagina fica aqui, e nao em `from_blocks`, porque e defeito de
@@ -241,7 +360,9 @@ def from_pages(pages: Any) -> ExtractedMaterial:
         except Exception as exc:
             logger.warning(f"Pagina {index + 1} do material ilegivel: {exc}")
 
-    return from_blocks(blocos, source_type="pdf", empty_hint=SCANNED_HINT)
+    return from_blocks(
+        blocos, source_type="pdf", empty_hint=SCANNED_HINT, title=title
+    )
 
 
 # --- Documento de texto (DOCX) ----------------------------------------------
@@ -273,8 +394,32 @@ def extract_docx_sync(data: bytes) -> ExtractedMaterial:
                 linhas.append(" | ".join(celulas))
 
     return from_blocks(
-        ["\n\n".join(linhas)], source_type="docx", rewrap=False
+        ["\n\n".join(linhas)],
+        source_type="docx",
+        rewrap=False,
+        title=_docx_title(documento),
     )
+
+
+def _docx_title(documento: Any) -> str:
+    """Titulo do .docx: o que esta escrito com estilo de titulo, ou o metadado.
+
+    O paragrafo com estilo `Titulo`/`Heading 1` vem antes do metadado de
+    proposito: e o que o professor le ao abrir o arquivo. O campo de
+    propriedades costuma estar vazio, ou guardar o nome do documento do qual
+    este foi copiado - que e pior do que nao ter nome nenhum.
+    """
+    for paragrafo in documento.paragraphs[:_TITLE_SCAN_LINES]:
+        estilo = str(getattr(getattr(paragrafo, "style", None), "name", "") or "")
+        if _fold(estilo) in {"title", "titulo", "heading 1", "titulo 1"}:
+            titulo = clean_title(paragrafo.text)
+            if titulo:
+                return titulo
+    try:
+        return str(documento.core_properties.title or "")
+    except Exception as exc:  # pragma: no cover - propriedades corrompidas
+        logger.warning(f"Propriedades do DOCX ilegiveis: {exc}")
+        return ""
 
 
 # --- Slide (PPTX) ------------------------------------------------------------
@@ -331,7 +476,38 @@ def extract_pptx_sync(data: bytes) -> ExtractedMaterial:
 
         blocos.append("\n".join(linhas))
 
-    return from_blocks(blocos, source_type="pptx", rewrap=False)
+    return from_blocks(
+        blocos,
+        source_type="pptx",
+        rewrap=False,
+        title=_pptx_title(apresentacao),
+    )
+
+
+def _pptx_title(apresentacao: Any) -> str:
+    """Tema da apresentacao: o titulo do slide de abertura, ou o metadado.
+
+    O placeholder de titulo do primeiro slide e onde o tema da aula esta escrito
+    - e o que aparece projetado. O metadado fica para tras porque o PowerPoint o
+    preenche sozinho com "Apresentacao do PowerPoint" muito mais vezes do que
+    com o tema. Dois slides sao olhados: deck com capa de imagem tem o tema no
+    segundo.
+    """
+    for slide in list(apresentacao.slides)[:2]:
+        try:
+            forma = slide.shapes.title
+        except Exception as exc:  # pragma: no cover - deck com layout quebrado
+            logger.warning(f"Titulo do slide ilegivel: {exc}")
+            continue
+        if forma is not None:
+            titulo = clean_title(getattr(forma, "text", ""))
+            if titulo:
+                return titulo
+    try:
+        return str(apresentacao.core_properties.title or "")
+    except Exception as exc:  # pragma: no cover - propriedades corrompidas
+        logger.warning(f"Propriedades do PPTX ilegiveis: {exc}")
+        return ""
 
 
 # --- Texto puro (TXT, MD) ----------------------------------------------------

@@ -328,7 +328,7 @@ def test_pdf_com_texto_nao_paga_o_custo_do_ocr(monkeypatch):
     pronto = ms.ExtractedMaterial(
         text="conteudo ja extraido " * 20, page_count=2, truncated=False
     )
-    monkeypatch.setattr(ms, "from_pages", lambda pages: pronto)
+    monkeypatch.setattr(ms, "from_pages", lambda pages, **_: pronto)
 
     def _nao_deveria_ser_chamado(*args, **kwargs):
         raise AssertionError("OCR acionado para PDF que ja tinha texto")
@@ -486,3 +486,116 @@ def test_disciplina_de_outro_professor_e_recusada():
         asyncio.run(_resolve_discipline("d1", "", "tutor-1", db))
 
     assert erro.value.status_code == 404
+
+
+# --- Titulo do documento ----------------------------------------------------
+#
+# O nome do arquivo raramente identifica o material ("doc1 (2) final.pdf"). O
+# documento, esse, quase sempre se apresenta: capa, slide de abertura, campo de
+# titulo do editor. Estes testes cobrem os dois lados da regra - aproveitar o
+# que serve e recusar o que o editor inventou sozinho.
+
+
+@pytest.mark.parametrize(
+    "cru, esperado",
+    [
+        ("  Banco de Dados Relacionais  ", "Banco de Dados Relacionais"),
+        ("# Normalizacao ate a 3FN", "Normalizacao ate a 3FN"),
+        ("Microsoft Word - apostila_sql.docx", "apostila_sql"),
+        ("Introducao a Algoritmos:", "Introducao a Algoritmos"),
+        # Titulo que o editor preenche sozinho nao diz nada do material.
+        ("Apresentação do PowerPoint", ""),
+        ("Untitled", ""),
+        ("Slide 1", ""),
+        # Numero de pagina e codigo de rodape.
+        ("12", ""),
+        ("- 4 -", ""),
+        ("ab", ""),
+        ("x" * 200, ""),
+    ],
+)
+def test_candidato_a_titulo_e_limpo_ou_recusado(cru, esperado):
+    assert ms.clean_title(cru) == esperado
+
+
+def test_titulo_sai_da_primeira_linha_aproveitavel():
+    texto = "12\n\nEstruturas de Dados em C\n\nCapitulo 1 - listas ligadas."
+
+    assert ms.title_from_text(texto) == "Estruturas de Dados em C"
+
+
+def test_documento_que_comeca_no_corpo_nao_inventa_titulo():
+    texto = _texto_longo()
+
+    assert ms.title_from_text(texto) == ""
+
+
+def test_pdf_usa_o_titulo_gravado_no_arquivo():
+    paginas = [_Page(_texto_longo("Sumario\n\n"))]
+
+    extraido = ms.from_pages(paginas, title="Sistemas de Banco de Dados")
+
+    assert extraido.title == "Sistemas de Banco de Dados"
+
+
+def test_pdf_sem_metadado_cai_para_a_capa():
+    paginas = [_Page("Redes de Computadores\n\n" + _texto_longo())]
+
+    assert ms.from_pages(paginas).title == "Redes de Computadores"
+
+
+def test_pdf_com_metadado_automatico_do_word_nao_perde_para_a_capa():
+    paginas = [_Page("Algoritmos de Ordenacao\n\n" + _texto_longo())]
+
+    extraido = ms.from_pages(paginas, title="Microsoft Word - Documento1.docx")
+
+    # "Documento1" e ruido: a capa identifica o material, o metadado nao.
+    assert extraido.title == "Algoritmos de Ordenacao"
+
+
+def test_docx_usa_o_paragrafo_com_estilo_de_titulo():
+    from docx import Document
+
+    documento = Document()
+    documento.core_properties.title = "modelo_ficha_v2"
+    documento.add_paragraph("Modelagem Conceitual de Dados", style="Title")
+    documento.add_paragraph(_texto_longo())
+    buffer = io.BytesIO()
+    documento.save(buffer)
+
+    extraido = asyncio.run(ms.extract(buffer.getvalue(), "aula.docx"))
+
+    assert extraido.title == "Modelagem Conceitual de Dados"
+
+
+def test_docx_sem_estilo_de_titulo_usa_as_propriedades_do_arquivo():
+    from docx import Document
+
+    documento = Document()
+    documento.core_properties.title = "Engenharia de Software II"
+    documento.add_paragraph(_texto_longo())
+    buffer = io.BytesIO()
+    documento.save(buffer)
+
+    extraido = asyncio.run(ms.extract(buffer.getvalue(), "doc1.docx"))
+
+    assert extraido.title == "Engenharia de Software II"
+
+
+def test_pptx_usa_o_tema_do_slide_de_abertura():
+    data = _pptx_bytes([
+        ("Inteligencia Artificial Aplicada", [_texto_longo()], ""),
+        ("Agentes e ambientes", [_texto_longo()], ""),
+    ])
+
+    extraido = asyncio.run(ms.extract(data, "deck final (2).pptx"))
+
+    assert extraido.title == "Inteligencia Artificial Aplicada"
+
+
+def test_markdown_usa_o_titulo_de_primeiro_nivel():
+    data = f"# Compiladores\n\n{_texto_longo()}".encode("utf-8")
+
+    extraido = asyncio.run(ms.extract(data, "notas.md"))
+
+    assert extraido.title == "Compiladores"

@@ -2157,6 +2157,11 @@ async def upload_material(
 
     A extracao roda fora do event loop: ler uma apostila grande e trabalho de
     CPU e seguraria todas as outras requisicoes durante o upload.
+
+    O nome do material sai, em ordem: do que o professor digitou, do titulo que
+    o proprio documento carrega - nome do livro, tema dos slides - e so entao do
+    nome do arquivo, que costuma ser "doc1 (2) final.pdf" e nao ajuda ninguem a
+    reconhecer o material na lista.
     """
     nome = (file.filename or "material.pdf").strip()
 
@@ -2173,7 +2178,7 @@ async def upload_material(
         tutor_id=user["tutor_id"],
         discipline_id=vinculo,
         discipline=rotulo,
-        title=(title.strip() or nome.rsplit(".", 1)[0]),
+        title=(title.strip() or extraido.title or nome.rsplit(".", 1)[0]),
         filename=nome,
         source_type=extraido.source_type,
         page_count=extraido.page_count,
