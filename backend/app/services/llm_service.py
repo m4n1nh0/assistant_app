@@ -634,6 +634,15 @@ async def call_llama(
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     """Chama o Ollama local."""
+    if not settings.ollama_base_url:
+        # Sem esta guarda, a URL sai como "/api/chat" e o httpx devolve
+        # "Request URL is missing an 'http://' or 'https://' protocol" - erro de
+        # biblioteca que nao diz ao professor o que configurar.
+        return LLMResponse(
+            llm="llama",
+            content="OLLAMA_BASE_URL nao configurada",
+            is_error=True,
+        )
     try:
         start = time.monotonic()
         messages = [{"role": "system", "content": system_prompt}] + \
@@ -673,6 +682,8 @@ async def stream_llama(
 ) -> AsyncIterator[str]:
     """Streaming do Ollama."""
     import json
+    if not settings.ollama_base_url:
+        raise Exception("OLLAMA_BASE_URL nao configurada")
     messages = [{"role": "system", "content": system_prompt}] + \
                _format_history(history) + [{"role": "user", "content": message}]
     async with httpx.AsyncClient(timeout=180) as client:

@@ -175,15 +175,21 @@ async def _candidate_llms_for_quiz(preferred: Optional[str] = None) -> List[str]
         task="code",
         available_only=True,
     )
+    disponiveis = settings.active_llms
+    if not disponiveis:
+        # Sem provedor configurado nao ha o que tentar. Devolver um nome fixo
+        # aqui so adiaria a falha para dentro da chamada, com mensagem pior.
+        return []
     if not ranked:
-        ranked = await rank_auto_llms(settings.active_llms, task="code")
-    fallback = [await pick_auto_llm(settings.active_llms) or "llama"]
+        ranked = await rank_auto_llms(disponiveis, task="code")
+    fallback = [await pick_auto_llm(disponiveis) or disponiveis[0]]
     return (ranked or fallback)[:3]
 
 
 async def _resolve_llm_for_quiz(preferred: Optional[str] = None) -> str:
     """Resolve qual LLM usar para geração de quiz."""
-    return (await _candidate_llms_for_quiz(preferred))[0]
+    candidatos = await _candidate_llms_for_quiz(preferred)
+    return candidatos[0] if candidatos else ""
 
 
 def _token_budget(quantidade_questoes: int) -> int:
@@ -668,6 +674,27 @@ def _avoid_block(ja_gerados: Sequence[Dict[str, Any]]) -> str:
     )
 
 
+def _attempts_error(attempts: Sequence[Dict[str, Any]]) -> str:
+    """Resume o que cada modelo respondeu quando nenhum gerou questao.
+
+    Antes so o erro do ultimo candidato chegava a tela, e o ultimo da fila e
+    justamente o provedor local - o professor lia "Servico local indisponivel"
+    sem saber que o modelo de nuvem tinha falhado antes, e por qual motivo.
+    """
+    motivos: Dict[str, str] = {}
+    for attempt in attempts:
+        nome = str(attempt.get("llm") or "")
+        if attempt.get("success") or not nome or nome in motivos:
+            continue
+        motivos[nome] = _compact_text(
+            str(attempt.get("error") or "nao devolveu perguntas"), limit=160
+        )
+    if not motivos:
+        return ""
+    detalhes = "; ".join(f"{nome}: {motivo}" for nome, motivo in motivos.items())
+    return f"Nenhum modelo gerou o quiz. {detalhes}"
+
+
 def _report_progress(state: QuizGraphState, prontas: int, total: int) -> None:
     callback = state.get("on_progress")
     if not callable(callback):
@@ -775,6 +802,18 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
 
     total = max(int(state["quantidade_questoes"]), 1)
     candidatos = await _candidate_llms_for_quiz(state.get("requested_llm"))
+    if not candidatos:
+        return {
+            "attempts": [],
+            "outcome": {
+                "error": (
+                    "Nenhum provedor de IA configurado para gerar o quiz. "
+                    "Cadastre uma chave de API ou o endereco de um modelo local."
+                ),
+                "questoes": [],
+                "attempts": [],
+            },
+        }
 
     questoes: List[Dict[str, Any]] = []
     attempts: List[Dict[str, Any]] = []
@@ -814,7 +853,7 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         return {
             "attempts": attempts,
             "outcome": {
-                "error": erro,
+                "error": _attempts_error(attempts) or erro,
                 "questoes": [],
                 "attempts": attempts,
             },

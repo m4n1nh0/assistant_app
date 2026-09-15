@@ -503,10 +503,15 @@ def test_disciplina_de_outro_professor_e_recusada():
         ("# Normalizacao ate a 3FN", "Normalizacao ate a 3FN"),
         ("Microsoft Word - apostila_sql.docx", "apostila_sql"),
         ("Introducao a Algoritmos:", "Introducao a Algoritmos"),
-        # Titulo que o editor preenche sozinho nao diz nada do material.
+        # Titulo que a ferramenta preenche sozinha nao diz nada do material.
         ("Apresentação do PowerPoint", ""),
         ("Untitled", ""),
         ("Slide 1", ""),
+        ("PDF Content", ""),
+        ("Documento1", ""),
+        ("Material de aula", ""),
+        # Uma palavra generica junto de uma especifica ainda identifica.
+        ("Material de Algoritmos", "Material de Algoritmos"),
         # Numero de pagina e codigo de rodape.
         ("12", ""),
         ("- 4 -", ""),
@@ -599,3 +604,22 @@ def test_markdown_usa_o_titulo_de_primeiro_nivel():
     extraido = asyncio.run(ms.extract(data, "notas.md"))
 
     assert extraido.title == "Compiladores"
+
+
+def test_metadado_generico_perde_para_a_capa_do_pdf():
+    # Caso real: o Acrobat grava "PDF Content" no titulo, e a capa do material
+    # traz o nome de verdade. O metadado ganhava, e a lista mostrava
+    # "PDF Content" no lugar do assunto do capitulo.
+    # A capa quebra o titulo em duas linhas pela largura da pagina, como todo
+    # PDF faz; a limpeza remonta a frase antes de procurar o titulo.
+    capa = (
+        "Consulta com varias tabelas no\nPostgreSQL\n\n"
+        "Voce vai aprender a projetar consultas envolvendo diversas tabelas "
+        "com diferentes tipos de juncao.\n\n"
+        "Prof. Sidney Venturi, Profa. Nathielly de Souza Campos"
+    )
+    paginas = [_Page(capa), _Page(_texto_longo())]
+
+    extraido = ms.from_pages(paginas, title="PDF Content")
+
+    assert extraido.title == "Consulta com varias tabelas no PostgreSQL"

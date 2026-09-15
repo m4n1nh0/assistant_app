@@ -1587,3 +1587,47 @@ def test_muitas_fontes_dividem_o_teto_de_contexto(monkeypatch):
     # Quatro fontes, cada uma com a sua cota do teto - mais a moldura dos
     # rotulos, que e curta.
     assert len(contexto) <= education.QUIZ_CONTEXT_CHAR_BUDGET + 1_000
+
+
+def test_erro_do_quiz_mostra_todos_os_modelos_tentados(monkeypatch):
+    """O professor via so a falha do ultimo candidato da fila.
+
+    E o ultimo e justamente o provedor local: a tela dizia "Servico local
+    indisponivel" sem contar que o modelo de nuvem tinha falhado antes, e por
+    que motivo - que e a informacao que resolve o problema.
+    """
+    motivos = {
+        "claude": "sem credito na conta",
+        "llama": "OLLAMA_BASE_URL nao configurada",
+    }
+
+    async def fake_dispatch_single(
+        llm, _prompt, _history, _system_prompt, *, max_tokens=None
+    ):
+        return LLMResponse(llm=llm, content=motivos[llm], is_error=True)
+
+    async def fake_candidates(_preferred=None):
+        return ["claude", "llama"]
+
+    monkeypatch.setattr(
+        quiz_generator_service, "_candidate_llms_for_quiz", fake_candidates
+    )
+    monkeypatch.setattr(
+        quiz_generator_service, "dispatch_single", fake_dispatch_single
+    )
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo=(
+                "O modelo entidade relacionamento organiza dados em entidades, "
+                "atributos e relacionamentos para apoiar o planejamento do banco."
+            ),
+            disciplina="Banco de Dados",
+            titulo_aula="DER",
+            quantidade_questoes=3,
+        )
+    )
+
+    assert result["questoes"] == []
+    assert "claude: sem credito na conta" in result["error"]
+    assert "llama: OLLAMA_BASE_URL nao configurada" in result["error"]

@@ -67,15 +67,30 @@ TITLE_MAX_CHARS = 120
 #: disso e ja estar no corpo do documento.
 _TITLE_SCAN_LINES = 12
 
-#: Titulo que o proprio editor inventa quando ninguem preencheu. Aceitar isso
-#: seria trocar o nome do arquivo - que ao menos o professor escolheu - por
-#: "Apresentacao do PowerPoint".
-_TITLE_NOISE = frozenset({
-    "untitled", "sem titulo", "sem nome", "documento", "documento1",
-    "document", "document1", "apresentacao", "apresentacao1",
-    "apresentacao do powerpoint", "powerpoint presentation", "presentation",
-    "presentation1", "slide", "slide 1", "titulo", "title", "nome",
-    "pdf document", "microsoft word", "microsoft powerpoint", "aula",
+#: Palavras que nao identificam material nenhum. Um candidato feito so delas e
+#: titulo que a ferramenta preencheu sozinha - "PDF Content", "Apresentacao do
+#: PowerPoint", "Documento1" -, e perde para a capa e para o nome do arquivo.
+#:
+#: A regra e por palavra, e nao por frase inteira: a lista de frases exatas
+#: precisava prever cada combinacao que cada exportador inventa, e "PDF Content"
+#: - que o Acrobat grava - passava por ela.
+_GENERIC_TITLE_WORDS = frozenset({
+    # Ferramenta e formato
+    "pdf", "word", "powerpoint", "excel", "acrobat", "adobe", "microsoft",
+    "office", "libreoffice", "writer", "impress", "canva", "google",
+    "doc", "docx", "ppt", "pptx", "odt", "rtf",
+    # Generico de documento
+    "content", "conteudo", "document", "documento", "documents", "documentos",
+    "presentation", "presentations", "apresentacao", "apresentacoes",
+    "file", "arquivo", "slide", "slides", "texto", "text", "page", "pagina",
+    "paginas", "layout", "print", "capa", "book", "livro", "untitled",
+    "titulo", "title", "nome", "name", "sem", "novo", "new", "copia", "copy",
+    "final", "versao", "version", "teste", "test", "rascunho", "draft",
+    # Generico do dominio
+    "aula", "material", "materiais", "disciplina", "turma",
+    # Conectivos
+    "de", "do", "da", "dos", "das", "e", "em", "no", "na", "o", "a", "os",
+    "as", "the", "of", "for", "com",
 })
 
 #: Prefixo que o Word e o PowerPoint carimbam ao exportar PDF. O que vem depois
@@ -142,10 +157,23 @@ def clean_title(raw: str) -> str:
     if not re.search(r"[A-Za-zÀ-ÿ]", text):
         # So numero, so pontuacao: numero de pagina, codigo de rodape.
         return ""
-    normalized = re.sub(r"[^a-z0-9 ]", "", _fold(text)).strip()
-    if normalized in _TITLE_NOISE:
+    if _is_generic(text):
         return ""
     return text
+
+
+def _is_generic(text: str) -> bool:
+    """Diz se o candidato so tem palavra que serve para qualquer arquivo.
+
+    "Documento1" e "Apresentacao 2" contam: o numero que o editor gruda no fim
+    nao acrescenta significado, entao ele sai antes da comparacao.
+    """
+    palavras = [
+        re.sub(r"\d+$", "", token)
+        for token in re.findall(r"[a-z0-9]+", _fold(text))
+    ]
+    uteis = [palavra for palavra in palavras if palavra]
+    return bool(uteis) and all(palavra in _GENERIC_TITLE_WORDS for palavra in uteis)
 
 
 def _fold(value: str) -> str:

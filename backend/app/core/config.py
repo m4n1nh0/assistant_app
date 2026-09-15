@@ -364,7 +364,12 @@ class Settings(BaseSettings):
         if self.grok_api_key:                              active.append("grok")
         if self.huggingface_api_key:                       active.append("hf")
         if self.localai_base_url:                          active.append("localai")
-        active.append("llama")
+        # Ollama entra pela mesma regra dos outros: endereco configurado. Antes
+        # ele entrava sempre, e num ambiente sem Ollama - `OLLAMA_BASE_URL`
+        # vazia para desliga-lo - o roteamento continuava oferecendo o provedor,
+        # escolhia ele e a chamada morria em "Request URL is missing an
+        # 'http://' or 'https://' protocol".
+        if self.ollama_base_url:                           active.append("llama")
         return active
 
     @property

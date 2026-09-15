@@ -204,3 +204,23 @@ def test_resolve_localai_model_uses_first_available_model(monkeypatch):
         run(client.aclose())
 
     assert model == "first-model"
+
+
+def test_ollama_sem_endereco_diz_o_que_falta_configurar():
+    """Erro de configuracao nao pode chegar como erro de biblioteca.
+
+    Sem a guarda, a URL saia como "/api/chat" e o httpx respondia "Request URL
+    is missing an 'http://' or 'https://' protocol" - mensagem que aparecia na
+    tela do professor sem dizer o que fazer.
+    """
+    from app.services import llm_service
+
+    original = llm_service.settings.ollama_base_url
+    llm_service.settings.ollama_base_url = ""
+    try:
+        resposta = asyncio.run(llm_service.call_llama("oi", [], "sistema"))
+    finally:
+        llm_service.settings.ollama_base_url = original
+
+    assert resposta.is_error
+    assert resposta.content == "OLLAMA_BASE_URL nao configurada"
