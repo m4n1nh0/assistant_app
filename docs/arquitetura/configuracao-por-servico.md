@@ -8,7 +8,7 @@ ferramentas in-process. Este documento importa quando você separa os serviços
 serviço tem seu próprio conjunto de variáveis.
 
 Para o *porquê* de cada fronteira, veja
-[Arquitetura agentiva](arquitetura-agentes.md). Se você veio aqui para **criar
+[Arquitetura agentiva](agentes.md). Se você veio aqui para **criar
 os serviços agora**, o caminho curto é [a receita](#receita-criar-os-servicos) —
 mas leia antes [o que não copiar do `.env.example`](#o-que-nao-copiar-do-envexample),
 que é onde o deploy costuma quebrar.

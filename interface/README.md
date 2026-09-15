@@ -21,8 +21,8 @@ O símbolo também identifica o Modo Educação e o ícone
 multirresolução permanece no runner Windows. Os documentos mantêm o corpo claro
 para impressão.
 
-Consulte [Identidade INTARQ](../docs/IDENTIDADE_INTARQ.md) para regras de uso e
-[Roadmap comercial](../docs/ROADMAP_COMERCIAL_30_DIAS.md) para o plano de beta
+Consulte [Identidade INTARQ](../docs/produto/identidade.md) para regras de uso e
+[Roadmap comercial](../docs/produto/roadmap-comercial.md) para o plano de beta
 em 30 dias.
 
 ## Requisitos
@@ -188,7 +188,7 @@ Calendar e Microsoft Outlook/Teams. Na Microsoft, a interface não recebe
 Client ID, Client Secret, tenant, código OAuth nem tokens: ela apenas abre o
 login oficial e consulta do backend o nome, e-mail e estado da conexão. O
 procedimento de infraestrutura, callbacks, consulta e criação de eventos está em
-[Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
+[Configuração de calendários](../docs/funcionalidades/calendarios.md).
 
 No **Modo Aula > 5. Presença**, a chamada oferece somente as turmas previstas
 para o dia, ordena pelo horário e seleciona todas automaticamente. Um único QR
@@ -224,7 +224,7 @@ Comandos falados com o nome configurado, como `Hannah, vamos iniciar a aula` e
 `Hannah, faça a chamada dos alunos`, passam pelo grafo do backend; após
 confirmação, a interface abre a aba de gravação ou presença. O mesmo nome é
 usado na interface, no chat e na ativação por voz. Veja o guia
-[Modo Educação](../docs/MODO_EDUCACAO.md).
+[Modo Educação](../docs/funcionalidades/modo-educacao.md).
 
 ## Ações Locais E Segurança
 

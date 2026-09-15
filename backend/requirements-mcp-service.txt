@@ -41,7 +41,7 @@ opentelemetry-api==1.39.0
 opentelemetry-sdk==1.39.0
 opentelemetry-exporter-otlp-proto-http==1.39.0
 
-# NAO entram aqui, e o motivo esta em docs/configuracao-por-servico.md:
+# NAO entram aqui, e o motivo esta em docs/arquitetura/configuracao-por-servico.md:
 #   sqlalchemy, aiomysql       - este servico nao conhece banco
 #   python-jose, passlib       - nao autentica ninguem
 #   anthropic, openai, gemini  - nao fala com modelo

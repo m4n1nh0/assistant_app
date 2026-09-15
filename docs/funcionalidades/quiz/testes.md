@@ -282,9 +282,9 @@ O player web oferece:
 
 ## 📚 Recursos Adicionais
 
-- Documento de arquitetura: [docs/auto-quiz-generator.md](./auto-quiz-generator.md)
-- Esquema de banco de dados: [models de Quiz](../backend/app/core/database.py)
-- Serviço de geração: [quiz_generator_service.py](../backend/app/services/quiz_generator_service.py)
+- Documento de arquitetura: [docs/funcionalidades/quiz/gerador-automatico.md](./gerador-automatico.md)
+- Esquema de banco de dados: [models de Quiz](../../../backend/app/core/database.py)
+- Serviço de geração: [quiz_generator_service.py](../../../backend/app/services/quiz_generator_service.py)
 
 ---
 

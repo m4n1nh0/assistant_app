@@ -32,6 +32,28 @@ codigo esta organizado* e o que cada modulo expoe.
 
 </div>
 
+## Documentos escritos a mao
+
+O que nao sai de docstring vive em tres pastas, na mesma divisao da navegacao
+lateral:
+
+<div class="grid cards" markdown>
+
+- :material-sitemap: **[Arquitetura](arquitetura/agentes.md)**
+
+    Grafo do chat, agentes, contratos e o que cada servico configura.
+
+- :material-school: **[Funcionalidades](funcionalidades/modo-educacao.md)**
+
+    Modo Educacao, quiz, calendarios, sistema academico e observabilidade de
+    provedores.
+
+- :material-rocket-launch: **[Produto](produto/identidade.md)**
+
+    Identidade visual e roadmap comercial.
+
+</div>
+
 ## Gerando o site
 
 ```bash

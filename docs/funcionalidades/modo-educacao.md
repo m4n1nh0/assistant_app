@@ -216,8 +216,8 @@ apagados.
 
 ## Documentação relacionada
 
-- [README principal](../README.md), com arquitetura e modelo de dados.
-- [Backend](../backend/README.md), com execução, configuração e endpoints.
-- [Interface](../interface/README.md), com requisitos e build Flutter.
-- [Configuração de calendários](CONFIGURACAO_CALENDARIOS.md), para sincronizar
+- [README principal](../../README.md), com arquitetura e modelo de dados.
+- [Backend](../../backend/README.md), com execução, configuração e endpoints.
+- [Interface](../../interface/README.md), com requisitos e build Flutter.
+- [Configuração de calendários](calendarios.md), para sincronizar
   aulas com Google Calendar ou Microsoft Outlook.

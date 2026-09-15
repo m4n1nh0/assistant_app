@@ -91,21 +91,22 @@ nav:
       - Interface Flutter: referencia/interface.md
       - Infraestrutura: referencia/infra.md
   - Arquitetura:
-      - Agentes, LangChain e LangGraph: arquitetura-agentes.md
-      - Configuracao por servico: configuracao-por-servico.md
+      - Agentes, LangChain e LangGraph: arquitetura/agentes.md
+      - Configuracao por servico: arquitetura/configuracao-por-servico.md
   - Funcionalidades:
-      - Modo Educacao: MODO_EDUCACAO.md
-      - Quiz - Modo Educacao: quiz-modo-educacao.md
-      - Quiz - integracao Flutter: quiz-flutter-integration.md
-      - Quiz - WebSocket e QR Code: quiz-websocket-qrcode.md
-      - Quiz - gerador automatico: auto-quiz-generator.md
-      - Quiz - guia de testes: quiz-testing-guide.md
-      - Calendarios: CONFIGURACAO_CALENDARIOS.md
-      - Integracao com sistema academico: academic-system-integration-scraping.md
-      - Agentes por disciplina: specialized-agents-by-discipline.md
-      - Memoria multi-turno: multi-turn-memory-optimization.md
-      - Deteccao de alucinacao: hallucination-detection-validation.md
-      - Painel de saude dos provedores: llm-provider-health-dashboard.md
+      - Modo Educacao: funcionalidades/modo-educacao.md
+      - Calendarios: funcionalidades/calendarios.md
+      - Integracao com sistema academico: funcionalidades/sistema-academico.md
+      - Agentes por disciplina: funcionalidades/agentes-por-disciplina.md
+      - Memoria multi-turno: funcionalidades/memoria-multi-turno.md
+      - Deteccao de alucinacao: funcionalidades/deteccao-alucinacao.md
+      - Painel de saude dos provedores: funcionalidades/painel-provedores.md
+      - Quiz:
+          - Modo Educacao: funcionalidades/quiz/modo-educacao.md
+          - Gerador automatico: funcionalidades/quiz/gerador-automatico.md
+          - Integracao Flutter: funcionalidades/quiz/flutter.md
+          - WebSocket e QR Code: funcionalidades/quiz/websocket-qrcode.md
+          - Guia de testes: funcionalidades/quiz/testes.md
   - Produto:
-      - Identidade INTARQ: IDENTIDADE_INTARQ.md
-      - Roadmap comercial: ROADMAP_COMERCIAL_30_DIAS.md
+      - Identidade INTARQ: produto/identidade.md
+      - Roadmap comercial: produto/roadmap-comercial.md

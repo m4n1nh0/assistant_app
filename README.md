@@ -26,9 +26,9 @@ seguem a paleta azul-noite, azul
 elétrico, ouro premium, prata tecnológica e grafite. Os PDFs continuam claros
 para impressão e recebem uma placa compacta com essa assinatura simplificada.
 
-As regras e ativos estão em [Identidade INTARQ](docs/IDENTIDADE_INTARQ.md). A
+As regras e ativos estão em [Identidade INTARQ](docs/produto/identidade.md). A
 sequência recomendada para um beta comercial está em
-[Roadmap comercial de 30 dias](docs/ROADMAP_COMERCIAL_30_DIAS.md).
+[Roadmap comercial de 30 dias](docs/produto/roadmap-comercial.md).
 
 ## Arquitetura
 
@@ -313,7 +313,7 @@ sobreposicao entre elas:
 
 O detalhamento completo — contratos, fronteiras de servico, estado do grafo,
 checkpointing, resiliencia e telemetria de custo — esta em
-[docs/arquitetura-agentes.md](docs/arquitetura-agentes.md).
+[docs/arquitetura/agentes.md](docs/arquitetura/agentes.md).
 
 As requisicoes completas de chat, tanto REST quanto WebSocket, passam pelo grafo
 composto em `backend/app/orchestration/graph.py` (a fachada historica
@@ -504,7 +504,7 @@ conectados, ferramentas disponiveis e o provedor de embeddings ativo.
 Grava a aula em blocos, transcreve cada bloco, indexa a transcricao no Qdrant e
 gera o resumo sob demanda. Acessivel pelo botao "Modo Aula" no painel esquerdo
 da interface. O guia operacional está em
-[Modo Educação](docs/MODO_EDUCACAO.md).
+[Modo Educação](docs/funcionalidades/modo-educacao.md).
 
 O acesso comum abre primeiro `VISAO GERAL`, um painel em quatro quadros com
 semestres, turmas e quantidade de alunos, agenda semanal e atalhos para os
@@ -1334,7 +1334,7 @@ O diretorio `site/` e artefato de build e nao e versionado.
 
 ## Documentacao Complementar
 
-- [docs/CONFIGURACAO_CALENDARIOS.md](docs/CONFIGURACAO_CALENDARIOS.md): configuração
+- [docs/funcionalidades/calendarios.md](docs/funcionalidades/calendarios.md): configuração
   completa do Google Calendar e Microsoft Outlook/Teams, incluindo OAuth,
   callbacks locais e Railway, conexão de contas e criação de eventos.
 - [backend/README.md](backend/README.md): endpoints, provedores locais,

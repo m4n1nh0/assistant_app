@@ -450,11 +450,11 @@ nunca aparecem em respostas ou logs.
 
 O cadastro dos clientes OAuth, escopos, callbacks locais e Railway e a conexão
 das contas estão documentados em
-[Configuração de calendários](../docs/CONFIGURACAO_CALENDARIOS.md).
+[Configuração de calendários](../docs/funcionalidades/calendarios.md).
 
 O fluxo acadêmico, o exemplo autenticado de apresentação e os comandos de voz
 que geram a ação `education_open` estão em
-[Modo Educação](../docs/MODO_EDUCACAO.md).
+[Modo Educação](../docs/funcionalidades/modo-educacao.md).
 
 ### Notificações
 
