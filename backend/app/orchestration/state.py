@@ -33,10 +33,11 @@ ActionKind = Literal[
     "registration",
     "calendar",
     "calendar_query",
+    "academic_query",
     "education",
 ]
 
-GraphRoute = Literal["action", "calendar_query", "single", "multi", "chain"]
+GraphRoute = Literal["action", "calendar_query", "academic_query", "single", "multi", "chain"]
 
 # Rotas que ja tem resposta propria e nao passam por modelo nem por RAG.
 NON_CHAT_KINDS: frozenset[str] = frozenset({
@@ -46,6 +47,7 @@ NON_CHAT_KINDS: frozenset[str] = frozenset({
     "registration",
     "calendar",
     "calendar_query",
+    "academic_query",
     "education",
 })
 

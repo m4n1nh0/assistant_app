@@ -71,6 +71,7 @@ async def detect_action(
         invoke_calendar_action_tool,
     )
     from ...services.calendar_query_service import interpret_calendar_query
+    from ...services.academic_query_service import is_academic_schedule_query
     from ...services.education_action_service import build_education_open_action
     from ...services.launcher_service import build_registration_context
 
@@ -81,6 +82,10 @@ async def detect_action(
         if is_context_wrapped(message):
             observed.set(kind="chat", reason="contexto local")
             return {"action_kind": "chat", "action": None}
+
+        if is_academic_schedule_query(message):
+            observed.set(kind="academic_query")
+            return {"action_kind": "academic_query", "action": None}
 
         education_action = build_education_open_action(message)
         if education_action:

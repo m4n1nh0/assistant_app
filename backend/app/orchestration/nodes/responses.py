@@ -127,3 +127,22 @@ async def query_calendar(
                 is_error=True,
             )
     return {"responses": [response], "action": None}
+
+
+async def query_academic(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict[str, Any]:
+    from ...services.academic_query_service import academic_schedule_response
+
+    try:
+        content = await academic_schedule_response(
+            runtime.context.tutor_id, runtime.context.timezone
+        )
+        response = LLMResponse(llm="backend", content=content)
+    except Exception:
+        response = LLMResponse(
+            llm="backend", content="Não consegui consultar seus horários de aula agora.",
+            is_error=True,
+        )
+    return {"responses": [response], "action": None}
