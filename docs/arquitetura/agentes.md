@@ -382,6 +382,28 @@ vetorial aa aula certa, e um bloco de fatos confirmados no prompt - inclusive o
 "nao ha aula registrada nessa data", que e justamente o que o modelo nao tinha
 como saber.
 
+Duas coisas que vieram de conversa real:
+
+- **A ancora atravessa os turnos.** A aula e nomeada uma vez e as perguntas
+  seguintes falam dela por pronome ("voce consegue acessar a transcricao?").
+  Quando a mensagem atual nao nomeia disciplina nem data, as ultimas falas do
+  usuario entram como segunda tentativa de casamento, e o bloco avisa que a
+  ancora foi herdada - para o assistente confirmar a aula, nao afirmar. A
+  heranca so vale quando a pergunta e de estudo ou tem marca de referencia
+  ("e a atividade?", "detalha isso"): herdar num pedido de outro assunto
+  colaria contexto de aula onde ele nao faz falta.
+- **Pedido de visao geral nao usa top-k.** "Me ajuda com a descricao da
+  atividade" nao se parece com nenhum trecho da fala do professor - os vizinhos
+  mais proximos viriam por acaso. Nesses pedidos (`wants_overview`) a busca
+  vetorial e pulada e a transcricao e lida direto do banco, **amostrada de ponta
+  a ponta**: cortar os primeiros trechos devolveria chamada e avisos, que e a
+  parte que nao responde nada.
+
+O bloco tambem diz ao modelo que ele **tem** acesso as aulas e que nao deve
+pedir captura de tela. Sem isso, a unica instrucao do prompt sobre "obter
+contexto" e a da interface desktop, e o assistente respondia a um pedido de
+transcricao oferecendo capturar a janela do editor.
+
 ### 7.2 Regras
 
 - A verificacao relacional roda no ramo de conversa (uma consulta indexada em

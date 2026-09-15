@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Sequence
 
@@ -60,6 +60,44 @@ _NO_GUESSING = (
     "isso ao usuario em vez de supor o que foi dado em aula.\n"
 )
 
+_ACCESS_NOTE = (
+    "Voce tem acesso as aulas gravadas e transcritas deste professor: elas vem "
+    "do proprio aplicativo e foram verificadas acima. Nunca peca captura de "
+    "tela, print, janela de editor ou que o usuario cole o material da aula - "
+    "esse caminho serve para conteudo da tela do PC, nao para aula. Se faltar "
+    "disciplina ou data para localizar a aula, peca exatamente esses dois "
+    "dados.\n"
+)
+
+# Pedido de visao geral: quem pergunta "do que tratou a aula" quer a aula
+# inteira, e nao os seis trechos mais parecidos com a frase da pergunta - que,
+# numa pergunta assim, nao se parece com trecho nenhum da transcricao.
+_OVERVIEW_PATTERNS = (
+    r"\bresum\w+", r"\btranscric\w+", r"\bdescric\w+", r"\batividade\w*\b",
+    r"\bpauta\b", r"\btopico\w*\b", r"\bassunto\w*\b", r"\bconteud\w+",
+    r"\bdo que (?:tratou|falei|falamos|foi|se tratou)\b",
+    r"\bsobre o que\b", r"\bcomo foi a aula\b", r"\bmaterial da aula\b",
+    r"\bo que (?:dei|passei|expliquei|ensinei|vimos|falei|falamos|"
+    r"aconteceu|rolou)\b",
+    r"\bme (?:conta|fala|passa|mostra)\b", r"\bacess\w+",
+)
+
+# Marcas de referencia a algo ja dito. Sozinhas nao valem nada; servem para
+# decidir se vale herdar disciplina e data das mensagens anteriores.
+#
+# Os padroes sao estreitos de proposito. `_normalize` tira o acento, entao "e"
+# e "e" viram a mesma palavra: um marcador solto como "e a" casaria com "qual e
+# a capital da Franca?" e colaria contexto de aula numa pergunta que nao tem
+# nada com aula. Por isso a conjuncao so vale no comeco da frase.
+_FOLLOW_UP_PATTERNS = (
+    r"\b(?:dela|nela|dele|nele|disso|nisso|dessa|nessa|desse|nesse)\b",
+    r"\b(?:essa|esse|isso|mesma|mesmo)\s+"
+    r"(?:aula|materia|disciplina|turma|conteudo|atividade|assunto)\b",
+    r"^e\s+(?:a|o|as|os|sobre|quanto|quando|qual|quais)\b",
+    r"\bmais detalhes?\b",
+    r"\b(?:continua|detalha|aprofunda|expande|explica melhor)\b",
+)
+
 
 @dataclass(frozen=True)
 class LessonHit:
@@ -96,6 +134,9 @@ class LessonScope:
         lessons: aulas que batem com disciplina e/ou data.
         latest: aula mais recente da disciplina, preenchida so quando a data
             pedida nao tem aula - e o que permite dizer "a ultima foi em X".
+        inherited: diz que disciplina e data vieram das mensagens anteriores da
+            conversa, e nao desta. O modelo precisa saber disso para confirmar a
+            aula com o usuario em vez de afirmar de que aula esta falando.
     """
 
     catalog: tuple[str, ...] = ()
@@ -104,6 +145,7 @@ class LessonScope:
     day_label: str = ""
     lessons: tuple[LessonHit, ...] = ()
     latest: LessonHit | None = None
+    inherited: bool = False
 
     @property
     def transcribed(self) -> tuple[LessonHit, ...]:
@@ -234,6 +276,31 @@ def parse_day(
     return None, ""
 
 
+def wants_overview(message: str) -> bool:
+    """Diz se o pedido e sobre a aula inteira, e nao sobre um ponto dela.
+
+    Vale a distincao porque a busca vetorial responde mal a esse tipo de
+    pergunta: "me ajuda com a descricao da atividade" nao se parece com nenhum
+    trecho da fala do professor, entao os vizinhos mais proximos vem por acaso.
+    Para esses pedidos, resumo e transcricao amostrada valem mais que top-k.
+    """
+    text = _normalize(message)
+    return any(re.search(pattern, text) for pattern in _OVERVIEW_PATTERNS)
+
+
+def is_follow_up(message: str) -> bool:
+    """Diz se a mensagem so faz sentido a luz do que ja foi conversado.
+
+    "Voce poderia acessar a transcricao?" nao nomeia disciplina nem data: a aula
+    esta na mensagem anterior. Sem isso, cada pergunta da sequencia perde a
+    ancora e o assistente volta a pedir o que o usuario ja disse.
+    """
+    text = _normalize(message)
+    if len(text.split()) > 14:
+        return False
+    return any(re.search(pattern, text) for pattern in _FOLLOW_UP_PATTERNS)
+
+
 def _label(row: DisciplineModel) -> str:
     code = str(row.code or "").strip()
     name = str(row.name or "").strip()
@@ -351,22 +418,61 @@ async def resolve(
     *,
     tutor_id: str,
     message: str,
+    context: Sequence[str] = (),
     timezone_name: str = "America/Sao_Paulo",
     now: datetime | None = None,
 ) -> LessonScope:
     """Confere a pergunta contra o cadastro de disciplinas e aulas.
 
+    Quando a mensagem sozinha nao nomeia disciplina nem data, o que ja foi dito
+    na conversa entra como segunda tentativa. Numa sequencia real a aula e
+    nomeada uma vez e as perguntas seguintes falam dela por pronome - sem essa
+    herança, so a primeira pergunta encontra a aula e o assistente volta a pedir
+    o que o usuario ja tinha dito.
+
     Args:
         db: sessao aberta pelo chamador.
         tutor_id: perfil dono das aulas.
         message: pergunta em linguagem natural.
+        context: falas anteriores da conversa, da mais antiga para a mais nova.
+            Passe so quando a mensagem atual for mesmo sobre aula; herdar a
+            ancora numa pergunta de outro assunto colaria contexto errado.
         timezone_name: fuso do professor, usado para "hoje" e para a data da aula.
         now: instante de referencia, para teste.
 
     Returns:
-        O escopo com disciplina, data e aulas confirmadas. Escopo vazio quando a
-        pergunta nao encosta em nada do cadastro.
+        O escopo com disciplina, data e aulas confirmadas, com `inherited` a
+        dizer se a ancora veio da conversa. Escopo vazio quando nem a mensagem
+        nem o contexto encostam no cadastro.
     """
+    scope = await _resolve_text(
+        db, tutor_id=tutor_id, text=message, timezone_name=timezone_name, now=now
+    )
+    if scope.disciplines or scope.day or not context:
+        return scope
+
+    remembered = await _resolve_text(
+        db,
+        tutor_id=tutor_id,
+        text="\n".join([*context, message]),
+        timezone_name=timezone_name,
+        now=now,
+    )
+    if not remembered.disciplines and not remembered.day:
+        return scope
+    return replace(remembered, inherited=True)
+
+
+async def _resolve_text(
+    db: AsyncSession,
+    *,
+    tutor_id: str,
+    text: str,
+    timezone_name: str,
+    now: datetime | None,
+) -> LessonScope:
+    """Uma passada de casamento sobre um texto - a mensagem ou ela mais o contexto."""
+    message = text
     if not tutor_id or not (message or "").strip():
         return LessonScope()
 
@@ -463,8 +569,9 @@ def describe(scope: LessonScope) -> str:
     else:
         lines.append("- Nenhuma disciplina ativa cadastrada para este professor.")
 
+    origin = "nas mensagens anteriores" if scope.inherited else "na pergunta"
     if scope.disciplines:
-        lines.append(f"- Disciplina citada na pergunta: {', '.join(scope.disciplines)}.")
+        lines.append(f"- Disciplina citada {origin}: {', '.join(scope.disciplines)}.")
     else:
         lines.append("- Nenhuma disciplina do cadastro foi reconhecida na pergunta.")
 
@@ -472,7 +579,13 @@ def describe(scope: LessonScope) -> str:
         asked = scope.day.strftime("%d/%m/%Y")
         if scope.day_label:
             asked = f"{asked} ({scope.day_label})"
-        lines.append(f"- Data pedida: {asked}.")
+        lines.append(f"- Data pedida {origin}: {asked}.")
+
+    if scope.inherited:
+        lines.append(
+            "- Essa aula veio do que ja foi dito nesta conversa, e nao da ultima "
+            "mensagem: confirme com o usuario que e dela que voce esta falando."
+        )
 
     if scope.lessons:
         for lesson in scope.lessons:
@@ -497,7 +610,7 @@ def describe(scope: LessonScope) -> str:
     elif scope.disciplines:
         lines.append("- Nenhuma aula registrada para essa disciplina.")
 
-    return _PREAMBLE + "\n".join(lines) + "\n" + _NO_GUESSING
+    return _PREAMBLE + "\n".join(lines) + "\n" + _ACCESS_NOTE + _NO_GUESSING
 
 
 def summary_chunks(scope: LessonScope) -> list[RetrievedChunk]:
@@ -520,27 +633,62 @@ def summary_chunks(scope: LessonScope) -> list[RetrievedChunk]:
     ]
 
 
+def _spread(items: list[str], count: int) -> list[str]:
+    """Escolhe `count` itens distribuidos ao longo da lista, mantendo a ordem.
+
+    Cortar os primeiros seria pegar so a abertura da aula - chamada, avisos,
+    "bom dia, vamos comecar" -, que e justamente a parte que nao responde nada.
+    """
+    if count <= 0 or not items:
+        return []
+    if len(items) <= count:
+        return items
+    step = len(items) / count
+    return [items[int(index * step)] for index in range(count)]
+
+
 async def transcript_chunks(
     db: AsyncSession,
     scope: LessonScope,
     *,
     limit: int = 6,
 ) -> list[RetrievedChunk]:
-    """Trechos direto do banco, quando o indice vetorial nao devolve nada.
+    """Trechos da transcricao lidos direto do banco, cobrindo a aula toda.
 
-    A aula pode estar transcrita no MySQL e ausente do Qdrant - indexacao
-    atrasada, embedding trocado. Com a aula ja identificada por disciplina e
-    data, ler a transcricao em ordem e melhor do que responder sem fonte.
+    Serve a dois casos: o indice vetorial sem o que devolver - a aula pode estar
+    transcrita no MySQL e ausente do Qdrant, por indexacao atrasada ou embedding
+    trocado - e o pedido de visao geral, em que top-k de similaridade e a
+    ferramenta errada. Nos dois, a aula ja foi identificada por disciplina e
+    data, entao ler a fonte e melhor do que responder sem ela.
     """
     lessons = scope.transcribed
     if not lessons or limit <= 0:
         return []
     by_id = {lesson.lesson_id: lesson for lesson in lessons}
-    rows = await db.scalars(
-        select(LessonSegmentModel)
+    # Duas consultas de proposito: a primeira traz so id e ordem, para escolher
+    # a amostra sem carregar a transcricao inteira de uma aula de duas horas.
+    index = await db.execute(
+        select(LessonSegmentModel.id, LessonSegmentModel.lesson_id)
         .where(LessonSegmentModel.lesson_id.in_(list(by_id)))
         .order_by(LessonSegmentModel.lesson_id, LessonSegmentModel.sequence)
-        .limit(limit)
+    )
+    by_lesson: dict[str, list[str]] = {}
+    for segment_id, lesson_id in index.all():
+        by_lesson.setdefault(str(lesson_id), []).append(str(segment_id))
+
+    share = max(1, limit // max(1, len(by_lesson)))
+    chosen = [
+        segment_id
+        for ids in by_lesson.values()
+        for segment_id in _spread(ids, share)
+    ][:limit]
+    if not chosen:
+        return []
+
+    rows = await db.scalars(
+        select(LessonSegmentModel)
+        .where(LessonSegmentModel.id.in_(chosen))
+        .order_by(LessonSegmentModel.lesson_id, LessonSegmentModel.sequence)
     )
     return [
         RetrievedChunk(

@@ -34,6 +34,12 @@ if TYPE_CHECKING:  # pragma: no cover - o import real e tardio, como o do banco
 
 _STUDY_LIMIT = 6
 _STUDY_MIN_SCORE = 0.25
+# Pedido de visao geral le a aula inteira em vez do top-k: mais trechos, porque
+# cada um cobre um pedaco maior do tempo de aula.
+_OVERVIEW_LIMIT = 10
+# Falas anteriores olhadas para herdar disciplina e data. Quatro cobrem a
+# sequencia usual (pergunta, resposta, ajuste) sem arrastar assunto antigo.
+_CONTEXT_TURNS = 4
 # Com a aula ja identificada por disciplina e data, o corte pode ser mais baixo:
 # o risco de colar trecho de outro assunto e o filtro por aula que resolve, nao
 # o score. Exigir 0.25 aqui descartaria a propria aula pedida.
@@ -91,7 +97,10 @@ def build_retrieve_context(retrieval: RetrievalGateway | None = None):
         # "banco de dados" na frase e uma disciplina cadastrada - coisa que a
         # heuristica de tarefa, que so olha palavra, nao tem como saber.
         scope, scope_error = await _scope(
-            tenant_id, state["message"], runtime.context.timezone
+            tenant_id,
+            state["message"],
+            runtime.context.timezone,
+            context=_conversation_anchor(state, task),
         )
         if scope_error:
             errors.append(scope_error)
@@ -99,26 +108,34 @@ def build_retrieve_context(retrieval: RetrievalGateway | None = None):
         if task != "study" and not scope.disciplines and not scope.lessons:
             return _with_errors(update, errors, state)
 
+        overview = _wants_overview(state["message"])
         async with span(
             "graph.retrieve_context",
             "rag",
             task=task,
             lessons=len(scope.lessons),
+            overview=overview,
         ) as observed:
-            try:
-                gateway = retrieval or _default_gateway()
-                chunks = await _search(gateway, state["message"], tenant_id, scope)
-            except Exception as exc:
-                # Falha de indice nao pode calar a resposta: o modelo responde
-                # do que foi confirmado no banco, que e degradacao aceitavel.
-                observed.fail(exc)
-                errors.append(f"busca de aula falhou: {exc}")
-                chunks = []
-            if not chunks and scope.transcribed:
-                # A aula esta no banco e faltou no indice. Ler a transcricao
-                # direto da fonte responde melhor do que nao responder.
+            chunks: list[RetrievedChunk] = []
+            # Pergunta de visao geral pula o top-k: "me ajuda com a descricao da
+            # atividade" nao se parece com nenhum trecho da fala do professor, e
+            # o que responde isso e a aula amostrada de ponta a ponta.
+            if not (overview and scope.transcribed):
                 try:
-                    chunks = await _transcript_fallback(scope)
+                    gateway = retrieval or _default_gateway()
+                    chunks = await _search(gateway, state["message"], tenant_id, scope)
+                except Exception as exc:
+                    # Falha de indice nao pode calar a resposta: o modelo responde
+                    # do que foi confirmado no banco, que e degradacao aceitavel.
+                    observed.fail(exc)
+                    errors.append(f"busca de aula falhou: {exc}")
+            if not chunks and scope.transcribed:
+                # A aula esta no banco - por indice atrasado ou por ser pedido
+                # de visao geral, ler a transcricao responde melhor.
+                try:
+                    chunks = await _transcript_fallback(
+                        scope, _OVERVIEW_LIMIT if overview else _STUDY_LIMIT
+                    )
                 except Exception as exc:
                     observed.fail(exc)
                     errors.append(f"leitura da transcricao falhou: {exc}")
@@ -146,10 +163,38 @@ def _with_errors(
     return update
 
 
+def _conversation_anchor(state: ChatGraphState, task: str) -> tuple[str, ...]:
+    """Falas anteriores que podem carregar a disciplina e a data desta pergunta.
+
+    So valem quando a mensagem atual e mesmo sobre aula: herdar a ancora numa
+    pergunta de outro assunto colaria contexto de aula onde ele nao tem nada a
+    fazer. Sao as falas do usuario - a do assistente costuma repetir varias
+    disciplinas ao listar o catalogo, o que so atrapalha o casamento.
+    """
+    from ...services.lesson_context_service import is_follow_up
+
+    if task != "study" and not is_follow_up(state["message"]):
+        return ()
+    history = state.get("history") or []
+    return tuple(
+        item.content
+        for item in history
+        if getattr(item, "role", "") == "user" and str(item.content or "").strip()
+    )[-_CONTEXT_TURNS:]
+
+
+def _wants_overview(message: str) -> bool:
+    from ...services.lesson_context_service import wants_overview
+
+    return wants_overview(message)
+
+
 async def _scope(
     tenant_id: str,
     message: str,
     timezone_name: str,
+    *,
+    context: tuple[str, ...] = (),
 ) -> tuple["LessonScope", str]:
     """Confere disciplina, data e transcricao no banco relacional.
 
@@ -166,6 +211,7 @@ async def _scope(
                 db,
                 tutor_id=tenant_id,
                 message=message,
+                context=context,
                 timezone_name=timezone_name,
             )
         return scope, ""
@@ -173,14 +219,15 @@ async def _scope(
         return lesson_context_service.LessonScope(), f"validacao de aula falhou: {exc}"
 
 
-async def _transcript_fallback(scope: "LessonScope") -> list[RetrievedChunk]:
+async def _transcript_fallback(
+    scope: "LessonScope",
+    limit: int = _STUDY_LIMIT,
+) -> list[RetrievedChunk]:
     from ...core.database import AsyncSessionLocal
     from ...services import lesson_context_service
 
     async with AsyncSessionLocal() as db:
-        return await lesson_context_service.transcript_chunks(
-            db, scope, limit=_STUDY_LIMIT
-        )
+        return await lesson_context_service.transcript_chunks(db, scope, limit=limit)
 
 
 def _summaries(scope: "LessonScope") -> list[RetrievedChunk]:

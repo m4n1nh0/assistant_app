@@ -250,6 +250,108 @@ def test_the_generated_summary_enters_as_context():
     asyncio.run(scenario())
 
 
+def test_the_class_named_earlier_in_the_conversation_is_inherited():
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_lesson(db)
+
+            scope = await resolve(
+                db,
+                "voce poderia acessar os dados de transcricao da aula?",
+                context=["Sobre minha aula de banco de dados de 14/09, me ajuda?"],
+            )
+
+            assert scope.disciplines == ("ARA0040 - BANCO DE DADOS",)
+            assert scope.day.isoformat() == "2026-09-14"
+            assert scope.inherited is True
+            assert "confirme com o usuario" in service.describe(scope)
+    asyncio.run(scenario())
+
+
+def test_what_the_message_itself_says_wins_over_the_conversation():
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_discipline(db, code="ARA0062", name="ESTRUTURA DE DADOS")
+            await add_lesson(db)
+
+            scope = await resolve(
+                db,
+                "e na aula de estrutura de dados?",
+                context=["minha aula de banco de dados de 14/09"],
+            )
+
+            assert scope.disciplines == ("ARA0062 - ESTRUTURA DE DADOS",)
+            assert scope.inherited is False
+    asyncio.run(scenario())
+
+
+def test_without_conversation_context_nothing_is_inherited():
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_lesson(db)
+
+            scope = await resolve(db, "voce poderia acessar a transcricao?")
+
+            assert scope.disciplines == () and scope.day is None
+    asyncio.run(scenario())
+
+
+def test_a_long_class_is_sampled_from_end_to_end():
+    # Os primeiros trechos de uma aula sao chamada e avisos: cortar o comeco
+    # devolveria justamente a parte que nao responde nada.
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_lesson(db, segments=tuple(f"trecho {i:02d}" for i in range(20)))
+            scope = await resolve(db, "aula de banco de dados de ontem")
+
+            chunks = await service.transcript_chunks(db, scope, limit=4)
+
+            contents = [chunk.content for chunk in chunks]
+            assert len(contents) == 4
+            assert contents[0] == "trecho 00"
+            assert contents[-1] == "trecho 15"
+    asyncio.run(scenario())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        ("me ajuda com a descricao da atividade", True),
+        ("do que tratou a aula?", True),
+        ("voce poderia acessar a transcricao da aula?", True),
+        ("me passa o resumo", True),
+        ("o professor citou chave estrangeira?", False),
+        ("como funciona uma left join?", False),
+    ],
+)
+def test_overview_requests_are_told_apart_from_pointed_ones(message, expected):
+    assert service.wants_overview(message) is expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        ("e a atividade?", True),
+        ("me da mais detalhes", True),
+        ("detalha isso", True),
+        ("explica melhor", True),
+        # O acento cai na normalizacao: "qual e a capital" nao pode virar
+        # referencia a uma aula so por conter "e a".
+        ("qual e a capital da Franca?", False),
+        ("qual é a capital da França?", False),
+        ("escreve um script de backup para mim", False),
+    ],
+)
+def test_follow_up_markers_do_not_catch_unrelated_questions(message, expected):
+    assert service.is_follow_up(message) is expected
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "message, expected",
