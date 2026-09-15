@@ -23,9 +23,9 @@ def test_blank_minutes_do_not_turn_into_zero_or_block_valid_rows():
     assert [(row["enrollment"], row["minutes"]) for row in rows] == [("124", 45)]
 
 
-def test_only_registered_code_and_period_belong_to_professor():
-    scope = {("ARA0040", "2026.1")}
+def test_only_registered_code_belongs_to_professor_across_periods():
+    scope = {"ARA0040"}
 
-    assert belongs_to_scope("ara0040", "2026.1", scope)
-    assert not belongs_to_scope("ARA0015", "2026.1", scope)
-    assert not belongs_to_scope("ARA0040", "2025.2", scope)
+    assert belongs_to_scope("ara0040", scope)
+    assert belongs_to_scope("ARA0040", scope)
+    assert not belongs_to_scope("ARA0015", scope)

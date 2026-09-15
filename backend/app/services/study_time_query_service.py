@@ -35,7 +35,7 @@ async def study_time_chat_response(tutor_id: str, message: str) -> str:
             .where(StudyTimeModel.tutor_id == tutor_id)
         )).all()
     records = [(item, name) for item, name in records
-               if belongs_to_scope(item.discipline_code, item.semester, scope)]
+               if belongs_to_scope(item.discipline_code, scope)]
     text = _plain(message)
     code = re.search(r"\b[Aa][Rr][Aa]\d{4}\b", message)
     if code:

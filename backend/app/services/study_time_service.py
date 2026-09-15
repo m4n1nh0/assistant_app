@@ -15,29 +15,27 @@ HEADERS = (
 )
 
 
-async def owned_discipline_scope(db, tutor_id: str) -> set[tuple[str, str]]:
-    """Codigos e periodos que constam nas disciplinas do professor."""
+async def owned_discipline_scope(db, tutor_id: str) -> set[str]:
+    """Codigos de disciplina cadastrados para este professor."""
     disciplines = (await db.execute(select(DisciplineModel).where(
         DisciplineModel.tutor_id == tutor_id
     ))).scalars().all()
-    return {(item.code.strip().upper(), item.semester.strip())
+    return {item.code.strip().upper()
             for item in disciplines if item.code and item.code.strip()}
 
 
-def belongs_to_scope(code: str, semester: str, scope: set[tuple[str, str]]) -> bool:
-    normalized = code.strip().upper()
-    period = semester.strip()
-    return (normalized, period) in scope or (normalized, "") in scope
+def belongs_to_scope(code: str, scope: set[str]) -> bool:
+    return code.strip().upper() in scope
 
 
-async def purge_outside_scope(db, tutor_id: str, scope: set[tuple[str, str]]) -> int:
+async def purge_outside_scope(db, tutor_id: str, scope: set[str]) -> int:
     """Remove registros que a importacao antiga aceitou sem conferir disciplina."""
     existing = (await db.execute(select(StudyTimeModel).where(
         StudyTimeModel.tutor_id == tutor_id
     ))).scalars().all()
     removed = 0
     for item in existing:
-        if not belongs_to_scope(item.discipline_code, item.semester, scope):
+        if not belongs_to_scope(item.discipline_code, scope):
             await db.delete(item)
             removed += 1
     if removed:

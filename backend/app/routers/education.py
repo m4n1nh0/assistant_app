@@ -131,9 +131,9 @@ async def import_study_time_file(
     if not scope:
         raise HTTPException(422, "Cadastre suas disciplinas com codigo antes de importar")
     accepted = [row for row in rows if belongs_to_scope(
-        row["discipline_code"], row["semester"], scope)]
+        row["discipline_code"], scope)]
     skipped_blank_minutes = sum(belongs_to_scope(
-        row["discipline_code"], row["semester"], scope) for row in blank_rows)
+        row["discipline_code"], scope) for row in blank_rows)
     skipped_other_disciplines = len(rows) - len(accepted) + len(blank_rows) - skipped_blank_minutes
     removed_outside_scope = await purge_outside_scope(db, user["tutor_id"], scope)
     if not accepted:
@@ -192,7 +192,7 @@ async def list_study_times(
                  group_sequence=item.group_sequence, course=item.course,
                  semester=item.semester, minutes=item.minutes)
             for item, name in records
-            if belongs_to_scope(item.discipline_code, item.semester, scope)]
+            if belongs_to_scope(item.discipline_code, scope)]
 
 
 @router.delete("/study-times/{record_id}")
