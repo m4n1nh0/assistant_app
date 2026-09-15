@@ -7,7 +7,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from ..core.database import StudentModel, StudyTimeModel
+from ..core.database import DisciplineModel, StudentModel, StudyTimeModel
 
 HEADERS = (
     "CURSO", "COD_DISCIPLINA", "NUM_SEQ_TURMA", "MATRICULA",
@@ -15,7 +15,37 @@ HEADERS = (
 )
 
 
-def parse_study_time_xlsx(content: bytes) -> tuple[list[dict], int]:
+async def owned_discipline_scope(db, tutor_id: str) -> set[tuple[str, str]]:
+    """Codigos e periodos que constam nas disciplinas do professor."""
+    disciplines = (await db.execute(select(DisciplineModel).where(
+        DisciplineModel.tutor_id == tutor_id
+    ))).scalars().all()
+    return {(item.code.strip().upper(), item.semester.strip())
+            for item in disciplines if item.code and item.code.strip()}
+
+
+def belongs_to_scope(code: str, semester: str, scope: set[tuple[str, str]]) -> bool:
+    normalized = code.strip().upper()
+    period = semester.strip()
+    return (normalized, period) in scope or (normalized, "") in scope
+
+
+async def purge_outside_scope(db, tutor_id: str, scope: set[tuple[str, str]]) -> int:
+    """Remove registros que a importacao antiga aceitou sem conferir disciplina."""
+    existing = (await db.execute(select(StudyTimeModel).where(
+        StudyTimeModel.tutor_id == tutor_id
+    ))).scalars().all()
+    removed = 0
+    for item in existing:
+        if not belongs_to_scope(item.discipline_code, item.semester, scope):
+            await db.delete(item)
+            removed += 1
+    if removed:
+        await db.commit()
+    return removed
+
+
+def parse_study_time_xlsx(content: bytes) -> tuple[list[dict], list[dict]]:
     workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     sheet = workbook.active
     iterator = sheet.values
@@ -27,7 +57,7 @@ def parse_study_time_xlsx(content: bytes) -> tuple[list[dict], int]:
     if missing:
         raise ValueError("Colunas ausentes: " + ", ".join(missing))
     result = []
-    skipped_blank_minutes = 0
+    blank_rows: list[dict] = []
     seen = set()
     for line, cells in enumerate(iterator, start=2):
         def cell(name):
@@ -44,7 +74,7 @@ def parse_study_time_xlsx(content: bytes) -> tuple[list[dict], int]:
         if not all((code, group, semester, course)):
             raise ValueError(f"Linha {line}: identificacao incompleta")
         if raw_minutes is None or str(raw_minutes).strip() == "":
-            skipped_blank_minutes += 1
+            blank_rows.append(dict(discipline_code=code, semester=semester))
             continue
         try:
             minutes = int(raw_minutes)
@@ -61,7 +91,7 @@ def parse_study_time_xlsx(content: bytes) -> tuple[list[dict], int]:
                            course=course, minutes=minutes))
     if not result:
         raise ValueError("Nenhum registro de tempo de estudo encontrado")
-    return result, skipped_blank_minutes
+    return result, blank_rows
 
 
 async def import_study_times(db, tutor_id: str, rows: list[dict]) -> dict:

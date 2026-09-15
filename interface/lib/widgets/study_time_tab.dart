@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/education_service.dart';
+import 'study_time_dashboard.dart';
 
 class StudyTimeTab extends StatefulWidget {
   const StudyTimeTab({super.key});
@@ -25,8 +26,11 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
   Future<void> refresh() async {
     setState(() => busy = true);
     try {
+      final removed = await education.reconcileStudyTimes();
       rows = await education.listStudyTimes();
-      message = '';
+      if (removed > 0) {
+        message = '$removed registros de outras disciplinas removidos.';
+      }
     } catch (e) {
       message = 'Falha ao carregar tempo de estudo: $e';
     } finally {
@@ -51,7 +55,9 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
         setState(() => message =
             '${result['created']} novos, ${result['updated']} corrigidos, '
             '${result['linked']} vinculados, ${result['pending']} pendentes, '
-            '${result['skipped_blank_minutes']} sem minutos ignorados.');
+            '${result['skipped_other_disciplines']} linhas de outras disciplinas não importadas. '
+            '${result['skipped_blank_minutes']} linhas tinham a coluna TEMPO DE ESTUDO vazia '
+            'e não foram importadas; vazio não significa zero.');
       }
     } catch (e) {
       if (mounted) {
@@ -87,6 +93,19 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
           children: [
             ElevatedButton.icon(onPressed: busy ? null : importFile,
               icon: const Icon(Icons.upload_file), label: const Text('Importar ou corrigir XLSX')),
+            ElevatedButton.icon(onPressed: busy ? null : () {
+              showDialog<void>(context: context, builder: (_) => StudyTimeDashboard(
+                records: visible,
+                title: [if (discipline != null) discipline!,
+                        if (group != null) 'Turma $group',
+                        if (course != null) course!].join(' • ').isEmpty
+                    ? 'Minhas disciplinas'
+                    : [if (discipline != null) discipline!,
+                       if (group != null) 'Turma $group',
+                       if (course != null) course!].join(' • '),
+              ));
+            }, icon: const Icon(Icons.present_to_all),
+              label: const Text('Exibir em sala')),
             Text('${visible.length} registros'),
             filter('Disciplina', 'discipline_code', discipline,
               (v) => setState(() => discipline = v)),

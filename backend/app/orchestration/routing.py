@@ -35,6 +35,8 @@ def route_after_resolution(state: ChatGraphState) -> GraphRoute:
         return "calendar_query"
     if action_kind == "academic_query":
         return "academic_query"
+    if action_kind == "study_time_query":
+        return "study_time_query"
     if action_kind in ACTION_KINDS:
         return "action"
     return cast(GraphRoute, state["mode"].value)

@@ -62,6 +62,13 @@ class EducationService {
         .map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
+  Future<int> reconcileStudyTimes() async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/study-times/reconcile'), headers: _headers);
+    final data = _decode(response) as Map<String, dynamic>;
+    return (data['removed_outside_scope'] as num).toInt();
+  }
+
   Future<void> deleteStudyTime(String id) async {
     final response = await http.delete(
       Uri.parse('$_baseUrl/education/study-times/$id'), headers: _headers);

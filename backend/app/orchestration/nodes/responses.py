@@ -146,3 +146,22 @@ async def query_academic(
             is_error=True,
         )
     return {"responses": [response], "action": None}
+
+
+async def query_study_time(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict[str, Any]:
+    from ...services.study_time_query_service import study_time_chat_response
+
+    try:
+        content = await study_time_chat_response(
+            runtime.context.tutor_id, state["message"]
+        )
+        response = LLMResponse(llm="backend", content=content)
+    except Exception:
+        response = LLMResponse(
+            llm="backend", content="Não consegui consultar o tempo de estudo agora.",
+            is_error=True,
+        )
+    return {"responses": [response], "action": None}

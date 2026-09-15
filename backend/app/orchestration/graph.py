@@ -30,7 +30,7 @@ from .nodes.dispatch import (
     build_dispatch_multi,
     build_dispatch_single,
 )
-from .nodes.responses import acknowledge_action, query_calendar, query_academic
+from .nodes.responses import acknowledge_action, query_calendar, query_academic, query_study_time
 from .nodes.retrieval import build_retrieve_context
 from .routing import route_after_resolution
 from .state import ChatGraphState, ChatRuntimeContext
@@ -79,6 +79,7 @@ def build_chat_graph(
     workflow.add_node("acknowledge_action", acknowledge_action)
     workflow.add_node("query_calendar", query_calendar)
     workflow.add_node("query_academic", query_academic)
+    workflow.add_node("query_study_time", query_study_time)
     workflow.add_node("dispatch_single", build_dispatch_single(run_agents))
     workflow.add_node("dispatch_multi", build_dispatch_multi(dispatch_multi))
     workflow.add_node("dispatch_chain", build_dispatch_chain(dispatch_chain))
@@ -93,6 +94,7 @@ def build_chat_graph(
             "action": "acknowledge_action",
             "calendar_query": "query_calendar",
             "academic_query": "query_academic",
+            "study_time_query": "query_study_time",
             "single": "dispatch_single",
             "multi": "dispatch_multi",
             "chain": "dispatch_chain",
@@ -101,6 +103,7 @@ def build_chat_graph(
     workflow.add_edge("acknowledge_action", END)
     workflow.add_edge("query_calendar", END)
     workflow.add_edge("query_academic", END)
+    workflow.add_edge("query_study_time", END)
     workflow.add_edge("dispatch_single", END)
     workflow.add_edge("dispatch_multi", END)
     workflow.add_edge("dispatch_chain", END)

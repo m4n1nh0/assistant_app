@@ -113,7 +113,10 @@ async def import_study_time_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Reimportar a mesma chave substitui os minutos e corrige o registro."""
-    from ..services.study_time_service import import_study_times, parse_study_time_xlsx
+    from ..services.study_time_service import (
+        belongs_to_scope, import_study_times, owned_discipline_scope,
+        parse_study_time_xlsx, purge_outside_scope,
+    )
 
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise HTTPException(422, "Selecione uma planilha .xlsx")
@@ -121,11 +124,39 @@ async def import_study_time_file(
     if len(content) > 10_000_000:
         raise HTTPException(413, "Planilha maior que 10 MB")
     try:
-        rows, skipped_blank_minutes = parse_study_time_xlsx(content)
+        rows, blank_rows = parse_study_time_xlsx(content)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    result = await import_study_times(db, user["tutor_id"], rows)
-    return {**result, "skipped_blank_minutes": skipped_blank_minutes}
+    scope = await owned_discipline_scope(db, user["tutor_id"])
+    if not scope:
+        raise HTTPException(422, "Cadastre suas disciplinas com codigo antes de importar")
+    accepted = [row for row in rows if belongs_to_scope(
+        row["discipline_code"], row["semester"], scope)]
+    skipped_blank_minutes = sum(belongs_to_scope(
+        row["discipline_code"], row["semester"], scope) for row in blank_rows)
+    skipped_other_disciplines = len(rows) - len(accepted) + len(blank_rows) - skipped_blank_minutes
+    removed_outside_scope = await purge_outside_scope(db, user["tutor_id"], scope)
+    if not accepted:
+        return dict(created=0, updated=0, linked=0, pending=0,
+                    skipped_blank_minutes=skipped_blank_minutes,
+                    skipped_other_disciplines=skipped_other_disciplines,
+                    removed_outside_scope=removed_outside_scope)
+    result = await import_study_times(db, user["tutor_id"], accepted)
+    return {**result, "skipped_blank_minutes": skipped_blank_minutes,
+            "skipped_other_disciplines": skipped_other_disciplines,
+            "removed_outside_scope": removed_outside_scope}
+
+
+@router.post("/study-times/reconcile")
+async def reconcile_study_times(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.study_time_service import owned_discipline_scope, purge_outside_scope
+
+    scope = await owned_discipline_scope(db, user["tutor_id"])
+    removed = await purge_outside_scope(db, user["tutor_id"], scope)
+    return {"removed_outside_scope": removed}
 
 
 @router.get("/study-times")
@@ -137,6 +168,9 @@ async def list_study_times(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from ..services.study_time_service import belongs_to_scope, owned_discipline_scope
+
+    scope = await owned_discipline_scope(db, user["tutor_id"])
     query = select(StudyTimeModel, StudentModel.name).outerjoin(
         StudentModel, (StudentModel.id == StudyTimeModel.student_id)
         & (StudentModel.tutor_id == user["tutor_id"])
@@ -157,7 +191,8 @@ async def list_study_times(
                  student_name=name, discipline_code=item.discipline_code,
                  group_sequence=item.group_sequence, course=item.course,
                  semester=item.semester, minutes=item.minutes)
-            for item, name in records]
+            for item, name in records
+            if belongs_to_scope(item.discipline_code, item.semester, scope)]
 
 
 @router.delete("/study-times/{record_id}")
