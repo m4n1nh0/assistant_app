@@ -2686,6 +2686,10 @@ class _RosterTabState extends State<_RosterTab> {
     int? nameIndex = (preview['name_column'] as num).toInt() >= 0
       ? (preview['name_column'] as num).toInt() : null;
     final corrections = <int, StudentCsvRow>{};
+    final rowConfidences = ((preview['row_confidences'] as List?) ?? const [])
+        .map((value) => (value as num).toDouble()).toList();
+    final analysisConfidence = ((preview['analysis_confidence'] as num?) ?? 0).toDouble();
+    final analysisOrigin = '${preview['analysis_origin'] ?? 'parser'}';
     final classes = widget.classes.value ?? const <ClassGroup>[];
     final classIndex = (preview['class_column'] as num?)?.toInt() ?? -1;
     final classHints = ((preview['class_values'] as List?) ?? const [])
@@ -2724,6 +2728,8 @@ class _RosterTabState extends State<_RosterTab> {
           content: SizedBox(width: 680, height: 520,
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('${raw.length} linhas detectadas. Confirme as colunas e corrija erros de OCR antes de continuar.'),
+              Text('Análise: $analysisOrigin • ${(analysisConfidence * 100).round()}% de confiança',
+                style: Theme.of(context).textTheme.bodySmall),
               ...((preview['warnings'] as List).map((warning) => Text('$warning',
                 style: TextStyle(color: Theme.of(context).colorScheme.error)))),
               Row(children: [
@@ -2779,7 +2785,8 @@ class _RosterTabState extends State<_RosterTab> {
                     name: cell(row, nameIndex));
                   return ListTile(dense: true,
                     title: Text(current.name.isEmpty ? 'Nome não identificado' : current.name),
-                    subtitle: Text('Matrícula: ${current.enrollment.isEmpty ? 'não identificada' : current.enrollment}'),
+                    subtitle: Text('Matrícula: ${current.enrollment.isEmpty ? 'não identificada' : current.enrollment}'
+                      '${rawIndex < rowConfidences.length ? ' • ${(rowConfidences[rawIndex] * 100).round()}%' : ''}'),
                     trailing: IconButton(icon: const Icon(Icons.edit_outlined, size: 18),
                       tooltip: 'Corrigir matrícula e nome', onPressed: () async {
                         final edited = await _editSourceStudent(

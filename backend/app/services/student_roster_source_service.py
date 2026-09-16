@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import re
@@ -173,6 +174,12 @@ def _xlsx_rows(data: bytes) -> tuple[list[list[str]], str]:
 
 
 def _mapping(rows: list[list[str]]) -> tuple[list[str], list[list[str]], int, int, list[str]]:
+    # Relatórios da Estácio trazem várias linhas de metadados antes da tabela.
+    # Procure o cabeçalho real em vez de assumir que ele é a primeira linha.
+    header_row = next((index for index, row in enumerate(rows[:100])
+        if any(_clean_header(cell) in ENROLLMENT_HEADERS for cell in row)
+        and any(_clean_header(cell) in NAME_HEADERS for cell in row)), 0)
+    rows = rows[header_row:]
     width = min(max(map(len, rows)), 30)
     first = [rows[0][index] if index < len(rows[0]) else "" for index in range(width)]
     headers = [_clean_header(value) for value in first]
@@ -227,12 +234,39 @@ def _scope_hints(columns: list[str], rows: list[list[str]],
                 class_values=class_values, discipline_values=discipline_values)
 
 
-def _preview(source_type: str, rows: list[list[str]], source_text: str = "") -> dict:
+def _preview(source_type: str, rows: list[list[str]], source_text: str = "",
+             analysis_text: str = "") -> dict:
     columns, records, enrollment, name, warnings = _mapping(rows)
     return dict(source_type=source_type, columns=columns, rows=records,
                 enrollment_column=enrollment, name_column=name,
                 warnings=warnings, source_text=source_text,
+                analysis_origin="parser",
+                analysis_confidence=1.0 if enrollment >= 0 and name >= 0 else 0.55,
+                _analysis_text=analysis_text[:30_000],
                 **_scope_hints(columns, records, enrollment))
+
+
+def _metadata_hints(text: str) -> tuple[list[str], list[str]]:
+    """Extrai disciplina e turma do bloco que antecede a lista de presença."""
+    lines = [line.strip(" \t\r") for line in text.splitlines()]
+
+    def value_after(label: str) -> str:
+        for index, line in enumerate(lines):
+            cells = [cell.strip() for cell in line.split("\t")]
+            if cells and _clean_header(cells[0]) == label:
+                inline = next((cell for cell in cells[1:] if cell), "")
+                if inline:
+                    return inline
+                return next((candidate for candidate in lines[index + 1:]
+                             if candidate.strip()), "")
+        return ""
+
+    discipline = value_after("disciplina")
+    class_code = value_after("turma")
+    discipline_code = re.search(r"\bARA\d{4}\b", discipline, re.IGNORECASE)
+    class_match = re.search(r"\b\d{4,8}\b", class_code)
+    return ([class_match.group()] if class_match else [],
+            [discipline_code.group().upper()] if discipline_code else [])
 
 
 def preview_student_roster_source(data: bytes | None = None, filename: str = "",
@@ -254,9 +288,11 @@ def preview_student_roster_source(data: bytes | None = None, filename: str = "",
     elif data is not None and extension == ".xlsx":
         rows, sheet = _xlsx_rows(data)
         source_type = f"XLSX • {sheet}"
-        return _preview(source_type, rows)
+        return _preview(source_type, rows,
+                        analysis_text="\n".join("\t".join(row) for row in rows))
     else:
         text = _decode(data) if data is not None else pasted_text
+    text = html.unescape(text)
     if not text.strip():
         raise ValueError("Fonte vazia")
     if extension == ".xml" or text.lstrip().startswith("<?xml"):
@@ -279,5 +315,11 @@ def preview_student_roster_source(data: bytes | None = None, filename: str = "",
                 source_type = "texto/print"
     if not rows:
         raise ValueError("Não encontrei uma tabela ou linhas com matrícula e nome")
-    return _preview(source_type, rows,
-        text[:1200] if source_type == "print (OCR)" else "")
+    result = _preview(source_type, rows,
+        text[:1200] if source_type == "print (OCR)" else "", text)
+    classes, disciplines = _metadata_hints(text)
+    if classes:
+        result["class_values"] = classes
+    if disciplines:
+        result["discipline_values"] = disciplines
+    return result

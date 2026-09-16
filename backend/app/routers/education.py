@@ -1661,6 +1661,7 @@ async def preview_student_roster_source(
     file: Optional[UploadFile] = File(None),
     pasted_text: str = Form(""),
     user: dict = Depends(get_current_user),
+    _llm_context: None = Depends(user_llm_context),
 ):
     """Lê fontes variadas; a gravação continua no fluxo de prévia da turma."""
     from ..services.student_roster_source_service import preview_student_roster_source as parse
@@ -1668,11 +1669,66 @@ async def preview_student_roster_source(
     if file is None and not pasted_text.strip():
         raise HTTPException(422, "Envie um arquivo ou cole a lista de alunos")
     content = await file.read() if file is not None else None
+    filename = file.filename if file is not None else ""
+    preview = None
+    parse_error = ""
     try:
-        return await asyncio.to_thread(parse, content,
-            file.filename if file is not None else "", pasted_text)
+        preview = await asyncio.to_thread(parse, content, filename, pasted_text)
     except (ValueError, UnicodeError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        parse_error = str(exc)
+
+    analysis_text = (preview or {}).pop("_analysis_text", "")
+    if not analysis_text and pasted_text.strip():
+        analysis_text = pasted_text
+    if not analysis_text and content and not filename.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".xlsx")):
+        analysis_text = content.decode("utf-8", errors="replace")
+    if not analysis_text and content and filename.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+        from ..services import ocr_service
+        if ocr_service.is_available():
+            try:
+                analysis_text = await asyncio.to_thread(
+                    ocr_service.text_from_image, content)
+            except Exception:
+                analysis_text = ""
+
+    needs_agent = preview is None or bool(preview.get("warnings")) or (
+        float(preview.get("analysis_confidence", 0)) < 0.8)
+    agent_result = None
+    if needs_agent and analysis_text:
+        from ..services.llm_status_service import get_ready_llms
+        from ..services.student_roster_agent_service import interpret_student_roster
+        agent_result = await interpret_student_roster(analysis_text, await get_ready_llms())
+
+    if agent_result:
+        students = agent_result["students"]
+        preview = {
+            "source_type": (preview or {}).get("source_type", "fonte interpretada"),
+            "columns": ["Matrícula", "Nome"],
+            "rows": [[item["enrollment"], item["name"]] for item in students],
+            "enrollment_column": 0,
+            "name_column": 1,
+            "class_column": -1,
+            "discipline_column": -1,
+            "class_values": ([agent_result["class_code"]]
+                             if agent_result["class_code"] else []),
+            "discipline_values": ([agent_result["discipline"]]
+                                  if agent_result["discipline"] else []),
+            "warnings": ["Dados interpretados por IA: confira antes de importar."],
+            "source_text": (preview or {}).get("source_text", ""),
+            "analysis_origin": f"agente {agent_result['provider']}",
+            "analysis_confidence": agent_result["confidence"],
+            "row_confidences": [item["confidence"] for item in students],
+            "semester_hint": agent_result["semester"],
+        }
+    if preview is None:
+        raise HTTPException(422, parse_error or
+                            "Não consegui identificar matrícula e nome na fonte")
+    preview.setdefault("row_confidences", [])
+    preview.setdefault("semester_hint", "")
+    preview["agent_attempted"] = needs_agent
+    return preview
 
 
 @router.post("/students/import", response_model=StudentImportResponse)

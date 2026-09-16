@@ -47,6 +47,35 @@ def test_source_exposes_class_and_discipline_hints():
     assert preview["discipline_values"] == ["ARA0058"]
 
 
+def test_estacio_copied_attendance_report_skips_metadata_and_reads_scope():
+    text = """Prof.: MARIANO FLORENCIO MENDONCA\tMatrícula: 14020747
+Tipo de Curso\t
+11
+GRADUAÇÃO
+Período Acadêmico\t
+2026.3 SEMI
+Disciplina\t
+ARA0058 - APL. DE CLOUD, IOT E INDÚSTRIA 4.0 EM PYTHON
+Turma\t
+3008
+Data da Aula\t
+15/09/2026 - 18:30 - 21:10
+Nº\tMatrícula\tAluno\tPresença\tAbono\tBloqueado
+1\t202503062862\tALEXSANDRO DE LIMA ARAUJO\t\t\t
+2\t202212041702\tGLEDSON NUNES SANTOS\t\t\t
+3\t202502188501\tKaua Meneses Leal\t\t\t
+"""
+
+    preview = preview_student_roster_source(pasted_text=text)
+
+    assert preview["enrollment_column"] == 1
+    assert preview["name_column"] == 2
+    assert len(preview["rows"]) == 3
+    assert preview["rows"][0][1:3] == ["202503062862", "ALEXSANDRO DE LIMA ARAUJO"]
+    assert preview["class_values"] == ["3008"]
+    assert preview["discipline_values"] == ["ARA0058"]
+
+
 def test_xlsx_uses_first_sheet_and_detects_headers():
     workbook = Workbook()
     workbook.active.append(["Matrícula", "Nome", "Turma"])
