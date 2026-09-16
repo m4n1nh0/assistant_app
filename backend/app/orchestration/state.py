@@ -36,6 +36,7 @@ ActionKind = Literal[
     "academic_query",
     "study_time_query",
     "education",
+    "project_group_import",
 ]
 
 GraphRoute = Literal["action", "calendar_query", "academic_query", "study_time_query", "single", "multi", "chain"]
@@ -51,6 +52,7 @@ NON_CHAT_KINDS: frozenset[str] = frozenset({
     "academic_query",
     "study_time_query",
     "education",
+    "project_group_import",
 })
 
 # Tipos de acao que a interface confirma e executa.
@@ -61,6 +63,7 @@ ACTION_KINDS: frozenset[str] = frozenset({
     "registration",
     "calendar",
     "education",
+    "project_group_import",
 })
 
 

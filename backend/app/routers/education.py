@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import json
+import hashlib
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -24,6 +25,8 @@ from ..core.database import (
     QuizSourceModel,
     StudentModel,
     StudyTimeModel,
+    ProjectGroupModel,
+    ProjectGroupMemberModel,
     DisciplineModel,
     QuizModel,
     QuestionModel,
@@ -69,6 +72,10 @@ from ..models.schemas import (
     StudentImportResponse,
     StudentResponse,
     StudentUpdate,
+    ProjectGroupTextRequest,
+    ProjectGroupCommitRequest,
+    ProjectGroupUpdate,
+    ProjectGroupMemberLink,
     DisciplineCreate,
     DisciplineResponse,
     DisciplineUpdate,
@@ -106,16 +113,238 @@ router = APIRouter(
 )
 
 
+async def _owned_project_discipline(discipline_id: str, tutor_id: str,
+                                    db: AsyncSession) -> DisciplineModel:
+    item = await db.get(DisciplineModel, discipline_id)
+    if item is None or item.tutor_id != tutor_id:
+        raise HTTPException(404, "Disciplina não encontrada")
+    return item
+
+
+async def _owned_project_group(group_id: str, tutor_id: str,
+                               db: AsyncSession) -> ProjectGroupModel:
+    item = await db.get(ProjectGroupModel, group_id)
+    if item is None or item.tutor_id != tutor_id:
+        raise HTTPException(404, "Grupo não encontrado")
+    return item
+
+
+@router.post("/project-groups/preview")
+async def preview_project_group_text(
+    body: ProjectGroupTextRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.project_group_service import (
+        parse_project_group_text, preview_project_groups, source_sha256,
+    )
+
+    discipline = await _owned_project_discipline(
+        body.discipline_id, user["tutor_id"], db)
+    try:
+        parsed, context = parse_project_group_text(body.text)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    summary = await preview_project_groups(
+        db, user["tutor_id"], discipline.id, parsed)
+    return {**summary, "preview_sha256": source_sha256(body.text),
+            "discipline_code": discipline.code,
+            "discipline_name": discipline.name,
+            "semester": discipline.semester,
+            "list_context": context}
+
+
+@router.post("/project-groups/import")
+async def import_project_group_text(
+    body: ProjectGroupCommitRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.project_group_service import (
+        import_project_groups, parse_project_group_text, source_sha256,
+    )
+
+    if source_sha256(body.text) != body.preview_sha256:
+        raise HTTPException(409, "A lista mudou depois da prévia; confira novamente")
+    discipline = await _owned_project_discipline(
+        body.discipline_id, user["tutor_id"], db)
+    try:
+        parsed, context = parse_project_group_text(body.text)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return await import_project_groups(db, user["tutor_id"],
+                                       discipline, parsed, context)
+
+
+@router.get("/project-groups")
+async def list_project_groups(
+    discipline_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == user["tutor_id"])
+    if discipline_id:
+        await _owned_project_discipline(discipline_id, user["tutor_id"], db)
+        query = query.where(ProjectGroupModel.discipline_id == discipline_id)
+    groups = (await db.execute(query.order_by(
+        ProjectGroupModel.semester.desc(), ProjectGroupModel.name
+    ))).scalars().all()
+    if not groups:
+        return []
+    members = (await db.execute(select(ProjectGroupMemberModel).where(
+        ProjectGroupMemberModel.group_id.in_([group.id for group in groups])
+    ))).scalars().all()
+    student_ids = [member.student_id for member in members if member.student_id]
+    students = (await db.execute(select(StudentModel).where(
+        StudentModel.tutor_id == user["tutor_id"],
+        StudentModel.id.in_(student_ids or [""]),
+    ))).scalars().all()
+    by_student_id = {student.id: student.name for student in students}
+    by_group_id: dict[str, list] = {}
+    for member in members:
+        by_group_id.setdefault(member.group_id, []).append(dict(
+            id=member.id, name=member.name,
+            student_id=member.student_id if member.student_id in by_student_id else None,
+            student_name=by_student_id.get(member.student_id),
+            source_note=member.source_note, position=member.position))
+    return [dict(id=group.id, discipline_id=group.discipline_id,
+                 semester=group.semester, name=group.name,
+                 project_title=group.project_title,
+                 project_description=group.project_description,
+                 review_notes=group.review_notes, score=group.score,
+                 source_note=group.source_note,
+                 members=sorted(by_group_id.get(group.id, []),
+                                key=lambda member: member["position"]))
+            for group in groups]
+
+
+@router.patch("/project-groups/{group_id}")
+async def update_project_group(
+    group_id: str,
+    body: ProjectGroupUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(group, field, value)
+    await db.commit()
+    return {"success": True}
+
+
+@router.patch("/project-groups/{group_id}/members/{member_id}")
+async def link_project_group_member(
+    group_id: str,
+    member_id: str,
+    body: ProjectGroupMemberLink,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.project_group_service import roster_for_discipline
+
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    member = await db.get(ProjectGroupMemberModel, member_id)
+    if member is None or member.group_id != group.id:
+        raise HTTPException(404, "Integrante não encontrado")
+    if body.student_id:
+        roster = await roster_for_discipline(db, user["tutor_id"],
+                                             group.discipline_id)
+        if body.student_id not in {student.id for student in roster}:
+            raise HTTPException(422, "Aluno não pertence às turmas desta disciplina")
+    member.student_id = body.student_id
+    await db.commit()
+    return {"success": True}
+
+
+@router.delete("/project-groups/{group_id}")
+async def delete_project_group(
+    group_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    members = (await db.execute(select(ProjectGroupMemberModel).where(
+        ProjectGroupMemberModel.group_id == group.id
+    ))).scalars().all()
+    for member in members:
+        await db.delete(member)
+    await db.delete(group)
+    await db.commit()
+    return {"success": True}
+
+
 @router.post("/study-times/import")
 async def import_study_time_file(
     file: UploadFile = File(...),
+    preview_sha256: str = Form(...),
+    include_without_student: bool = Form(False),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Reimportar a mesma chave substitui os minutos e corrige o registro."""
     from ..services.study_time_service import (
         belongs_to_scope, import_study_times, owned_discipline_scope,
-        parse_study_time_xlsx, purge_outside_scope,
+        parse_study_time_xlsx,
+    )
+
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(422, "Selecione uma planilha .xlsx")
+    content = await file.read()
+    if len(content) > 10_000_000:
+        raise HTTPException(413, "Planilha maior que 10 MB")
+    if hashlib.sha256(content).hexdigest() != preview_sha256:
+        raise HTTPException(409, "A planilha mudou depois da prévia; visualize novamente")
+    try:
+        rows, blank_rows = parse_study_time_xlsx(content)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    scope = await owned_discipline_scope(db, user["tutor_id"])
+    if not scope:
+        raise HTTPException(422, "Cadastre suas disciplinas com codigo antes de importar")
+    accepted = [row for row in rows if belongs_to_scope(
+        row["discipline_code"], scope)]
+    skipped_blank_minutes = sum(belongs_to_scope(
+        row["discipline_code"], scope) for row in blank_rows)
+    skipped_other_disciplines = len(rows) - len(accepted) + len(blank_rows) - skipped_blank_minutes
+    from ..services.study_time_service import (
+        student_enrollment_index, match_study_student, remove_unmatched_existing,
+    )
+    by_enrollment = await student_enrollment_index(db, user["tutor_id"])
+    without_student = sum(match_study_student(row, by_enrollment) is None
+                          for row in accepted)
+    chosen = (accepted if include_without_student else
+              [row for row in accepted if match_study_student(row, by_enrollment)])
+    removed_without_student = 0
+    if not include_without_student:
+        unmatched_rows = [row for row in accepted
+                          if match_study_student(row, by_enrollment) is None]
+        removed_without_student = await remove_unmatched_existing(
+            db, user["tutor_id"], unmatched_rows)
+    if not chosen:
+        await db.commit()
+        return dict(created=0, updated=0, linked=0, pending=0,
+                    skipped_blank_minutes=skipped_blank_minutes,
+                    skipped_other_disciplines=skipped_other_disciplines,
+                    without_student_not_imported=without_student if not include_without_student else 0,
+                    removed_without_student=removed_without_student)
+    result = await import_study_times(db, user["tutor_id"], chosen)
+    return {**result, "skipped_blank_minutes": skipped_blank_minutes,
+            "skipped_other_disciplines": skipped_other_disciplines,
+            "without_student_not_imported": without_student if not include_without_student else 0,
+            "removed_without_student": removed_without_student}
+
+
+@router.post("/study-times/preview")
+async def preview_study_time_file(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lê o arquivo e mostra o destino das linhas sem gravar nada."""
+    from ..services.study_time_service import (
+        belongs_to_scope, owned_discipline_scope, parse_study_time_xlsx,
+        preview_study_times,
     )
 
     if not (file.filename or "").lower().endswith(".xlsx"):
@@ -129,22 +358,23 @@ async def import_study_time_file(
         raise HTTPException(422, str(exc)) from exc
     scope = await owned_discipline_scope(db, user["tutor_id"])
     if not scope:
-        raise HTTPException(422, "Cadastre suas disciplinas com codigo antes de importar")
-    accepted = [row for row in rows if belongs_to_scope(
-        row["discipline_code"], scope)]
-    skipped_blank_minutes = sum(belongs_to_scope(
-        row["discipline_code"], scope) for row in blank_rows)
-    skipped_other_disciplines = len(rows) - len(accepted) + len(blank_rows) - skipped_blank_minutes
-    removed_outside_scope = await purge_outside_scope(db, user["tutor_id"], scope)
-    if not accepted:
-        return dict(created=0, updated=0, linked=0, pending=0,
-                    skipped_blank_minutes=skipped_blank_minutes,
-                    skipped_other_disciplines=skipped_other_disciplines,
-                    removed_outside_scope=removed_outside_scope)
-    result = await import_study_times(db, user["tutor_id"], accepted)
-    return {**result, "skipped_blank_minutes": skipped_blank_minutes,
-            "skipped_other_disciplines": skipped_other_disciplines,
-            "removed_outside_scope": removed_outside_scope}
+        raise HTTPException(422, "Cadastre suas disciplinas com código antes de importar")
+    accepted = [row for row in rows if belongs_to_scope(row["discipline_code"], scope)]
+    blank_mine = sum(belongs_to_scope(row["discipline_code"], scope)
+                     for row in blank_rows)
+    summary = await preview_study_times(db, user["tutor_id"], accepted)
+    registered = (await db.execute(select(DisciplineModel).where(
+        DisciplineModel.tutor_id == user["tutor_id"]
+    ))).scalars().all()
+    registered_periods = {code: sorted({item.semester for item in registered
+                          if item.code.strip().upper() == code and item.semester})
+                          for code in summary["by_discipline"]}
+    return {**summary, "preview_sha256": hashlib.sha256(content).hexdigest(),
+            "registered_periods": registered_periods,
+            "accepted_with_minutes": len(accepted),
+            "blank_minutes_in_my_disciplines": blank_mine,
+            "outside_my_disciplines": len(rows) - len(accepted)
+              + len(blank_rows) - blank_mine}
 
 
 @router.post("/study-times/reconcile")
@@ -193,6 +423,30 @@ async def list_study_times(
                  semester=item.semester, minutes=item.minutes)
             for item, name in records
             if belongs_to_scope(item.discipline_code, scope)]
+
+
+@router.delete("/study-times/bulk")
+async def delete_study_times_for_period(
+    discipline_code: str,
+    semester: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permite retirar uma importação de teste de uma disciplina e período."""
+    from ..services.study_time_service import belongs_to_scope, owned_discipline_scope
+
+    scope = await owned_discipline_scope(db, user["tutor_id"])
+    if not belongs_to_scope(discipline_code, scope):
+        raise HTTPException(422, "Disciplina não cadastrada para este professor")
+    items = (await db.execute(select(StudyTimeModel).where(
+        StudyTimeModel.tutor_id == user["tutor_id"],
+        StudyTimeModel.discipline_code == discipline_code.strip().upper(),
+        StudyTimeModel.semester == semester.strip(),
+    ))).scalars().all()
+    for item in items:
+        await db.delete(item)
+    await db.commit()
+    return {"deleted": len(items)}
 
 
 @router.delete("/study-times/{record_id}")

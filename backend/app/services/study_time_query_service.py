@@ -65,7 +65,8 @@ async def study_time_chat_response(tutor_id: str, message: str) -> str:
     lines = [f"- {name}: {minutes} min ({minutes / 60:.1f} h)"
              for name, minutes in ranking]
     headline = (f"Tempo de estudo importado: {total} minutos ({total / 60:.1f} horas) "
-                f"em {len(records)} registros; {linked} vinculados e {pending} pendentes. "
+                f"em {len(records)} registros; {linked} com aluno cadastrado e "
+                f"{pending} sem aluno no cadastro. "
                 f"Média por registro: {total / len(records):.1f} minutos.")
     breakdown_field = None
     if "por disciplina" in text:

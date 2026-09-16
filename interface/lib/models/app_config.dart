@@ -615,6 +615,7 @@ class ChatResult {
   final CodingAction? codingAction;
   final CalendarCreateAction? calendarCreateAction;
   final EducationOpenAction? educationOpenAction;
+  final ProjectGroupImportAction? projectGroupImportAction;
 
   const ChatResult({
     required this.responses,
@@ -624,6 +625,7 @@ class ChatResult {
     this.codingAction,
     this.calendarCreateAction,
     this.educationOpenAction,
+    this.projectGroupImportAction,
   });
 
   LlmResponse get firstResponse => responses.isEmpty
@@ -650,6 +652,26 @@ class EducationOpenAction {
         requiresConfirmation: json['requires_confirmation'] != false &&
             json['requiresConfirmation'] != false,
       );
+}
+
+
+class ProjectGroupImportAction {
+  final String sourceText;
+  final String disciplineCode;
+  final String disciplineHint;
+  final int groupCount;
+
+  const ProjectGroupImportAction({required this.sourceText,
+    this.disciplineCode = '', this.disciplineHint = '',
+    required this.groupCount});
+
+  factory ProjectGroupImportAction.fromJson(Map<String, dynamic> json) =>
+    ProjectGroupImportAction(
+      sourceText: json['source_text']?.toString() ?? '',
+      disciplineCode: json['discipline_code']?.toString() ?? '',
+      disciplineHint: json['discipline_hint']?.toString() ?? '',
+      groupCount: (json['group_count'] as num?)?.toInt() ?? 0,
+    );
 }
 
 /// Pedido de abertura de app, URL ou comando ja cadastrado como atalho.

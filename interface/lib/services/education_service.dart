@@ -38,10 +38,73 @@ class EducationService {
         if (_api.token != null) 'Authorization': 'Bearer ${_api.token}',
       };
 
-  Future<Map<String, dynamic>> importStudyTimes(List<int> bytes, String filename) async {
+  Future<Map<String, dynamic>> previewProjectGroups(
+      String disciplineId, String text) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/project-groups/preview'),
+      headers: _headers,
+      body: jsonEncode({'discipline_id': disciplineId, 'text': text}),
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
+  Future<Map<String, dynamic>> importProjectGroups(
+      String disciplineId, String text, String previewSha256) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/project-groups/import'),
+      headers: _headers,
+      body: jsonEncode({'discipline_id': disciplineId, 'text': text,
+        'preview_sha256': previewSha256}),
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> listProjectGroups({String? disciplineId}) async {
+    final uri = Uri.parse('$_baseUrl/education/project-groups').replace(
+      queryParameters: {if (disciplineId != null) 'discipline_id': disciplineId});
+    final response = await http.get(uri, headers: _headers);
+    return (_decode(response) as List)
+        .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  Future<void> updateProjectGroup(String id, Map<String, dynamic> fields) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/project-groups/$id'),
+      headers: _headers, body: jsonEncode(fields));
+    _decode(response);
+  }
+
+  Future<void> linkProjectGroupMember(String groupId, String memberId,
+      String? studentId) async {
+    final response = await http.patch(Uri.parse(
+      '$_baseUrl/education/project-groups/$groupId/members/$memberId'),
+      headers: _headers, body: jsonEncode({'student_id': studentId}));
+    _decode(response);
+  }
+
+  Future<void> deleteProjectGroup(String id) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/project-groups/$id'), headers: _headers);
+    _decode(response);
+  }
+
+  Future<Map<String, dynamic>> previewStudyTimes(List<int> bytes, String filename) async {
+    final request = http.MultipartRequest(
+      'POST', Uri.parse('$_baseUrl/education/study-times/preview'));
+    if (_api.token != null) request.headers['Authorization'] = 'Bearer ${_api.token}';
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    final response = await http.Response.fromStream(await request.send());
+    return _decode(response) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> importStudyTimes(
+      List<int> bytes, String filename, String previewSha256,
+      {bool includeWithoutStudent = false}) async {
     final request = http.MultipartRequest(
       'POST', Uri.parse('$_baseUrl/education/study-times/import'));
     if (_api.token != null) request.headers['Authorization'] = 'Bearer ${_api.token}';
+    request.fields['preview_sha256'] = previewSha256;
+    request.fields['include_without_student'] = '$includeWithoutStudent';
     request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
@@ -73,6 +136,14 @@ class EducationService {
     final response = await http.delete(
       Uri.parse('$_baseUrl/education/study-times/$id'), headers: _headers);
     _decode(response);
+  }
+
+  Future<int> deleteStudyTimesForPeriod(String disciplineCode, String semester) async {
+    final uri = Uri.parse('$_baseUrl/education/study-times/bulk').replace(
+      queryParameters: {'discipline_code': disciplineCode, 'semester': semester});
+    final response = await http.delete(uri, headers: _headers);
+    final data = _decode(response) as Map<String, dynamic>;
+    return (data['deleted'] as num).toInt();
   }
 
   Never _fail(http.Response response) {

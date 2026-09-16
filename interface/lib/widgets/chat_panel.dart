@@ -1605,7 +1605,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           result.codingAction != null ||
           result.registrationAction != null ||
           result.calendarCreateAction != null ||
-          result.educationOpenAction != null;
+          result.educationOpenAction != null ||
+          result.projectGroupImportAction != null;
       if (hasAction) {
         _addSystemMsg(
             'Ação automática do backend ignorada: a mensagem era sobre o '
@@ -1617,6 +1618,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   }
 
   Future<void> _handleAssistantAction(ChatResult result) async {
+    if (result.projectGroupImportAction != null) {
+      await _suggestProjectGroupImport(result.projectGroupImportAction!);
+      return;
+    }
     if (result.educationOpenAction != null) {
       await _suggestEducationMode(result.educationOpenAction!);
       return;
@@ -1638,6 +1643,21 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
       return;
     }
     await _executeLaunchAction(result.action);
+  }
+
+  Future<void> _suggestProjectGroupImport(ProjectGroupImportAction action) async {
+    if (!mounted || action.sourceText.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useSafeArea: false,
+      builder: (_) => EducationDialog(
+        startAt: 'groups',
+        initialGroupText: action.sourceText,
+        initialDisciplineCode: action.disciplineCode,
+        initialDisciplineHint: action.disciplineHint,
+      ),
+    );
   }
 
   Future<void> _suggestEducationMode(EducationOpenAction action) async {
@@ -1674,6 +1694,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (open != true || !mounted) return;
     await showDialog<void>(
       context: context,
+      barrierDismissible: false,
+      useSafeArea: false,
       builder: (_) => EducationDialog(startAt: action.destination),
     );
   }
@@ -1686,6 +1708,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         result.codingAction != null ||
         result.calendarCreateAction != null ||
         result.educationOpenAction != null ||
+        result.projectGroupImportAction != null ||
         result.registrationAction != null ||
         result.action != null ||
         _isLocalScriptResultRequest(userRequest)) {
@@ -1889,7 +1912,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (result.codingAction != null ||
         result.computerAction != null ||
         result.calendarCreateAction != null ||
-        result.educationOpenAction != null) {
+        result.educationOpenAction != null ||
+        result.projectGroupImportAction != null) {
       return;
     }
 

@@ -1,10 +1,13 @@
 """Regressoes para planilhas mistas e disciplinas de outros professores."""
 
 from io import BytesIO
+from types import SimpleNamespace
 
 from openpyxl import Workbook
 
-from app.services.study_time_service import belongs_to_scope, parse_study_time_xlsx
+from app.services.study_time_service import (
+    belongs_to_scope, match_study_student, parse_study_time_xlsx,
+)
 
 
 def test_blank_minutes_do_not_turn_into_zero_or_block_valid_rows():
@@ -29,3 +32,10 @@ def test_only_registered_code_belongs_to_professor_across_periods():
     assert belongs_to_scope("ara0040", scope)
     assert belongs_to_scope("ARA0040", scope)
     assert not belongs_to_scope("ARA0015", scope)
+
+
+def test_unmatched_enrollment_is_not_assigned_to_another_student():
+    row = {"enrollment": "123", "group_sequence": "14500856"}
+    student = SimpleNamespace(id="other", class_group="3001")
+
+    assert match_study_student(row, {"456": [student]}) is None

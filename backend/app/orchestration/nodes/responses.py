@@ -72,6 +72,12 @@ async def acknowledge_action(
             else "Entendi que a aula vai comecar. Posso abrir o Modo Aula "
             "diretamente na gravacao."
         )
+    elif action_kind == "project_group_import":
+        content = (
+            f"Encontrei {_value(action, 'group_count')} grupos na lista. "
+            "Vou abrir a prévia no Modo Aula para você escolher a disciplina "
+            "e confirmar o cadastro."
+        )
     elif action_kind == "computer":
         content = (
             f"Vou executar {_value(action, 'name')} no computador "

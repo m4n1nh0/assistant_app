@@ -74,6 +74,7 @@ async def detect_action(
     from ...services.academic_query_service import is_academic_schedule_query
     from ...services.study_time_query_service import is_study_time_query
     from ...services.education_action_service import build_education_open_action
+    from ...services.project_group_service import build_project_group_chat_action
     from ...services.launcher_service import build_registration_context
 
     message = state["message"]
@@ -83,6 +84,12 @@ async def detect_action(
         if is_context_wrapped(message):
             observed.set(kind="chat", reason="contexto local")
             return {"action_kind": "chat", "action": None}
+
+        project_group_action = build_project_group_chat_action(message)
+        if project_group_action:
+            observed.set(kind="project_group_import")
+            return {"action_kind": "project_group_import",
+                    "action": project_group_action}
 
         if is_study_time_query(message):
             observed.set(kind="study_time_query")

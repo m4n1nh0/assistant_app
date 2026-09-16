@@ -111,7 +111,7 @@ class ChatResponse(BaseModel):
     mode: str
     responses: List[LLMResponse]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction", "CalendarCreateAction", "EducationOpenAction"]] = None
+    action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction", "CalendarCreateAction", "EducationOpenAction", "ProjectGroupImportAction"]] = None
 
 
 class LoginRequest(BaseModel):
@@ -873,6 +873,36 @@ class EducationOpenAction(BaseModel):
     type: Literal["education_open"] = "education_open"
     destination: Literal["lesson", "attendance"] = "lesson"
     reason: str = ""
+    requires_confirmation: bool = True
+
+
+class ProjectGroupTextRequest(BaseModel):
+    """Lista de grupos a conferir antes de cadastrar."""
+    discipline_id: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=250000)
+
+
+class ProjectGroupCommitRequest(ProjectGroupTextRequest):
+    preview_sha256: str = Field(min_length=64, max_length=64)
+
+
+class ProjectGroupUpdate(BaseModel):
+    project_title: Optional[str] = Field(default=None, max_length=255)
+    project_description: Optional[str] = None
+    review_notes: Optional[str] = None
+    score: Optional[float] = Field(default=None, allow_inf_nan=False)
+
+
+class ProjectGroupMemberLink(BaseModel):
+    student_id: Optional[str] = None
+
+
+class ProjectGroupImportAction(BaseModel):
+    type: Literal["project_group_import"] = "project_group_import"
+    source_text: str
+    discipline_code: str = ""
+    discipline_hint: str = ""
+    group_count: int
     requires_confirmation: bool = True
 
 

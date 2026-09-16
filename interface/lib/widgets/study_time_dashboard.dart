@@ -57,7 +57,7 @@ class StudyTimeDashboard extends StatelessWidget {
             metric('Tempo total', '${(total / 60).toStringAsFixed(1)} horas'),
             metric('Registros', '${records.length}'),
             metric('Média por registro', '${(total / records.length).round()} min'),
-            metric('Vinculados / pendentes', '$linked / ${records.length - linked}'),
+            metric('Com aluno / sem aluno no cadastro', '$linked / ${records.length - linked}'),
           ]),
           const SizedBox(height: 20),
           Expanded(child: LayoutBuilder(builder: (context, constraints) {
@@ -86,7 +86,7 @@ class StudyTimeDashboard extends StatelessWidget {
           })),
           const SizedBox(height: 8),
           const Text('Dados importados da planilha. Linhas sem minutos não entram no total; '
-            'registros pendentes não mostram nome de aluno.'),
+            'matrículas sem aluno no cadastro não aparecem no ranking por nome.'),
         ])),
     ));
   }

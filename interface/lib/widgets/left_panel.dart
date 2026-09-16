@@ -95,6 +95,8 @@ class _LeftPanelState extends ConsumerState<LeftPanel> {
                   color: AssistantTheme.c3,
                   onTap: () => showDialog(
                     context: context,
+                    barrierDismissible: false,
+                    useSafeArea: false,
                     builder: (_) => const EducationDialog(),
                   ),
                 ),

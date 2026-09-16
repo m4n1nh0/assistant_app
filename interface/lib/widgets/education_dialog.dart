@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -35,6 +36,7 @@ import 'materials_panel.dart';
 import 'quiz_qrcode_monitor.dart';
 import 'sia_attendance_importer.dart';
 import 'study_time_tab.dart';
+import 'project_groups_tab.dart';
 
 /// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
 /// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
@@ -45,6 +47,7 @@ const _historyTab = 3;
 const _pointsTab = 4;
 const _attendanceTab = 5;
 const _quizTab = 6;
+const _groupsTab = 9;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -56,8 +59,13 @@ typedef _Classes = ValueNotifier<List<ClassGroup>?>;
 /// relatorio de pontos.
 class EducationDialog extends StatefulWidget {
   final String startAt;
+  final String initialGroupText;
+  final String initialDisciplineCode;
+  final String initialDisciplineHint;
 
-  const EducationDialog({super.key, this.startAt = 'auto'});
+  const EducationDialog({super.key, this.startAt = 'auto',
+    this.initialGroupText = '', this.initialDisciplineCode = '',
+    this.initialDisciplineHint = ''});
 
   @override
   State<EducationDialog> createState() => _EducationDialogState();
@@ -70,6 +78,7 @@ class _EducationDialogState extends State<EducationDialog> {
   final ValueNotifier<String?> _quizLessonId = ValueNotifier<String?>(null);
 
   int? _initialTab;
+  bool _maximized = false;
 
   @override
   void initState() {
@@ -97,7 +106,9 @@ class _EducationDialogState extends State<EducationDialog> {
     if (!mounted) return;
     _classes.value = classes;
     setState(() {
-      if (classes != null && classes.isEmpty) {
+      if (widget.startAt == 'groups') {
+        _initialTab = _groupsTab;
+      } else if (classes != null && classes.isEmpty) {
         _initialTab = _rosterTab;
       } else if (widget.startAt == 'attendance') {
         _initialTab = _attendanceTab;
@@ -114,15 +125,22 @@ class _EducationDialogState extends State<EducationDialog> {
   @override
   Widget build(BuildContext context) {
     final initialTab = _initialTab;
+    final size = MediaQuery.sizeOf(context);
 
-    return Dialog(
+    return PopScope(
+      canPop: false,
+      child: Dialog(
+      insetPadding: _maximized
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       backgroundColor: AssistantTheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(4),
         side: const BorderSide(color: AssistantTheme.border2),
       ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1160, maxHeight: 820),
+      child: SizedBox(
+        width: _maximized ? size.width : math.min(1160, size.width - 48),
+        height: _maximized ? size.height : math.min(820, size.height - 48),
         child: Column(
           children: [
             _buildHeader(context),
@@ -131,7 +149,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 9,
+                  length: 10,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -170,6 +188,8 @@ class _EducationDialogState extends State<EducationDialog> {
                                 text: '7. MATERIAL'),
                             Tab(icon: Icon(Icons.timer_outlined, size: 17),
                                 text: '8. TEMPO DE ESTUDO'),
+                            Tab(icon: Icon(Icons.groups_2_outlined, size: 17),
+                                text: '9. GRUPOS DE PROJETO'),
                           ],
                         ),
                         Expanded(
@@ -193,7 +213,18 @@ class _EducationDialogState extends State<EducationDialog> {
                                     DefaultTabController.of(tabContext)
                                         .animateTo(_lessonTab),
                                 onOpenAssistant: () =>
-                                    Navigator.of(tabContext).pop(),
+                                    showDialog<void>(
+                                      context: tabContext,
+                                      builder: (hintContext) => AlertDialog(
+                                        title: const Text('Conversar com a IA'),
+                                        content: const Text(
+                                          'O Modo Aula permanece aberto. Para voltar ao chat, '
+                                          'feche esta janela pelo X.'),
+                                        actions: [TextButton(
+                                          onPressed: () => Navigator.pop(hintContext),
+                                          child: const Text('Entendi'))],
+                                      ),
+                                    ),
                               ),
                               _RosterTab(classes: _classes),
                               _LessonTab(
@@ -210,6 +241,11 @@ class _EducationDialogState extends State<EducationDialog> {
                               _QuizTab(selectedLessonId: _quizLessonId),
                               const MaterialsPanel(),
                               const StudyTimeTab(),
+                              ProjectGroupsTab(
+                                initialText: widget.initialGroupText,
+                                initialDisciplineCode: widget.initialDisciplineCode,
+                                initialDisciplineHint: widget.initialDisciplineHint,
+                              ),
                             ],
                           ),
                         ),
@@ -220,6 +256,7 @@ class _EducationDialogState extends State<EducationDialog> {
               ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -253,6 +290,13 @@ class _EducationDialogState extends State<EducationDialog> {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            tooltip: _maximized ? 'Restaurar tamanho' : 'Maximizar',
+            icon: Icon(_maximized ? Icons.fullscreen_exit : Icons.fullscreen,
+                size: 20),
+            color: AssistantTheme.textSecondary,
+            onPressed: () => setState(() => _maximized = !_maximized),
           ),
           IconButton(
             tooltip: 'Fechar',

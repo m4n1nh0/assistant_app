@@ -496,6 +496,39 @@ class StudyTimeModel(Base):
     imported_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class ProjectGroupModel(Base):
+    """Equipe de projeto vinculada à disciplina, com contexto para avaliação."""
+
+    __tablename__ = "project_groups"
+    __table_args__ = (
+        UniqueConstraint("tutor_id", "discipline_id", "name",
+                         name="uq_project_group_owner_discipline_name"),
+    )
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id = Column(String(64), nullable=False, index=True)
+    discipline_id = Column(String(64), nullable=False, index=True)
+    semester = Column(String(16), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    project_title = Column(String(255), nullable=False, default="")
+    project_description = Column(Text, nullable=False, default="")
+    review_notes = Column(Text, nullable=False, default="")
+    score = Column(Float, nullable=True)
+    source_note = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ProjectGroupMemberModel(Base):
+    """Nome da lista; student_id só é preenchido quando a identidade é segura."""
+
+    __tablename__ = "project_group_members"
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    group_id = Column(String(64), nullable=False, index=True)
+    student_id = Column(String(64), nullable=True, index=True)
+    name = Column(String(180), nullable=False)
+    source_note = Column(String(120), nullable=False, default="")
+    position = Column(Integer, nullable=False, default=0)
+
+
 class AttendanceSessionModel(Base):
     """Janela temporaria de chamada com um QR para uma ou mais turmas."""
 

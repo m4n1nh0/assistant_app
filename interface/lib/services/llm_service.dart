@@ -239,6 +239,11 @@ class LlmService {
               : responses,
           educationOpenAction: EducationOpenAction.fromJson(actionData),
         );
+      } else if (actionType == 'project_group_import') {
+        return ChatResult(
+          responses: responses,
+          projectGroupImportAction: ProjectGroupImportAction.fromJson(actionData),
+        );
       } else if (actionType == 'calendar_create') {
         return ChatResult(
           responses: responses.isEmpty
