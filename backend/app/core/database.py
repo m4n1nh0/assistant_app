@@ -513,6 +513,7 @@ class ProjectGroupModel(Base):
     project_description = Column(Text, nullable=False, default="")
     review_notes = Column(Text, nullable=False, default="")
     score = Column(Float, nullable=True)
+    penalty_points = Column(Float, nullable=False, default=0)
     source_note = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -900,6 +901,9 @@ def _add_compatibility_columns(sync_conn) -> None:
         "student_answers": {
             "student_name": "VARCHAR(180) NULL",
             "pontuacao": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "project_groups": {
+            "penalty_points": "FLOAT NOT NULL DEFAULT 0",
         },
     }
     for table_name, columns in additions.items():

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 from sqlalchemy import select
 
@@ -134,6 +135,7 @@ async def project_group_chat_data(tutor_id: str, message: str) -> str:
                  project_title=group.project_title,
                  project_description=group.project_description,
                  review_notes=group.review_notes,
+                 penalty_points=group.penalty_points,
                  annotations_from_list=group.source_note,
                  members=by_group.get(group.id, []))
             for group in groups if group.discipline_id in by_discipline]
@@ -159,6 +161,25 @@ def unique_student_match(name: str, roster: list[StudentModel]) -> StudentModel 
     key = normalize_person(name)
     matches = [student for student in roster if normalize_person(student.name) == key]
     return matches[0] if len(matches) == 1 else None
+
+
+def suggested_student_matches(name: str, roster: list[StudentModel]) -> list[dict]:
+    """Propõe nomes parecidos da própria disciplina, sem vincular automaticamente."""
+    source = normalize_person(name)
+    source_tokens = set(source.split())
+    proposals = []
+    for student in roster:
+        target = normalize_person(student.name)
+        target_tokens = set(target.split())
+        sequence = SequenceMatcher(None, source, target).ratio()
+        overlap = len(source_tokens & target_tokens) / max(1, len(source_tokens | target_tokens))
+        # Sobrenomes compartilhados sozinhos não devem dominar a sugestão.
+        confidence = round(0.7 * sequence + 0.3 * overlap, 3)
+        if confidence >= 0.48:
+            proposals.append(dict(student_id=student.id, student_name=student.name,
+                                  enrollment=student.external_id or "",
+                                  confidence=confidence))
+    return sorted(proposals, key=lambda row: (-row["confidence"], row["student_name"]))[:3]
 
 
 async def preview_project_groups(db, tutor_id: str, discipline_id: str,

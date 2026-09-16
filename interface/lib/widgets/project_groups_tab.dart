@@ -232,6 +232,107 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     title.dispose(); description.dispose(); review.dispose(); score.dispose();
   }
 
+  Future<void> editPenalty(Map<String, dynamic> group) async {
+    final controller = TextEditingController(
+      text: '${group['penalty_points'] ?? 0}');
+    final key = GlobalKey<FormState>();
+    final confirmed = await showDialog<bool>(context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Subtração de pontos • ${group['name']}'),
+        content: SizedBox(width: 360, child: Form(key: key, child: Column(
+          mainAxisSize: MainAxisSize.min, children: [
+          TextFormField(controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Pontos a subtrair'),
+            validator: (value) {
+              final number = double.tryParse((value ?? '').replaceAll(',', '.'));
+              return number != null && number.isFinite && number >= 0
+                ? null : 'Informe zero ou um valor positivo';
+            }),
+          const SizedBox(height: 8),
+          const Text('A penalidade fica registrada neste grupo. Zero a remove.'),
+        ]))),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () {
+            if (key.currentState?.validate() == true) {
+              Navigator.pop(dialogContext, true);
+            }
+          }, child: const Text('Salvar')),
+        ],
+      ));
+    if (confirmed == true) {
+      await education.updateProjectGroup('${group['id']}', {
+        'penalty_points': double.parse(controller.text.replaceAll(',', '.')),
+      });
+      await loadGroups();
+    }
+    controller.dispose();
+  }
+
+  Future<void> reviewSuggestedLinks() async {
+    if (selectedId == null) return;
+    setState(() => busy = true);
+    try {
+      final rows = await education.projectGroupLinkSuggestions(selectedId!);
+      if (!mounted) return;
+      final choices = <String, String?>{};
+      final confirmed = await showDialog<bool>(context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, update) => AlertDialog(
+            title: const Text('Conferir nomes e matrículas'),
+            content: SizedBox(width: 620, height: 520,
+              child: rows.isEmpty ? const Text('Todos os integrantes já têm vínculo.')
+                : ListView(children: [
+                  const Text('Sugestões por semelhança de nome, restritas às turmas desta disciplina. Confira a matrícula antes de salvar.'),
+                  const SizedBox(height: 12),
+                  ...rows.map((row) {
+                    final candidates = (row['candidates'] as List).cast<Map<String, dynamic>>();
+                    if (candidates.isEmpty) {
+                      return ListTile(
+                        title: Text('${row['member_name']} • ${row['group_name']}'),
+                        subtitle: const Text('Nenhuma sugestão; use o vínculo manual no integrante.'));
+                    }
+                    return Padding(padding: const EdgeInsets.only(bottom: 12),
+                      child: DropdownButtonFormField<String>(
+                        value: choices['${row['member_id']}'],
+                        isExpanded: true,
+                        decoration: InputDecoration(labelText:
+                          '${row['member_name']} • ${row['group_name']}'),
+                        items: [const DropdownMenuItem<String>(value: '',
+                          child: Text('Não associar agora')),
+                          ...candidates.map((candidate) => DropdownMenuItem<String>(
+                            value: '${candidate['student_id']}',
+                            child: Text('${candidate['student_name']} • matrícula ${candidate['enrollment']}'
+                              ' • ${((candidate['confidence'] as num) * 100).round()}%',
+                              overflow: TextOverflow.ellipsis)))],
+                        onChanged: (value) => update(() => choices['${row['member_id']}'] = value),
+                      ));
+                  }),
+                ])),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar')),
+              ElevatedButton(onPressed: choices.values.where((id) => id != null && id.isNotEmpty).isEmpty
+                ? null : () => Navigator.pop(dialogContext, true),
+                child: Text('Confirmar ${choices.values.where((id) => id != null && id.isNotEmpty).length} vínculos')),
+            ],
+          )));
+      if (confirmed == true) {
+        final links = choices.entries.where((entry) => entry.value != null && entry.value!.isNotEmpty)
+          .map((entry) => {'member_id': entry.key, 'student_id': entry.value!}).toList();
+        final linked = await education.confirmProjectGroupLinks(selectedId!, links);
+        await loadGroups();
+        if (mounted) setState(() => message = '$linked integrantes vinculados após sua confirmação.');
+      }
+    } catch (error) {
+      if (mounted) setState(() => message = 'Falha ao conferir vínculos: $error');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> removeGroup(Map<String, dynamic> group) async {
     final confirmed = await showDialog<bool>(context: context,
       builder: (dialogContext) => AlertDialog(
@@ -270,6 +371,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           ElevatedButton.icon(onPressed: busy ? null : previewAndImport,
             icon: const Icon(Icons.fact_check_outlined),
             label: const Text('Conferir e cadastrar grupos')),
+          OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : reviewSuggestedLinks,
+            icon: const Icon(Icons.person_search_outlined),
+            label: const Text('Sugerir nomes e matrículas')),
           Text('${groups.length} grupos cadastrados'),
         ]),
       const SizedBox(height: 10),
@@ -281,10 +385,30 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       if (message.isNotEmpty) Padding(padding: const EdgeInsets.all(8),
         child: Text(message)),
       const SizedBox(height: 8),
+      if (groups.isNotEmpty) ...[
+        Builder(builder: (context) {
+          final notes = groups.map((group) => '${group['source_note'] ?? ''}'
+            .split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty).toSet()).toList();
+          final common = notes.first.intersection(
+            notes.skip(1).fold(notes.first.toSet(), (set, note) => set.intersection(note)));
+          if (common.isEmpty) return const SizedBox.shrink();
+          return Padding(padding: const EdgeInsets.only(bottom: 10),
+            child: Card(child: Padding(padding: const EdgeInsets.all(12),
+              child: Row(children: [const Icon(Icons.info_outline),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Aviso geral da lista: ${common.join(' • ')}'))]))));
+        }),
+      ],
       Expanded(child: busy ? const Center(child: CircularProgressIndicator()) :
         groups.isEmpty ? const Center(child: Text('Nenhum grupo cadastrado nesta disciplina.')) :
         ListView(children: groups.map((group) {
           final members = (group['members'] as List).cast<Map<String, dynamic>>();
+          final allNotes = groups.map((item) => '${item['source_note'] ?? ''}'
+            .split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty).toSet()).toList();
+          final commonNotes = allNotes.skip(1).fold(allNotes.first.toSet(),
+            (set, notes) => set.intersection(notes));
+          final groupNotes = '${group['source_note'] ?? ''}'.split('\n')
+            .map((line) => line.trim()).where((line) => line.isNotEmpty && !commonNotes.contains(line)).toList();
           return Card(child: Padding(padding: const EdgeInsets.all(14),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
@@ -292,6 +416,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                   style: Theme.of(context).textTheme.titleLarge)),
                 IconButton(icon: const Icon(Icons.edit_note), tooltip: 'Editar projeto e análise',
                   onPressed: () => editProject(group)),
+                IconButton(icon: const Icon(Icons.remove_circle_outline),
+                  tooltip: 'Registrar subtração de pontos neste grupo',
+                  onPressed: () => editPenalty(group)),
                 IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Excluir grupo',
                   onPressed: () => removeGroup(group)),
               ]),
@@ -303,8 +430,10 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                 Text('Análise: ${group['review_notes']}'),
               if (group['score'] != null)
                 Text('Pontuação registrada: ${group['score']}'),
-              if ('${group['source_note']}'.isNotEmpty)
-                Text('Anotações da lista: ${group['source_note']}'),
+              if ((group['penalty_points'] as num? ?? 0) > 0)
+                Text('Subtração de pontos: −${group['penalty_points']}'),
+              if (groupNotes.isNotEmpty)
+                Text('Anotação deste grupo: ${groupNotes.join(' • ')}'),
               const SizedBox(height: 8),
               Wrap(spacing: 8, runSpacing: 6,
                 children: members.map((member) => ActionChip(

@@ -76,6 +76,7 @@ from ..models.schemas import (
     ProjectGroupCommitRequest,
     ProjectGroupUpdate,
     ProjectGroupMemberLink,
+    ProjectGroupSuggestedLinksCommit,
     DisciplineCreate,
     DisciplineResponse,
     DisciplineUpdate,
@@ -213,6 +214,7 @@ async def list_project_groups(
                  project_title=group.project_title,
                  project_description=group.project_description,
                  review_notes=group.review_notes, score=group.score,
+                 penalty_points=group.penalty_points,
                  source_note=group.source_note,
                  members=sorted(by_group_id.get(group.id, []),
                                 key=lambda member: member["position"]))
@@ -231,6 +233,65 @@ async def update_project_group(
         setattr(group, field, value)
     await db.commit()
     return {"success": True}
+
+
+@router.get("/project-groups/link-suggestions")
+async def project_group_link_suggestions(
+    discipline_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.project_group_service import (
+        roster_for_discipline, suggested_student_matches,
+    )
+    await _owned_project_discipline(discipline_id, user["tutor_id"], db)
+    roster = await roster_for_discipline(db, user["tutor_id"], discipline_id)
+    groups = (await db.execute(select(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == user["tutor_id"],
+        ProjectGroupModel.discipline_id == discipline_id,
+    ))).scalars().all()
+    members = (await db.execute(select(ProjectGroupMemberModel).where(
+        ProjectGroupMemberModel.group_id.in_([group.id for group in groups] or [""]),
+        ProjectGroupMemberModel.student_id.is_(None),
+    ))).scalars().all()
+    by_group = {group.id: group.name for group in groups}
+    return [dict(member_id=member.id, member_name=member.name,
+                 group_name=by_group[member.group_id],
+                 candidates=suggested_student_matches(member.name, roster))
+            for member in members]
+
+
+@router.post("/project-groups/link-suggestions/confirm")
+async def confirm_project_group_link_suggestions(
+    body: ProjectGroupSuggestedLinksCommit,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..services.project_group_service import roster_for_discipline
+    await _owned_project_discipline(body.discipline_id, user["tutor_id"], db)
+    roster = await roster_for_discipline(db, user["tutor_id"], body.discipline_id)
+    valid_students = {student.id for student in roster}
+    if len({link.member_id for link in body.links}) != len(body.links):
+        raise HTTPException(422, "Integrante repetido na confirmação")
+    groups = (await db.execute(select(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == user["tutor_id"],
+        ProjectGroupModel.discipline_id == body.discipline_id,
+    ))).scalars().all()
+    group_ids = {group.id for group in groups}
+    member_ids = [link.member_id for link in body.links]
+    members = (await db.execute(select(ProjectGroupMemberModel).where(
+        ProjectGroupMemberModel.id.in_(member_ids or [""]),
+    ))).scalars().all()
+    by_id = {member.id: member for member in members}
+    for link in body.links:
+        member = by_id.get(link.member_id)
+        if (member is None or member.group_id not in group_ids
+                or member.student_id is not None or link.student_id not in valid_students):
+            raise HTTPException(409, "Sugestão desatualizada ou fora da disciplina; confira novamente")
+    for link in body.links:
+        by_id[link.member_id].student_id = link.student_id
+    await db.commit()
+    return {"linked": len(body.links)}
 
 
 @router.patch("/project-groups/{group_id}/members/{member_id}")

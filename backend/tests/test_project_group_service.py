@@ -1,6 +1,7 @@
 from app.services.project_group_service import (
     build_project_group_chat_action, is_project_group_question,
     parse_project_group_text,
+    suggested_student_matches,
 )
 
 
@@ -33,3 +34,15 @@ def test_project_question_requests_registered_group_context():
     assert is_project_group_question("Analise o projeto do grupo 3 da ARA0058")
     assert is_project_group_question("Qual grupo tem Nicolas Rosa?")
     assert not is_project_group_question("Quando tenho aula na turma 3001?")
+
+
+def test_name_suggestions_show_matriculas_without_linking():
+    from types import SimpleNamespace
+    roster = [
+        SimpleNamespace(id="one", name="JOAO VITOR PEREIRA DA SILVA", external_id="20250001"),
+        SimpleNamespace(id="two", name="MARIA EDUARDA SOUZA", external_id="20250002"),
+    ]
+    candidates = suggested_student_matches("JOAO VITOR PEREIRA", roster)
+    assert candidates[0]["student_id"] == "one"
+    assert candidates[0]["enrollment"] == "20250001"
+    assert all(candidate["student_id"] != "two" for candidate in candidates)

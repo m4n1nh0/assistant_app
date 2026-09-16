@@ -74,6 +74,25 @@ class EducationService {
     _decode(response);
   }
 
+  Future<List<Map<String, dynamic>>> projectGroupLinkSuggestions(
+      String disciplineId) async {
+    final uri = Uri.parse('$_baseUrl/education/project-groups/link-suggestions')
+        .replace(queryParameters: {'discipline_id': disciplineId});
+    final response = await http.get(uri, headers: _headers);
+    return (_decode(response) as List)
+        .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  Future<int> confirmProjectGroupLinks(String disciplineId,
+      List<Map<String, String>> links) async {
+    final response = await http.post(Uri.parse(
+      '$_baseUrl/education/project-groups/link-suggestions/confirm'),
+      headers: _headers, body: jsonEncode({
+        'discipline_id': disciplineId, 'links': links,
+      }));
+    return (Map<String, dynamic>.from(_decode(response) as Map)['linked'] as num).toInt();
+  }
+
   Future<void> linkProjectGroupMember(String groupId, String memberId,
       String? studentId) async {
     final response = await http.patch(Uri.parse(

@@ -891,10 +891,21 @@ class ProjectGroupUpdate(BaseModel):
     project_description: Optional[str] = None
     review_notes: Optional[str] = None
     score: Optional[float] = Field(default=None, allow_inf_nan=False)
+    penalty_points: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class ProjectGroupMemberLink(BaseModel):
     student_id: Optional[str] = None
+
+
+class ProjectGroupSuggestedLink(BaseModel):
+    member_id: str
+    student_id: str
+
+
+class ProjectGroupSuggestedLinksCommit(BaseModel):
+    discipline_id: str
+    links: list[ProjectGroupSuggestedLink] = Field(max_length=200)
 
 
 class ProjectGroupImportAction(BaseModel):
