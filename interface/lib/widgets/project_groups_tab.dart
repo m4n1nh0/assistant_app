@@ -350,6 +350,37 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     await loadGroups();
   }
 
+  Future<void> deleteAll() async {
+    setState(() => busy = true);
+    try {
+      final allGroups = await education.listProjectGroups();
+      if (!mounted) return;
+      if (allGroups.isEmpty) {
+        setState(() => message = 'Não há grupos para excluir.');
+        return;
+      }
+      final confirmed = await showDialog<bool>(context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Excluir todos os grupos de projeto?'),
+          content: Text('${allGroups.length} grupos e seus integrantes serão excluídos de todas as suas disciplinas e períodos. A disciplina selecionada não limita esta exclusão.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Excluir todos os grupos')),
+          ],
+        ));
+      if (confirmed != true) return;
+      final deleted = await education.deleteAllProjectGroups();
+      await loadGroups();
+      if (mounted) setState(() => message = '$deleted grupos de projeto excluídos.');
+    } catch (error) {
+      if (mounted) setState(() => message = 'Falha ao excluir grupos: $error');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
@@ -374,6 +405,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : reviewSuggestedLinks,
             icon: const Icon(Icons.person_search_outlined),
             label: const Text('Sugerir nomes e matrículas')),
+          OutlinedButton.icon(onPressed: busy ? null : deleteAll,
+            icon: const Icon(Icons.delete_forever_outlined),
+            label: const Text('Excluir todos os grupos')),
           Text('${groups.length} grupos cadastrados'),
         ]),
       const SizedBox(height: 10),

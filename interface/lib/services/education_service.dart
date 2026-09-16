@@ -107,6 +107,12 @@ class EducationService {
     _decode(response);
   }
 
+  Future<int> deleteAllProjectGroups() async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/project-groups/all'), headers: _headers);
+    return (Map<String, dynamic>.from(_decode(response) as Map)['deleted'] as num).toInt();
+  }
+
   Future<Map<String, dynamic>> previewStudyTimes(List<int> bytes, String filename) async {
     final request = http.MultipartRequest(
       'POST', Uri.parse('$_baseUrl/education/study-times/preview'));
@@ -155,6 +161,13 @@ class EducationService {
     final response = await http.delete(
       Uri.parse('$_baseUrl/education/study-times/$id'), headers: _headers);
     _decode(response);
+  }
+
+  Future<int> deleteAllStudyTimes() async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/study-times/all'), headers: _headers);
+    final data = _decode(response) as Map<String, dynamic>;
+    return (data['deleted'] as num).toInt();
   }
 
   Future<int> deleteStudyTimesForPeriod(String disciplineCode, String semester) async {

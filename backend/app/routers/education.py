@@ -318,6 +318,25 @@ async def link_project_group_member(
     return {"success": True}
 
 
+@router.delete("/project-groups/all")
+async def delete_all_project_groups(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove todos os grupos deste professor, inclusive seus integrantes."""
+    groups = (await db.execute(select(ProjectGroupModel.id).where(
+        ProjectGroupModel.tutor_id == user["tutor_id"],
+    ))).scalars().all()
+    if groups:
+        await db.execute(sql_delete(ProjectGroupMemberModel).where(
+            ProjectGroupMemberModel.group_id.in_(groups)))
+        await db.execute(sql_delete(ProjectGroupModel).where(
+            ProjectGroupModel.id.in_(groups),
+            ProjectGroupModel.tutor_id == user["tutor_id"]))
+    await db.commit()
+    return {"deleted": len(groups)}
+
+
 @router.delete("/project-groups/{group_id}")
 async def delete_project_group(
     group_id: str,
@@ -484,6 +503,18 @@ async def list_study_times(
                  semester=item.semester, minutes=item.minutes)
             for item, name in records
             if belongs_to_scope(item.discipline_code, scope)]
+
+
+@router.delete("/study-times/all")
+async def delete_all_study_times(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove todas as linhas de tempo importadas deste professor."""
+    result = await db.execute(sql_delete(StudyTimeModel).where(
+        StudyTimeModel.tutor_id == user["tutor_id"]))
+    await db.commit()
+    return {"deleted": max(0, result.rowcount or 0)}
 
 
 @router.delete("/study-times/bulk")

@@ -127,6 +127,31 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
     }
   }
 
+  Future<void> deleteAll() async {
+    final confirmed = await showDialog<bool>(context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir todos os tempos de estudo?'),
+        content: Text('${rows.length} registros importados serão excluídos de todas as suas disciplinas e períodos. Os filtros atuais não limitam esta exclusão.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Excluir todos')),
+        ],
+      ));
+    if (confirmed != true || !mounted) return;
+    setState(() => busy = true);
+    try {
+      final deleted = await education.deleteAllStudyTimes();
+      await refresh();
+      if (mounted) setState(() => message = '$deleted registros de tempo de estudo excluídos.');
+    } catch (error) {
+      if (mounted) setState(() => message = 'Falha ao excluir tempos de estudo: $error');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     List<String> options(String field) =>
@@ -199,6 +224,9 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
               },
               icon: const Icon(Icons.delete_sweep_outlined),
               label: const Text('Remover período importado')),
+            OutlinedButton.icon(onPressed: busy || rows.isEmpty ? null : deleteAll,
+              icon: const Icon(Icons.delete_forever_outlined),
+              label: const Text('Excluir todos os tempos')),
           ]),
         if (message.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 8),
           child: Text(message)),
