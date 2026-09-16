@@ -26,12 +26,12 @@ PROVIDER_ORDER = (
 )
 
 PROVIDER_SPECS: dict[str, dict[str, str]] = {
-    "claude": {"label": "Claude", "key_attr": "claude_api_key", "model": "claude-sonnet-4-6"},
-    "gpt": {"label": "OpenAI", "key_attr": "openai_api_key", "model": "gpt-4o"},
+    "claude": {"label": "Claude", "key_attr": "claude_api_key", "model_attr": "claude_model"},
+    "gpt": {"label": "OpenAI", "key_attr": "openai_api_key", "model_attr": "openai_model"},
     "together": {"label": "Together", "key_attr": "together_api_key", "model_attr": "together_model"},
     "openrouter": {"label": "OpenRouter", "key_attr": "openrouter_api_key", "model_attr": "openrouter_model"},
     "deepseek": {"label": "DeepSeek", "key_attr": "deepseek_api_key", "model_attr": "deepseek_model"},
-    "gemini": {"label": "Gemini", "key_attr": "gemini_api_key", "model": "gemini-1.5-flash"},
+    "gemini": {"label": "Gemini", "key_attr": "gemini_api_key", "model_attr": "gemini_model"},
     "grok": {"label": "Grok / Groq", "key_attr": "grok_api_key", "model_attr": "grok_model"},
     "hf": {"label": "Hugging Face", "key_attr": "huggingface_api_key", "model_attr": "huggingface_model"},
 }

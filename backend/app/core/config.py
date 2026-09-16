@@ -57,6 +57,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GROK_API_KEY", "GROQ_API_KEY"),
     )
     huggingface_api_key: str = ""
+    # Todo provedor tem o modelo em settings, sobrescrivel por ambiente e pela
+    # tela de configuracao. Antes claude, gpt e gemini tinham o nome fixo no
+    # codigo: quando o Google tirou `gemini-1.5-flash` do ar, a unica saida era
+    # editar o fonte - a geracao de quiz falhava com "model is not found" e o
+    # professor nao tinha onde trocar.
+    claude_model: str = "claude-sonnet-5"
+    openai_model: str = "gpt-4o"
+    gemini_model: str = "gemini-2.0-flash"
     grok_model: str = "grok-3"
     groq_model: str = "llama-3.3-70b-versatile"
     together_model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo"

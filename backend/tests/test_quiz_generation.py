@@ -1682,3 +1682,121 @@ def test_erro_do_quiz_mostra_todos_os_modelos_tentados(monkeypatch):
     assert result["questoes"] == []
     assert "claude: sem credito na conta" in result["error"]
     assert "llama: OLLAMA_BASE_URL nao configurada" in result["error"]
+
+
+def test_lote_sem_perguntas_diz_o_que_o_modelo_respondeu(monkeypatch):
+    """"sem detalhe" na revisao nao dizia se foi prosa, repeticao ou vazio.
+
+    O lote que volta sem pergunta gravava a tentativa sem campo de erro, entao
+    a tela nao tinha o que mostrar - e sem saber que o modelo respondeu fora do
+    JSON, o professor nao tem como decidir se troca de modelo ou de fonte.
+    """
+    async def fake_dispatch_single(
+        llm, _prompt, _history, _system_prompt, *, max_tokens=None
+    ):
+        return LLMResponse(
+            llm=llm,
+            content="Claro! Posso ajudar com o quiz sobre modelagem de dados.",
+        )
+
+    async def fake_candidates(_preferred=None):
+        return ["together"]
+
+    monkeypatch.setattr(
+        quiz_generator_service, "_candidate_llms_for_quiz", fake_candidates
+    )
+    monkeypatch.setattr(
+        quiz_generator_service, "dispatch_single", fake_dispatch_single
+    )
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Entidades, atributos e relacionamentos no modelo conceitual.",
+            disciplina="Banco de Dados",
+            titulo_aula="DER",
+            quantidade_questoes=2,
+        )
+    )
+
+    assert result["questoes"] == []
+    erros = [str(t.get("error") or "") for t in result["attempts"]]
+    assert all(erro.strip() for erro in erros), "tentativa sem motivo vira 'sem detalhe'"
+    assert "Resposta sem JSON" in result["error"]
+    assert "Posso ajudar" in result["error"]
+
+
+def test_provedor_com_erro_permanente_sai_da_fila(monkeypatch):
+    """Modelo retirado do ar devolve o mesmo erro em todo lote.
+
+    Rechamar queima a tentativa que o proximo da fila usaria. O reordenamento
+    por vencedor so protege quando alguem entrega o lote; quando ninguem
+    entrega - que e justamente quando as tentativas sao preciosas - o provedor
+    quebrado voltava ao topo a cada lote.
+    """
+    tentados = []
+
+    async def fake_dispatch_single(
+        llm, prompt, _history, _system_prompt, *, max_tokens=None
+    ):
+        if "gere " not in prompt:
+            return LLMResponse(llm=llm, content='{"validacoes": []}')
+        tentados.append(llm)
+        if llm == "gemini":
+            return LLMResponse(
+                llm=llm,
+                content=(
+                    "models/gemini-1.5-flash is not found for API version "
+                    "v1beta, or is not supported for generateContent."
+                ),
+                is_error=True,
+            )
+        # Responde, mas fora do JSON: e falha passageira, entao continua na
+        # fila e deve ser tentada em todo lote.
+        return LLMResponse(llm=llm, content="Claro, posso ajudar com o quiz!")
+
+    async def fake_candidates(_preferred=None):
+        return ["gemini", "together"]
+
+    monkeypatch.setattr(
+        quiz_generator_service, "_candidate_llms_for_quiz", fake_candidates
+    )
+    monkeypatch.setattr(
+        quiz_generator_service, "dispatch_single", fake_dispatch_single
+    )
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Resumo da aula sobre normalizacao e chaves.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=8,
+        )
+    )
+
+    assert result["questoes"] == []
+    assert tentados.count("gemini") == 1, f"gemini rechamado: {tentados}"
+    assert tentados.count("together") > 1, f"together saiu cedo: {tentados}"
+    # A falha permanente continua na explicacao, mesmo o provedor tendo saido.
+    assert "gemini" in result["error"] and "together" in result["error"]
+
+
+def test_fila_de_candidatos_nao_para_nos_tres_primeiros(monkeypatch):
+    """Dois provedores quebrados consumiam a fila inteira.
+
+    O teto de tres candidatos fazia o quiz falhar com as outras contas do
+    professor configuradas e nunca chamadas.
+    """
+    configurados = [
+        "claude", "gpt", "together", "openrouter", "deepseek", "gemini",
+    ]
+
+    async def fake_rank(candidates, task="general", *, available_only=False):
+        return list(candidates)
+
+    monkeypatch.setattr(
+        quiz_generator_service, "settings",
+        SimpleNamespace(active_llms=list(configurados)),
+    )
+    monkeypatch.setattr(quiz_generator_service, "rank_auto_llms", fake_rank)
+
+    assert run(quiz_generator_service._candidate_llms_for_quiz()) == configurados

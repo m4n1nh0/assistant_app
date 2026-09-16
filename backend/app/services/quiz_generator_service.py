@@ -183,7 +183,12 @@ async def _candidate_llms_for_quiz(preferred: Optional[str] = None) -> List[str]
     if not ranked:
         ranked = await rank_auto_llms(disponiveis, task="code")
     fallback = [await pick_auto_llm(disponiveis) or disponiveis[0]]
-    return (ranked or fallback)[:3]
+    # Sem teto: antes so os tres primeiros da fila eram tentados, entao dois
+    # provedores quebrados (modelo retirado do ar, chave vencida) consumiam a
+    # fila inteira e o quiz falhava com as demais contas do professor intactas
+    # e nunca chamadas. Provedor que falha sai da fila em `_drop_provider`, o
+    # que ja limita quantas chamadas cada geracao faz.
+    return ranked or fallback
 
 
 async def _resolve_llm_for_quiz(preferred: Optional[str] = None) -> str:
@@ -695,6 +700,79 @@ def _attempts_error(attempts: Sequence[Dict[str, Any]]) -> str:
     return f"Nenhum modelo gerou o quiz. {detalhes}"
 
 
+#: Erros que nao mudam entre um lote e o seguinte: chave, permissao, modelo
+#: inexistente ou credito acabado. Insistir so gasta os lotes que restam.
+_PERMANENT_FAILURE_MARKS = (
+    "credencial",
+    "not found",
+    "nao configurada",
+    "não configurada",
+    "is not supported",
+    "unauthorized",
+    "forbidden",
+    "invalid api key",
+    "invalid_api_key",
+    "incorrect api key",
+    "authentication",
+    "quota",
+    "insufficient",
+    "billing",
+    "credit",
+    "401",
+    "403",
+    "404",
+)
+
+
+def _is_permanent_failure(error: str) -> bool:
+    """Diz se repetir a chamada neste provedor daria o mesmo erro."""
+    texto = (error or "").lower()
+    return any(marca in texto for marca in _PERMANENT_FAILURE_MARKS)
+
+
+def _drop_provider(candidatos: List[str], llm_name: str, error: str) -> None:
+    """Tira da fila o provedor cujo erro nao vai mudar no proximo lote.
+
+    Sem isso, um provedor com modelo retirado do ar era chamado de novo a cada
+    lote, devolvia a mesma mensagem e queimava as tentativas que o provedor
+    seguinte usaria para entregar as perguntas que faltavam.
+    """
+    if not _is_permanent_failure(error) or llm_name not in candidatos:
+        return
+    if len(candidatos) == 1:
+        # Ultimo da fila fica: e melhor tentar de novo e falhar com a mensagem
+        # dele do que terminar sem provedor algum e sem explicacao.
+        return
+    candidatos.remove(llm_name)
+    logger.info(
+        f"{llm_name} fora da fila do quiz: erro nao muda no proximo lote "
+        f"({_compact_text(error, limit=120)})"
+    )
+
+
+def _empty_batch_reason(
+    content: str,
+    questoes_lidas: Sequence[Dict[str, Any]],
+) -> str:
+    """Diz por que o lote nao rendeu pergunta nenhuma.
+
+    Sao tres casos distintos com consequencias distintas: o modelo escreveu
+    fora do JSON (prompt ou modelo inadequado), devolveu JSON valido mas so
+    repetiu o que ja havia (pedir mais perguntas nao vai adiantar) ou nao
+    devolveu nada (resposta vazia ou cortada). "Resposta sem perguntas
+    estruturadas" cobria os tres e nao ajudava em nenhum.
+    """
+    texto = (content or "").strip()
+    if not texto:
+        return "Resposta vazia do modelo."
+    if questoes_lidas:
+        return (
+            f"O modelo devolveu {len(questoes_lidas)} pergunta(s), mas todas "
+            "repetiam as já geradas."
+        )
+    return f"Resposta sem JSON de perguntas: “{_compact_text(texto, limit=160)}”"
+
+
 def _report_progress(state: QuizGraphState, prontas: int, total: int) -> None:
     callback = state.get("on_progress")
     if not callable(callback):
@@ -709,7 +787,7 @@ async def _generate_batch(
     state: QuizGraphState,
     quantidade: int,
     ja_gerados: List[Dict[str, Any]],
-    candidatos: Sequence[str],
+    candidatos: List[str],
     attempts: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Pede um lote de questoes, tentando cada modelo candidato em ordem."""
@@ -728,7 +806,9 @@ async def _generate_batch(
     vistos = {_dedupe_key(questao.get("enunciado", "")) for questao in ja_gerados}
     erro = "A IA não gerou perguntas aproveitáveis."
 
-    for llm_name in candidatos:
+    # Copia: `_drop_provider` altera a fila original, e tirar item de lista
+    # sendo percorrida pularia o candidato seguinte.
+    for llm_name in list(candidatos):
         try:
             response = await dispatch_single(
                 llm_name,
@@ -746,6 +826,7 @@ async def _generate_batch(
                 "error": str(e),
                 "question_count": 0,
             })
+            _drop_provider(candidatos, llm_name, str(e))
             continue
 
         if response.is_error:
@@ -757,6 +838,7 @@ async def _generate_batch(
                 "error": response.content,
                 "question_count": 0,
             })
+            _drop_provider(candidatos, llm_name, response.content)
             continue
 
         quiz_data = _json_from_content(response.content)
@@ -772,15 +854,25 @@ async def _generate_batch(
             if len(novas) >= quantidade:
                 break
 
-        attempts.append({
-            "llm": llm_name,
-            "success": bool(novas),
-            "question_count": len(novas),
-        })
         if not novas:
-            erro = "Resposta do LLM sem perguntas estruturadas."
+            # Sem motivo aqui, a revisao mostrava "sem detalhe" e o professor
+            # nao tinha como saber se o modelo falou fora do JSON, repetiu as
+            # perguntas do lote anterior ou devolveu resposta vazia.
+            erro = _empty_batch_reason(response.content, questoes)
+            attempts.append({
+                "llm": llm_name,
+                "success": False,
+                "error": erro,
+                "question_count": 0,
+            })
             logger.warning(f"Quiz generation returned no questions from {llm_name}")
             continue
+
+        attempts.append({
+            "llm": llm_name,
+            "success": True,
+            "question_count": len(novas),
+        })
 
         return {
             "questoes": novas,
@@ -801,7 +893,7 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
     """
 
     total = max(int(state["quantidade_questoes"]), 1)
-    candidatos = await _candidate_llms_for_quiz(state.get("requested_llm"))
+    candidatos = list(await _candidate_llms_for_quiz(state.get("requested_llm")))
     if not candidatos:
         return {
             "attempts": [],
@@ -839,7 +931,7 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         # perguntas repete a chamada perdida no modelo que falhou, lote a lote.
         vencedor = lote.get("llm")
         if vencedor and candidatos and candidatos[0] != vencedor:
-            candidatos = [vencedor] + [
+            candidatos[:] = [vencedor] + [
                 nome for nome in candidatos if nome != vencedor
             ]
 
