@@ -9,6 +9,7 @@ import re
 import unicodedata
 from collections import Counter
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 from sqlalchemy import select
 
@@ -255,35 +256,82 @@ class NameSimilarityIndex:
         return scores
 
 
+def damerau_levenshtein(source: str, target: str) -> int:
+    """Distância de edição com transposição adjacente, sem dependência externa."""
+    if source == target:
+        return 0
+    previous_previous = list(range(len(target) + 1))
+    previous = previous_previous
+    for row_index, left in enumerate(source, start=1):
+        current = [row_index] + [0] * len(target)
+        for column_index, right in enumerate(target, start=1):
+            current[column_index] = min(
+                previous[column_index] + 1,
+                current[column_index - 1] + 1,
+                previous[column_index - 1] + (left != right),
+            )
+            if (row_index > 1 and column_index > 1
+                    and left == target[column_index - 2]
+                    and source[row_index - 2] == right):
+                current[column_index] = min(current[column_index],
+                    previous_previous[column_index - 2] + 1)
+        previous_previous, previous = previous, current
+    return previous[-1]
+
+
+def _token_edit_similarity(source: str, target: str) -> float:
+    left, right = _sound_token(source), _sound_token(target)
+    if left == right:
+        return 1.0
+    edit = 1.0 - damerau_levenshtein(left, right) / max(len(left), len(right))
+    prefix = 0.0
+    if min(len(left), len(right)) >= 4 and (left.startswith(right) or right.startswith(left)):
+        prefix = 0.88 - 0.02 * abs(len(left) - len(right))
+    return max(0.0, edit, prefix, SequenceMatcher(None, left, right).ratio())
+
+
+def _best_token_alignment(source: list[str], target: list[str]) -> float:
+    similarities = [[_token_edit_similarity(left, right) for right in target]
+                    for left in source]
+
+    @lru_cache(maxsize=None)
+    def best(index: int, used: int) -> float:
+        if index == len(source):
+            return 0.0
+        score = best(index + 1, used)
+        for target_index, similarity in enumerate(similarities[index]):
+            if not used & (1 << target_index) and similarity >= 0.55:
+                score = max(score, similarity + best(index + 1,
+                    used | (1 << target_index)))
+        return score
+
+    return best(0, 0) / len(source)
+
+
+def _complete_name_confidence(source: list[str], target: list[str]) -> float | None:
+    if len(source) < 2 or not target:
+        return None
+    extra = len(target) - len(source)
+    if not (Counter(source) - Counter(target)):
+        return round(max(0.0, 1.0 - 0.04 * extra), 3)
+    if not (Counter(map(_sound_token, source)) - Counter(map(_sound_token, target))):
+        return round(max(0.0, 0.98 - 0.03 * extra), 3)
+    return None
+
+
 def partial_name_confidence(source_name: str, target_name: str) -> tuple[float, bool]:
     """Compara partes do nome; sinaliza cobertura exata para vínculo seguro."""
     source = _name_tokens(source_name)
     target = _name_tokens(target_name)
     if len(source) < 2 or not target:
         return 0.0, False
-    exact_coverage = not (Counter(source) - Counter(target))
-    if exact_coverage:
-        # Penaliza nomes adicionais: dois nomes da lista são menos conclusivos
-        # diante de um nome cadastrado muito longo.
-        return round(max(0.0, 1.0 - 0.04 * (len(target) - len(source))), 3), True
-    sound_coverage = not (Counter(map(_sound_token, source))
-                          - Counter(map(_sound_token, target)))
-    if sound_coverage:
-        return round(max(0.0, 0.98 - 0.03 * (len(target) - len(source))), 3), True
-    remaining = target.copy()
-    similarities = []
-    for token in source:
-        if not remaining:
-            similarities.append(0.0)
-            continue
-        best = max(remaining, key=lambda item: SequenceMatcher(None, token, item).ratio())
-        similarity = SequenceMatcher(None, token, best).ratio()
-        remaining.remove(best)
-        similarities.append(similarity if similarity >= 0.65 else 0.0)
-    coverage = sum(similarities) / len(source)
+    complete = _complete_name_confidence(source, target)
+    if complete is not None:
+        return complete, True
+    coverage = _best_token_alignment(source, target)
     whole = SequenceMatcher(None, normalize_person(source_name),
                             normalize_person(target_name)).ratio()
-    return round(0.65 * coverage + 0.35 * whole, 3), False
+    return round(0.72 * coverage + 0.28 * whole, 3), False
 
 
 def student_name_confidence(name: str, student: StudentModel) -> float:
@@ -319,9 +367,10 @@ def unique_student_match(name: str, roster: list[StudentModel],
         if alias_exact:
             return _single_student_identity(alias_exact)
     scored = []
+    source_tokens = _name_tokens(name)
     for student in roster:
-        confidence, complete = partial_name_confidence(name, student.name)
-        if complete:
+        confidence = _complete_name_confidence(source_tokens, _name_tokens(student.name))
+        if confidence is not None:
             scored.append((confidence, student))
     scored.sort(key=lambda row: (-row[0], row[1].id))
     seen_identities = set()
@@ -344,7 +393,13 @@ def suggested_student_matches(name: str, roster: list[StudentModel],
     """Propõe nomes parecidos da própria disciplina, sem vincular automaticamente."""
     proposals = []
     ml_scores = (index or NameSimilarityIndex(roster)).similarities(name)
+    shortlist = {student_id for student_id, _ in sorted(ml_scores.items(),
+                  key=lambda item: -item[1])[:40]}
+    source_parts = set(map(_sound_token, _name_tokens(name)))
     for student in roster:
+        if student.id not in shortlist and not source_parts.intersection(
+                map(_sound_token, _name_tokens(student.name))):
+            continue
         rule_score = student_name_confidence(name, student)
         confidence = round(max(rule_score,
             0.65 * rule_score + 0.35 * ml_scores.get(student.id, 0.0)), 3)

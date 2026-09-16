@@ -5,6 +5,28 @@ import 'package:flutter/material.dart';
 
 import '../services/education_service.dart';
 
+String projectGroupDisciplineCode(Discipline item) =>
+  RegExp(r'ARA\d{4}', caseSensitive: false).firstMatch(item.code)?.group(0)?.toUpperCase()
+    ?? item.code.toUpperCase();
+
+Discipline? inferProjectGroupDiscipline(List<Discipline> disciplines, String source) {
+  final upper = source.toUpperCase();
+  final code = RegExp(r'ARA\d{4}').firstMatch(upper)?.group(0);
+  final period = RegExp(r'20\d{2}[-._][12]').firstMatch(upper)?.group(0)
+    ?.replaceAll(RegExp(r'[-_]'), '.');
+  List<Discipline> matches = code == null ? [] : disciplines
+    .where((item) => projectGroupDisciplineCode(item) == code).toList();
+  if (matches.isEmpty && RegExp(r'\bIOT\b').hasMatch(upper)) {
+    matches = disciplines.where((item) =>
+      '${item.code} ${item.name}'.toUpperCase().contains('IOT')).toList();
+  }
+  if (period != null) {
+    final samePeriod = matches.where((item) => item.semester == period).toList();
+    if (samePeriod.isNotEmpty) matches = samePeriod;
+  }
+  return matches.length == 1 ? matches.single : null;
+}
+
 class ProjectGroupsTab extends StatefulWidget {
   final String initialText;
   final String initialDisciplineCode;
@@ -27,6 +49,10 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   String message = '';
   bool busy = false;
 
+  String disciplineCode(Discipline item) => projectGroupDisciplineCode(item);
+  Discipline? inferDiscipline(String source) =>
+    inferProjectGroupDiscipline(disciplines, source);
+
   @override
   void initState() {
     super.initState();
@@ -48,11 +74,15 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       students = await education.listStudents(activeOnly: false);
       if (selectedId == null && disciplines.isNotEmpty) {
         final matching = disciplines.where((item) =>
-          item.code.toUpperCase() == widget.initialDisciplineCode.toUpperCase()).toList();
+          widget.initialDisciplineCode.isNotEmpty &&
+          disciplineCode(item) == widget.initialDisciplineCode.toUpperCase()).toList();
         final byHint = disciplines.where((item) => widget.initialDisciplineHint.isNotEmpty
-          && item.name.toLowerCase().contains(widget.initialDisciplineHint.toLowerCase())).toList();
-        selectedId = matching.isNotEmpty ? matching.first.id
-          : byHint.isNotEmpty ? byHint.first.id : disciplines.first.id;
+          && '${item.code} ${item.name}'.toLowerCase()
+            .contains(widget.initialDisciplineHint.toLowerCase())).toList();
+        final fromText = inferDiscipline(
+          '${widget.initialDisciplineCode} ${widget.initialDisciplineHint} ${widget.initialText}');
+        selectedId = matching.length == 1 ? matching.single.id
+          : byHint.length == 1 ? byHint.single.id : fromText?.id;
       }
       await loadGroups();
     } catch (error) {
@@ -63,7 +93,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   }
 
   Future<void> loadGroups() async {
-    groups = await education.listProjectGroups(disciplineId: selectedId);
+    groups = selectedId == null ? [] :
+      await education.listProjectGroups(disciplineId: selectedId);
     if (mounted) setState(() {});
   }
 
@@ -78,7 +109,20 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     } on FormatException {
       textController.text = latin1.decode(bytes);
     }
-    setState(() => message = 'Lista carregada. Confira a disciplina e veja a prévia.');
+    final inferred = inferDiscipline(picked.files.single.name);
+    if (inferred != null) {
+      setState(() {
+        selectedId = inferred.id;
+        message = 'Lista carregada. Disciplina ${disciplineCode(inferred)} sugerida pelo nome do arquivo; confira antes de importar.';
+      });
+      await loadGroups();
+    } else {
+      setState(() {
+        selectedId = null;
+        groups = [];
+        message = 'Lista carregada. Selecione a disciplina antes de conferir a prévia.';
+      });
+    }
   }
 
   Future<String?> choosePreviewStudent(Map member) async {
@@ -131,13 +175,18 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   }
 
   Future<void> previewAndImport() async {
-    if (selectedId == null || textController.text.trim().isEmpty) return;
+    if (selectedId == null) {
+      setState(() => message = 'Selecione a disciplina correta para comparar as matrículas.');
+      return;
+    }
+    if (textController.text.trim().isEmpty) return;
     setState(() => busy = true);
     try {
       final preview = await education.previewProjectGroups(
         selectedId!, textController.text);
       if (!mounted) return;
       final choices = <String, String>{};
+      var acknowledgedLowMatch = false;
       int linkedAfterReview() {
         var count = 0;
         for (final group in preview['group_names'] as List) {
@@ -151,6 +200,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
         }
         return count;
       }
+      bool lowMatch() => (preview['roster_count'] as num).toInt() > 0 &&
+        linkedAfterReview() * 4 < (preview['members'] as num).toInt();
       final confirmed = await showDialog<bool>(context: context,
         builder: (dialogContext) => StatefulBuilder(
           builder: (dialogContext, update) => AlertDialog(
@@ -159,7 +210,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             child: SingleChildScrollView(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
             children: [
-              Text('${preview['discipline_code']} • ${preview['discipline_name']} • ${preview['semester']}'),
+              Text('${preview['discipline_code']}'
+                '${'${preview['discipline_name']}'.trim().isEmpty ? '' : ' • ${preview['discipline_name']}'}'
+                ' • ${preview['semester']}'),
               const SizedBox(height: 10),
               Text('${preview['groups']} grupos e ${preview['members']} nomes.'),
               Text('${preview['new_groups']} grupos novos; ${preview['updated_groups']} atualizados.'),
@@ -167,6 +220,15 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
               Text('${linkedAfterReview()} nomes serão vinculados; '
                 '${(preview['members'] as num).toInt() - linkedAfterReview()} ficarão sem vínculo.'),
               Text('${preview['roster_count']} alunos ativos nas turmas desta disciplina.'),
+              if (lowMatch()) ...[
+                const SizedBox(height: 8),
+                Text('Poucos nomes correspondem aos alunos desta disciplina. Confira se escolheu a matéria correta antes de importar.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                CheckboxListTile(contentPadding: EdgeInsets.zero,
+                  title: const Text('Conferi a disciplina e quero importar mesmo assim'),
+                  value: acknowledgedLowMatch,
+                  onChanged: (value) => update(() => acknowledgedLowMatch = value ?? false)),
+              ],
               if (choices.isNotEmpty) Text('${choices.length} vínculos revisados por você.'),
               const Text('Toque no lápis de um nome para revisar ou escolher outra matrícula.'),
               const SizedBox(height: 10),
@@ -228,7 +290,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Cancelar')),
-            ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true),
+            ElevatedButton(onPressed: lowMatch() && !acknowledgedLowMatch ? null :
+              () => Navigator.pop(dialogContext, true),
               child: const Text('Confirmar cadastro')),
           ],
         )));
@@ -541,7 +604,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           SizedBox(width: 360, child: DropdownButtonFormField<String>(
             value: selectedId,
             isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Disciplina'),
+            decoration: const InputDecoration(labelText: 'Disciplina',
+              hintText: 'Escolha a matéria da lista'),
             selectedItemBuilder: (context) => disciplines.map((item) =>
               Align(alignment: Alignment.centerLeft, child: Text(
                 '${item.code} • ${item.name} (${item.semester})',
@@ -556,7 +620,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           )),
           OutlinedButton.icon(onPressed: busy ? null : pickText,
             icon: const Icon(Icons.upload_file), label: const Text('Carregar TXT')),
-          ElevatedButton.icon(onPressed: busy ? null : previewAndImport,
+          ElevatedButton.icon(onPressed: busy || selectedId == null ? null : previewAndImport,
             icon: const Icon(Icons.fact_check_outlined),
             label: const Text('Conferir e cadastrar grupos')),
           OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : reviewSuggestedLinks,
@@ -568,7 +632,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           OutlinedButton.icon(onPressed: busy ? null : deleteAll,
             icon: const Icon(Icons.delete_forever_outlined),
             label: const Text('Excluir todos os grupos')),
-          Text('${groups.length} grupos cadastrados'),
+          Text(selectedId == null ? 'Selecione a disciplina' :
+            '${groups.length} grupos cadastrados'),
         ]),
       const SizedBox(height: 10),
       TextField(controller: textController, minLines: 2, maxLines: 5,
@@ -594,7 +659,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
         }),
       ],
       Expanded(child: busy ? const Center(child: CircularProgressIndicator()) :
-        groups.isEmpty ? const Center(child: Text('Nenhum grupo cadastrado nesta disciplina.')) :
+        groups.isEmpty ? Center(child: Text(selectedId == null
+          ? 'Selecione a disciplina da lista para ver os grupos.'
+          : 'Nenhum grupo cadastrado nesta disciplina.')) :
         ListView(children: groups.map((group) {
           final members = (group['members'] as List).cast<Map<String, dynamic>>();
           final allNotes = groups.map((item) => '${item['source_note'] ?? ''}'

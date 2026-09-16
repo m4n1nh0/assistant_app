@@ -6,6 +6,7 @@ from app.services.project_group_service import (
     partial_name_confidence,
     validate_import_member_links,
     NameSimilarityIndex,
+    damerau_levenshtein,
 )
 
 
@@ -145,6 +146,20 @@ def test_confirmed_resolution_takes_precedence_and_can_block_auto_link():
                                 {"rian adrian": None}) is None
     assert unique_student_match("RIAN ADRIAN", [student],
                                 {"rian adrian": student}) is student
+
+
+def test_edit_distance_handles_transposition_and_keeps_previous_partial_links():
+    from types import SimpleNamespace
+    assert damerau_levenshtein("adrian", "adrain") == 1
+    roster = [
+        SimpleNamespace(id="nicolas", name="NICOLAS ROSA SANTOS",
+                        external_id="123", aliases=[]),
+        SimpleNamespace(id="pedro", name="PEDRO HENRIQUE FEITOSA",
+                        external_id="456", aliases=[]),
+    ]
+    assert unique_student_match("NICOLAS ROSA", roster).id == "nicolas"
+    assert unique_student_match("PEDRO FEITOSA", roster).id == "pedro"
+    assert suggested_student_matches("PEDRO FEITOZA", roster)[0]["student_id"] == "pedro"
 
 
 def test_confirmed_name_resolution_is_scoped_and_persisted():
