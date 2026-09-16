@@ -108,7 +108,10 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                     '${item['source_note'].toString().isEmpty ? '' : ' • anotação ${item['source_note']}'}',
                     style: Theme.of(context).textTheme.titleMedium),
                   ...((item['names'] as List).map((member) => Text(
-                    '• ${member['name']}${member['linked'] == true ? ' ✓' : ' (sem vínculo automático)'}'))),
+                    '• ${member['name']}${member['linked'] == true
+                      ? ' → ${member['student_name']} • matrícula ${member['enrollment']}'
+                        ' • ${((member['confidence'] as num) * 100).round()}%'
+                      : ' (sem vínculo automático)'}'))),
                   const SizedBox(height: 8),
                 ],
               ))),
@@ -333,6 +336,52 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     }
   }
 
+  Future<void> linkUnambiguousNames() async {
+    if (selectedId == null) return;
+    setState(() => busy = true);
+    try {
+      final rows = await education.projectGroupLinkSuggestions(selectedId!);
+      final safe = rows.where((row) => row['automatic_match'] != null).toList();
+      if (!mounted) return;
+      if (safe.isEmpty) {
+        setState(() => message = 'Nenhum nome sem vínculo tem correspondência inequívoca nesta disciplina.');
+        return;
+      }
+      final confirmed = await showDialog<bool>(context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Conferir ${safe.length} vínculos automáticos'),
+          content: SizedBox(width: 560, height: 420,
+            child: ListView(children: [
+              const Text('Confira os nomes e matrículas. Só há correspondências únicas nesta disciplina.'),
+              const SizedBox(height: 12),
+              ...safe.map((row) {
+                final student = row['automatic_match'] as Map<String, dynamic>;
+                return ListTile(title: Text('${row['member_name']} → ${student['student_name']}'),
+                  subtitle: Text('${row['group_name']} • matrícula ${student['enrollment']}'));
+              }),
+            ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+            ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Confirmar vínculos')),
+          ],
+        ));
+      if (confirmed != true) return;
+      final links = safe.map((row) => <String, String>{
+        'member_id': '${row['member_id']}',
+        'student_id': '${(row['automatic_match'] as Map)['student_id']}',
+      }).toList();
+      final linked = await education.confirmProjectGroupLinks(selectedId!, links);
+      await loadGroups();
+      if (mounted) setState(() => message = '$linked nomes vinculados após sua confirmação.');
+    } catch (error) {
+      if (mounted) setState(() => message = 'Falha ao vincular nomes: $error');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> removeGroup(Map<String, dynamic> group) async {
     final confirmed = await showDialog<bool>(context: context,
       builder: (dialogContext) => AlertDialog(
@@ -388,7 +437,12 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
         children: [
           SizedBox(width: 360, child: DropdownButtonFormField<String>(
             value: selectedId,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Disciplina'),
+            selectedItemBuilder: (context) => disciplines.map((item) =>
+              Align(alignment: Alignment.centerLeft, child: Text(
+                '${item.code} • ${item.name} (${item.semester})',
+                maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
             items: disciplines.map((item) => DropdownMenuItem(
               value: item.id, child: Text('${item.code} • ${item.name} (${item.semester})',
                 overflow: TextOverflow.ellipsis))).toList(),
@@ -405,6 +459,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : reviewSuggestedLinks,
             icon: const Icon(Icons.person_search_outlined),
             label: const Text('Sugerir nomes e matrículas')),
+          OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : linkUnambiguousNames,
+            icon: const Icon(Icons.auto_fix_high_outlined),
+            label: const Text('Vincular nomes seguros')),
           OutlinedButton.icon(onPressed: busy ? null : deleteAll,
             icon: const Icon(Icons.delete_forever_outlined),
             label: const Text('Excluir todos os grupos')),

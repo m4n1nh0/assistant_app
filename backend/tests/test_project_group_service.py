@@ -2,6 +2,8 @@ from app.services.project_group_service import (
     build_project_group_chat_action, is_project_group_question,
     parse_project_group_text,
     suggested_student_matches,
+    unique_student_match,
+    partial_name_confidence,
 )
 
 
@@ -46,3 +48,29 @@ def test_name_suggestions_show_matriculas_without_linking():
     assert candidates[0]["student_id"] == "one"
     assert candidates[0]["enrollment"] == "20250001"
     assert all(candidate["student_id"] != "two" for candidate in candidates)
+
+
+def test_unique_name_prefix_is_linked_but_ambiguous_prefix_is_not():
+    from types import SimpleNamespace
+    nicolas = SimpleNamespace(id="one", name="NICOLAS ROSA SANTOS")
+    other = SimpleNamespace(id="two", name="MARIA EDUARDA SOUZA")
+    assert unique_student_match("NICOLAS ROSA", [nicolas, other]) is nicolas
+    assert unique_student_match("NICOLAS", [nicolas, other]) is None
+    assert unique_student_match("NICOLAS ROSA", [nicolas,
+        SimpleNamespace(id="three", name="NICOLAS ROSA SILVA")]) is None
+
+
+def test_non_consecutive_name_parts_match_with_clear_margin():
+    from types import SimpleNamespace
+    pedro = SimpleNamespace(id="one", name="PEDRO HENRIQUE FEITOSA")
+    other = SimpleNamespace(id="two", name="PEDRO LUCAS COSTA")
+    assert unique_student_match("PEDRO FEITOSA", [pedro, other]) is pedro
+    confidence, complete = partial_name_confidence("PEDRO FEITOSA", pedro.name)
+    assert complete and confidence >= 0.92
+
+
+def test_name_typo_is_suggested_but_not_auto_linked():
+    from types import SimpleNamespace
+    pedro = SimpleNamespace(id="one", name="PEDRO HENRIQUE FEITOSA", external_id="123")
+    assert unique_student_match("PEDRO FEITOZA", [pedro]) is None
+    assert suggested_student_matches("PEDRO FEITOZA", [pedro])[0]["student_id"] == "one"

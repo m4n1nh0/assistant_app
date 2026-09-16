@@ -255,10 +255,18 @@ async def project_group_link_suggestions(
         ProjectGroupMemberModel.student_id.is_(None),
     ))).scalars().all()
     by_group = {group.id: group.name for group in groups}
-    return [dict(member_id=member.id, member_name=member.name,
-                 group_name=by_group[member.group_id],
-                 candidates=suggested_student_matches(member.name, roster))
-            for member in members]
+    from ..services.project_group_service import unique_student_match
+    result = []
+    for member in members:
+        automatic = unique_student_match(member.name, roster)
+        result.append(dict(member_id=member.id, member_name=member.name,
+                           group_name=by_group[member.group_id],
+                           automatic_match=(dict(student_id=automatic.id,
+                               student_name=automatic.name,
+                               enrollment=automatic.external_id or "")
+                               if automatic else None),
+                           candidates=suggested_student_matches(member.name, roster)))
+    return result
 
 
 @router.post("/project-groups/link-suggestions/confirm")

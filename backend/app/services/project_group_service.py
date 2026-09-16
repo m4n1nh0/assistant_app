@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections import Counter
 from difflib import SequenceMatcher
 
 from sqlalchemy import select
@@ -157,29 +158,79 @@ async def roster_for_discipline(db, tutor_id: str, discipline_id: str) -> list[S
     ))).scalars().all()
 
 
+_NAME_PARTICLES = {"de", "da", "do", "das", "dos", "e"}
+
+
+def _name_tokens(name: str) -> list[str]:
+    return [token for token in normalize_person(name).split()
+            if token not in _NAME_PARTICLES]
+
+
+def partial_name_confidence(source_name: str, target_name: str) -> tuple[float, bool]:
+    """Compara partes do nome; sinaliza cobertura exata para vínculo seguro."""
+    source = _name_tokens(source_name)
+    target = _name_tokens(target_name)
+    if len(source) < 2 or not target:
+        return 0.0, False
+    exact_coverage = not (Counter(source) - Counter(target))
+    if exact_coverage:
+        # Penaliza nomes adicionais: dois nomes da lista são menos conclusivos
+        # diante de um nome cadastrado muito longo.
+        return round(max(0.0, 1.0 - 0.04 * (len(target) - len(source))), 3), True
+    remaining = target.copy()
+    similarities = []
+    for token in source:
+        if not remaining:
+            similarities.append(0.0)
+            continue
+        best = max(remaining, key=lambda item: SequenceMatcher(None, token, item).ratio())
+        similarity = SequenceMatcher(None, token, best).ratio()
+        remaining.remove(best)
+        similarities.append(similarity if similarity >= 0.65 else 0.0)
+    coverage = sum(similarities) / len(source)
+    whole = SequenceMatcher(None, normalize_person(source_name),
+                            normalize_person(target_name)).ratio()
+    return round(0.65 * coverage + 0.35 * whole, 3), False
+
+
 def unique_student_match(name: str, roster: list[StudentModel]) -> StudentModel | None:
     key = normalize_person(name)
-    matches = [student for student in roster if normalize_person(student.name) == key]
-    return matches[0] if len(matches) == 1 else None
+    exact = [student for student in roster if normalize_person(student.name) == key]
+    if exact:
+        return exact[0] if len(exact) == 1 else None
+    scored = []
+    for student in roster:
+        confidence, complete = partial_name_confidence(name, student.name)
+        if complete:
+            scored.append((confidence, student))
+    scored.sort(key=lambda row: -row[0])
+    if not scored or scored[0][0] < 0.92:
+        return None
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.08:
+        return None
+    return scored[0][1]
 
 
 def suggested_student_matches(name: str, roster: list[StudentModel]) -> list[dict]:
     """Propõe nomes parecidos da própria disciplina, sem vincular automaticamente."""
-    source = normalize_person(name)
-    source_tokens = set(source.split())
     proposals = []
     for student in roster:
-        target = normalize_person(student.name)
-        target_tokens = set(target.split())
-        sequence = SequenceMatcher(None, source, target).ratio()
-        overlap = len(source_tokens & target_tokens) / max(1, len(source_tokens | target_tokens))
-        # Sobrenomes compartilhados sozinhos não devem dominar a sugestão.
-        confidence = round(0.7 * sequence + 0.3 * overlap, 3)
-        if confidence >= 0.48:
+        confidence, _ = partial_name_confidence(name, student.name)
+        if confidence >= 0.55:
             proposals.append(dict(student_id=student.id, student_name=student.name,
                                   enrollment=student.external_id or "",
                                   confidence=confidence))
     return sorted(proposals, key=lambda row: (-row["confidence"], row["student_name"]))[:3]
+
+
+def preview_member_match(name: str, roster: list[StudentModel]) -> dict:
+    student = unique_student_match(name, roster)
+    return dict(name=name, linked=student is not None,
+                student_name=student.name if student else "",
+                enrollment=(student.external_id or "") if student else "",
+                confidence=(1.0 if student and normalize_person(name) == normalize_person(student.name)
+                            else partial_name_confidence(name, student.name)[0]
+                            if student else None))
 
 
 async def preview_project_groups(db, tutor_id: str, discipline_id: str,
@@ -213,8 +264,7 @@ async def preview_project_groups(db, tutor_id: str, discipline_id: str,
                 members_removed_on_update=removed_members,
                 group_names=[dict(name=group["name"], members=len(group["members"]),
                                   source_note=group["note"],
-                                  names=[dict(name=member["name"],
-                                              linked=bool(unique_student_match(member["name"], roster)))
+                                  names=[preview_member_match(member["name"], roster)
                                          for member in group["members"]])
                              for group in parsed])
 
@@ -254,8 +304,8 @@ async def import_project_groups(db, tutor_id: str, discipline, parsed: list[dict
                     name=member_row["name"])
                 db.add(member)
             student = unique_student_match(member_row["name"], roster)
-            # Preserva um vínculo manual existente quando o nome não basta.
-            if student:
+            # Preserva vínculos corrigidos manualmente ao reimportar a lista.
+            if student and not member.student_id:
                 member.student_id = student.id
             member.name = member_row["name"]
             member.source_note = member_row["note"]

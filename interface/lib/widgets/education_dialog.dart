@@ -48,6 +48,10 @@ const _pointsTab = 4;
 const _attendanceTab = 5;
 const _quizTab = 6;
 const _groupsTab = 9;
+const _educationTabLabels = [
+  'Visão geral', 'Turmas', 'Gravar aula', 'Histórico', 'Pontuações',
+  'Presença', 'Quiz', 'Material', 'Tempo de estudo', 'Grupos de projeto',
+];
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -154,8 +158,17 @@ class _EducationDialogState extends State<EducationDialog> {
                   child: Builder(
                     builder: (tabContext) => Column(
                       children: [
-                        const TabBar(
+                        Row(children: [
+                        IconButton(
+                          tooltip: 'Aba anterior',
+                          onPressed: () {
+                            final controller = DefaultTabController.of(tabContext);
+                            if (controller.index > 0) controller.animateTo(controller.index - 1);
+                          },
+                          icon: const Icon(Icons.chevron_left)),
+                        const Expanded(child: TabBar(
                           isScrollable: true,
+                          tabAlignment: TabAlignment.start,
                           indicatorColor: AssistantTheme.c3,
                           labelColor: AssistantTheme.c3,
                           unselectedLabelColor: AssistantTheme.textMuted,
@@ -191,7 +204,34 @@ class _EducationDialogState extends State<EducationDialog> {
                             Tab(icon: Icon(Icons.groups_2_outlined, size: 17),
                                 text: '9. GRUPOS DE PROJETO'),
                           ],
-                        ),
+                        )),
+                        IconButton(
+                          tooltip: 'Próxima aba',
+                          onPressed: () {
+                            final controller = DefaultTabController.of(tabContext);
+                            if (controller.index < controller.length - 1) {
+                              controller.animateTo(controller.index + 1);
+                            }
+                          },
+                          icon: const Icon(Icons.chevron_right)),
+                        AnimatedBuilder(
+                          animation: DefaultTabController.of(tabContext),
+                          builder: (context, _) {
+                            final controller = DefaultTabController.of(tabContext);
+                            return SizedBox(width: 150, child: DropdownButtonHideUnderline(
+                              child: DropdownButton<int>(
+                                value: controller.index,
+                                isExpanded: true,
+                                items: [for (var index = 0; index < _educationTabLabels.length; index++)
+                                  DropdownMenuItem(value: index, child: Text(
+                                    _educationTabLabels[index],
+                                    overflow: TextOverflow.ellipsis))],
+                                onChanged: (index) {
+                                  if (index != null) controller.animateTo(index);
+                                },
+                              )));
+                          }),
+                        ]),
                         Expanded(
                           child: TabBarView(
                             children: [
