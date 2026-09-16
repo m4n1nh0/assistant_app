@@ -81,6 +81,55 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     setState(() => message = 'Lista carregada. Confira a disciplina e veja a prévia.');
   }
 
+  Future<String?> choosePreviewStudent(Map member) async {
+    final query = TextEditingController();
+    final candidates = (member['candidates'] as List? ?? [])
+      .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    final chosen = await showDialog<String>(context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) {
+          final search = query.text.trim().toLowerCase();
+          final available = roster.where((student) => search.isEmpty ||
+            student.name.toLowerCase().contains(search) ||
+            (student.externalId ?? '').contains(search) ||
+            student.aliases.any((alias) => alias.toLowerCase().contains(search))).toList();
+          final ordered = search.isEmpty ? <String>{
+            ...candidates.map((item) => item['student_id'].toString()),
+            ...available.map((student) => student.id),
+          }.toList() : available.map((student) => student.id).toList();
+          final byId = {for (final student in roster) student.id: student};
+          return AlertDialog(
+            title: Text('Escolher aluno para ${member['name']}'),
+            content: SizedBox(width: 480, height: 430, child: Column(children: [
+              TextField(controller: query, autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Buscar por nome ou matrícula',
+                  prefixIcon: Icon(Icons.search)),
+                onChanged: (_) => update(() {})),
+              const SizedBox(height: 8),
+              Expanded(child: ListView(children: ordered.take(80)
+                .where((id) => byId.containsKey(id)).map((id) {
+                  final student = byId[id]!;
+                  final suggested = candidates.where((item) => item['student_id'] == id).toList();
+                  return ListTile(
+                    title: Text(student.name),
+                    subtitle: Text('Matrícula ${student.externalId ?? 'não informada'}'
+                      '${suggested.isEmpty ? '' : ' • semelhança ${((suggested.first['confidence'] as num) * 100).round()}%'}'),
+                    onTap: () => Navigator.pop(dialogContext, id));
+                }).toList())),
+            ])),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar')),
+              TextButton(onPressed: () => Navigator.pop(dialogContext, ''),
+                child: const Text('Deixar sem vínculo')),
+            ],
+          );
+        }));
+    query.dispose();
+    return chosen;
+  }
+
   Future<void> previewAndImport() async {
     if (selectedId == null || textController.text.trim().isEmpty) return;
     setState(() => busy = true);
@@ -88,10 +137,26 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       final preview = await education.previewProjectGroups(
         selectedId!, textController.text);
       if (!mounted) return;
+      final choices = <String, String>{};
+      int linkedAfterReview() {
+        var count = 0;
+        for (final group in preview['group_names'] as List) {
+          for (final member in group['names'] as List) {
+            final key = '${group['name']}\u0000${member['name']}';
+            if (choices.containsKey(key)
+                ? choices[key]!.isNotEmpty : member['linked'] == true) {
+              count++;
+            }
+          }
+        }
+        return count;
+      }
       final confirmed = await showDialog<bool>(context: context,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, update) => AlertDialog(
           title: const Text('Conferir grupos antes de cadastrar'),
-          content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(
+          content: SizedBox(width: 620, height: 550,
+            child: SingleChildScrollView(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
             children: [
               Text('${preview['discipline_code']} • ${preview['discipline_name']} • ${preview['semester']}'),
@@ -99,19 +164,56 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
               Text('${preview['groups']} grupos e ${preview['members']} nomes.'),
               Text('${preview['new_groups']} grupos novos; ${preview['updated_groups']} atualizados.'),
               Text('${preview['members_removed_on_update']} integrantes antigos sairão dos grupos atualizados.'),
-              Text('${preview['linked']} nomes com aluno identificado sem ambiguidade.'),
-              Text('${preview['names_without_unique_match']} nomes ficarão na lista sem vínculo automático.'),
+              Text('${linkedAfterReview()} nomes serão vinculados; '
+                '${(preview['members'] as num).toInt() - linkedAfterReview()} ficarão sem vínculo.'),
+              Text('${preview['roster_count']} alunos ativos nas turmas desta disciplina.'),
+              if (choices.isNotEmpty) Text('${choices.length} vínculos revisados por você.'),
+              const Text('Toque no lápis de um nome para revisar ou escolher outra matrícula.'),
               const SizedBox(height: 10),
               ...((preview['group_names'] as List).map((item) => Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('${item['name']}: ${item['members']} integrantes'
                     '${item['source_note'].toString().isEmpty ? '' : ' • anotação ${item['source_note']}'}',
                     style: Theme.of(context).textTheme.titleMedium),
-                  ...((item['names'] as List).map((member) => Text(
-                    '• ${member['name']}${member['linked'] == true
-                      ? ' → ${member['student_name']} • matrícula ${member['enrollment']}'
-                        ' • ${((member['confidence'] as num) * 100).round()}%'
-                      : ' (sem vínculo automático)'}'))),
+                  ...((item['names'] as List).map((member) {
+                    final key = '${item['name']}\u0000${member['name']}';
+                    final selected = choices[key];
+                    final changed = choices.containsKey(key);
+                    final manual = roster.where((student) => student.id == selected).toList();
+                    final display = changed
+                      ? selected == '' ? 'sem vínculo (sua escolha)'
+                        : manual.isEmpty ? 'aluno indisponível'
+                        : '${manual.first.name} • matrícula ${manual.first.externalId ?? 'não informada'} (sua escolha)'
+                      : member['linked'] == true
+                        ? '${member['student_name']} • matrícula ${member['enrollment']}'
+                          ' • ${member['match_source'] == 'confirmed'
+                            ? 'correção confirmada anteriormente'
+                            : 'semelhança ${((member['confidence'] as num) * 100).round()}%'}'
+                        : 'sem vínculo automático';
+                    final suggestions = (member['candidates'] as List? ?? [])
+                      .map((candidate) => '${candidate['student_name']}'
+                        ' (${((candidate['confidence'] as num) * 100).round()}%)').join(', ');
+                    return Padding(padding: const EdgeInsets.only(top: 4),
+                      child: Row(children: [
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('• ${member['name']} → $display'),
+                            if (!changed && member['linked'] != true && suggestions.isNotEmpty)
+                              Text('Sugestões: $suggestions',
+                                style: Theme.of(context).textTheme.bodySmall),
+                            if (!changed && member['linked'] != true && suggestions.isEmpty)
+                              Text('Nenhum candidato próximo entre os alunos ativos da disciplina.',
+                                style: Theme.of(context).textTheme.bodySmall),
+                          ])),
+                        IconButton(icon: const Icon(Icons.edit_outlined, size: 18),
+                          tooltip: 'Revisar matrícula',
+                          onPressed: () async {
+                            final picked = await choosePreviewStudent(
+                              Map<String, dynamic>.from(member as Map));
+                            if (picked != null) update(() => choices[key] = picked);
+                          }),
+                      ]));
+                  })),
                   const SizedBox(height: 8),
                 ],
               ))),
@@ -129,13 +231,18 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('Confirmar cadastro')),
           ],
-        ));
+        )));
       if (confirmed != true) {
         if (mounted) setState(() => message = 'Cadastro cancelado. Nenhum grupo foi gravado.');
         return;
       }
       final result = await education.importProjectGroups(
-        selectedId!, textController.text, '${preview['preview_sha256']}');
+        selectedId!, textController.text, '${preview['preview_sha256']}',
+        memberLinks: choices.entries.map((entry) {
+          final parts = entry.key.split('\u0000');
+          return <String, dynamic>{'group_name': parts[0], 'member_name': parts[1],
+            'student_id': entry.value.isEmpty ? null : entry.value};
+        }).toList());
       await loadGroups();
       if (mounted) {
         setState(() => message =
@@ -153,7 +260,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   List<Student> get roster {
     final ids = classes.where((item) => item.disciplineId == selectedId)
         .map((item) => item.id).toSet();
-    return students.where((student) => ids.contains(student.classId)).toList()
+    return students.where((student) => student.active && ids.contains(student.classId)).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
@@ -404,14 +511,10 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     try {
       final allGroups = await education.listProjectGroups();
       if (!mounted) return;
-      if (allGroups.isEmpty) {
-        setState(() => message = 'Não há grupos para excluir.');
-        return;
-      }
       final confirmed = await showDialog<bool>(context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Excluir todos os grupos de projeto?'),
-          content: Text('${allGroups.length} grupos e seus integrantes serão excluídos de todas as suas disciplinas e períodos. A disciplina selecionada não limita esta exclusão.'),
+          content: Text('${allGroups.length} grupos, seus integrantes e as correções de vínculo aprendidas serão excluídos de todas as suas disciplinas e períodos. A disciplina selecionada não limita esta exclusão.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Cancelar')),

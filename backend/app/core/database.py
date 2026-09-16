@@ -530,6 +530,24 @@ class ProjectGroupMemberModel(Base):
     position = Column(Integer, nullable=False, default=0)
 
 
+class ProjectGroupNameResolutionModel(Base):
+    """Correção confirmada pelo tutor para uma variação de nome na disciplina."""
+    __tablename__ = "project_group_name_resolutions"
+    __table_args__ = (
+        UniqueConstraint("tutor_id", "discipline_id", "source_name",
+                         name="uq_project_group_name_resolution"),
+    )
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id = Column(String(64), nullable=False, index=True)
+    discipline_id = Column(String(64), nullable=False, index=True)
+    source_name = Column(String(180), nullable=False)
+    enrollment = Column(String(80), nullable=True)
+    student_id = Column(String(64), nullable=True)
+    blocked = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+
 class AttendanceSessionModel(Base):
     """Janela temporaria de chamada com um QR para uma ou mais turmas."""
 

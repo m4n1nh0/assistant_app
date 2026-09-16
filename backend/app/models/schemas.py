@@ -882,8 +882,15 @@ class ProjectGroupTextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=250000)
 
 
+class ProjectGroupImportMemberLink(BaseModel):
+    group_name: str
+    member_name: str
+    student_id: Optional[str] = None
+
+
 class ProjectGroupCommitRequest(ProjectGroupTextRequest):
     preview_sha256: str = Field(min_length=64, max_length=64)
+    member_links: list[ProjectGroupImportMemberLink] = Field(default_factory=list, max_length=250)
 
 
 class ProjectGroupUpdate(BaseModel):

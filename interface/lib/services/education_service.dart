@@ -49,12 +49,13 @@ class EducationService {
   }
 
   Future<Map<String, dynamic>> importProjectGroups(
-      String disciplineId, String text, String previewSha256) async {
+      String disciplineId, String text, String previewSha256,
+      {List<Map<String, dynamic>> memberLinks = const []}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/project-groups/import'),
       headers: _headers,
       body: jsonEncode({'discipline_id': disciplineId, 'text': text,
-        'preview_sha256': previewSha256}),
+        'preview_sha256': previewSha256, 'member_links': memberLinks}),
     );
     return Map<String, dynamic>.from(_decode(response) as Map);
   }

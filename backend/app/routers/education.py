@@ -26,6 +26,7 @@ from ..core.database import (
     StudentModel,
     StudyTimeModel,
     ProjectGroupModel,
+    ProjectGroupNameResolutionModel,
     ProjectGroupMemberModel,
     DisciplineModel,
     QuizModel,
@@ -173,8 +174,11 @@ async def import_project_group_text(
         parsed, context = parse_project_group_text(body.text)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return await import_project_groups(db, user["tutor_id"],
-                                       discipline, parsed, context)
+    try:
+        return await import_project_groups(db, user["tutor_id"],
+            discipline, parsed, context, body.member_links)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/project-groups")
@@ -242,10 +246,13 @@ async def project_group_link_suggestions(
     db: AsyncSession = Depends(get_db),
 ):
     from ..services.project_group_service import (
-        roster_for_discipline, suggested_student_matches,
+        NameSimilarityIndex, learned_name_resolutions, roster_for_discipline,
+        suggested_student_matches, unique_student_match,
     )
     await _owned_project_discipline(discipline_id, user["tutor_id"], db)
     roster = await roster_for_discipline(db, user["tutor_id"], discipline_id)
+    learned = await learned_name_resolutions(db, user["tutor_id"], discipline_id, roster)
+    index = NameSimilarityIndex(roster)
     groups = (await db.execute(select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == user["tutor_id"],
         ProjectGroupModel.discipline_id == discipline_id,
@@ -255,17 +262,16 @@ async def project_group_link_suggestions(
         ProjectGroupMemberModel.student_id.is_(None),
     ))).scalars().all()
     by_group = {group.id: group.name for group in groups}
-    from ..services.project_group_service import unique_student_match
     result = []
     for member in members:
-        automatic = unique_student_match(member.name, roster)
+        automatic = unique_student_match(member.name, roster, learned)
         result.append(dict(member_id=member.id, member_name=member.name,
                            group_name=by_group[member.group_id],
                            automatic_match=(dict(student_id=automatic.id,
                                student_name=automatic.name,
                                enrollment=automatic.external_id or "")
                                if automatic else None),
-                           candidates=suggested_student_matches(member.name, roster)))
+                           candidates=suggested_student_matches(member.name, roster, index)))
     return result
 
 
@@ -275,10 +281,12 @@ async def confirm_project_group_link_suggestions(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from ..services.project_group_service import roster_for_discipline
+    from ..services.project_group_service import (
+        remember_name_resolution, roster_for_discipline,
+    )
     await _owned_project_discipline(body.discipline_id, user["tutor_id"], db)
     roster = await roster_for_discipline(db, user["tutor_id"], body.discipline_id)
-    valid_students = {student.id for student in roster}
+    valid_students = {student.id: student for student in roster}
     if len({link.member_id for link in body.links}) != len(body.links):
         raise HTTPException(422, "Integrante repetido na confirmação")
     groups = (await db.execute(select(ProjectGroupModel).where(
@@ -297,7 +305,10 @@ async def confirm_project_group_link_suggestions(
                 or member.student_id is not None or link.student_id not in valid_students):
             raise HTTPException(409, "Sugestão desatualizada ou fora da disciplina; confira novamente")
     for link in body.links:
-        by_id[link.member_id].student_id = link.student_id
+        member = by_id[link.member_id]
+        member.student_id = link.student_id
+        await remember_name_resolution(db, user["tutor_id"], body.discipline_id,
+                                       member.name, valid_students[link.student_id])
     await db.commit()
     return {"linked": len(body.links)}
 
@@ -310,18 +321,22 @@ async def link_project_group_member(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from ..services.project_group_service import roster_for_discipline
+    from ..services.project_group_service import (
+        remember_name_resolution, roster_for_discipline,
+    )
 
     group = await _owned_project_group(group_id, user["tutor_id"], db)
     member = await db.get(ProjectGroupMemberModel, member_id)
     if member is None or member.group_id != group.id:
         raise HTTPException(404, "Integrante não encontrado")
+    roster = await roster_for_discipline(db, user["tutor_id"], group.discipline_id)
+    valid_students = {student.id: student for student in roster}
     if body.student_id:
-        roster = await roster_for_discipline(db, user["tutor_id"],
-                                             group.discipline_id)
-        if body.student_id not in {student.id for student in roster}:
+        if body.student_id not in valid_students:
             raise HTTPException(422, "Aluno não pertence às turmas desta disciplina")
     member.student_id = body.student_id
+    await remember_name_resolution(db, user["tutor_id"], group.discipline_id,
+                                   member.name, valid_students.get(body.student_id))
     await db.commit()
     return {"success": True}
 
@@ -341,6 +356,8 @@ async def delete_all_project_groups(
         await db.execute(sql_delete(ProjectGroupModel).where(
             ProjectGroupModel.id.in_(groups),
             ProjectGroupModel.tutor_id == user["tutor_id"]))
+    await db.execute(sql_delete(ProjectGroupNameResolutionModel).where(
+        ProjectGroupNameResolutionModel.tutor_id == user["tutor_id"]))
     await db.commit()
     return {"deleted": len(groups)}
 
