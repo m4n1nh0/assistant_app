@@ -4,13 +4,13 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
@@ -48,10 +48,6 @@ const _pointsTab = 4;
 const _attendanceTab = 5;
 const _quizTab = 6;
 const _groupsTab = 9;
-const _educationTabLabels = [
-  'Visão geral', 'Turmas', 'Gravar aula', 'Histórico', 'Pontuações',
-  'Presença', 'Quiz', 'Material', 'Tempo de estudo', 'Grupos de projeto',
-];
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -158,55 +154,64 @@ class _EducationDialogState extends State<EducationDialog> {
                   child: Builder(
                     builder: (tabContext) => Column(
                       children: [
-                        Row(children: [
+                        LayoutBuilder(builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 1250;
+                          final tabIconSize = compact ? 14.0 : 17.0;
+                          return Row(children: [
                         IconButton(
                           tooltip: 'Aba anterior',
+                          iconSize: compact ? 18 : 24,
+                          visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
                           onPressed: () {
                             final controller = DefaultTabController.of(tabContext);
                             if (controller.index > 0) controller.animateTo(controller.index - 1);
                           },
                           icon: const Icon(Icons.chevron_left)),
-                        const Expanded(child: TabBar(
+                        Expanded(child: TabBar(
                           isScrollable: true,
                           tabAlignment: TabAlignment.start,
+                          labelStyle: TextStyle(fontSize: compact ? 10 : 12),
+                          labelPadding: EdgeInsets.symmetric(horizontal: compact ? 8 : 16),
                           indicatorColor: AssistantTheme.c3,
                           labelColor: AssistantTheme.c3,
                           unselectedLabelColor: AssistantTheme.textMuted,
                           tabs: [
                             Tab(
-                                icon: Icon(Icons.dashboard_outlined, size: 17),
+                                icon: Icon(Icons.dashboard_outlined, size: tabIconSize),
                                 text: 'VISAO GERAL'),
                             Tab(
-                                icon: Icon(Icons.groups_outlined, size: 17),
+                                icon: Icon(Icons.groups_outlined, size: tabIconSize),
                                 text: '1. TURMAS'),
                             Tab(
-                                icon: Icon(Icons.mic_none, size: 17),
+                                icon: Icon(Icons.mic_none, size: tabIconSize),
                                 text: '2. GRAVAR AULA'),
                             Tab(
-                                icon: Icon(Icons.history, size: 17),
+                                icon: Icon(Icons.history, size: tabIconSize),
                                 text: '3. HISTORICO'),
                             Tab(
                                 icon:
-                                    Icon(Icons.emoji_events_outlined, size: 17),
+                                    Icon(Icons.emoji_events_outlined, size: tabIconSize),
                                 text: '4. PONTUACOES'),
                             Tab(
-                                icon: Icon(Icons.how_to_reg_outlined, size: 17),
+                                icon: Icon(Icons.how_to_reg_outlined, size: tabIconSize),
                                 text: '5. PRESENCA'),
                             Tab(
-                                icon: Icon(Icons.quiz_outlined, size: 17),
+                                icon: Icon(Icons.quiz_outlined, size: tabIconSize),
                                 text: '6. QUIZ'),
                             Tab(
                                 icon: Icon(Icons.folder_open_outlined,
-                                    size: 17),
+                                    size: tabIconSize),
                                 text: '7. MATERIAL'),
-                            Tab(icon: Icon(Icons.timer_outlined, size: 17),
+                            Tab(icon: Icon(Icons.timer_outlined, size: tabIconSize),
                                 text: '8. TEMPO DE ESTUDO'),
-                            Tab(icon: Icon(Icons.groups_2_outlined, size: 17),
+                            Tab(icon: Icon(Icons.groups_2_outlined, size: tabIconSize),
                                 text: '9. GRUPOS DE PROJETO'),
                           ],
                         )),
                         IconButton(
                           tooltip: 'Próxima aba',
+                          iconSize: compact ? 18 : 24,
+                          visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
                           onPressed: () {
                             final controller = DefaultTabController.of(tabContext);
                             if (controller.index < controller.length - 1) {
@@ -214,24 +219,8 @@ class _EducationDialogState extends State<EducationDialog> {
                             }
                           },
                           icon: const Icon(Icons.chevron_right)),
-                        AnimatedBuilder(
-                          animation: DefaultTabController.of(tabContext),
-                          builder: (context, _) {
-                            final controller = DefaultTabController.of(tabContext);
-                            return SizedBox(width: 150, child: DropdownButtonHideUnderline(
-                              child: DropdownButton<int>(
-                                value: controller.index,
-                                isExpanded: true,
-                                items: [for (var index = 0; index < _educationTabLabels.length; index++)
-                                  DropdownMenuItem(value: index, child: Text(
-                                    _educationTabLabels[index],
-                                    overflow: TextOverflow.ellipsis))],
-                                onChanged: (index) {
-                                  if (index != null) controller.animateTo(index);
-                                },
-                              )));
-                          }),
-                        ]),
+                        ]);
+                        }),
                         Expanded(
                           child: TabBarView(
                             children: [
@@ -2452,7 +2441,8 @@ class _RosterTabState extends State<_RosterTab> {
     RosterDiff diff,
   ) async {
     final entries = diff.entries;
-    final marcadas = {for (final entry in entries) entry.key};
+    final marcadas = {for (final entry in entries)
+      if (entry.action != RosterAction.ausente) entry.key};
 
     return showDialog<_RosterImportChoice>(
       context: context,
@@ -2476,7 +2466,7 @@ class _RosterTabState extends State<_RosterTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${group.display} · arquivo com ${rows.length} linha(s)',
+                    '${group.display} · fonte com ${rows.length} linha(s)',
                     style: const TextStyle(color: AssistantTheme.textPrimary),
                   ),
                   const SizedBox(height: 4),
@@ -2559,6 +2549,11 @@ class _RosterTabState extends State<_RosterTab> {
                         ),
                       ),
                     ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text('Alunos ausentes na fonte ficam ativos por padrão. Marque cada ausência se quiser desativá-la.',
+                      style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted)),
+                  ),
                 ],
               ),
             ),
@@ -2607,42 +2602,258 @@ class _RosterTabState extends State<_RosterTab> {
     }
   }
 
-  Future<void> _importCsv() async {
-    final group = _selected;
-    if (group == null) {
-      _report('Escolha a turma que vai receber os alunos.', error: true);
-      return;
+  Future<Map<String, dynamic>?> _chooseRosterSource() async {
+    final controller = TextEditingController();
+    final choice = await showDialog<Map<String, dynamic>>(context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: const Text('Importar alunos para a turma'),
+          content: SizedBox(width: 560, child: Column(mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Escolha CSV, XML, XLSX, TXT, JSON ou um print; você também pode colar o texto da tela da Estácio.'),
+              const SizedBox(height: 10),
+              TextField(controller: controller, minLines: 4, maxLines: 9,
+                decoration: const InputDecoration(
+                  labelText: 'Texto copiado da tela', border: OutlineInputBorder()),
+                onChanged: (_) => update(() {})),
+              TextButton.icon(onPressed: () async {
+                final copied = await Clipboard.getData('text/plain');
+                if (copied?.text != null) {
+                  controller.text = copied!.text!;
+                  update(() {});
+                }
+              }, icon: const Icon(Icons.content_paste, size: 16),
+                label: const Text('Colar da área de transferência')),
+            ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar')),
+            OutlinedButton.icon(onPressed: () async {
+              final selected = await FilePicker.pickFiles(type: FileType.custom,
+                allowedExtensions: const ['csv', 'xml', 'xlsx', 'txt', 'json',
+                  'html', 'png', 'jpg', 'jpeg', 'webp', 'bmp'], withData: true);
+              if (selected == null || selected.files.isEmpty) return;
+              final file = selected.files.single;
+              final bytes = file.bytes ??
+                (file.path == null ? null : await File(file.path!).readAsBytes());
+              if (bytes != null && dialogContext.mounted) {
+                Navigator.pop(dialogContext, <String, dynamic>{
+                  'bytes': bytes, 'filename': file.name});
+              }
+            }, icon: const Icon(Icons.upload_file_outlined, size: 16),
+              label: const Text('Escolher arquivo ou print')),
+            FilledButton(onPressed: controller.text.trim().isEmpty ? null :
+              () => Navigator.pop(dialogContext,
+                <String, dynamic>{'text': controller.text}),
+              child: const Text('Analisar texto')),
+          ],
+        )));
+    controller.dispose();
+    return choice;
+  }
+
+  Future<StudentCsvRow?> _editSourceStudent(String enrollment, String name) async {
+    final enrollmentController = TextEditingController(text: enrollment);
+    final nameController = TextEditingController(text: name);
+    final edited = await showDialog<StudentCsvRow>(context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Corrigir linha da fonte'),
+        content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: enrollmentController,
+              decoration: const InputDecoration(labelText: 'Matrícula')),
+            TextField(controller: nameController,
+              decoration: const InputDecoration(labelText: 'Nome completo')),
+          ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext,
+            StudentCsvRow(enrollment: enrollmentController.text.trim(),
+              name: nameController.text.trim())), child: const Text('Usar correção')),
+        ],
+      ));
+    enrollmentController.dispose(); nameController.dispose();
+    return edited;
+  }
+
+  Future<_RosterSourceReview?> _reviewRosterSource(Map<String, dynamic> preview) async {
+    final columns = (preview['columns'] as List).map((item) => '$item').toList();
+    final raw = (preview['rows'] as List).map((item) =>
+      (item as List).map((cell) => '$cell').toList()).toList();
+    int? enrollmentIndex = (preview['enrollment_column'] as num).toInt() >= 0
+      ? (preview['enrollment_column'] as num).toInt() : null;
+    int? nameIndex = (preview['name_column'] as num).toInt() >= 0
+      ? (preview['name_column'] as num).toInt() : null;
+    final corrections = <int, StudentCsvRow>{};
+    final classes = widget.classes.value ?? const <ClassGroup>[];
+    final classIndex = (preview['class_column'] as num?)?.toInt() ?? -1;
+    final classHints = ((preview['class_values'] as List?) ?? const [])
+        .map((value) => '$value'.trim().toLowerCase()).toSet();
+    final disciplineHints = ((preview['discipline_values'] as List?) ?? const [])
+        .map((value) => '$value'.trim().toLowerCase()).toSet();
+    bool matchesHint(ClassGroup group) {
+      final code = group.code.trim().toLowerCase();
+      final discipline = group.discipline.toLowerCase();
+      final classOk = classHints.isEmpty || classHints.contains(code);
+      final disciplineOk = disciplineHints.isEmpty || disciplineHints.any(
+        (hint) => discipline.contains(hint) || group.label.toLowerCase().contains(hint));
+      return classOk && disciplineOk;
+    }
+    ClassGroup? selectedGroup = classes.where(matchesHint).length == 1
+        ? classes.where(matchesHint).first
+        : (_selected != null && classes.any((item) => item.id == _selected!.id)
+            ? _selected : null);
+    String error = '';
+    String cell(List<String> row, int? index) =>
+      index == null || index >= row.length ? '' : row[index].trim();
+
+    List<int> visibleRows() {
+      if (selectedGroup == null || classIndex < 0 || classHints.isEmpty) {
+        return List.generate(raw.length, (index) => index);
+      }
+      final target = selectedGroup!.code.trim().toLowerCase();
+      return [for (var index = 0; index < raw.length; index++)
+        if (cell(raw[index], classIndex).toLowerCase() == target) index];
     }
 
+    return showDialog<_RosterSourceReview>(context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: Text('Conferir ${preview['source_type']} antes de importar'),
+          content: SizedBox(width: 680, height: 520,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${raw.length} linhas detectadas. Confirme as colunas e corrija erros de OCR antes de continuar.'),
+              ...((preview['warnings'] as List).map((warning) => Text('$warning',
+                style: TextStyle(color: Theme.of(context).colorScheme.error)))),
+              Row(children: [
+                Expanded(child: DropdownButtonFormField<int>(value: enrollmentIndex,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Coluna de matrícula'),
+                  items: [for (var index = 0; index < columns.length; index++)
+                    DropdownMenuItem(value: index, child: Text(columns[index],
+                      overflow: TextOverflow.ellipsis))],
+                  onChanged: (value) => update(() {
+                    enrollmentIndex = value; corrections.clear(); error = '';
+                  }))),
+                const SizedBox(width: 12),
+                Expanded(child: DropdownButtonFormField<int>(value: nameIndex,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Coluna de nome'),
+                  items: [for (var index = 0; index < columns.length; index++)
+                    DropdownMenuItem(value: index, child: Text(columns[index],
+                      overflow: TextOverflow.ellipsis))],
+                  onChanged: (value) => update(() {
+                    nameIndex = value; corrections.clear(); error = '';
+                  }))),
+              ]),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(value: selectedGroup?.id,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Disciplina e turma de destino'),
+                items: [for (final group in classes)
+                  DropdownMenuItem(value: group.id, child: Text(group.display,
+                    overflow: TextOverflow.ellipsis))],
+                onChanged: (value) => update(() {
+                  selectedGroup = value == null
+                      ? null : classes.firstWhere((item) => item.id == value);
+                  error = '';
+                })),
+              if (selectedGroup != null && classHints.isNotEmpty && !matchesHint(selectedGroup!))
+                Text('A turma escolhida difere da turma/disciplina identificada na fonte.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              if ('${preview['source_text'] ?? ''}'.isNotEmpty)
+                ExpansionTile(title: const Text('Texto reconhecido no print'),
+                  children: [SelectableText('${preview['source_text']}')]),
+              if (error.isNotEmpty) Text(error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              const SizedBox(height: 8),
+              Expanded(child: Builder(builder: (context) {
+                final visible = visibleRows();
+                return ListView.builder(itemCount: visible.length,
+                itemBuilder: (context, index) {
+                  final rawIndex = visible[index];
+                  final row = raw[rawIndex];
+                  final current = corrections[rawIndex] ?? StudentCsvRow(
+                    enrollment: cell(row, enrollmentIndex),
+                    name: cell(row, nameIndex));
+                  return ListTile(dense: true,
+                    title: Text(current.name.isEmpty ? 'Nome não identificado' : current.name),
+                    subtitle: Text('Matrícula: ${current.enrollment.isEmpty ? 'não identificada' : current.enrollment}'),
+                    trailing: IconButton(icon: const Icon(Icons.edit_outlined, size: 18),
+                      tooltip: 'Corrigir matrícula e nome', onPressed: () async {
+                        final edited = await _editSourceStudent(
+                          current.enrollment, current.name);
+                        if (edited != null) update(() => corrections[rawIndex] = edited);
+                      }));
+                });
+              })),
+            ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar')),
+            FilledButton(onPressed: () {
+              if (enrollmentIndex == null || nameIndex == null ||
+                  enrollmentIndex == nameIndex) {
+                update(() => error = 'Escolha colunas diferentes para matrícula e nome.');
+                return;
+              }
+              if (selectedGroup == null) {
+                update(() => error = 'Escolha a disciplina e a turma de destino.');
+                return;
+              }
+              if (classHints.isNotEmpty && !matchesHint(selectedGroup!)) {
+                update(() => error = 'Escolha a turma indicada pela fonte antes de continuar.');
+                return;
+              }
+              final students = <StudentCsvRow>[];
+              final enrollments = <String>{};
+              for (final index in visibleRows()) {
+                final row = corrections[index] ?? StudentCsvRow(
+                  enrollment: cell(raw[index], enrollmentIndex),
+                  name: cell(raw[index], nameIndex));
+                if (row.enrollment.isEmpty && row.name.isEmpty) continue;
+                if (row.enrollment.isEmpty || row.name.isEmpty) {
+                  update(() => error = 'Linha ${index + 1}: corrija matrícula e nome.');
+                  return;
+                }
+                if (!enrollments.add(row.enrollment.toLowerCase())) {
+                  update(() => error = 'Matrícula ${row.enrollment} repetida na fonte.');
+                  return;
+                }
+                students.add(row);
+              }
+              if (students.isEmpty) {
+                update(() => error = 'Nenhum aluno válido foi identificado.');
+                return;
+              }
+              Navigator.pop(dialogContext, _RosterSourceReview(selectedGroup!, students));
+            }, child: const Text('Continuar para revisão da turma')),
+          ],
+        )));
+  }
+
+  Future<void> _importRosterSource() async {
     setState(() => _importing = true);
     try {
-      final selection = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['csv'],
-        withData: true,
-      );
-      if (selection == null || selection.files.isEmpty) return;
-
-      final file = selection.files.single;
-      final bytes = file.bytes ??
-          (file.path == null ? null : await File(file.path!).readAsBytes());
-      if (bytes == null) {
-        throw const FormatException(
-            'Nao foi possivel ler o arquivo escolhido.');
-      }
-
-      late final String content;
-      try {
-        content = utf8.decode(bytes);
-      } on FormatException {
-        content = latin1.decode(bytes);
-      }
-      final rows = parseStudentCsv(content);
+      final source = await _chooseRosterSource();
+      if (source == null) return;
+      final preview = await education.previewStudentRosterSource(
+        bytes: source['bytes'] as List<int>?,
+        filename: source['filename']?.toString() ?? '',
+        pastedText: source['text']?.toString() ?? '');
       if (!mounted) return;
+      final review = await _reviewRosterSource(preview);
+      if (review == null || !mounted) return;
+      final group = review.group;
+      final rows = review.students;
+      final roster = _selected?.id == group.id
+          ? _students
+          : await education.listStudents(classId: group.id, activeOnly: false);
 
       // A previa compara o arquivo com a turma antes de aplicar: sem isso o
       // professor so descobre o que a planilha fez depois de aplicada.
-      final diff = diffRoster(roster: _students, file: rows);
+      final diff = diffRoster(roster: roster, file: rows);
       final escolha = await _confirmRosterImport(group, rows, diff);
       if (escolha == null) return;
 
@@ -2900,10 +3111,10 @@ class _RosterTabState extends State<_RosterTab> {
                   const SizedBox(width: 4),
                 ],
                 TextButton.icon(
-                  onPressed: _importing || group == null ? null : _importCsv,
+                  onPressed: _importing ? null : _importRosterSource,
                   icon: const Icon(Icons.upload_file_outlined, size: 14),
                   label: Text(
-                    _importing ? 'IMPORTANDO...' : 'IMPORTAR CSV',
+                    _importing ? 'IMPORTANDO...' : 'IMPORTAR ALUNOS',
                     style: const TextStyle(fontSize: 10),
                   ),
                 ),
@@ -2917,8 +3128,8 @@ class _RosterTabState extends State<_RosterTab> {
                 : _students.isEmpty
                     ? const _EmptyState(
                         icon: Icons.groups_outlined,
-                        text: 'Turma sem alunos.\nImporte o CSV com as '
-                            'colunas matricula e nome.',
+                        text: 'Turma sem alunos.\nImporte um arquivo, print ou texto '
+                            'com matrícula e nome.',
                       )
                     : Column(
                         children: [
@@ -5026,6 +5237,12 @@ class _EmptyState extends StatelessWidget {
 }
 
 /// O que a tela devolve da previa: o que importar e quem desativar.
+class _RosterSourceReview {
+  final ClassGroup group;
+  final List<StudentCsvRow> students;
+  const _RosterSourceReview(this.group, this.students);
+}
+
 class _RosterImportChoice {
   final List<StudentCsvRow> students;
   final List<String> deactivateIds;

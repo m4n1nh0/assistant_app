@@ -123,6 +123,20 @@ class EducationService {
     return _decode(response) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> previewStudentRosterSource({
+    List<int>? bytes, String filename = '', String pastedText = '',
+  }) async {
+    final request = http.MultipartRequest('POST',
+      Uri.parse('$_baseUrl/education/students/source-preview'));
+    if (_api.token != null) request.headers['Authorization'] = 'Bearer ${_api.token}';
+    if (bytes != null) {
+      request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    }
+    if (pastedText.isNotEmpty) request.fields['pasted_text'] = pastedText;
+    final response = await http.Response.fromStream(await request.send());
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
   Future<Map<String, dynamic>> importStudyTimes(
       List<int> bytes, String filename, String previewSha256,
       {bool includeWithoutStudent = false}) async {

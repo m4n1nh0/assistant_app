@@ -1,6 +1,7 @@
 """Modo educacao: grava a aula em blocos, indexa e resume sob demanda."""
 
 from collections import defaultdict
+import asyncio
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import json
@@ -1653,6 +1654,25 @@ async def create_student(
     await db.commit()
     await db.refresh(student)
     return _student_response(student)
+
+
+@router.post("/students/source-preview")
+async def preview_student_roster_source(
+    file: Optional[UploadFile] = File(None),
+    pasted_text: str = Form(""),
+    user: dict = Depends(get_current_user),
+):
+    """Lê fontes variadas; a gravação continua no fluxo de prévia da turma."""
+    from ..services.student_roster_source_service import preview_student_roster_source as parse
+
+    if file is None and not pasted_text.strip():
+        raise HTTPException(422, "Envie um arquivo ou cole a lista de alunos")
+    content = await file.read() if file is not None else None
+    try:
+        return await asyncio.to_thread(parse, content,
+            file.filename if file is not None else "", pasted_text)
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/students/import", response_model=StudentImportResponse)
