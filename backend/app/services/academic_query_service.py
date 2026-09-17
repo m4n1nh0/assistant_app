@@ -19,10 +19,53 @@ def _plain(value: str) -> str:
                    if not unicodedata.combining(c))
 
 
-def is_academic_schedule_query(message: str) -> bool:
+#: Pedido sobre o que aconteceu DENTRO de uma aula. "aula do dia 10/09" casa as
+#: palavras de agenda, mas "resumo", "sobre" ou "o que foi visto" dizem que a
+#: pessoa quer o conteudo - e quem responde isso e o contexto das aulas gravadas,
+#: nao a projecao de horarios.
+_LESSON_CONTENT = re.compile(
+    r"\b(resum\w*|conteudo\w*|materia\w*|assunto\w*|topico\w*|transcri\w*"
+    r"|explica\w*|revis\w*|detalh\w*"
+    r"|o que (?:foi|a gente|nos|eu|voce|vimos|vi|falamos|falei|estudamos|aprendemos|dei|passei|passou|teve))\b"
+)
+#: "sobre" sozinho e ambiguo: "buscar sobre a aula do dia 10/09" quer conteudo,
+#: "horarios das aulas sobre banco de dados" quer agenda. So vale como pedido de
+#: conteudo quando nenhuma palavra forte de agenda aparece junto.
+_ABOUT = re.compile(r"\bsobre\b")
+_STRONG_SCHEDULE = re.compile(r"\b(quando|horario\w*|agenda\w*|calendario\w*|proxim\w*)\b")
+
+
+def is_academic_schedule_query(
+    message: str,
+    *,
+    timezone_name: str = "America/Sao_Paulo",
+    now: datetime | None = None,
+) -> bool:
+    """Diz se a pergunta e sobre a agenda de aulas, e nao sobre uma aula dada.
+
+    A resposta desta rota projeta as proximas semanas a partir dos horarios
+    semanais. Por isso ela nao serve a duas perguntas que tambem falam de "aula"
+    e "dia": o conteudo de uma aula ("resumo da aula do dia 10/09") e uma data
+    que ja passou ("tive aula dia 10/09?") - nas duas, a lista de aulas futuras
+    ignoraria a data pedida.
+    """
     text = _plain(message)
-    return bool(re.search(r"\b(aula|aulas|turma|turmas|disciplina|disciplinas)\b", text)
-                and re.search(r"\b(quando|data|datas|dia|dias|horario|horarios|agenda|calendario|proxim|listar|listar|trazer|tracar)\w*\b", text))
+    if not (re.search(r"\b(aula|aulas|turma|turmas|disciplina|disciplinas)\b", text)
+            and re.search(r"\b(quando|data|datas|dia|dias|horario|horarios|agenda|calendario|proxim|listar|trazer|tracar)\w*\b", text)):
+        return False
+    if _LESSON_CONTENT.search(text):
+        return False
+    if _ABOUT.search(text) and not _STRONG_SCHEDULE.search(text):
+        return False
+
+    from .lesson_context_service import parse_day
+
+    day, _ = parse_day(message, timezone_name=timezone_name, now=now)
+    if day is not None:
+        today = (now.astimezone(ZoneInfo(timezone_name)) if now else datetime.now(ZoneInfo(timezone_name))).date()
+        if day < today:
+            return False
+    return True
 
 
 async def academic_schedule_response(tutor_id: str, timezone_name: str) -> str:

@@ -389,3 +389,48 @@ def test_a_written_date_wins_over_the_word():
 @pytest.mark.unit
 def test_a_question_without_a_date_returns_none():
     assert service.parse_day("o que e normalizacao?", now=NOW) == (None, "")
+
+
+def test_a_future_date_is_reported_as_future():
+    """"Resumo da aula de 09/10" em setembro: a aula ainda nao aconteceu."""
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+
+            scope = await resolve(db, "me passe um resumo da aula de 09/10")
+
+            assert scope.day.isoformat() == "2026-10-09"
+            assert scope.future is True
+            assert "ainda nao chegou" in service.describe(scope)
+    asyncio.run(scenario())
+
+
+def test_a_day_month_swap_points_to_the_class_that_exists():
+    """Quem digita 09/10 querendo 10/09 recebe a pergunta certa, nao um "nao achei"."""
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            # 10/09 as 20:30 em Sao Paulo.
+            await add_lesson(db, started_at=datetime(2026, 9, 10, 23, 30, tzinfo=timezone.utc))
+
+            scope = await resolve(db, "me passe um resumo da aula de 09/10")
+
+            assert scope.lessons == ()
+            assert [lesson.day.isoformat() for lesson in scope.swapped] == ["2026-09-10"]
+            text = service.describe(scope)
+            assert "dia e mes invertidos (10/09/2026)" in text
+            assert "Pergunte se o usuario quis dizer" in text
+    asyncio.run(scenario())
+
+
+def test_no_swap_hint_when_the_requested_day_has_a_class():
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_lesson(db)
+            # 09/14 nao existe, mas 14/09 tem aula: nada a sugerir.
+            scope = await resolve(db, "resumo da aula de 14/09")
+
+            assert scope.lessons and scope.swapped == ()
+            assert scope.future is False
+    asyncio.run(scenario())

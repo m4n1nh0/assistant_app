@@ -137,6 +137,11 @@ class LessonScope:
         inherited: diz que disciplina e data vieram das mensagens anteriores da
             conversa, e nao desta. O modelo precisa saber disso para confirmar a
             aula com o usuario em vez de afirmar de que aula esta falando.
+        future: a data pedida ainda nao chegou. Sem isso o modelo so le "nenhuma
+            aula nessa data" e pede mais detalhes, quando o motivo e simples.
+        swapped: aulas na data com dia e mes invertidos ("09/10" lido como 10/09),
+            preenchidas so quando a data pedida nao tem aula. E o erro de
+            digitacao mais comum, e a aula certa costuma estar ali.
     """
 
     catalog: tuple[str, ...] = ()
@@ -146,6 +151,8 @@ class LessonScope:
     lessons: tuple[LessonHit, ...] = ()
     latest: LessonHit | None = None
     inherited: bool = False
+    future: bool = False
+    swapped: tuple[LessonHit, ...] = ()
 
     @property
     def transcribed(self) -> tuple[LessonHit, ...]:
@@ -229,6 +236,20 @@ def _numeric_day(text: str, today: date) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def _swapped_day(text: str, day: date) -> date | None:
+    """A data com dia e mes invertidos, quando a pergunta escreveu dd/mm."""
+    if re.search(r"(?<!\d)\d{4}-\d{1,2}-\d{1,2}(?!\d)", text):
+        return None
+    if not re.search(r"(?<!\d)\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?(?!\d)", text):
+        return None
+    if day.day > 12 or day.day == day.month:
+        return None
+    try:
+        return date(day.year, day.day, day.month)
+    except ValueError:
+        return None
 
 
 def parse_day(
@@ -530,6 +551,29 @@ async def _resolve_text(
         _hit(row, local, counts.get(str(row.id), 0)) for row, local in selected
     )
 
+    def _of_discipline(items):
+        if not matched:
+            return list(items)
+        return [
+            item
+            for item in items
+            if any(_same_discipline(str(item[0].discipline or ""), label) for label in matched)
+        ]
+
+    today = _local_now(timezone_name, now).date()
+    swapped: tuple[LessonHit, ...] = ()
+    if day is not None and not lessons:
+        alternative = _swapped_day(_normalize(message), day)
+        if alternative is not None and alternative <= today:
+            found = _of_discipline(await _lessons_of_day(
+                db, tutor_id=tutor_id, day=alternative, timezone_name=timezone_name
+            ))
+            if found:
+                counted = await _segment_counts(db, [str(row.id) for row, _ in found])
+                swapped = tuple(
+                    _hit(row, local, counted.get(str(row.id), 0)) for row, local in found
+                )
+
     latest: LessonHit | None = None
     if day is not None and not lessons and matched:
         recent = await _recent_lessons(db, tutor_id=tutor_id, timezone_name=timezone_name)
@@ -551,6 +595,8 @@ async def _resolve_text(
         day_label=day_label,
         lessons=lessons,
         latest=latest,
+        future=day is not None and day > today,
+        swapped=swapped,
     )
 
 
@@ -603,6 +649,19 @@ def describe(scope: LessonScope) -> str:
             )
     elif scope.day:
         lines.append("- Nenhuma aula registrada nessa data para esse recorte.")
+        if scope.future:
+            lines.append(
+                "- Essa data ainda nao chegou: aula futura nao tem gravacao nem "
+                "resumo. Diga isso ao usuario em vez de pedir mais detalhes."
+            )
+        if scope.swapped:
+            day = scope.swapped[0].day.strftime("%d/%m/%Y")
+            found = "; ".join(lesson.label for lesson in scope.swapped)
+            lines.append(
+                f"- Com dia e mes invertidos ({day}) ha aula registrada: {found}. "
+                "Pergunte se o usuario quis dizer essa data antes de falar do "
+                "conteudo dela."
+            )
         if scope.latest:
             lines.append(
                 f"- Aula mais recente dessa disciplina: {scope.latest.label}."

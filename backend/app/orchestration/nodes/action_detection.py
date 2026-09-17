@@ -95,7 +95,7 @@ async def detect_action(
             observed.set(kind="study_time_query")
             return {"action_kind": "study_time_query", "action": None}
 
-        if is_academic_schedule_query(message):
+        if is_academic_schedule_query(message, timezone_name=context.timezone):
             observed.set(kind="academic_query")
             return {"action_kind": "academic_query", "action": None}
 
