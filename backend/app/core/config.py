@@ -228,6 +228,27 @@ class Settings(BaseSettings):
     orchestrator_port: int = 8001
     observability_port: int = 8004
 
+    # `local` roda o grafo do chat dentro da assistant-api; `remote` manda cada
+    # turno para o agent-orchestrator. As chaves de provedor nao viajam: o
+    # orquestrador as decifra do banco pelo `tutor_id`, com a mesma
+    # CREDENTIAL_ENCRYPTION_KEY.
+    orchestrator_transport: str = "local"
+    orchestrator_url: str = ""
+    # Um turno inclui chamada de modelo, ferramenta e ate capacidade da maquina
+    # do usuario (90s de teto proprio), entao o limite aqui e o do turno inteiro.
+    orchestrator_timeout_seconds: float = 300.0
+    orchestrator_max_retries: int = 1
+
+    # Endereco da assistant-api visto pelo orquestrador. A maquina do usuario
+    # so e alcancavel pelo WebSocket, que vive na API: e por aqui que uma
+    # capacidade local disparada no orquestrador volta ate ela.
+    assistant_api_url: str = ""
+
+    # Segredo compartilhado das rotas entre servicos (`X-Internal-Token`). Vazio
+    # fecha essas rotas em vez de abri-las: a rota interna da API dispara
+    # script na maquina do usuario, e ela esta no mesmo dominio publico.
+    internal_service_token: str = ""
+
     # --- Checkpointing do grafo -------------------------------------------
     # `memory` nao sobrevive a restart, mas cobre o caso real de retomada dentro
     # da mesma sessao sem exigir dependencia extra. `sqlite` persiste entre
@@ -348,6 +369,28 @@ class Settings(BaseSettings):
             self.mcp_service_url.rstrip("/")
             or f"http://127.0.0.1:{self.mcp_service_port}"
         )
+
+    @property
+    def orchestrator_base_url(self) -> str:
+        """Endereco do agent-orchestrator, deduzido da porta quando a URL nao foi dada."""
+        return (
+            self.orchestrator_url.rstrip("/")
+            or f"http://127.0.0.1:{self.orchestrator_port}"
+        )
+
+    @property
+    def assistant_api_base_url(self) -> str:
+        """Endereco da assistant-api para quem esta fora dela.
+
+        O padrao nao pode sair de `port`: no processo do orquestrador essa e a
+        porta do proprio orquestrador.
+        """
+        return self.assistant_api_url.rstrip("/") or "http://127.0.0.1:8000"
+
+    @property
+    def uses_remote_orchestrator(self) -> bool:
+        """Diz se o grafo do chat roda em outro processo."""
+        return self.orchestrator_transport.strip().lower() == "remote"
 
     @property
     def uses_remote_tools(self) -> bool:

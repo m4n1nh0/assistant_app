@@ -3,7 +3,8 @@
 Este e o unico modulo que sabe, ao mesmo tempo, qual e a configuracao e quais
 implementacoes existem. Agente, no de grafo e servico de dominio pedem o
 gateway aqui e recebem uma abstracao - por isso trocar in-process por remoto e
-mudar `TOOL_TRANSPORT` ou `MCP_TRANSPORT`, sem tocar em regra de negocio.
+mudar `TOOL_TRANSPORT`, `MCP_TRANSPORT` ou `ORCHESTRATOR_TRANSPORT`, sem tocar
+em regra de negocio.
 
 As instancias sao preguicosas e memorizadas por processo: montar o catalogo lê
 o modulo de ferramentas, e fazer isso em tempo de import criaria dependencia
@@ -16,12 +17,14 @@ from loguru import logger
 
 from ..core.config import get_settings
 from ..ports.mcp import MCPGateway
+from ..ports.orchestration import OrchestrationGateway
 from ..ports.retrieval import RetrievalGateway
 from ..ports.tools import ToolGateway
 
 _mcp_gateway: MCPGateway | None = None
 _tool_gateway: ToolGateway | None = None
 _retrieval_gateway: RetrievalGateway | None = None
+_orchestration_gateway: OrchestrationGateway | None = None
 
 
 def get_mcp_gateway() -> MCPGateway:
@@ -50,32 +53,44 @@ def get_retrieval_gateway() -> RetrievalGateway:
     return _retrieval_gateway
 
 
+def get_orchestration_gateway() -> OrchestrationGateway:
+    """A porta pela qual a API entrega um turno ao grafo do chat."""
+    global _orchestration_gateway
+    if _orchestration_gateway is None:
+        _orchestration_gateway = _build_orchestration_gateway()
+    return _orchestration_gateway
+
+
 def override(
     *,
     mcp: MCPGateway | None = None,
     tools: ToolGateway | None = None,
     retrieval: RetrievalGateway | None = None,
+    orchestration: OrchestrationGateway | None = None,
 ) -> None:
     """Substitui implementacoes, para teste e para o modo de desenvolvimento.
 
     Passar `None` num campo mantem o que ja estava; use `reset()` para voltar
     tudo ao que a configuracao manda.
     """
-    global _mcp_gateway, _tool_gateway, _retrieval_gateway
+    global _mcp_gateway, _tool_gateway, _retrieval_gateway, _orchestration_gateway
     if mcp is not None:
         _mcp_gateway = mcp
     if tools is not None:
         _tool_gateway = tools
     if retrieval is not None:
         _retrieval_gateway = retrieval
+    if orchestration is not None:
+        _orchestration_gateway = orchestration
 
 
 def reset() -> None:
     """Descarta as instancias, forcando releitura da configuracao."""
-    global _mcp_gateway, _tool_gateway, _retrieval_gateway
+    global _mcp_gateway, _tool_gateway, _retrieval_gateway, _orchestration_gateway
     _mcp_gateway = None
     _tool_gateway = None
     _retrieval_gateway = None
+    _orchestration_gateway = None
 
 
 def build_mcp_client():
@@ -157,3 +172,28 @@ def _build_tool_gateway() -> ToolGateway:
         )
 
     return build_local_tool_gateway()
+
+
+def _build_orchestration_gateway() -> OrchestrationGateway:
+    settings = get_settings()
+    if settings.uses_remote_orchestrator:
+        from .orchestration.remote import RemoteOrchestrationGateway
+
+        if not settings.internal_service_token.strip():
+            # O orquestrador recusa turno sem token; avisar aqui poupa o
+            # diagnostico de "chat sempre responde erro" sem mensagem util.
+            logger.error(
+                "ORCHESTRATOR_TRANSPORT=remote sem INTERNAL_SERVICE_TOKEN: "
+                "o agent-orchestrator vai recusar os turnos"
+            )
+        logger.info(f"Orquestrador remoto em {settings.orchestrator_base_url}")
+        return RemoteOrchestrationGateway(
+            settings.orchestrator_base_url,
+            token=settings.internal_service_token,
+            timeout_seconds=settings.orchestrator_timeout_seconds,
+            max_retries=settings.orchestrator_max_retries,
+        )
+
+    from .orchestration.local import LocalOrchestrationGateway
+
+    return LocalOrchestrationGateway()

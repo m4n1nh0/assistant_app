@@ -31,6 +31,7 @@ from .core.rate_limit import mark_ready as mark_rate_limiter_ready
 from .core.redis_client import set_client as set_redis_client
 from .utils.scheduler import start_scheduler, stop_scheduler
 from .routers.chat import router as chat_router
+from .routers.internal import router as internal_router
 from .routers.websocket import router as ws_router
 from .routers.automations import router as automations_router
 from .routers.memory import router as memory_router
@@ -217,6 +218,7 @@ async def log_requests(request: Request, call_next):
 
 app.include_router(router_health)
 app.include_router(chat_router)
+app.include_router(internal_router)
 app.include_router(ws_router)
 app.include_router(tutor_router)
 app.include_router(education_router)

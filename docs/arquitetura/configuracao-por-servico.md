@@ -2,9 +2,10 @@
 
 Referência operacional: **qual variável de ambiente pertence a qual processo**.
 
-O INTARQ roda como um processo só por padrão — `assistant-api`, com MCP e
-ferramentas in-process. Este documento importa quando você separa os serviços
-(`MCP_TRANSPORT=remote`, `TOOL_TRANSPORT=remote`) ou implanta em PaaS, onde cada
+O INTARQ roda como um processo só por padrão — `assistant-api`, com MCP,
+ferramentas e o grafo do chat in-process. Este documento importa quando você
+separa os serviços (`MCP_TRANSPORT=remote`, `TOOL_TRANSPORT=remote`,
+`ORCHESTRATOR_TRANSPORT=remote`) ou implanta em PaaS, onde cada
 serviço tem seu próprio conjunto de variáveis.
 
 Para o *porquê* de cada fronteira, veja
@@ -308,41 +309,62 @@ construtoras puras (`build_project_open_action`,
 
 ## `agent-orchestrator`
 
-Ao subir, lê **17 variáveis** — 8 próprias e as 9 do bloco de observabilidade.
-Ao atender uma requisição, precisa de quase tudo que a `assistant-api` precisa —
-e é exatamente por isso que ele **não é extraído por padrão**.
+Roda o grafo do chat quando a `assistant-api` tem `ORCHESTRATOR_TRANSPORT=remote`.
+A API continua dona de autenticação, persona, histórico, gravação da conversa e
+WebSocket; o orquestrador recebe o turno pronto e devolve o estado final.
+
+Por atender o turno inteiro — RAG, agentes, ferramentas, provedores —, ele lê
+quase tudo que a `assistant-api` lê. O arquivo completo é
+`backend/.env.orchestrator.example`; os grupos que **não** podem faltar:
 
 ```bash
-ORCHESTRATOR_PORT=8001         # só no desenvolvimento local
-CHECKPOINT_BACKEND=memory
-CHECKPOINT_MAX_THREADS=200
-CHECKPOINT_SQLITE_PATH=data/checkpoints.sqlite
-GRAPH_NODE_MAX_RETRIES=2
-HOST=0.0.0.0
-LOG_LEVEL=info
+# --- entre serviços --------------------------------------------------------
+INTERNAL_SERVICE_TOKEN=<o mesmo da assistant-api>
+ASSISTANT_API_URL=http://assistant-api.railway.internal:8000
+
+# --- credenciais: iguais às da assistant-api --------------------------------
+DATABASE_URL=...
+CREDENTIAL_ENCRYPTION_KEY=<o mesmo da assistant-api>
+JWT_SECRET=<o mesmo da assistant-api>
+
+# --- infraestrutura que o grafo usa -----------------------------------------
+QDRANT_URL=...   EMBEDDING_PROVIDER=...   LOCALAI_BASE_URL=...   OLLAMA_BASE_URL=
+TOOL_TRANSPORT=...   MCP_TRANSPORT=...    # como o agente chega às ferramentas
+
+PORT=8001
 RELOAD=false
-# + o bloco de observabilidade; aqui LANGSMITH_* tem efeito real,
-#   porque é neste processo que o grafo LangGraph roda.
 ```
 
-No `docker-compose.yml` ele tem **perfil próprio**, `orchestrator`, fora de
-`services`: o arranjo padrão de desenvolvimento é MCP e ferramentas remotos com
-o grafo rodando dentro da `assistant-api`. Sobe com
-`docker compose --profile orchestrator up`, ou direto de `backend/` com
-`python -m services.orchestrator.main`. O arquivo de variáveis é
-`backend/.env.orchestrator.example`, e o bloco comentado no fim dele é o que
-falta para o serviço **atender** requisição, e não só subir.
+| Variável | Sem ela |
+|---|---|
+| `INTERNAL_SERVICE_TOKEN` | Todo turno é recusado com `503`; `/health/ready` responde `ok: false` |
+| `CREDENTIAL_ENCRYPTION_KEY` (igual à API) | As chaves salvas no banco não abrem: só LocalAI/Ollama ficam disponíveis |
+| `ASSISTANT_API_URL` | Capacidades da máquina do usuário tentam `127.0.0.1:8000` e falham |
+| `LOCALAI_*` / `OLLAMA_BASE_URL` / `EMBEDDING_*` iguais à API | A API anuncia um provedor que o orquestrador não alcança, ou o RAG gera vetores de outra dimensão |
 
-> **Antes de separar este serviço, leia isto.** As credenciais de nuvem são de
-> cada usuário, ficam cifradas no banco e são decifradas **por requisição** num
-> `ContextVar`. Um orquestrador em outro processo precisaria receber essas chaves
-> pela rede a cada mensagem — trocando segurança por um isolamento que, num
-> backend que roda na máquina do usuário, não resolve problema nenhum.
->
-> O entrypoint existe para teste de carga isolado do fluxo agentivo e para o dia
-> em que API e orquestração precisarem escalar separado. Nesse dia, ele precisará
-> também do bloco de provedores, de `DATABASE_URL`, `REDIS_URL`, `QDRANT_URL` e
-> `EMBEDDING_*`.
+**Start command:** `python -m services.orchestrator.main`. É obrigatório: a
+imagem cheia tem como `CMD` a `assistant-api`.
+
+> **Sem domínio público.** `/orchestrate/*` exige `X-Internal-Token`, mas o
+> serviço não tem motivo para ser alcançado de fora da rede interna.
+
+### Como as credenciais ficam fora da rede
+
+As chaves de nuvem são de cada usuário e ficam cifradas no banco. A API não as
+envia: o turno leva o `tutor_id`, e o orquestrador decifra as chaves daquele
+usuário com a mesma `CREDENTIAL_ENCRYPTION_KEY`, ativando-as num `ContextVar`
+só durante o turno — o mesmo mecanismo que a API usa.
+
+### Como o agente alcança a máquina do usuário
+
+A máquina só é alcançável pelo WebSocket da sessão, que vive na API. O
+manifesto de capacidades vai junto com o turno, e o orquestrador monta o
+catálogo daquela máquina; quando o agente dispara uma capacidade, a chamada
+volta por `POST /internal/devices/invoke` na API e segue pelo socket.
+
+Consequência: **com mais de uma réplica da API**, a volta pode cair numa réplica
+que não tem o socket daquela sessão. Escalar a API horizontalmente exige
+afinidade de sessão ou canal compartilhado antes.
 
 ---
 
@@ -376,7 +398,10 @@ de fornecedor no código da aplicação.
 | `MCP_TOOLS_CACHE_TTL_SECONDS` / `MCP_CIRCUIT_*` | se local | opcional | se local | — |
 | `MCP_TRANSPORT` / `MCP_SERVICE_URL` | opcional | — | opcional | — |
 | `TOOL_TIMEOUT_SECONDS` / `TOOL_MAX_RETRIES` | opcional | — | opcional | — |
-| `TOOL_TRANSPORT` / `TOOL_SERVICE_URL` | opcional | — | — | — |
+| `TOOL_TRANSPORT` / `TOOL_SERVICE_URL` | opcional | — | — | opcional |
+| `ORCHESTRATOR_TRANSPORT` / `ORCHESTRATOR_URL` | opcional | — | — | — |
+| `INTERNAL_SERVICE_TOKEN` | **obrig.** se orquestrador remoto | — | — | **obrig.** |
+| `ASSISTANT_API_URL` | — | — | — | **obrig.** |
 | `CHECKPOINT_*` / `GRAPH_NODE_MAX_RETRIES` | opcional | — | — | opcional |
 | `AGENT_MAX_*` | opcional | — | — | opcional |
 | `OTEL_ENABLED` / `OTEL_EXPORTER_ENDPOINT` / `OTEL_CONSOLE_EXPORT` | opcional | opcional | opcional | opcional |
@@ -384,12 +409,12 @@ de fornecedor no código da aplicação.
 | `OTEL_SERVICE_NAME` | opcional | — | — | — |
 | `LANGSMITH_*` / `LLM_PRICING` | opcional | lida, sem efeito | lida, sem efeito | opcional |
 | `CORS_ORIGINS` | **obrig.** em PaaS | — | — | — |
-| `DATABASE_URL` | **obrig.** | — | ⚠ | futuro |
-| `REDIS_URL` | opcional | — | — | futuro |
-| `QDRANT_*` / `EMBEDDING_*` | opcional | — | — | futuro |
-| `JWT_SECRET` / `SECRET_KEY` | **obrig.** | — | ⚠ | futuro |
-| `CREDENTIAL_ENCRYPTION_KEY` | **obrig.** | — | ⚠ | futuro |
-| Chaves de provedor (`CLAUDE_API_KEY`…) | migração inicial | — | — | futuro |
+| `DATABASE_URL` | **obrig.** | — | ⚠ | **obrig.** |
+| `REDIS_URL` | opcional | — | — | opcional |
+| `QDRANT_*` / `EMBEDDING_*` | opcional | — | — | igual à API |
+| `JWT_SECRET` / `SECRET_KEY` | **obrig.** | — | ⚠ | igual à API |
+| `CREDENTIAL_ENCRYPTION_KEY` | **obrig.** | — | ⚠ | **igual à API** |
+| Chaves de provedor (`CLAUDE_API_KEY`…) | migração inicial | — | — | — (vêm do banco) |
 | `SMTP_*` / `BREVO_API_KEY` | opcional | — | — | — |
 | `TELEGRAM_*` / `WA_*` | opcional | — | ⚠ | — |
 | `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` | opcional | — | — | — |
@@ -423,7 +448,8 @@ gerados quando ausentes.
 ## Receita: criar os serviços
 
 A ordem importa. O `mcp-service` não depende de ninguém, o `tool-service`
-depende dele, e a `assistant-api` depende dos dois. Crie de dentro para fora e
+depende dele, o `agent-orchestrator` usa os dois, e a `assistant-api` depende
+de todos. Crie de dentro para fora e
 **verifique cada um antes de criar o próximo** — assim, quando algo falhar, o
 serviço culpado é o último que você mexeu.
 
@@ -547,7 +573,21 @@ tool-service pronto: N ferramentas
 servidores e `N` for igual ao número de ferramentas locais, a URL interna está
 errada — confira a porta contra a linha `escutando em` do serviço anterior.
 
-### 3. `assistant-api`
+### 3. `agent-orchestrator`
+
+```
+Dockerfile:    backend/Dockerfile (imagem cheia)
+Start command: python -m services.orchestrator.main
+Healthcheck:   /health/live
+Variáveis:     backend/.env.orchestrator.example (PORT=8001, RELOAD=false),
+               com INTERNAL_SERVICE_TOKEN, CREDENTIAL_ENCRYPTION_KEY e
+               DATABASE_URL iguais aos da assistant-api
+```
+
+Verifique `GET /health/ready` pela rede interna ou no log de boot: sem
+`INTERNAL_SERVICE_TOKEN` ele registra erro e responde `ok: false`.
+
+### 4. `assistant-api`
 
 No serviço que já existe, acrescente:
 
@@ -556,6 +596,9 @@ TOOL_TRANSPORT=remote
 TOOL_SERVICE_URL=http://tool-service.railway.internal:8003
 MCP_TRANSPORT=remote
 MCP_SERVICE_URL=http://mcp-service.railway.internal:8002
+ORCHESTRATOR_TRANSPORT=remote
+ORCHESTRATOR_URL=http://agent-orchestrator.railway.internal:8001
+INTERNAL_SERVICE_TOKEN=<o mesmo do orquestrador>
 ```
 
 E **remova** `MCP_SERVERS` — quem fala com os servidores agora é o
@@ -572,7 +615,7 @@ campo `tools.transport` e o campo `mcp.transport` precisam dizer `"remote"`, e
 
 ### Voltar atrás
 
-Trocar `TOOL_TRANSPORT` e `MCP_TRANSPORT` de volta para `local` e restaurar
+Trocar `TOOL_TRANSPORT`, `MCP_TRANSPORT` e `ORCHESTRATOR_TRANSPORT` de volta para `local` e restaurar
 `MCP_SERVERS` na `assistant-api` desfaz tudo, sem redeploy dos outros serviços e
 sem tocar em código. Os dois serviços dedicados podem ficar de pé, ociosos, até
 você decidir.
@@ -605,11 +648,13 @@ diz à `assistant-api` que ela fala por HTTP com os dois serviços; o
 `mcp-service`. São duas decisões distintas, cada uma no arquivo do processo que
 a toma.
 
-Para subir o orquestrador:
+O orquestrador entra no mesmo perfil `services`:
 
 ```bash
 cp backend/.env.orchestrator.example backend/.env.orchestrator
-docker compose --profile orchestrator up
+# e, no backend/.env: ORCHESTRATOR_TRANSPORT=remote,
+# ORCHESTRATOR_URL=http://agent-orchestrator:8001 e o INTERNAL_SERVICE_TOKEN
+docker compose --profile services up
 ```
 
 > **A regra do Compose que morde:** `environment:` **vence** `env_file:`. No

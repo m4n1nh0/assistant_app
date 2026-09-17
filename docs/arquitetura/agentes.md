@@ -501,7 +501,7 @@ separado por padrao e decisao de configuracao, nao de codigo.**
 | Servico | Porta (dev) | Padrao | Justificativa |
 |---|---|---|---|
 | `assistant-api` | `ASSISTANT_API_PORT` 8000 | sempre | exposicao do produto |
-| `agent-orchestrator` | `ORCHESTRATOR_PORT` 8001 | in-process | credenciais por usuario vivem em `ContextVar`; extrair exigiria trafegar chave decifrada |
+| `agent-orchestrator` | `ORCHESTRATOR_PORT` 8001 | in-process, extraivel | a API continua dona de autenticacao, persona e WebSocket; o grafo escala e reinicia separado. Chave de provedor nao trafega: o orquestrador decifra do banco pelo `tutor_id` |
 | `mcp-service` | `MCP_SERVICE_PORT` 8002 | in-process, extraivel | servidores `stdio` sobem **subprocesso** — isolamento de crash e restart independente sao ganho real |
 | `tool-service` | `TOOL_SERVICE_PORT` 8003 | in-process, extraivel | as ferramentas so **montam proposta**, sem efeito colateral; o salto de rede seria latencia pura |
 | collector OTLP | `OBSERVABILITY_PORT` 8004 | profile opcional | padrao aberto, substituivel |
@@ -511,12 +511,33 @@ Trocar o transporte:
 ```bash
 MCP_TRANSPORT=remote   MCP_SERVICE_URL=http://mcp-service:8002
 TOOL_TRANSPORT=remote  TOOL_SERVICE_URL=http://tool-service:8003
+ORCHESTRATOR_TRANSPORT=remote  ORCHESTRATOR_URL=http://agent-orchestrator:8001
+INTERNAL_SERVICE_TOKEN=<mesmo valor na API e no orquestrador>
 docker compose --profile services up
 ```
 
 Nenhum agente ou no de grafo percebe a diferenca — e ha **testes de contrato**
 que rodam a mesma assercao contra os dois transportes, para que as
 implementacoes nao divirjam devagar.
+
+### O que atravessa a fronteira API → orquestrador
+
+| O que | Como atravessa |
+|---|---|
+| Turno (mensagem, historico, persona, provedores disponiveis) | corpo de `POST /orchestrate/chat` |
+| Chaves de provedor do usuario | **nao atravessam**: o orquestrador decifra do banco pelo `tutor_id` |
+| Capacidades da maquina do usuario | o manifesto validado vai no turno; a execucao volta por `POST /internal/devices/invoke` na API, dona do WebSocket |
+| Correlacao | `traceparent`, `X-Request-ID`, `X-Conversation-ID`, `X-Execution-ID` |
+| Autenticacao | `X-Internal-Token` (`INTERNAL_SERVICE_TOKEN`); vazio fecha as rotas |
+
+Duas limitacoes conhecidas do arranjo remoto:
+
+- **Streaming (`/chat/stream`, `chat_stream`) continua na API.** Ele fala direto
+  com o provedor, sem grafo; so o chat completo passa pelo orquestrador.
+- **Capacidade da maquina com varias replicas da API.** O WebSocket de uma
+  sessao vive numa replica so, e a volta `/internal/devices/invoke` cai em
+  qualquer uma. Com mais de uma replica, e preciso afinidade de sessao ou um
+  canal compartilhado (Redis pub/sub) antes de escalar a API horizontalmente.
 
 ### Health: `live` x `ready`
 

@@ -196,9 +196,11 @@ services:
       retries: 3
       start_period: 10s
 
-  # Perfil proprio, fora de "services": o arranjo padrao de desenvolvimento e
-  # MCP + ferramentas remotos com o grafo rodando dentro da assistant-api. Este
-  # servico existe para teste de carga isolado do fluxo agentivo.
+  # Recebe os turnos do chat quando o backend/.env tem
+  # ORCHESTRATOR_TRANSPORT=remote, ORCHESTRATOR_URL=http://agent-orchestrator:8001
+  # e o mesmo INTERNAL_SERVICE_TOKEN do .env.orchestrator. Ele decifra as chaves
+  # do usuario do banco e devolve capacidade da maquina ao backend
+  # (ASSISTANT_API_URL), por isso le banco, Qdrant e a chave de cifra.
   #
   # UNICO servico extraido que usa a imagem cheia, e de proposito: ao atender
   # POST /orchestrate/chat ele importa agent_service e langchain_agent_service
@@ -208,7 +210,7 @@ services:
   # falha nao e economia. Por isso tambem ele mantem `command:`: o CMD da imagem
   # cheia e o da assistant-api.
   agent-orchestrator:
-    profiles: ["orchestrator"]
+    profiles: ["services", "orchestrator"]
     build:
       context: ./backend
       dockerfile: Dockerfile

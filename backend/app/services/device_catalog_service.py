@@ -77,6 +77,10 @@ class DeviceCatalog:
     def __init__(self, *, default_timeout: float = 90.0) -> None:
         self._registries: dict[str, ToolRegistry] = {}
         self._executors: dict[str, ToolExecutor] = {}
+        # O manifesto validado, alem do registry montado a partir dele: e o que
+        # a API encaminha ao agent-orchestrator para ele montar o mesmo catalogo
+        # do lado de la.
+        self._manifests: dict[str, ClientManifest] = {}
         self._default_timeout = default_timeout
 
     def publish(
@@ -95,6 +99,7 @@ class DeviceCatalog:
             timeout_seconds=timeout_seconds,
         )
         self._registries[manifest.device_id] = registry
+        self._manifests[manifest.device_id] = manifest
         self._executors[manifest.device_id] = ToolExecutor(
             registry,
             default_timeout=timeout_seconds or self._default_timeout,
@@ -109,7 +114,12 @@ class DeviceCatalog:
         """Esquece a maquina que desconectou."""
         registry = self._registries.pop(device_id, None)
         self._executors.pop(device_id, None)
+        self._manifests.pop(device_id, None)
         return len(registry) if registry else 0
+
+    def manifest(self, device_id: str = "") -> ClientManifest | None:
+        """O manifesto publicado por uma maquina, ou `None` se ela nao publicou."""
+        return self._manifests.get(device_id or current_device())
 
     def descriptors(
         self,

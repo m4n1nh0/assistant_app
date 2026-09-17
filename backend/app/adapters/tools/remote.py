@@ -7,6 +7,12 @@ sem tocar em agente ou no de grafo.
 Toda chamada carrega os identificadores de correlacao em cabecalho, entao um
 trace comecado na API continua no tool-service em vez de virar dois traces
 soltos.
+
+As capacidades da maquina do usuario **nao** vivem no tool-service: elas sao
+publicadas pelo WebSocket da sessao, no processo que atende o chat. Por isso
+este gateway soma o catalogo de dispositivos local ao remoto, como o gateway
+in-process faz - sem isso, ligar `TOOL_TRANSPORT=remote` tirava do agente toda
+capacidade da maquina, sem erro nenhum.
 """
 
 from __future__ import annotations
@@ -32,12 +38,21 @@ class RemoteToolGateway:
         max_retries: int = 1,
         retry_backoff: float = 0.5,
         client: httpx.AsyncClient | None = None,
+        devices: Any = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._max_retries = max(0, max_retries)
         self._backoff = max(0.0, retry_backoff)
         self._client = client
+        self._devices = devices
+
+    def _device_catalog(self):
+        if self._devices is None:
+            from ...services.device_catalog_service import get_device_catalog
+
+            return get_device_catalog()
+        return self._devices
 
     async def _request(
         self,
@@ -81,7 +96,8 @@ class RemoteToolGateway:
         raise last
 
     async def list_tools(self, *, agent_id: str = "") -> list[ToolDescriptor]:
-        """Catalogo publicado pelo tool-service para um agente."""
+        """Catalogo publicado pelo tool-service, mais a maquina da sessao."""
+        devices = self._device_catalog().descriptors(agent_id=agent_id)
         async with span("tool_service.list", "tool", agent=agent_id or None):
             try:
                 payload = await self._request(
@@ -89,13 +105,18 @@ class RemoteToolGateway:
                 )
             except Exception as exc:
                 # Catalogo indisponivel nao pode derrubar a conversa: o agente
-                # responde sem ferramenta, como ja faz quando o MCP cai.
+                # responde sem ferramenta, como ja faz quando o MCP cai. A
+                # maquina do usuario nao depende do tool-service e continua.
                 logger.warning(f"tool-service indisponivel: {exc}")
-                return []
-        return [_descriptor(item) for item in payload.get("tools", [])]
+                return devices
+        return [_descriptor(item) for item in payload.get("tools", [])] + devices
 
     async def invoke(self, invocation: ToolInvocation) -> ToolResult:
-        """Executa uma ferramenta no tool-service."""
+        """Executa uma ferramenta no tool-service, ou na maquina da sessao."""
+        devices = self._device_catalog()
+        device_executor = devices.executor()
+        if device_executor is not None and devices.find(invocation.name):
+            return await device_executor.invoke(invocation)
         async with span(
             f"tool.{invocation.name}",
             "tool",
