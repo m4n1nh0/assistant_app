@@ -17,8 +17,8 @@ from typing import Any
 from shared.ports.mcp import MCPGateway
 from shared.ports.tools import ToolDescriptor, ToolInvocation, ToolResult
 from ...toolkit.catalog import sync_mcp_tools
-from ...toolkit.executor import ToolExecutor
-from ...toolkit.registry import ToolRegistry
+from shared.toolkit.executor import ToolExecutor
+from shared.toolkit.registry import ToolRegistry
 from ...services.device_catalog_service import DeviceCatalog, get_device_catalog
 
 

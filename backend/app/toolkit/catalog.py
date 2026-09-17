@@ -21,7 +21,7 @@ from loguru import logger
 from ..orchestration.agents import mcp_scopes, scopes_for_tool
 from shared.ports.mcp import MCPGateway
 from shared.ports.tools import ToolDescriptor, ToolSource
-from .registry import ToolRegistry, ToolRunner
+from shared.toolkit.registry import ToolRegistry, ToolRunner
 
 
 def descriptor_from_langchain(

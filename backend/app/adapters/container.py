@@ -111,7 +111,7 @@ def build_local_tool_gateway(*, mcp: MCPGateway | None = None) -> ToolGateway:
     fora do processo nao muda a regra de execucao.
     """
     from ..toolkit.catalog import build_local_registry
-    from ..toolkit.executor import ToolExecutor
+    from shared.toolkit.executor import ToolExecutor
     from .tools.local import LocalToolGateway
 
     settings = get_settings()

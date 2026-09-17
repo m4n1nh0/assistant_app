@@ -116,38 +116,48 @@ def test_mcp_service_loads_nothing_from_the_product():
     assert sorted(m for m in loaded if m == "app" or m.startswith("app.")) == []
 
 
-#: O que o tool-service carrega de `app` hoje. E divida conhecida, nao desenho:
-#: `assistant_tools` puxa `launcher_service`, que traz banco e credenciais sem
-#: usa-los (docs/arquitetura/configuracao-por-servico.md). A lista existe para
-#: a divida so poder diminuir - modulo novo aqui reprova o teste.
-TOOL_SERVICE_KNOWN_DEBT = {
-    "app.core.database",
-    "app.core.security",
-    "app.services.credential_storage_service",
-    "app.services.user_llm_config_service",
-    "app.services.launcher_service",
+#: Tudo que o tool-service pode carregar de `app`: o catalogo de ferramentas do
+#: produto e o que ele precisa para montar proposta. Lista fechada de proposito -
+#: modulo novo aqui e decisao de arquitetura, nao efeito colateral de um import.
+TOOL_SERVICE_ALLOWED = {
+    "app",
+    "app.adapters",
+    "app.adapters.container",
+    "app.adapters.mcp",
+    "app.adapters.mcp.local",
+    "app.adapters.tools",
+    "app.adapters.tools.local",
+    "app.core",
+    "app.core.config",
+    "app.models",
+    "app.models.schemas",
+    "app.orchestration",
+    "app.orchestration.agents",
+    "app.ports",
+    "app.ports.orchestration",
+    "app.ports.retrieval",
+    "app.services",
+    "app.services.assistant_tools",
+    "app.services.calendar_action_service",
+    "app.services.client_capability_service",
+    "app.services.coding_action_service",
+    "app.services.computer_action_service",
+    "app.services.device_catalog_service",
+    "app.services.launcher_intent_service",
+    "app.services.local_message_markers",
+    "app.toolkit",
+    "app.toolkit.catalog",
 }
 
 
-def test_tool_service_does_not_grow_its_dependency_on_the_product():
+def test_tool_service_loads_only_the_tool_catalog():
+    """Montar proposta nao precisa de banco, JWT nem cifra."""
     loaded = _loaded_by("services.tool_service.main")
+    from_app = {m for m in loaded if m == "app" or m.startswith("app.")}
 
-    domain = {
-        m
-        for m in loaded
-        if m.startswith(("app.core.database", "app.core.security", "app.services."))
-    }
-    assert domain - TOOL_SERVICE_KNOWN_DEBT - {
-        # Montam proposta de acao: e o catalogo do servico.
-        "app.services.assistant_tools",
-        "app.services.calendar_action_service",
-        "app.services.coding_action_service",
-        "app.services.computer_action_service",
-        "app.services.client_capability_service",
-        "app.services.device_catalog_service",
-        "app.services.local_message_markers",
-    } == set()
-    assert not any(m.startswith("app.routers") for m in loaded)
+    assert sorted(from_app - TOOL_SERVICE_ALLOWED) == []
+    for forbidden in ("sqlalchemy", "jose", "passlib", "cryptography"):
+        assert forbidden not in loaded, f"tool-service voltou a carregar {forbidden}"
 
 
 def test_orchestrator_never_loads_the_http_delivery_layer():

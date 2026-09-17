@@ -31,7 +31,7 @@ from shared.ports.tools import (
     ToolResult,
     ToolTimeout,
 )
-from .registry import ToolRegistry
+from shared.toolkit.registry import ToolRegistry
 
 
 class ToolExecutor:

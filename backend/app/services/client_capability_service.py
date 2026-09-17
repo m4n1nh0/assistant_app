@@ -27,7 +27,7 @@ from loguru import logger
 
 from ..orchestration.agents import mcp_scopes
 from shared.ports.tools import ToolDescriptor
-from ..toolkit.registry import ToolRegistry, ToolRunner
+from shared.toolkit.registry import ToolRegistry, ToolRunner
 
 #: Prefixo do nome no catalogo. Deixa obvio no trace e no prompt que a execucao
 #: sai do servidor, e evita colisao com ferramentas locais do backend.

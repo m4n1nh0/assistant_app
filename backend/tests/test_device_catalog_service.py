@@ -22,8 +22,8 @@ from app.services.device_catalog_service import (
     reset_device,
     session_device,
 )
-from app.toolkit.executor import ToolExecutor
-from app.toolkit.registry import ToolRegistry
+from shared.toolkit.executor import ToolExecutor
+from shared.toolkit.registry import ToolRegistry
 
 
 def _manifest(capability_id: str = "run_script") -> dict:

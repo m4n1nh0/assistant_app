@@ -12,8 +12,8 @@ import pytest
 
 from shared.observability import configure_sink, default_sink
 from shared.ports.tools import ToolDescriptor, ToolInvocation
-from app.toolkit.executor import ToolExecutor
-from app.toolkit.registry import ToolRegistry
+from shared.toolkit.executor import ToolExecutor
+from shared.toolkit.registry import ToolRegistry
 
 pytestmark = pytest.mark.unit
 

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from .calendar_action_service import build_calendar_create_action
 from .coding_action_service import build_coding_action
 from .computer_action_service import build_computer_action
-from .launcher_service import (
+from .launcher_intent_service import (
     build_project_open_action,
     build_shortcut_registration_action,
 )

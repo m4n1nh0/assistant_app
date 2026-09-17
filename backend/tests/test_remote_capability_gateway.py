@@ -20,8 +20,8 @@ from app.services.remote_capability_gateway import (
     RemoteCapabilityError,
     RemoteCapabilityGateway,
 )
-from app.toolkit.executor import ToolExecutor
-from app.toolkit.registry import ToolRegistry
+from shared.toolkit.executor import ToolExecutor
+from shared.toolkit.registry import ToolRegistry
 from shared.ports.tools import ToolInvocation
 
 MANIFEST = {

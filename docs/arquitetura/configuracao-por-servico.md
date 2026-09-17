@@ -24,7 +24,6 @@ que é onde o deploy costuma quebrar.
 | opcional | Tem padrão utilizável; ajuste quando precisar |
 | lida, sem efeito | O processo lê no boot, mas não há nele nada que use o valor |
 | — | O serviço não lê essa variável |
-| ⚠ | Carregada por import transitivo, mas **não usada** — veja [a nota](#o-que-o-tool-service-carrega-sem-usar) |
 
 As listas abaixo não vêm de memória: cada entrypoint foi importado, os módulos
 efetivamente carregados (`sys.modules`) foram cruzados com as leituras de
@@ -273,37 +272,18 @@ TELEMETRY_MEMORY_EVENTS=2000
 > quem vai *mandar trabalho* — e o errado para quem decide *reiniciar o
 > container*: um catálogo momentaneamente vazio viraria loop de restart.
 
-### O que o `tool-service` carrega sem usar
+### Sem banco nem credenciais
 
-⚠ Ao montar o catálogo, este serviço importa transitivamente
-`app.core.database`, `app.core.security` e `credential_storage_service`:
+Montar o catálogo não toca banco, JWT nem cifra. O reconhecimento de atalho que
+as ferramentas usam mora em `app/services/launcher_intent_service.py`, só com
+texto; consultar o atalho no banco continua em `launcher_service`, que o
+tool-service não carrega. A governança (`ToolRegistry`, `ToolExecutor`) está em
+`shared/toolkit`.
 
-```
-tool_service.main
-  └── build_local_tool_gateway
-        └── toolkit.catalog.build_local_registry
-              └── services.assistant_tools
-                    └── launcher_service ── app.core.database  (modelos + engine)
-                    └── user_llm_config_service ── app.core.security          (JWT)
-                                                └── credential_storage_service (cifra)
-```
-
-Consequência prática: `DATABASE_URL`, `JWT_SECRET` e
-`CREDENTIAL_ENCRYPTION_KEY` aparecem no fecho de imports, mas **nenhum código
-executado pelo `tool-service` os utiliza**. As ferramentas dele só montam
-proposta; não consultam banco nem autenticam.
-
-O engine do SQLAlchemy é criado no import (`app/core/database.py:62`), porém não
-conecta até o primeiro uso — que nunca acontece aqui. Então:
-
-- **Não defina** essas variáveis no `tool-service`. Sem elas o padrão do
-  `Settings` é usado, o engine é construído e fica ocioso, e nada quebra.
-- Definir um `DATABASE_URL` real seria dar ao serviço uma credencial que ele não
-  precisa.
-
-É uma aresta conhecida, não um requisito. Resolvê-la significa separar as
-construtoras puras (`build_project_open_action`,
-`build_shortcut_registration_action`) do módulo que carrega os modelos de banco.
+Por isso `DATABASE_URL`, `JWT_SECRET` e `CREDENTIAL_ENCRYPTION_KEY` não só não
+devem estar no ambiente deste serviço — os pacotes nem estão na imagem.
+`tests/test_import_boundaries.py` mantém uma lista fechada do que ele pode
+carregar de `app` e reprova `sqlalchemy`, `jose`, `passlib` ou `cryptography`.
 
 ---
 
@@ -409,14 +389,14 @@ de fornecedor no código da aplicação.
 | `OTEL_SERVICE_NAME` | opcional | — | — | — |
 | `LANGSMITH_*` / `LLM_PRICING` | opcional | lida, sem efeito | lida, sem efeito | opcional |
 | `CORS_ORIGINS` | **obrig.** em PaaS | — | — | — |
-| `DATABASE_URL` | **obrig.** | — | ⚠ | **obrig.** |
+| `DATABASE_URL` | **obrig.** | — | — | **obrig.** |
 | `REDIS_URL` | opcional | — | — | opcional |
 | `QDRANT_*` / `EMBEDDING_*` | opcional | — | — | igual à API |
-| `JWT_SECRET` / `SECRET_KEY` | **obrig.** | — | ⚠ | igual à API |
-| `CREDENTIAL_ENCRYPTION_KEY` | **obrig.** | — | ⚠ | **igual à API** |
+| `JWT_SECRET` / `SECRET_KEY` | **obrig.** | — | — | igual à API |
+| `CREDENTIAL_ENCRYPTION_KEY` | **obrig.** | — | — | **igual à API** |
 | Chaves de provedor (`CLAUDE_API_KEY`…) | migração inicial | — | — | — (vêm do banco) |
 | `SMTP_*` / `BREVO_API_KEY` | opcional | — | — | — |
-| `TELEGRAM_*` / `WA_*` | opcional | — | ⚠ | — |
+| `TELEGRAM_*` / `WA_*` | opcional | — | — | — |
 | `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` | opcional | — | — | — |
 | `WHISPER_*` / `STT_*` / `TTS_*` | opcional | — | — | — |
 

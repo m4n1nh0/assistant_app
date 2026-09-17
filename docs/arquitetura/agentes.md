@@ -84,6 +84,9 @@ backend/
 │   │   ├── tools.py              ToolGateway, ToolDescriptor, ToolResult
 │   │   ├── mcp.py                MCPGateway, MCPServerHealth
 │   │   └── telemetry.py          TelemetrySink, SpanRecord, UsageRecord
+│   ├── toolkit/                  governanca de ferramentas, sem catalogo
+│   │   ├── registry.py           contrato, escopo, origem
+│   │   └── executor.py           validacao, timeout, retry, auditoria
 │   ├── mcp/                      MCP (protocolo)
 │   │   ├── config.py             parser de MCP_SERVERS
 │   │   ├── client.py             conexao, cache, retry, disjuntor
@@ -116,9 +119,7 @@ backend/
 │   │       └── dispatch.py
 │   │
 │   ├── toolkit/                  Tool Service (dominio)
-│   │   ├── registry.py           catalogo, escopo, origem
-│   │   ├── executor.py           validacao, timeout, retry, auditoria
-│   │   └── catalog.py            registro de tools locais e MCP
+│   │   └── catalog.py            registro das tools do produto e MCP
 │   │
 │   ├── adapters/                 implementacoes dos contratos
 │   │   ├── container.py          composicao a partir da configuracao
@@ -147,7 +148,7 @@ backend/
 | `app.core` | `shared` | `app.services`, `app.routers`, `app.orchestration`, `app.adapters` |
 | `shared.ports` / `app.ports` | tipos de dados | implementacao (`adapters`, `services`, `core`) |
 | `services.mcp_service` | `shared` | qualquer modulo de `app` |
-| `services.tool_service` | `shared`, catalogo de `app` | `app.routers`; divida conhecida congelada |
+| `services.tool_service` | `shared`, catalogo de `app` (lista fechada) | banco, JWT, cifra, `app.routers` |
 | `services.orchestrator` | `shared`, dominio de `app` | `app.routers` |
 
 As regras sao testadas em `tests/test_import_boundaries.py`: as de pacote por

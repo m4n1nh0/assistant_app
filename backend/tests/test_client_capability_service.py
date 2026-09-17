@@ -20,7 +20,7 @@ from app.services.client_capability_service import (
     register_client_capabilities,
     unregister_client_capabilities,
 )
-from app.toolkit.registry import ToolRegistry
+from shared.toolkit.registry import ToolRegistry
 
 MANIFEST = {
     "platform": "windows",

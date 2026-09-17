@@ -28,7 +28,7 @@ from ...services.remote_capability_gateway import (
     DEFAULT_TIMEOUT_SECONDS,
     RemoteCapabilityError,
 )
-from ...toolkit.registry import ToolRunner
+from shared.toolkit.registry import ToolRunner
 
 #: Folga sobre o teto da maquina: a API espera a maquina ate o teto dela, e so
 #: depois responde. Sem folga, o orquestrador desistiria antes da resposta.

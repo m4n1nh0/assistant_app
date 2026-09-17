@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from shared.ports.tools import ToolError, ToolTimeout
-from ..toolkit.registry import ToolRunner
+from shared.toolkit.registry import ToolRunner
 
 #: Envia `payload` para a maquina `device_id`. E o unico ponto de transporte.
 SendToDevice = Callable[[str, dict[str, Any]], Awaitable[None]]

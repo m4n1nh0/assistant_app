@@ -24,8 +24,8 @@ from typing import Any, Iterator
 from loguru import logger
 
 from shared.ports.tools import ToolDescriptor
-from ..toolkit.executor import ToolExecutor
-from ..toolkit.registry import RegisteredTool, ToolRegistry
+from shared.toolkit.executor import ToolExecutor
+from shared.toolkit.registry import RegisteredTool, ToolRegistry
 from .client_capability_service import (
     ClientManifest,
     register_client_capabilities,
