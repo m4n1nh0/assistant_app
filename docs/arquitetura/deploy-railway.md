@@ -7,7 +7,8 @@ fronteiras entre processos, [Arquitetura agentiva](agentes.md).
 
 > Os nomes de serviço abaixo (`assistant-api`, `agent-orchestrator`,
 > `tool-service`, `mcp-service`, `mysql`, `Redis`, `qdrant`, `localai`) são
-> sugestões. Nas referências `${{servico.VARIAVEL}}`, use **exatamente** o nome
+> sugestões — na instalação de referência a API se chama `assistant_app` e o
+> orquestrador, `orchestrator`. Nas referências `${{servico.VARIAVEL}}`, use **exatamente** o nome
 > que o serviço tem no seu projeto — inclusive nomes gerados pela Railway, como
 > `serene-creation`. Referência para serviço inexistente vira texto vazio, sem
 > erro.
@@ -49,6 +50,43 @@ flowchart LR
 Só a `assistant-api` recebe tráfego de fora. Todo o resto conversa pela rede
 privada (`*.railway.internal`), que só existe entre serviços do mesmo projeto e
 ambiente.
+
+---
+
+## Configuração comum a todos os serviços de aplicação
+
+Os quatro serviços saem do mesmo repositório. Em *Settings* de cada um:
+
+| Campo | Como preencher |
+|---|---|
+| **Source** | mesmo repositório e mesma branch nos quatro |
+| **Root Directory** | `/backend` |
+| **Dockerfile Path** | caminho absoluto no repositório, ex.: `/backend/Dockerfile.mcp-service` |
+| **Watch Paths** | padrões estilo `.gitignore`, **a partir da raiz do repositório** e com `/` inicial, um por linha |
+
+### Watch paths: o erro que não avisa
+
+Watch path decide quais commits disparam o deploy de cada serviço. Padrão curto
+demais não dá erro: o serviço simplesmente não recebe a mudança.
+
+O caso real que motivou esta seção: o `agent-orchestrator` estava com
+`/backend/services/orchestrator/**`. Só que o entrypoint dele é um arquivo de
+quarenta linhas — **o grafo, os nós e as regras que ele executa moram em
+`/backend/app/**`**. Uma correção de roteamento do chat subiu na API e nunca
+chegou ao orquestrador, que é onde o chat roda com `ORCHESTRATOR_TRANSPORT=remote`.
+
+Regras práticas:
+
+- serviço que carrega código de `app/` (API, orquestrador, tool-service) observa
+  `/backend/app/**`;
+- todo serviço observa `/backend/shared/**` e `/backend/services/common.py`;
+- na dúvida, deixe o campo **vazio**: todo commit dispara o deploy. Deploy a
+  mais custa minutos; deploy a menos deixa produção rodando código velho;
+- **mudar o watch path não redeploya o que já foi enviado.** Depois de corrigir,
+  faça *Deploy latest commit* à mão;
+- para saber o que está no ar, `GET /health` ou `GET /health/live` da API mostram o commit
+  (`RAILWAY_GIT_COMMIT_SHA`); compare com o deploy de cada serviço em
+  *Deployments*.
 
 ---
 
@@ -144,14 +182,13 @@ volume em `/models`, `LOCALAI_ADDRESS=:8080` e o modelo em `PRELOAD_MODELS`.
 
 | Configuração | Valor |
 |---|---|
-| Root directory | `backend` |
-| Dockerfile | variável `RAILWAY_DOCKERFILE_PATH` abaixo |
+| Root Directory | `/backend` |
+| Dockerfile Path | `/backend/Dockerfile.mcp-service` |
 | Start command | vazio (o `CMD` da imagem) |
 | Healthcheck | `/health/live` |
 | Domínio público | nenhum |
 
 ```dotenv
-RAILWAY_DOCKERFILE_PATH="Dockerfile.mcp-service"
 HOST="0.0.0.0"
 PORT="8002"
 RELOAD="false"
@@ -173,11 +210,11 @@ OTEL_ENABLED="false"
 **Watch paths**
 
 ```
-backend/shared/**
-backend/services/common.py
-backend/services/mcp_service/**
-backend/requirements-mcp-service.txt
-backend/Dockerfile.mcp-service
+/backend/shared/**
+/backend/services/common.py
+/backend/services/mcp_service/**
+/backend/requirements-mcp-service.txt
+/backend/Dockerfile.mcp-service
 ```
 
 **Confira no log:** `services.mcp_service.main:app escutando em 0.0.0.0:8002`.
@@ -188,14 +225,13 @@ backend/Dockerfile.mcp-service
 
 | Configuração | Valor |
 |---|---|
-| Root directory | `backend` |
-| Dockerfile | variável `RAILWAY_DOCKERFILE_PATH` abaixo |
+| Root Directory | `/backend` |
+| Dockerfile Path | `/backend/Dockerfile.tool-service` |
 | Start command | vazio |
 | Healthcheck | `/health/live` (nunca `/health/ready`) |
 | Domínio público | nenhum |
 
 ```dotenv
-RAILWAY_DOCKERFILE_PATH="Dockerfile.tool-service"
 HOST="0.0.0.0"
 PORT="8003"
 RELOAD="false"
@@ -220,12 +256,12 @@ chaves de provedor: o serviço não carrega banco nem cifra.
 **Watch paths**
 
 ```
-backend/shared/**
-backend/services/common.py
-backend/services/tool_service/**
-backend/app/**
-backend/requirements-tool-service.txt
-backend/Dockerfile.tool-service
+/backend/app/**
+/backend/shared/**
+/backend/services/common.py
+/backend/services/tool_service/**
+/backend/requirements-tool-service.txt
+/backend/Dockerfile.tool-service
 ```
 
 **Confira no log:** `tool-service pronto: N ferramentas`.
@@ -236,8 +272,8 @@ backend/Dockerfile.tool-service
 
 | Configuração | Valor |
 |---|---|
-| Root directory | `backend` |
-| Dockerfile | `Dockerfile` (imagem cheia) |
+| Root Directory | `/backend` |
+| Dockerfile Path | `/backend/Dockerfile` (imagem cheia) |
 | Start command | **`python -m services.orchestrator.main`** — obrigatório |
 | Healthcheck | `/health/live` |
 | Domínio público | nenhum |
@@ -308,13 +344,16 @@ Sem volume, apague `EMBEDDING_CACHE_DIR` e `RAILWAY_RUN_UID`.
 **Watch paths**
 
 ```
-backend/app/**
-backend/shared/**
-backend/services/common.py
-backend/services/orchestrator/**
-backend/requirements.txt
-backend/Dockerfile
+/backend/app/**
+/backend/shared/**
+/backend/services/common.py
+/backend/services/orchestrator/**
+/backend/requirements.txt
+/backend/Dockerfile
 ```
+
+`/backend/app/**` **não é opcional** aqui: é onde está o grafo que este serviço
+executa.
 
 **Confira:** `GET /health/ready` (pela rede interna) responde `ok: true` e
 `internal_token_configured: true`.
@@ -325,8 +364,8 @@ backend/Dockerfile
 
 | Configuração | Valor |
 |---|---|
-| Root directory | `backend` |
-| Dockerfile | `Dockerfile` |
+| Root Directory | `/backend` |
+| Dockerfile Path | `/backend/Dockerfile` |
 | Start command | vazio (`python run.py`) |
 | Healthcheck | `/health/live` |
 | Domínio público | **sim**, apontando para a porta `8000` |
@@ -432,12 +471,12 @@ CHECKPOINT_MAX_THREADS="200"
 **Watch paths**
 
 ```
-backend/app/**
-backend/shared/**
-backend/services/common.py
-backend/requirements.txt
-backend/Dockerfile
-backend/static/**
+/backend/app/**
+/backend/shared/**
+/backend/services/common.py
+/backend/requirements.txt
+/backend/Dockerfile
+/backend/static/**
 ```
 
 **Confira no log de boot:**
@@ -485,6 +524,7 @@ ou ser apagados.
 | Provedores de nuvem somem só no chat | `CREDENTIAL_ENCRYPTION_KEY` do orquestrador diferente da API |
 | Agente não usa capacidades da máquina do usuário | `ASSISTANT_API_URL` errado no orquestrador, ou mais de uma réplica da API |
 | Timeout nas URLs `.railway.internal` | porta errada na URL (compare com `escutando em` no log) ou ambiente só IPv6 — use `HOST="::"` |
+| Correção sobe na API mas o chat continua igual | o `agent-orchestrator` não fez deploy: watch path sem `/backend/app/**`. Corrija e faça *Deploy latest commit* |
 | Healthcheck reprova sem mensagem | `PORT` copiado do `.env.example` local, ou healthcheck em `/health/ready` no tool-service |
 | OAuth de calendário recusa o redirect | falta `FORWARDED_ALLOW_IPS="*"` na API |
 | `Access denied for user 'app'@... (using password: NO)` | referências do `DATABASE_URL` apontam para variáveis que o MySQL não publica (`MYSQLUSER` numa imagem que publica `MYSQL_USER`); o log de boot mostra `DATABASE_URL incompleta` |

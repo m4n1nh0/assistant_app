@@ -95,7 +95,9 @@ Blocos prontos para a Railway: [deploy na Railway](../docs/arquitetura/deploy-ra
 ## Orquestração De Chat
 
 O chat completo via REST (`POST /chat/`) e WebSocket (`type: chat`) usa um
-`StateGraph` assíncrono definido em `app/services/chat_graph_service.py`. O
+`StateGraph` assíncrono composto em `app/orchestration/graph.py`, com entrada
+pela fachada `app/services/chat_graph_service.py`. Ele roda na API ou no
+`agent-orchestrator`, conforme `ORCHESTRATOR_TRANSPORT`. O
 workflow detecta ações locais, resolve atalhos e escolhe entre despacho
 `single`, `multi` e `chain`. Os nós chamam a Service Layer existente, mantendo
 banco, provedores e execução local fora do grafo. O SSE (`POST /chat/stream`) e
@@ -117,9 +119,18 @@ de devolvê-la no contrato público `LLMResponse`.
 | Rota do grafo | Comportamento |
 |---------------|--------------|
 | ação local | Devolve uma proposta `computer_action`, `coding_action`, `launch` ou `register_shortcut` no campo `action` |
+| consulta de calendário | Responde com os eventos do Google Calendar ou Microsoft Graph |
+| horário de aulas | Projeta as próximas quatro semanas dos horários semanais cadastrados ("quando tenho aula?") |
+| tempo de estudo | Responde o tempo de estudo registrado |
 | `single` | Usa o provedor solicitado ou escolhe automaticamente um disponível |
 | `multi` | Consulta em paralelo todos os provedores disponíveis, ou apenas o solicitado |
 | `chain` | Passa a resposta de cada provedor ao próximo para refinamento |
+
+A rota de horário de aulas ignora a data citada, então só recebe pergunta de
+agenda. Pedido sobre uma aula dada — resumo, conteúdo, "buscar sobre a aula do
+dia 10/09", data que já passou — segue para a conversa, onde a aula é conferida
+no banco antes da busca. Se a data pedida é futura, ou se só a data com dia e mês
+invertidos tem aula, o prompt diz isso ao modelo.
 
 Diagnóstico, script, workspace, projeto e cadastro encerram o grafo com uma
 confirmação produzida pelo próprio backend. Um atalho de abertura já cadastrado

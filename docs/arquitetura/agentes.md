@@ -33,6 +33,8 @@ flowchart TB
         N3 -->|conditional| N4{rota}
         N4 --> A1[acknowledge_action]
         N4 --> A2[query_calendar]
+        N4 --> A6[query_academic]
+        N4 --> A7[query_study_time]
         N4 --> A3[dispatch_single]
         N4 --> A4[dispatch_multi]
         N4 --> A5[dispatch_chain]
@@ -161,21 +163,39 @@ limpo - o mesmo fecho que o container carrega.
 
 ### 3.1 Grafo do chat
 
-Cada mensagem entra por `detect_action` e sai por uma de cinco rotas. A ordem
+Cada mensagem entra por `detect_action` e sai por uma de sete rotas. A ordem
 importa: **acao vem antes de resposta em texto**, porque "abre o VS Code" deve
 virar acao para a interface executar, e nao um paragrafo explicando como abrir
 o VS Code.
 
 | No | O que faz | Falha |
 |---|---|---|
-| `detect_action` | Classifica em acao, consulta de agenda ou conversa | `RetryPolicy` |
+| `detect_action` | Classifica em acao, consulta (calendario, horario de aulas, tempo de estudo) ou conversa | `RetryPolicy` |
 | `resolve_shortcut` | Casa a mensagem com atalho cadastrado | Degrada para conversa |
 | `retrieve_context` | Ancora a pergunta no cadastro (disciplina, data, transcricao) e busca a aula com esse escopo | Degrada sem contexto |
 | `acknowledge_action` | Confirma a acao ao usuario | — |
 | `query_calendar` | Executa a consulta de agenda | Mensagem de erro controlada |
+| `query_academic` | Projeta as proximas aulas a partir dos horarios semanais | Mensagem de erro controlada |
+| `query_study_time` | Responde o tempo de estudo registrado | Mensagem de erro controlada |
 | `dispatch_single` | Entrega ao subgrafo de agente | Fallback entre provedores |
 | `dispatch_multi` | Varios provedores em paralelo | Provedor que falha nao derruba |
 | `dispatch_chain` | Provedores encadeados | Provedor que falha e pulado |
+
+#### Agenda de aulas x aula dada
+
+`query_academic` responde "quando tenho aula?" projetando as proximas quatro
+semanas dos horarios semanais — e **ignora qualquer data citada**. Por isso
+`is_academic_schedule_query` so manda para la o que e mesmo agenda. Continua em
+conversa, com a ancoragem do RAG (secao 7.1):
+
+- pedido de conteudo: resumo, conteudo, materia, assunto, transcricao,
+  explicar, revisar, "o que foi/vimos/dei";
+- "sobre" sem palavra forte de agenda ("buscar sobre a aula do dia 10/09"; ja
+  "horarios das aulas sobre banco de dados" e agenda);
+- data que ja passou ("tive aula dia 10/09?").
+
+Veio de conversa real: "Pode buscar sobre a aula do dia 10/09?" devolvia a lista
+de aulas de 17/09 em diante.
 
 ### 3.2 Subgrafo do agente
 
@@ -398,6 +418,14 @@ e o banco relacional. Por isso a pergunta passa primeiro por
    palavra. A data da aula e comparada no fuso local, senao a aula da noite cai
    no dia seguinte em UTC;
 3. **essa aula tem transcricao?** A contagem sai de `lesson_segments`.
+
+Quando a data pedida nao tem aula, o bloco ainda diz **por que**:
+
+- **data futura** — "essa data ainda nao chegou". Sem isso o modelo lia so
+  "nenhuma aula registrada" e pedia mais detalhes ao usuario;
+- **dia e mes invertidos** — se "09/10" nao tem aula mas 10/09 tem, o bloco
+  cita a aula de 10/09 e manda o assistente perguntar se era essa a data, sem
+  descrever o conteudo antes da confirmacao.
 
 O resultado vira duas coisas: o escopo (`lesson_ids`) que restringe a busca
 vetorial aa aula certa, e um bloco de fatos confirmados no prompt - inclusive o

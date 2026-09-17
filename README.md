@@ -344,7 +344,8 @@ checkpointing, resiliencia e telemetria de custo — esta em
 As requisicoes completas de chat, tanto REST quanto WebSocket, passam pelo grafo
 composto em `backend/app/orchestration/graph.py` (a fachada historica
 `app/services/chat_graph_service.py` continua sendo o ponto de entrada das
-rotas):
+rotas). O grafo roda dentro da API ou no `agent-orchestrator`, conforme
+`ORCHESTRATOR_TRANSPORT`:
 
 ```mermaid
 flowchart TD
@@ -355,11 +356,15 @@ flowchart TD
     Ctx --> Route{Rota}
     Route -->|acao local| Ack[acknowledge_action]
     Route -->|consulta agenda| Cal[query_calendar]
+    Route -->|horario de aulas| Acad[query_academic]
+    Route -->|tempo de estudo| Study[query_study_time]
     Route -->|single| Sub[Subgrafo de agente]
     Route -->|multi| Multi[dispatch_multi]
     Route -->|chain| Chain[dispatch_chain]
     Ack --> End([END])
     Cal --> End
+    Acad --> End
+    Study --> End
     Multi --> End
     Chain --> End
     Sub --> End
@@ -400,11 +405,18 @@ aula entra junto dos trechos. Se a transcricao existe no banco mas falta no
 indice, o texto e lido direto da fonte. E se nao houve aula naquela data, isso
 vai escrito no prompt, com a data da ultima aula da disciplina, para o
 assistente dizer "nao houve aula registrada em 15/09" em vez de descrever uma
-aula que nao aconteceu.
+aula que nao aconteceu. Data que ainda nao chegou e avisada como futura, e se a
+data com dia e mes invertidos tem aula ("09/10" digitado querendo 10/09), o
+assistente pergunta se era essa.
 
 A verificacao relacional e uma consulta indexada e roda no ramo de conversa; a
 busca vetorial, que e a cara, so roda quando o pedido e de estudo ou quando uma
 disciplina cadastrada aparece na frase.
+
+Pergunta de agenda e pergunta sobre aula dada tambem sao separadas ali:
+"quando tenho aula?" vai para a projecao de horarios, mas "resumo da aula do dia
+10/09", "buscar sobre a aula do dia 10/09" e "tive aula dia 10/09?" seguem para
+a conversa com a aula ancorada — a projecao de horarios ignora a data pedida.
 
 O no `detect_action` so desvia do chat quando a frase pede mesmo uma acao
 local. No cadastro de atalho, "cadastre" e "registre" bastam, porque aqui so
@@ -1242,6 +1254,9 @@ que mais quebram deploy:
   `INTERNAL_SERVICE_TOKEN` iguais na `assistant-api` e no `agent-orchestrator`.
 - `RELOAD=false` em todo servico e `FORWARDED_ALLOW_IPS=*` na API.
 - O orquestrador precisa do start command `python -m services.orchestrator.main`.
+- Watch paths a partir da raiz do repositorio, com `/` inicial. API, orquestrador
+  e tool-service observam `/backend/app/**`: sem isso, o orquestrador nao recebe
+  as mudancas do chat.
 
 ### Ollama E LocalAI Na Railway
 

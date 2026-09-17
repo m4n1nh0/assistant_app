@@ -501,8 +501,11 @@ sinal é o healthcheck do deploy. Era o preço anunciado.
 
 Em cada serviço novo da plataforma:
 
-- *Root directory*: `backend` — os Dockerfiles e o pacote `services/` estão lá.
-- *Dockerfile*: o da tabela acima (no Railway, `RAILWAY_DOCKERFILE_PATH`).
+- *Root directory*: `/backend` — os Dockerfiles e o pacote `services/` estão lá.
+- *Dockerfile*: o da tabela acima; na Railway, em *Dockerfile Path*, com caminho
+  absoluto (`/backend/Dockerfile.mcp-service`).
+- *Watch paths*: incluem `/backend/app/**` em todo serviço que carrega código de
+  `app/` — veja [Deploy na Railway](deploy-railway.md#watch-paths-o-erro-que-nao-avisa).
 - *Start command*: **vazio** — o `CMD` da imagem já é o certo.
 - *Variáveis*: o `backend/.env.<serviço>.example` correspondente.
 
