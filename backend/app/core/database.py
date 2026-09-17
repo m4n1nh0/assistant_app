@@ -15,6 +15,8 @@ Duas convencoes atravessam quase todas as tabelas:
 
 import os
 import json
+from typing import Mapping
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import uuid
@@ -40,25 +42,102 @@ from .config import get_settings
 
 settings = get_settings()
 
-# Build database_url: prefer DATABASE_URL env var, else construct from MYSQL_* vars
-def _get_database_url():
-    # First try to use DATABASE_URL directly (if it's set and not empty)
-    if settings.database_url and not settings.database_url.startswith("mysql+aiomysql://assistant:assistant@localhost"):
-        return settings.database_url
-    
-    # Otherwise construct from individual MYSQL_* environment variables.
-    # Support both the docker-compose naming (MYSQL_HOST) and Railway's
-    # native MySQL plugin naming (MYSQLHOST, no underscore).
-    mysql_user = os.getenv("MYSQL_USER") or os.getenv("MYSQLUSER", "assistant")
-    mysql_password = os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQLPASSWORD", "assistant")
-    mysql_host = os.getenv("MYSQL_HOST") or os.getenv("MYSQLHOST", "localhost")
-    mysql_port = os.getenv("MYSQL_PORT") or os.getenv("MYSQLPORT", "3306")
-    mysql_database = os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE", "assistant")
-    
-    db_url = f"mysql+aiomysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}"
-    return db_url
+_DEFAULT_DATABASE_URL = "mysql+aiomysql://assistant:assistant@localhost"
 
-database_url = _get_database_url()
+
+def _env_first(env: Mapping[str, str], *names: str) -> str:
+    for name in names:
+        value = (env.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def database_url_problems(url: str) -> list[str]:
+    """O que impede uma URL de banco de conectar, sem nunca citar a senha.
+
+    Existe por causa de um erro que o driver nao explica: referencia de
+    variavel da plataforma que resolve vazia (`${{mysql.MYSQLUSER}}` num MySQL
+    que publica `MYSQL_USER`) gera `mysql+aiomysql://:@host:3306/`, e o aiomysql
+    entao tenta logar com o usuario do sistema operacional e sem senha. O log
+    diz "Access denied for user 'app'", que aponta para o lugar errado.
+    """
+    if "${{" in url:
+        return ["referencia de variavel nao resolvida (${{...}})"]
+    try:
+        parsed = make_url(url)
+    except Exception:
+        return ["URL malformada"]
+    if parsed.get_backend_name() == "sqlite":
+        return []
+    problems = []
+    if not parsed.username:
+        problems.append("usuario vazio")
+    if not parsed.host:
+        problems.append("host vazio")
+    if not parsed.database:
+        problems.append("nome do banco vazio")
+    return problems
+
+
+def _url_from_parts(env: Mapping[str, str]) -> str | None:
+    """Monta a URL a partir das variaveis soltas do MySQL, quando existem.
+
+    Aceita os dois jeitos de nomear: `MYSQL_USER` (imagem oficial, compose) e
+    `MYSQLUSER` (template MySQL da Railway). Basta uma delas existir; as que
+    faltam usam os padroes de desenvolvimento. Usuario e senha sao codificados,
+    entao senha com `@`, `:` ou `/` nao quebra a URL.
+    """
+    names = ("USER", "PASSWORD", "HOST", "PORT", "DATABASE")
+    values = {n: _env_first(env, f"MYSQL_{n}", f"MYSQL{n}") for n in names}
+    if not any(values.values()):
+        return None
+    return URL.create(
+        "mysql+aiomysql",
+        username=values["USER"] or "assistant",
+        password=values["PASSWORD"] or "assistant",
+        host=values["HOST"] or "localhost",
+        port=int(values["PORT"] or 3306),
+        database=values["DATABASE"] or "assistant",
+    ).render_as_string(hide_password=False)
+
+
+def resolve_database_url(configured: str, env: Mapping[str, str]) -> str:
+    """URL efetiva do banco: `DATABASE_URL`, corrigida ou substituida quando da.
+
+    Ordem:
+
+    1. `DATABASE_URL` definida e diferente do padrao de desenvolvimento. Se vier
+       com `mysql://` (formato da `MYSQL_URL` da Railway), o driver e trocado
+       para o assincrono. Se estiver incompleta, o problema vai para o log e as
+       variaveis `MYSQL_*` sao usadas no lugar, quando existem.
+    2. Variaveis `MYSQL_*` / `MYSQL*` soltas.
+    3. O padrao de desenvolvimento.
+    """
+    url = (configured or "").strip()
+    if url and not url.startswith(_DEFAULT_DATABASE_URL):
+        if url.startswith("mysql://"):
+            logger.warning(
+                "DATABASE_URL com mysql:// usa driver sincrono; "
+                "trocando para mysql+aiomysql://"
+            )
+            url = "mysql+aiomysql://" + url[len("mysql://"):]
+        problems = database_url_problems(url)
+        if not problems:
+            return url
+        fallback = _url_from_parts(env)
+        logger.error(
+            f"DATABASE_URL incompleta: {', '.join(problems)}. Confira se as "
+            "referencias apontam para variaveis que o servico do banco publica "
+            "(MYSQL_USER na imagem oficial, MYSQLUSER no template da Railway)."
+            + (" Usando as variaveis MYSQL_* do ambiente." if fallback else "")
+        )
+        return fallback or url
+
+    return _url_from_parts(env) or configured
+
+
+database_url = resolve_database_url(settings.database_url, os.environ)
 
 engine = create_async_engine(
     database_url,

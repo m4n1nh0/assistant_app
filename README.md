@@ -1233,8 +1233,11 @@ start command, healthcheck, volumes, watch paths e o bloco de variaveis de cada
 um — esta em [Deploy na Railway](docs/arquitetura/deploy-railway.md). Os pontos
 que mais quebram deploy:
 
-- `DATABASE_URL` precisa de `mysql+aiomysql://`; a `MYSQL_URL` da Railway usa
-  `mysql://`.
+- `DATABASE_URL` precisa de `mysql+aiomysql://` e de referencias que o servico
+  MySQL realmente publica: `MYSQLUSER` no template da Railway, `MYSQL_USER` na
+  imagem Docker. Referencia inexistente resolve vazia, e o boot registra
+  `DATABASE_URL incompleta`.
+- Desligue o App Sleeping do banco e dos servicos internos.
 - `SECRET_KEY`, `JWT_SECRET`, `CREDENTIAL_ENCRYPTION_KEY` e
   `INTERNAL_SERVICE_TOKEN` iguais na `assistant-api` e no `agent-orchestrator`.
 - `RELOAD=false` em todo servico e `FORWARDED_ALLOW_IPS=*` na API.

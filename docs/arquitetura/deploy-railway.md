@@ -6,7 +6,7 @@ variável, veja [Configuração por serviço](configuracao-por-servico.md); para
 fronteiras entre processos, [Arquitetura agentiva](agentes.md).
 
 > Os nomes de serviço abaixo (`assistant-api`, `agent-orchestrator`,
-> `tool-service`, `mcp-service`, `MySQL`, `Redis`, `qdrant`, `localai`) são
+> `tool-service`, `mcp-service`, `mysql`, `Redis`, `qdrant`, `localai`) são
 > sugestões. Nas referências `${{servico.VARIAVEL}}`, use **exatamente** o nome
 > que o serviço tem no seu projeto — inclusive nomes gerados pela Railway, como
 > `serene-creation`. Referência para serviço inexistente vira texto vazio, sem
@@ -41,7 +41,7 @@ flowchart LR
 | `agent-orchestrator` | `backend/Dockerfile` | não | `/app/data` (opcional) | grafo do chat |
 | `tool-service` | `backend/Dockerfile.tool-service` | não | — | catálogo e governança das ferramentas |
 | `mcp-service` | `backend/Dockerfile.mcp-service` | não | — | servidores MCP |
-| `MySQL` | template Railway | não | do template | banco relacional |
+| `mysql` | template Railway ou imagem `mysql` | não | `/var/lib/mysql` | banco relacional |
 | `Redis` | template Railway | não | do template | rate limiting e cache de status dos provedores |
 | `qdrant` | imagem `qdrant/qdrant:v1.12.6` | não | `/qdrant/storage` | índice vetorial das aulas e memórias |
 | `localai` | imagem LocalAI | não | `/models` | LLM local (opcional) |
@@ -57,7 +57,9 @@ ambiente.
 Crie de dentro para fora e confira cada serviço antes do próximo — quando algo
 falhar, o culpado é o último que você mexeu.
 
-1. `MySQL`, `Redis`, `qdrant` (e `localai`, se usar)
+1. `mysql`, `Redis`, `qdrant` (e `localai`, se usar), com **App Sleeping
+   desligado**: serviço dormindo só acorda no primeiro acesso, e o boot da API
+   e do orquestrador pode pegá-lo ainda parado
 2. `mcp-service`
 3. `tool-service`
 4. `agent-orchestrator`
@@ -95,13 +97,28 @@ referenciada como `${{shared.JWT_SECRET}}`.
 
 ### MySQL e Redis
 
-Templates da Railway, sem variável extra. Os serviços de aplicação usam as
-variáveis que eles publicam (`MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE`,
-`REDIS_URL`).
+O Redis vem do template da Railway e publica `REDIS_URL`.
 
-A URL que o MySQL publica (`MYSQL_URL`) começa com `mysql://`, que usa driver
-síncrono. O backend é assíncrono: monte a `DATABASE_URL` com `mysql+aiomysql://`,
-como nos blocos abaixo.
+O MySQL pode ter sido criado de dois jeitos, e **os nomes das variáveis mudam**
+entre eles. Abra a aba *Variables* do serviço e veja qual conjunto existe:
+
+| Criado a partir de | Ícone no canvas | Variáveis publicadas | `DATABASE_URL` |
+|---|---|---|---|
+| Template MySQL da Railway | logo do MySQL | `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE` | `mysql+aiomysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.RAILWAY_PRIVATE_DOMAIN}}:3306/${{MySQL.MYSQLDATABASE}}` |
+| Imagem Docker `mysql` | cubo | `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` (as que você definiu) | `mysql+aiomysql://${{mysql.MYSQL_USER}}:${{mysql.MYSQL_PASSWORD}}@${{mysql.RAILWAY_PRIVATE_DOMAIN}}:3306/${{mysql.MYSQL_DATABASE}}` |
+
+Referência a variável que não existe resolve **vazia**, e a URL vira
+`mysql+aiomysql://:@host:3306/`. O backend detecta isso no boot e registra
+`DATABASE_URL incompleta: usuario vazio, nome do banco vazio`; sem esse aviso, o
+driver só diria `Access denied for user 'app'`, o usuário do container. Confira
+o valor resolvido passando o mouse sobre a variável no painel.
+
+A `MYSQL_URL` do template começa com `mysql://` (driver síncrono). Se usá-la, o
+backend troca para `mysql+aiomysql://` sozinho e avisa no log, mas prefira montar
+a URL como na tabela.
+
+Os blocos abaixo usam a imagem Docker (`mysql`, com `MYSQL_USER`). Com o
+template, troque pela linha da tabela.
 
 ### qdrant
 
@@ -242,7 +259,7 @@ JWT_SECRET="<mesmo da assistant-api>"
 CREDENTIAL_ENCRYPTION_KEY="<mesmo da assistant-api>"
 
 # --- dados ----------------------------------------------------------------------
-DATABASE_URL="mysql+aiomysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.RAILWAY_PRIVATE_DOMAIN}}:3306/${{MySQL.MYSQLDATABASE}}"
+DATABASE_URL="mysql+aiomysql://${{mysql.MYSQL_USER}}:${{mysql.MYSQL_PASSWORD}}@${{mysql.RAILWAY_PRIVATE_DOMAIN}}:3306/${{mysql.MYSQL_DATABASE}}"
 REDIS_URL="${{Redis.REDIS_URL}}"
 QDRANT_URL="http://${{qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333"
 QDRANT_API_KEY=""
@@ -335,7 +352,7 @@ CREDENTIAL_ENCRYPTION_KEY="<gerado; nunca rotacione>"
 INTERNAL_SERVICE_TOKEN="<gerado>"
 
 # --- dados ----------------------------------------------------------------------
-DATABASE_URL="mysql+aiomysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.RAILWAY_PRIVATE_DOMAIN}}:3306/${{MySQL.MYSQLDATABASE}}"
+DATABASE_URL="mysql+aiomysql://${{mysql.MYSQL_USER}}:${{mysql.MYSQL_PASSWORD}}@${{mysql.RAILWAY_PRIVATE_DOMAIN}}:3306/${{mysql.MYSQL_DATABASE}}"
 # Só no primeiro deploy, se quiser dados de demonstração (roda uma única vez).
 DATABASE_SEED=""
 REDIS_URL="${{Redis.REDIS_URL}}"
@@ -470,7 +487,8 @@ ou ser apagados.
 | Timeout nas URLs `.railway.internal` | porta errada na URL (compare com `escutando em` no log) ou ambiente só IPv6 — use `HOST="::"` |
 | Healthcheck reprova sem mensagem | `PORT` copiado do `.env.example` local, ou healthcheck em `/health/ready` no tool-service |
 | OAuth de calendário recusa o redirect | falta `FORWARDED_ALLOW_IPS="*"` na API |
-| Erro de driver ao conectar no banco | `DATABASE_URL` com `mysql://` em vez de `mysql+aiomysql://` |
+| `Access denied for user 'app'@... (using password: NO)` | referências do `DATABASE_URL` apontam para variáveis que o MySQL não publica (`MYSQLUSER` numa imagem que publica `MYSQL_USER`); o log de boot mostra `DATABASE_URL incompleta` |
+| Serviços dormindo demoram ou falham no primeiro acesso | App Sleeping ligado em banco ou serviço interno — desligue em *Settings → Serverless* |
 | Modelo de embeddings baixado a cada deploy | sem volume em `/app/data` ou sem `RAILWAY_RUN_UID="0"` |
 | Streaming (`/chat/stream`) funciona e o chat completo não | streaming fica na API; o chat completo passa pelo orquestrador — verifique o orquestrador |
 
