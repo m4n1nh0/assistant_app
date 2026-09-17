@@ -21,7 +21,9 @@ from app.core.database import (
     DisciplineModel,
     LessonClassGroupModel,
     LessonModel,
+    ProjectGroupMemberModel,
     ProjectGroupModel,
+    StudentModel,
     get_db,
 )
 from app.core.security import get_current_user
@@ -41,7 +43,8 @@ def client():
         async with engine.begin() as conn:
             for model in (
                 LessonModel, LessonClassGroupModel, ClassGroupModel,
-                DisciplineModel, ProjectGroupModel,
+                DisciplineModel, ProjectGroupModel, ProjectGroupMemberModel,
+                StudentModel,
             ):
                 await conn.run_sync(model.__table__.create)
         async with sessions() as db:
@@ -127,3 +130,12 @@ def test_listagem_filtra_por_tipo_e_por_grupo(client):
     assert len(todas) == 3
     assert [item["title"] for item in palestras] == ["LGPD na prática"]
     assert [item["group_name"] for item in do_grupo] == ["Grupo 4"]
+
+
+def test_lista_de_grupos_traz_o_nome_da_disciplina(client):
+    """"Grupo 4" existe em varias disciplinas: sem o nome, a escolha e as cegas."""
+    grupos = client.get("/education/project-groups").json()
+
+    assert [grupo["name"] for grupo in grupos] == ["Grupo 4"]
+    assert grupos[0]["discipline"] == "ARA0040 - BANCO DE DADOS"
+    assert grupos[0]["semester"] == "2026.2"

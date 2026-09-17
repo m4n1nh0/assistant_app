@@ -35,7 +35,7 @@ entidades dos fluxos atuais sem apagar o histórico.
 
 O botão **Modo Aula** abre a visão geral quando já há turmas cadastradas.
 Comandos estruturados para iniciar aula ou fazer chamada continuam abrindo
-diretamente `2. Gravar Aula` ou `5. Presença`, respectivamente.
+diretamente `2. Gravar` ou `5. Presença`, respectivamente.
 
 ## Preparar uma apresentação
 
@@ -102,7 +102,7 @@ sequenceDiagram
     G-->>UI: education_open / lesson
     UI-->>P: Sugere abrir a gravação
     P->>UI: Confirma
-    UI->>E: Abre 2. Gravar Aula
+    UI->>E: Abre 2. Gravar
 ```
 
 A confirmação é obrigatória. O comando abre a aba adequada, mas não inicia a
@@ -131,7 +131,7 @@ de arquivo próprio.
 ## Formato do resumo
 
 O resumo da aula tem dois formatos, escolhidos no seletor **Formato do resumo**
-que fica ao lado do botão que gera o resumo — tanto em `2. Gravar Aula` quanto
+que fica ao lado do botão que gera o resumo — tanto em `2. Gravar` quanto
 em `4. Histórico`:
 
 - **Comum**: fio condutor da aula, principais tópicos, definições e fórmulas,
@@ -187,7 +187,7 @@ seja o formato — ele precisa ser gerado de novo.
 
 A gravação, a transcrição, o resumo, a busca no chat e o quiz são o mesmo
 mecanismo. O que muda é a que a gravação pertence, e isso se escolhe em
-`2. Gravar Aula`, antes de iniciar:
+`2. Gravar`, antes de iniciar:
 
 | Tipo | Exige | Herda | Onde aparece |
 |---|---|---|---|
@@ -212,12 +212,12 @@ título, melhor o chat encontra.
 ## Status da aula
 
 Uma aula está **em andamento** ou **encerrada**. O botão **ENCERRAR** de
-`2. Gravar Aula` gera o resumo e só então encerra — quando o modelo não
+`2. Gravar` gera o resumo e só então encerra — quando o modelo não
 responde, o resumo falha e a aula continua em andamento.
 
 Para não depender disso, o status também se muda na mão:
 
-- em `2. Gravar Aula`, o ícone **Encerrar sem gerar resumo**, ao lado do
+- em `2. Gravar`, o ícone **Encerrar sem gerar resumo**, ao lado do
   ENCERRAR, fecha a aula direto;
 - em `4. Histórico`, o ícone na linha da aula encerra a que ficou aberta ou
   reabre a que encerrou antes da hora, para continuar gravando no mesmo

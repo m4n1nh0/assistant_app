@@ -184,7 +184,7 @@ class _EducationDialogState extends State<EducationDialog> {
                                 text: '1. TURMAS'),
                             Tab(
                                 icon: Icon(Icons.mic_none, size: tabIconSize),
-                                text: '2. GRAVAR AULA'),
+                                text: '2. GRAVAR'),
                             Tab(
                                 icon: Icon(Icons.history, size: tabIconSize),
                                 text: '3. HISTORICO'),
@@ -993,9 +993,15 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                   child: Text(
                     [
                       group['name']?.toString() ?? 'Grupo',
+                      // Nome de grupo se repete entre disciplinas: sem ela, a
+                      // escolha e as cegas.
+                      if ((group['discipline']?.toString() ?? '').isNotEmpty)
+                        group['discipline'].toString(),
+                      if ((group['semester']?.toString() ?? '').isNotEmpty)
+                        group['semester'].toString(),
                       if ((group['project_title']?.toString() ?? '').isNotEmpty)
                         group['project_title'].toString(),
-                    ].join(' — '),
+                    ].join(' • '),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -5251,9 +5257,10 @@ class _HowItWorks extends StatelessWidget {
   static const _steps = [
     (
       Icons.edit_outlined,
-      'Escolha a turma e clique em INICIAR AULA.',
-      'A lista vem do cadastro, entao a disciplina da aula nasce igual a dos '
-          'alunos. O tema e opcional e ajuda a achar a aula depois.',
+      'Escolha o que vai gravar: aula, apresentacao de grupo ou palestra.',
+      'Aula pede a turma - e a disciplina nasce igual a dos alunos. '
+          'Apresentacao pede o grupo e herda a disciplina dele. Palestra pede '
+          'so o titulo, que e o que a identifica depois.',
     ),
     (
       Icons.mic_none,

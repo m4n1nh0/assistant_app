@@ -864,7 +864,7 @@ class _AssistantPanel extends StatelessWidget {
                 Expanded(
                   child: _AssistantAction(
                     icon: Icons.mic_none,
-                    label: 'INICIAR AULA',
+                    label: 'GRAVAR',
                     onTap: onStartLesson,
                   ),
                 ),

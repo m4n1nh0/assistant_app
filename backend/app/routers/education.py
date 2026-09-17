@@ -217,7 +217,18 @@ async def list_project_groups(
             student_id=member.student_id if member.student_id in by_student_id else None,
             student_name=by_student_id.get(member.student_id),
             source_note=member.source_note, position=member.position))
+    # A disciplina vem pelo nome, e nao so pelo id: nome de grupo se repete
+    # entre disciplinas ("Grupo 4" existe em todas), e a tela precisa dizer de
+    # qual delas e o grupo.
+    disciplinas = {
+        item.id: _discipline_label(item)
+        for item in (await db.execute(select(DisciplineModel).where(
+            DisciplineModel.tutor_id == user["tutor_id"],
+            DisciplineModel.id.in_({group.discipline_id for group in groups}),
+        ))).scalars().all()
+    }
     return [dict(id=group.id, discipline_id=group.discipline_id,
+                 discipline=disciplinas.get(group.discipline_id, ""),
                  semester=group.semester, name=group.name,
                  project_title=group.project_title,
                  project_description=group.project_description,

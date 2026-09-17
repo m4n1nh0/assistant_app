@@ -550,7 +550,7 @@ relatorios. Indicadores mostram turmas ativas, alunos, aulas por semana e
 resumos recentes; a parte inferior reúne aulas recentes, os próximos encontros
 das turmas e atalhos para conversar com a IA ou iniciar a gravação. As demais
 abas seguem a ordem de uso — `1. TURMAS`,
-`2. GRAVAR AULA`, `3. PONTUACOES`, `4. HISTORICO`, `5. PRESENCA` — porque o
+`2. GRAVAR`, `3. PONTUACOES`, `4. HISTORICO`, `5. PRESENCA` — porque o
 cadastro precede a gravacao: e ele que ancora os nomes
 ouvidos no audio. Sem turma cadastrada o dialogo abre no cadastro; com turma,
 abre direto na gravacao. A pontuacao nao tem botao: o professor cita o aluno em
@@ -562,7 +562,7 @@ se pede o resumo de uma aula antiga e se exporta o resultado em PDF.
 
 Pedidos falados ou digitados usando o nome configurado, como `Hannah, vamos
 iniciar a aula` e `Hannah, faça a chamada dos alunos`, viram uma ação estruturada
-do grafo. A interface sugere abrir o Modo Aula diretamente em `2. GRAVAR AULA`
+do grafo. A interface sugere abrir o Modo Aula diretamente em `2. GRAVAR`
 ou `5. PRESENCA`; somente a aba é aberta após confirmação, sem iniciar gravação
 ou QR automaticamente. O nome é sincronizado com o perfil e também é usado como
 palavra de ativação do microfone.
