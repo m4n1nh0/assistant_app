@@ -183,6 +183,32 @@ nada.
 Corrigir um trecho da transcrição continua invalidando o resumo, qualquer que
 seja o formato — ele precisa ser gerado de novo.
 
+## O que dá para gravar
+
+A gravação, a transcrição, o resumo, a busca no chat e o quiz são o mesmo
+mecanismo. O que muda é a que a gravação pertence, e isso se escolhe em
+`2. Gravar Aula`, antes de iniciar:
+
+| Tipo | Exige | Herda | Onde aparece |
+|---|---|---|---|
+| **Aula** | disciplina e turma | — | histórico, quiz, chat |
+| **Apresentação** | o grupo de projeto | disciplina e período do grupo | também no cartão do grupo, em `9. Grupos de Projeto` |
+| **Palestra** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
+
+Consequências práticas:
+
+- **Quiz de qualquer fonte.** Uma palestra, uma apresentação e aulas podem ser
+  combinadas na mesma geração, junto com o material didático.
+- **Busca no chat.** Aula é encontrada pela disciplina e pela data, como sempre.
+  Palestra e apresentação, que podem não ter disciplina, são encontradas pela
+  data e **pelo título** ("o que foi dito na palestra sobre LGPD?"). O bloco de
+  contexto diz de qual gravação está falando, para você confirmar.
+- **Avaliação de grupo.** O cartão do grupo lista as apresentações gravadas, com
+  data, tamanho da transcrição e se já têm resumo.
+
+Título genérico em palestra ("Aula 1") ancora mal: quanto mais específico o
+título, melhor o chat encontra.
+
 ## Status da aula
 
 Uma aula está **em andamento** ou **encerrada**. O botão **ENCERRAR** de

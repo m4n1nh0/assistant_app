@@ -434,3 +434,85 @@ def test_no_swap_hint_when_the_requested_day_has_a_class():
             assert scope.lessons and scope.swapped == ()
             assert scope.future is False
     asyncio.run(scenario())
+
+
+async def add_recording(
+    db,
+    *,
+    lesson_id,
+    kind,
+    title,
+    discipline="",
+    started_at=datetime(2026, 9, 14, 23, 30, tzinfo=timezone.utc),
+    segments=("conteudo gravado",),
+):
+    db.add(LessonModel(
+        id=lesson_id,
+        tutor_id="t1",
+        kind=kind,
+        discipline=discipline,
+        title=title,
+        class_group="",
+        status="finished",
+        started_at=started_at.replace(tzinfo=None),
+    ))
+    for index, text in enumerate(segments):
+        db.add(LessonSegmentModel(
+            id=f"{lesson_id}-s{index}",
+            lesson_id=lesson_id,
+            tutor_id="t1",
+            sequence=index,
+            text=text,
+        ))
+    await db.commit()
+
+
+def test_palestra_e_encontrada_pelo_titulo_sem_disciplina():
+    """Palestra nao tem disciplina: sem o titulo, so a data a encontraria."""
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_recording(
+                db, lesson_id="p1", kind="palestra", title="LGPD na prática",
+            )
+
+            scope = await resolve(db, "o que foi dito na palestra sobre LGPD na prática?")
+
+            assert [item.lesson_id for item in scope.lessons] == ["p1"]
+            assert scope.lessons[0].kind == "palestra"
+            texto = service.describe(scope)
+            assert 'palestra "LGPD na prática"' in texto
+    asyncio.run(scenario())
+
+
+def test_apresentacao_de_grupo_e_citada_pelo_titulo_dela():
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_recording(
+                db,
+                lesson_id="a1",
+                kind="apresentacao",
+                title="Apresentacao: Grupo 4",
+                discipline="ARA0040 - BANCO DE DADOS",
+            )
+
+            scope = await resolve(db, "resumo da Apresentacao: Grupo 4")
+
+            assert [item.lesson_id for item in scope.lessons] == ["a1"]
+            assert "Apresentacao: Grupo 4, 14/09/2026" in service.describe(scope)
+    asyncio.run(scenario())
+
+
+def test_pergunta_generica_nao_casa_com_titulo_de_gravacao():
+    """Titulo so ancora quando a pergunta o cita de fato."""
+    async def scenario():
+        async with database() as db:
+            await add_discipline(db)
+            await add_recording(db, lesson_id="p1", kind="palestra", title="LGPD na prática")
+
+            scope = await resolve(db, "como faço um bolo de cenoura?")
+
+            assert scope.lessons == ()
+            assert scope.anchored is False
+    asyncio.run(scenario())

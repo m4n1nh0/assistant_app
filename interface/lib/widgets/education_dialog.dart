@@ -365,6 +365,13 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   final _scrollCtrl = ScrollController();
 
   Lesson? _lesson;
+
+  /// O que esta sendo gravado: `aula`, `apresentacao` ou `palestra`. O
+  /// mecanismo e o mesmo; muda o que precisa estar informado antes de comecar.
+  String _kind = 'aula';
+  String? _groupId;
+  List<Map<String, dynamic>> _groups = const [];
+
   Timer? _chunkTimer;
   Timer? _clockTimer;
   Timer? _retryTimer;
@@ -461,23 +468,51 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
 
   // --- Ciclo da aula -------------------------------------------------------
 
+  /// Carrega os grupos de projeto, para gravar a apresentacao de um deles.
+  Future<void> _loadGroups() async {
+    try {
+      final groups = await education.listProjectGroups();
+      if (mounted) setState(() => _groups = groups);
+    } catch (_) {
+      // Sem a lista a tela continua util nos outros tipos.
+    }
+  }
+
   Future<void> _startLesson() async {
     final chosen = _chosen;
-    if (chosen.isEmpty) {
-      _setStatus('Selecione a turma antes de iniciar.');
+    final title = _titleCtrl.text.trim();
+    var discipline = '';
+    var semester = _currentSemesterCode();
+    var classIds = const <String>[];
+
+    if (_kind == 'aula') {
+      if (chosen.isEmpty) {
+        _setStatus('Selecione a turma antes de iniciar.');
+        return;
+      }
+      final disciplines = chosen.map((item) => item.discipline).toSet();
+      discipline = disciplines.length == 1 ? disciplines.first : '';
+      if (discipline.isEmpty) {
+        _setStatus('As turmas escolhidas sao de disciplinas diferentes.');
+        return;
+      }
+      final semesters = chosen.map((item) => item.semester).toSet();
+      if (semesters.length > 1) {
+        _setStatus('As turmas escolhidas sao de semestres diferentes.');
+        return;
+      }
+      semester = semesters.length == 1 ? semesters.first : semester;
+      classIds = chosen.map((item) => item.id).toList();
+    } else if (_kind == 'apresentacao') {
+      if ((_groupId ?? '').isEmpty) {
+        _setStatus('Escolha o grupo que vai apresentar.');
+        return;
+      }
+    } else if (title.isEmpty) {
+      _setStatus('Dê um título à palestra antes de iniciar.');
       return;
     }
-    final disciplines = chosen.map((item) => item.discipline).toSet();
-    final discipline = disciplines.length == 1 ? disciplines.first : '';
-    if (discipline.isEmpty) {
-      _setStatus('As turmas escolhidas sao de disciplinas diferentes.');
-      return;
-    }
-    final semesters = chosen.map((item) => item.semester).toSet();
-    if (semesters.length > 1) {
-      _setStatus('As turmas escolhidas sao de semestres diferentes.');
-      return;
-    }
+
     if (!await _recorder.hasPermission()) {
       _setStatus('Microfone nao autorizado pelo sistema.');
       return;
@@ -486,14 +521,15 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     setState(() => _starting = true);
     try {
       await _resolveInputDevice();
-      // Aula de duas horas nao pode esbarrar no fim do token no meio.
+      // Gravacao de duas horas nao pode esbarrar no fim do token no meio.
       await api.refreshSession();
       final lesson = await education.createLesson(
+        kind: _kind,
+        groupId: _kind == 'apresentacao' ? _groupId : null,
         discipline: discipline,
-        semester:
-            semesters.length == 1 ? semesters.first : _currentSemesterCode(),
-        title: _titleCtrl.text.trim(),
-        classIds: chosen.map((item) => item.id).toList(),
+        semester: semester,
+        title: title,
+        classIds: classIds,
       );
       setState(() {
         _lesson = lesson;
@@ -904,6 +940,82 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     );
   }
 
+  /// Escolha do que esta sendo gravado, e o que cada tipo exige.
+  Widget _buildKindPicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'aula', label: Text('Aula'), icon: Icon(Icons.school_outlined, size: 15)),
+            ButtonSegment(
+                value: 'apresentacao',
+                label: Text('Apresentação'),
+                icon: Icon(Icons.groups_2_outlined, size: 15)),
+            ButtonSegment(
+                value: 'palestra',
+                label: Text('Palestra'),
+                icon: Icon(Icons.campaign_outlined, size: 15)),
+          ],
+          selected: {_kind},
+          showSelectedIcon: false,
+          onSelectionChanged: (value) {
+            final kind = value.first;
+            setState(() => _kind = kind);
+            if (kind == 'apresentacao' && _groups.isEmpty) _loadGroups();
+          },
+        ),
+        const SizedBox(height: 6),
+        Text(
+          switch (_kind) {
+            'apresentacao' =>
+              'A gravação fica no grupo, e herda a disciplina e o período dele.',
+            'palestra' =>
+              'Sem disciplina e sem turma: o título é o que identifica a palestra. '
+                  'Ela também vira fonte de quiz e de busca no chat.',
+            _ => 'Aula da turma, como sempre: transcrição, resumo e quiz.',
+          },
+          style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+        ),
+        if (_kind == 'apresentacao') ...[
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            value: _groupId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              isDense: true,
+              labelText: 'GRUPO QUE VAI APRESENTAR',
+            ),
+            items: [
+              for (final group in _groups)
+                DropdownMenuItem(
+                  value: group['id']?.toString(),
+                  child: Text(
+                    [
+                      group['name']?.toString() ?? 'Grupo',
+                      if ((group['project_title']?.toString() ?? '').isNotEmpty)
+                        group['project_title'].toString(),
+                    ].join(' — '),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            onChanged: (value) => setState(() => _groupId = value),
+          ),
+          if (_groups.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'Nenhum grupo cadastrado. Crie os grupos na aba GRUPOS DE PROJETO.',
+                style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+              ),
+            ),
+        ],
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+
   Widget _buildStartForm() {
     return ValueListenableBuilder<List<ClassGroup>?>(
       valueListenable: widget.classes,
@@ -919,21 +1031,41 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           (total, item) => total + item.studentCount,
         );
 
+        final podeIniciar = switch (_kind) {
+          'aula' => chosen.isNotEmpty,
+          'apresentacao' => (_groupId ?? '').isNotEmpty,
+          _ => true,
+        };
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _buildKindPicker(),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
                   flex: 2,
-                  child: _Field(controller: _titleCtrl, label: 'TEMA DA AULA'),
+                  child: _Field(
+                    controller: _titleCtrl,
+                    label: switch (_kind) {
+                      'apresentacao' => 'TÍTULO DA APRESENTAÇÃO (OPCIONAL)',
+                      'palestra' => 'TÍTULO DA PALESTRA',
+                      _ => 'TEMA DA AULA',
+                    },
+                  ),
                 ),
                 const SizedBox(width: 10),
                 FilledButton.icon(
-                  onPressed: _starting || chosen.isEmpty ? null : _startLesson,
+                  onPressed: _starting || !podeIniciar ? null : _startLesson,
                   icon: const Icon(Icons.fiber_manual_record, size: 15),
-                  label: Text(_starting ? 'INICIANDO...' : 'INICIAR AULA'),
+                  label: Text(
+                    _starting
+                        ? 'INICIANDO...'
+                        : _kind == 'aula'
+                            ? 'INICIAR AULA'
+                            : 'INICIAR GRAVAÇÃO',
+                  ),
                   style: FilledButton.styleFrom(
                     backgroundColor: AssistantTheme.c3,
                     foregroundColor: AssistantTheme.bg,
@@ -941,6 +1073,9 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                 ),
               ],
             ),
+            // Turma so existe em aula: apresentacao pertence ao grupo e
+            // palestra nao pertence a nenhuma.
+            if (_kind == 'aula') ...[
             const SizedBox(height: 12),
             Text(
               chosen.isEmpty
@@ -1001,6 +1136,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                       TextStyle(fontSize: 10, color: AssistantTheme.textMuted),
                 ),
               ),
+            ],
           ],
         );
       },
@@ -1796,7 +1932,7 @@ class _QuizTabState extends State<_QuizTab> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    '${_when(lesson)}  -  ${lesson.discipline}',
+                                    '${_when(lesson)}  -  ${lesson.displayLabel}',
                                     style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: selected
@@ -3886,7 +4022,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${_when(lesson)}  -  ${lesson.discipline}'
+                                '${_when(lesson)}  -  ${lesson.displayLabel}'
                                 '${lesson.semester.isEmpty ? "" : "  [${lesson.semester}]"}',
                                 style: TextStyle(
                                   fontSize: 12,

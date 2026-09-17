@@ -45,6 +45,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   List<ClassGroup> classes = [];
   List<Student> students = [];
   List<Map<String, dynamic>> groups = [];
+  /// Apresentacoes gravadas, por grupo. Ficam aqui para a avaliacao ter ao lado
+  /// o que o grupo falou, e nao so a nota.
+  Map<String, List<Lesson>> presentations = {};
   String? selectedId;
   String message = '';
   bool busy = false;
@@ -95,7 +98,21 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   Future<void> loadGroups() async {
     groups = selectedId == null ? [] :
       await education.listProjectGroups(disciplineId: selectedId);
+    await loadPresentations();
     if (mounted) setState(() {});
+  }
+
+  Future<void> loadPresentations() async {
+    presentations = {};
+    try {
+      final gravacoes = await education.listLessons(kind: 'apresentacao', limit: 200);
+      for (final gravacao in gravacoes) {
+        if (gravacao.groupId.isEmpty) continue;
+        presentations.putIfAbsent(gravacao.groupId, () => []).add(gravacao);
+      }
+    } catch (_) {
+      // Sem as gravacoes a aba continua servindo para cadastro e avaliacao.
+    }
   }
 
   Future<void> pickText() async {
@@ -695,6 +712,21 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                 Text('Subtração de pontos: −${group['penalty_points']}'),
               if (groupNotes.isNotEmpty)
                 Text('Anotação deste grupo: ${groupNotes.join(' • ')}'),
+              if ((presentations['${group['id']}'] ?? const []).isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Apresentações gravadas',
+                  style: Theme.of(context).textTheme.labelMedium),
+                for (final gravacao in presentations['${group['id']}']!)
+                  Padding(padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      [
+                        _quando(gravacao.startedAt),
+                        gravacao.title,
+                        '${gravacao.transcriptChars} caracteres transcritos',
+                        if ((gravacao.summary ?? '').isNotEmpty) 'com resumo',
+                      ].where((parte) => parte.isNotEmpty).join(' • '),
+                      style: Theme.of(context).textTheme.bodySmall)),
+              ],
               const SizedBox(height: 8),
               Wrap(spacing: 8, runSpacing: 6,
                 children: members.map((member) => ActionChip(
@@ -711,4 +743,11 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
         }).toList())),
     ]));
   }
+}
+
+String _quando(DateTime? value) {
+  if (value == null) return '';
+  final local = value.toLocal();
+  String dois(int n) => n.toString().padLeft(2, '0');
+  return '${dois(local.day)}/${dois(local.month)} ${dois(local.hour)}:${dois(local.minute)}';
 }

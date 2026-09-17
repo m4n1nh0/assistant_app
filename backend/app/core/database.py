@@ -706,7 +706,16 @@ class AttendanceRosterModel(Base):
 
 
 class LessonModel(Base):
-    """Uma aula gravada: disciplina, turmas, estado e transcricao acumulada.
+    """Uma gravacao do professor: aula, apresentacao de grupo ou palestra.
+
+    A tabela nasceu so para aula, e o nome ficou. O que grava, transcreve,
+    resume e indexa e o mesmo mecanismo nos tres casos - o que muda e a que a
+    gravacao pertence, e e isso que `kind` e `group_id` guardam:
+
+    - `aula`: disciplina e turma, como sempre foi;
+    - `apresentacao`: pertence a um grupo de projeto, e herda dele a disciplina
+      e o semestre;
+    - `palestra`: nao tem disciplina nem turma; o titulo e a identificacao.
 
     `transcript_chars` evita ter que medir o texto inteiro so para decidir como
     fatiar o resumo.
@@ -714,6 +723,9 @@ class LessonModel(Base):
     __tablename__ = "lessons"
     id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id       = Column(String(64), nullable=False, index=True)
+    kind           = Column(String(20), nullable=False, default="aula", index=True)
+    #: Grupo de projeto da apresentacao. Vazio nos outros tipos.
+    group_id       = Column(String(64), nullable=True, index=True)
     discipline        = Column(String(120), nullable=False, index=True)
     semester       = Column(String(16), nullable=False, default="", index=True)
     title          = Column(String(255), nullable=False, default="")
@@ -1031,6 +1043,8 @@ def _add_compatibility_columns(sync_conn) -> None:
         "lessons": {
             "semester": "VARCHAR(16) NOT NULL DEFAULT ''",
             "summary_style": "VARCHAR(16) NULL",
+            "kind": "VARCHAR(20) NOT NULL DEFAULT 'aula'",
+            "group_id": "VARCHAR(64) NULL",
         },
         "lesson_segments": {
             "embedding_model": "VARCHAR(120) NULL",

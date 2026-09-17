@@ -101,7 +101,7 @@ _FOLLOW_UP_PATTERNS = (
 
 @dataclass(frozen=True)
 class LessonHit:
-    """Uma aula encontrada no banco, com o que basta para citar a fonte."""
+    """Uma gravacao encontrada no banco, com o que basta para citar a fonte."""
 
     lesson_id: str
     discipline: str
@@ -111,10 +111,24 @@ class LessonHit:
     status: str = ""
     segments: int = 0
     summary: str = ""
+    #: `aula`, `apresentacao` ou `palestra`.
+    kind: str = "aula"
 
     @property
     def label(self) -> str:
-        parts = [self.discipline or "aula", self.day.strftime("%d/%m/%Y")]
+        """Como a fonte e citada na resposta.
+
+        O tipo entra no rotulo porque muda o que a fonte e: "palestra sobre
+        LGPD" e "aula de banco de dados" nao se confundem, e o modelo precisa
+        dizer de qual esta falando.
+        """
+        data = self.day.strftime("%d/%m/%Y")
+        if self.kind == "palestra":
+            return f'palestra "{self.title or "sem titulo"}", {data}'
+        if self.kind == "apresentacao":
+            titulo = self.title or "apresentacao de grupo"
+            return f"{titulo}, {data}"
+        parts = [self.discipline or "aula", data]
         if self.class_group:
             parts.append(f"turma {self.class_group}")
         return ", ".join(parts)
@@ -380,6 +394,7 @@ def _hit(row: LessonModel, day: date, segments: int) -> LessonHit:
         status=str(row.status or "").strip(),
         segments=segments,
         summary=str(row.summary or "").strip(),
+        kind=str(getattr(row, "kind", "aula") or "aula"),
     )
 
 
@@ -413,6 +428,30 @@ async def _lessons_of_day(
         for row in rows.all()
         if (local := _local_date(row.started_at, timezone_name)) == day
     ]
+
+
+def _title_matches(row: LessonModel, message: str) -> bool:
+    """Diz se a pergunta cita o titulo desta gravacao.
+
+    Palestra nao tem disciplina, entao sem isto so a data a encontraria. O
+    casamento e o mesmo das disciplinas - conjunto de palavras, minimo de quatro
+    letras -, e titulo curto demais nao ancora nada.
+    """
+    return _mentioned((str(row.title or ""),), message)
+
+
+async def _lessons_by_title(
+    db: AsyncSession,
+    *,
+    tutor_id: str,
+    message: str,
+    timezone_name: str,
+) -> list[tuple[LessonModel, date]]:
+    """Gravacoes recentes cujo titulo aparece na pergunta."""
+    candidates = await _recent_lessons(
+        db, tutor_id=tutor_id, timezone_name=timezone_name
+    )
+    return [item for item in candidates if _title_matches(item[0], message)]
 
 
 async def _recent_lessons(
@@ -524,9 +563,15 @@ async def _resolve_text(
             db, tutor_id=tutor_id, timezone_name=timezone_name
         )
     else:
-        # Sem disciplina e sem data nao ha o que ancorar: a busca vetorial
-        # generica ja atende, e varrer aula aqui seria SQL a toa.
-        return LessonScope(catalog=catalog)
+        # Sem disciplina e sem data, sobra o titulo: e o unico caminho ate uma
+        # palestra, que nao tem disciplina nem turma.
+        candidates = await _lessons_by_title(
+            db, tutor_id=tutor_id, message=message, timezone_name=timezone_name
+        )
+        if not candidates:
+            # Nada ancora: a busca vetorial generica ja atende, e varrer
+            # gravacao aqui seria SQL a toa.
+            return LessonScope(catalog=catalog)
 
     if matched:
         selected = [

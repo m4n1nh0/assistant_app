@@ -1123,9 +1123,21 @@ class AttendanceReportResponse(BaseModel):
     sessions: List[AttendanceSessionResponse] = Field(default_factory=list)
 
 
+#: O que esta sendo gravado. O mecanismo e o mesmo; muda a que a gravacao
+#: pertence e o que e obrigatorio informar.
+RecordingKind = Literal["aula", "apresentacao", "palestra"]
+
+
 class LessonCreate(BaseModel):
-    """Abertura de uma aula, ligada a disciplina, semestre e turmas."""
-    discipline: str
+    """Abertura de uma gravacao: aula, apresentacao de grupo ou palestra.
+
+    `aula` exige disciplina (ou turmas de onde deduzi-la), `apresentacao` exige
+    `group_id` e herda disciplina e semestre do grupo, e `palestra` exige so o
+    titulo.
+    """
+    kind: RecordingKind = "aula"
+    group_id: Optional[str] = None
+    discipline: str = ""
     semester: str = ""
     title: str = ""
     class_group: str = ""
@@ -1279,9 +1291,13 @@ class LessonPointCreate(BaseModel):
 
 
 class LessonResponse(BaseModel):
-    """Aula gravada: identificacao, disciplina, turmas e estado do processamento."""
+    """Gravacao: tipo, identificacao, turmas e estado do processamento."""
     id: str
     tutor_id: str
+    kind: RecordingKind = "aula"
+    group_id: Optional[str] = None
+    #: Nome do grupo, quando e apresentacao: a tela mostra isso, nao o id.
+    group_name: str = ""
     discipline: str
     semester: str = ""
     title: str = ""

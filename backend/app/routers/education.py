@@ -781,10 +781,14 @@ def _student_response(item: StudentModel) -> StudentResponse:
 def _lesson_response(
     item: LessonModel,
     classes: Sequence[ClassGroupModel] = (),
+    group_name: str = "",
 ) -> LessonResponse:
     return LessonResponse(
         id=item.id,
         tutor_id=item.tutor_id,
+        kind=getattr(item, "kind", "aula") or "aula",
+        group_id=getattr(item, "group_id", None),
+        group_name=group_name,
         discipline=item.discipline,
         semester=getattr(item, "semester", "") or "",
         title=item.title or "",
@@ -1973,43 +1977,78 @@ async def create_lesson(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Abre uma aula e passa a aceitar os blocos de gravacao.
+    """Abre uma gravacao e passa a aceitar os blocos de audio.
 
-    A aula nasce aberta: os trechos chegam por `POST /education/lessons/{id}/segments`
-    enquanto a aula acontece, e nao em um upload unico no fim.
+    A gravacao nasce aberta: os trechos chegam por
+    `POST /education/lessons/{id}/segments` enquanto ela acontece, e nao em um
+    upload unico no fim. Vale para os tres tipos - o que muda e o que precisa
+    estar informado antes de comecar.
     """
-    classes = await _resolve_classes(body.class_ids, user["tutor_id"], db)
-    semesters = {group.semester for group in classes if group.semester}
-    if len(semesters) > 1:
-        raise HTTPException(422, "As turmas pertencem a semestres diferentes")
+    tutor_id = user["tutor_id"]
+    kind = body.kind
+    title = body.title.strip()
+    semester = _semester_code(body.semester)
+    group_name = ""
+    group_id = None
+    classes: Sequence[ClassGroupModel] = ()
     discipline = body.discipline.strip()
-    if not discipline and classes:
-        disciplines = {group.discipline for group in classes if group.discipline}
-        discipline = disciplines.pop() if len(disciplines) == 1 else ""
-    if not discipline:
-        raise HTTPException(422, "Disciplina e obrigatoria")
+
+    if kind == "apresentacao":
+        group = await db.get(ProjectGroupModel, (body.group_id or "").strip())
+        if group is None or group.tutor_id != tutor_id:
+            raise HTTPException(404, "Grupo de projeto nao encontrado")
+        group_id = group.id
+        group_name = group.name
+        # Disciplina e semestre vem do grupo: sao dele, e repetir na tela so
+        # daria chance de divergir do cadastro.
+        semester = group.semester or semester
+        owner = await db.get(DisciplineModel, group.discipline_id)
+        if owner is not None and owner.tutor_id == tutor_id:
+            discipline = _discipline_label(owner)
+        title = title or f"Apresentacao: {group.name}"
+    elif kind == "palestra":
+        if not title:
+            raise HTTPException(422, "Informe o titulo da palestra")
+        # Palestra nao pertence a disciplina nem a turma: a disciplina pode
+        # ficar vazia, e o titulo e o que identifica a gravacao.
+        classes = ()
+    else:
+        classes = await _resolve_classes(body.class_ids, tutor_id, db)
+        semesters = {group.semester for group in classes if group.semester}
+        if len(semesters) > 1:
+            raise HTTPException(422, "As turmas pertencem a semestres diferentes")
+        if not discipline and classes:
+            disciplines = {group.discipline for group in classes if group.discipline}
+            discipline = disciplines.pop() if len(disciplines) == 1 else ""
+        if not discipline:
+            raise HTTPException(422, "Disciplina e obrigatoria")
 
     lesson = LessonModel(
-        tutor_id=user["tutor_id"],
+        tutor_id=tutor_id,
+        kind=kind,
+        group_id=group_id,
         discipline=discipline,
-        semester=_semester_code(body.semester),
-        title=body.title.strip(),
-        class_group=body.class_group.strip(),
+        semester=semester,
+        title=title,
+        class_group=body.class_group.strip() if kind == "aula" else "",
         teacher=body.teacher,
         started_at=_as_utc(body.started_at) if body.started_at else datetime.now(timezone.utc),
         metadata_=body.metadata,
     )
     db.add(lesson)
     await db.flush()
-    await _link_classes(lesson, classes, db)
+    if classes:
+        await _link_classes(lesson, classes, db)
     await db.commit()
     await db.refresh(lesson)
-    return _lesson_response(lesson, classes)
+    return _lesson_response(lesson, classes, group_name=group_name)
 
 
 @router.get("/lessons", response_model=List[LessonResponse])
 async def list_lessons(
     discipline: Optional[str] = None,
+    kind: Optional[str] = None,
+    group_id: Optional[str] = None,
     semester: Optional[str] = None,
     class_group: Optional[str] = None,
     date_from: Optional[str] = None,
@@ -2022,6 +2061,10 @@ async def list_lessons(
     query = select(LessonModel).where(LessonModel.tutor_id == user["tutor_id"])
     if discipline:
         query = query.where(LessonModel.discipline == discipline)
+    if kind:
+        query = query.where(LessonModel.kind == kind)
+    if group_id:
+        query = query.where(LessonModel.group_id == group_id)
     if semester:
         query = query.where(LessonModel.semester == _semester_code(semester))
     if class_group:
@@ -2036,7 +2079,33 @@ async def list_lessons(
     result = await db.execute(query.order_by(LessonModel.started_at.desc()).limit(limit))
     lessons = list(result.scalars().all())
     classes = await _classes_of([item.id for item in lessons], db)
-    return [_lesson_response(item, classes.get(item.id, [])) for item in lessons]
+    groups = await _group_names([item.group_id for item in lessons], user["tutor_id"], db)
+    return [
+        _lesson_response(
+            item,
+            classes.get(item.id, []),
+            group_name=groups.get(item.group_id or "", ""),
+        )
+        for item in lessons
+    ]
+
+
+async def _group_names(
+    group_ids: Sequence[Optional[str]],
+    tutor_id: str,
+    db: AsyncSession,
+) -> Dict[str, str]:
+    """Nome de cada grupo de projeto citado, para a tela nao mostrar id."""
+    wanted = {item for item in group_ids if item}
+    if not wanted:
+        return {}
+    rows = (await db.execute(
+        select(ProjectGroupModel.id, ProjectGroupModel.name).where(
+            ProjectGroupModel.id.in_(wanted),
+            ProjectGroupModel.tutor_id == tutor_id,
+        )
+    )).all()
+    return {group_id: name for group_id, name in rows}
 
 
 @router.get("/lessons/{lesson_id}", response_model=LessonDetailResponse)

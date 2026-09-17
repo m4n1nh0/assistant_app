@@ -970,7 +970,8 @@ Endpoints principais:
 
 | Endpoint | Uso |
 | --- | --- |
-| `POST /education/lessons` | Abre a aula (semestre, disciplina, turmas e tema) |
+| `POST /education/lessons` | Abre a gravacao. `kind`: `aula` (disciplina e turmas), `apresentacao` (`group_id`, herda do grupo) ou `palestra` (so o titulo) |
+| `GET /education/lessons?kind=&group_id=` | Lista as gravacoes, filtrando por tipo ou grupo |
 | `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
 | `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
 | `PATCH /education/lessons/{id}/segments/{segment_id}` | Corrige o texto e substitui seu vetor |

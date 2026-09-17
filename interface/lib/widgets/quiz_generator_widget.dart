@@ -385,8 +385,8 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                 for (final aula in _sourceLessons())
                   _buildSourceTile(
                     titulo: aula.id == widget.lessonId
-                        ? 'Aula atual: ${_lessonLabel(aula)}'
-                        : 'Aula: ${_lessonLabel(aula)}',
+                        ? 'Atual: ${aula.displayLabel}'
+                        : aula.displayLabel,
                     detalhe: _lessonHint(aula),
                     marcada: _lessonIds.contains(aula.id),
                     onChanged: (marcar) => setState(() {
@@ -469,9 +469,6 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
       ...outras,
     ];
   }
-
-  String _lessonLabel(Lesson aula) =>
-      aula.title.isEmpty ? 'sem título' : aula.title;
 
   /// O que decide se vale marcar a aula: ela tem texto?
   String _lessonHint(Lesson aula) {

@@ -365,8 +365,15 @@ class EducationService {
 
   // --- Aulas ---------------------------------------------------------------
 
+  /// Abre uma gravacao: aula, apresentacao de grupo ou palestra.
+  ///
+  /// `aula` precisa de disciplina (ou turmas de onde deduzi-la),
+  /// `apresentacao` precisa do grupo - disciplina e semestre vem dele - e
+  /// `palestra` precisa so do titulo.
   Future<Lesson> createLesson({
-    required String discipline,
+    String discipline = '',
+    String kind = 'aula',
+    String? groupId,
     String semester = '',
     String title = '',
     String classGroup = '',
@@ -377,6 +384,8 @@ class EducationService {
       Uri.parse('$_baseUrl/education/lessons'),
       headers: _headers,
       body: jsonEncode({
+        'kind': kind,
+        if (groupId != null) 'group_id': groupId,
         'discipline': discipline,
         'semester': semester,
         'title': title,
@@ -408,6 +417,8 @@ class EducationService {
 
   Future<List<Lesson>> listLessons({
     String? discipline,
+    String? kind,
+    String? groupId,
     String? semester,
     String? dateFrom,
     String? dateTo,
@@ -417,6 +428,8 @@ class EducationService {
       queryParameters: {
         if (discipline != null && discipline.isNotEmpty)
           'discipline': discipline,
+        if (kind != null && kind.isNotEmpty) 'kind': kind,
+        if (groupId != null && groupId.isNotEmpty) 'group_id': groupId,
         if (semester != null && semester.isNotEmpty) 'semester': semester,
         if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
         if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
@@ -1154,8 +1167,19 @@ class ClassGroup {
 }
 
 /// Uma aula gravada: disciplina, turmas, estado e horarios.
+/// Rotulo do tipo de gravacao, para a tela nao mostrar o valor cru.
+String recordingKindLabel(String kind) => switch (kind) {
+      'apresentacao' => 'Apresentação',
+      'palestra' => 'Palestra',
+      _ => 'Aula',
+    };
+
 class Lesson {
   final String id;
+  /// `aula`, `apresentacao` ou `palestra`.
+  final String kind;
+  final String groupId;
+  final String groupName;
   final String discipline;
   final String semester;
   final String title;
@@ -1181,6 +1205,9 @@ class Lesson {
     required this.title,
     required this.classGroup,
     required this.status,
+    this.kind = 'aula',
+    this.groupId = '',
+    this.groupName = '',
     this.classIds = const [],
     this.classLabels = const [],
     this.startedAt,
@@ -1195,8 +1222,24 @@ class Lesson {
 
   bool get isClosed => status == 'closed';
 
+  /// Como a gravacao se identifica numa lista: aula pela disciplina, palestra e
+  /// apresentacao pelo titulo, que e o que as distingue.
+  String get displayLabel {
+    final tipo = recordingKindLabel(kind);
+    if (kind == 'aula') {
+      return title.isEmpty ? discipline : '$discipline — $title';
+    }
+    if (kind == 'apresentacao' && groupName.isNotEmpty) {
+      return '$tipo: $groupName';
+    }
+    return title.isEmpty ? tipo : '$tipo: $title';
+  }
+
   factory Lesson.fromJson(Map<String, dynamic> json) => Lesson(
         id: json['id'].toString(),
+        kind: json['kind']?.toString() ?? 'aula',
+        groupId: json['group_id']?.toString() ?? '',
+        groupName: json['group_name']?.toString() ?? '',
         discipline: json['discipline']?.toString() ?? '',
         semester: json['semester']?.toString() ?? '',
         title: json['title']?.toString() ?? '',
@@ -1226,6 +1269,9 @@ class LessonDetail extends Lesson {
 
   LessonDetail({
     required super.id,
+    super.kind,
+    super.groupId,
+    super.groupName,
     required super.discipline,
     super.semester,
     required super.title,
@@ -1249,6 +1295,9 @@ class LessonDetail extends Lesson {
     final lesson = Lesson.fromJson(json);
     return LessonDetail(
       id: lesson.id,
+      kind: lesson.kind,
+      groupId: lesson.groupId,
+      groupName: lesson.groupName,
       discipline: lesson.discipline,
       semester: lesson.semester,
       title: lesson.title,
