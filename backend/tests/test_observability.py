@@ -12,7 +12,7 @@ import asyncio
 
 import pytest
 
-from app.core.observability import (
+from shared.observability import (
     InMemorySink,
     ObservabilityContext,
     bind,
@@ -28,7 +28,7 @@ from app.core.observability import (
     set_context,
     span,
 )
-from app.core.observability.context import REQUEST_ID_HEADER, TRACEPARENT_HEADER
+from shared.observability.context import REQUEST_ID_HEADER, TRACEPARENT_HEADER
 
 pytestmark = pytest.mark.unit
 
@@ -104,7 +104,7 @@ def test_bind_adds_fields_and_restores_them_afterwards():
             assert current_context().request_id == "req-1"
         assert current_context().agent_id == ""
     finally:
-        from app.core.observability import reset_context
+        from shared.observability import reset_context
 
         reset_context(token)
 
@@ -116,7 +116,7 @@ def test_bind_ignores_empty_fields():
         with bind(agent_id=""):
             assert current_context().agent_id == "calendar"
     finally:
-        from app.core.observability import reset_context
+        from shared.observability import reset_context
 
         reset_context(token)
 

@@ -20,9 +20,9 @@ from app.adapters.fakes import FakeMCPGateway
 from app.adapters.mcp.local import LocalMCPGateway
 from app.adapters.mcp.remote import RemoteMCPGateway
 from app.adapters.tools.remote import RemoteToolGateway
-from app.core.observability import configure_sink, default_sink
-from app.mcp.client import MCPClient
-from app.ports.tools import ToolInvocation
+from shared.observability import configure_sink, default_sink
+from shared.mcp.client import MCPClient
+from shared.ports.tools import ToolInvocation
 
 pytestmark = pytest.mark.contract
 

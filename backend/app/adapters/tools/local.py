@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...ports.mcp import MCPGateway
-from ...ports.tools import ToolDescriptor, ToolInvocation, ToolResult
+from shared.ports.mcp import MCPGateway
+from shared.ports.tools import ToolDescriptor, ToolInvocation, ToolResult
 from ...toolkit.catalog import sync_mcp_tools
 from ...toolkit.executor import ToolExecutor
 from ...toolkit.registry import ToolRegistry

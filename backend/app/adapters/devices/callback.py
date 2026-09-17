@@ -22,8 +22,8 @@ from typing import Any, Callable
 import httpx
 
 from ...core.internal_auth import INTERNAL_TOKEN_HEADER
-from ...core.observability import current_context
-from ...ports.tools import ToolTimeout
+from shared.observability import current_context
+from shared.ports.tools import ToolTimeout
 from ...services.remote_capability_gateway import (
     DEFAULT_TIMEOUT_SECONDS,
     RemoteCapabilityError,

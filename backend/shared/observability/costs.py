@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from ...ports.telemetry import UsageRecord
+from shared.ports.telemetry import UsageRecord
 
 
 @dataclass(frozen=True)

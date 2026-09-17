@@ -26,7 +26,7 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from ..ports.tools import ToolError, ToolTimeout
+from shared.ports.tools import ToolError, ToolTimeout
 from ..toolkit.registry import ToolRunner
 
 #: Envia `payload` para a maquina `device_id`. E o unico ponto de transporte.

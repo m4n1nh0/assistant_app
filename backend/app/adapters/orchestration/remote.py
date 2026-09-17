@@ -22,7 +22,7 @@ import httpx
 from loguru import logger
 
 from ...core.internal_auth import INTERNAL_TOKEN_HEADER
-from ...core.observability import current_context, span
+from shared.observability import current_context, span
 from ...models.schemas import LLMResponse
 from ...ports.orchestration import ChatTurn
 from .wire import result_from_payload, turn_to_payload

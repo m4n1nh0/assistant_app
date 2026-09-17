@@ -21,8 +21,8 @@ from typing import Any
 
 from loguru import logger
 
-from ..core.observability import span
-from ..ports.tools import (
+from shared.observability import span
+from shared.ports.tools import (
     ToolDescriptor,
     ToolError,
     ToolInvocation,

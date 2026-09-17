@@ -18,8 +18,8 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from ...core.observability import current_context, span
-from ...ports.mcp import MCPServerHealth, MCPToolRef, MCPUnavailable
+from shared.observability import current_context, span
+from shared.ports.mcp import MCPServerHealth, MCPToolRef, MCPUnavailable
 
 
 class RemoteMCPGateway:

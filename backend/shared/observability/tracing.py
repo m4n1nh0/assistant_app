@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Iterator
 
-from ...ports.telemetry import SpanKind, SpanRecord, TelemetrySink, UsageRecord
+from shared.ports.telemetry import SpanKind, SpanRecord, TelemetrySink, UsageRecord
 from .context import current_context
 from .sinks import CompositeSink, InMemorySink, LoggingSink, NullSink
 

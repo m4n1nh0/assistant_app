@@ -69,7 +69,7 @@ flowchart TB
     OTEL --> COLL[(Collector / exporter)]
 ```
 
-As setas **tracejadas** atravessam um contrato de `app.ports`: quem esta de um
+As setas **tracejadas** atravessam um contrato de `shared.ports` ou `app.ports`: quem esta de um
 lado nao conhece a implementacao do outro.
 
 ---
@@ -78,12 +78,29 @@ lado nao conhece a implementacao do outro.
 
 ```text
 backend/
-├── app/
+├── shared/                       nucleo tecnico — nunca importa `app`
+│   ├── settings.py               ServiceSettings · MCPSettings
 │   ├── ports/                    contratos (Protocol) — sem SDK, sem I/O
 │   │   ├── tools.py              ToolGateway, ToolDescriptor, ToolResult
 │   │   ├── mcp.py                MCPGateway, MCPServerHealth
-│   │   ├── retrieval.py          RetrievalGateway, RetrievedChunk
 │   │   └── telemetry.py          TelemetrySink, SpanRecord, UsageRecord
+│   ├── mcp/                      MCP (protocolo)
+│   │   ├── config.py             parser de MCP_SERVERS
+│   │   ├── client.py             conexao, cache, retry, disjuntor
+│   │   └── factory.py            cliente a partir da configuracao
+│   └── observability/            transversal
+│       ├── context.py            correlation IDs (contextvars + W3C)
+│       ├── tracing.py            span() / span_sync()
+│       ├── otel.py               adaptador OpenTelemetry (opcional)
+│       ├── langsmith.py          ativacao opcional
+│       ├── costs.py              tabela de preco e estimativa
+│       ├── sinks.py              log · memoria · composto
+│       └── middleware.py         correlacao HTTP e bootstrap
+│
+├── app/
+│   ├── ports/                    contratos que dependem do dominio
+│   │   ├── orchestration.py      OrchestrationGateway, ChatTurn
+│   │   └── retrieval.py          RetrievalGateway, RetrievedChunk
 │   │
 │   ├── orchestration/            LangGraph
 │   │   ├── agents.py             especialistas (dado puro, sem framework)
@@ -103,35 +120,39 @@ backend/
 │   │   ├── executor.py           validacao, timeout, retry, auditoria
 │   │   └── catalog.py            registro de tools locais e MCP
 │   │
-│   ├── mcp/                      MCP (protocolo)
-│   │   ├── config.py             parser de MCP_SERVERS
-│   │   └── client.py             conexao, cache, retry, disjuntor
-│   │
 │   ├── adapters/                 implementacoes dos contratos
 │   │   ├── container.py          composicao a partir da configuracao
 │   │   ├── fakes.py              in-memory, para teste
 │   │   ├── tools/                local · remote · langchain_binding
 │   │   ├── mcp/                  local · remote
+│   │   ├── orchestration/        local · remote · wire
+│   │   ├── devices/              callback da maquina do usuario
 │   │   └── retrieval/            lesson_retriever
-│   │
-│   ├── core/observability/       transversal
-│   │   ├── context.py            correlation IDs (contextvars + W3C)
-│   │   ├── tracing.py            span() / span_sync()
-│   │   ├── otel.py               adaptador OpenTelemetry (opcional)
-│   │   ├── langsmith.py          ativacao opcional
-│   │   ├── costs.py              tabela de preco e estimativa
-│   │   ├── sinks.py              log · memoria · composto
-│   │   └── middleware.py         correlacao HTTP e bootstrap
 │   │
 │   ├── services/                 dominio (RAG, educacao, agenda, providers…)
 │   └── routers/                  REST · SSE · WebSocket
 │
 └── services/                     entrypoints de processo
     ├── common.py                 health, lifespan, graceful shutdown
-    ├── mcp_service/main.py       porta MCP_SERVICE_PORT
+    ├── mcp_service/main.py       porta MCP_SERVICE_PORT — so `shared`
     ├── tool_service/main.py      porta TOOL_SERVICE_PORT
     └── orchestrator/main.py      porta ORCHESTRATOR_PORT
 ```
+
+### Quem pode importar quem
+
+| Pacote | Pode importar | Nunca importa |
+|---|---|---|
+| `shared` | bibliotecas de terceiros, o proprio `shared` | `app`, `services` |
+| `app.core` | `shared` | `app.services`, `app.routers`, `app.orchestration`, `app.adapters` |
+| `shared.ports` / `app.ports` | tipos de dados | implementacao (`adapters`, `services`, `core`) |
+| `services.mcp_service` | `shared` | qualquer modulo de `app` |
+| `services.tool_service` | `shared`, catalogo de `app` | `app.routers`; divida conhecida congelada |
+| `services.orchestrator` | `shared`, dominio de `app` | `app.routers` |
+
+As regras sao testadas em `tests/test_import_boundaries.py`: as de pacote por
+leitura estatica do codigo, as de servico importando o entrypoint num processo
+limpo - o mesmo fecho que o container carrega.
 
 ---
 
@@ -230,7 +251,7 @@ namespace de conta faz `aget_state` procurar um subgrafo inexistente.
 | `usage_metadata` padrao (tokens de entrada/saida/cache) | idem |
 | `BaseTool` / `StructuredTool` para todo o catalogo | `assistant_tools`, `adapters/tools/langchain_binding` |
 | `ToolNode`, `Command`, `RetryPolicy`, checkpointers | `orchestration/agent_graph.py` |
-| Adaptador MCP (`langchain-mcp-adapters`) | `mcp/client.py` |
+| Adaptador MCP (`langchain-mcp-adapters`) | `shared/mcp/client.py` |
 
 ### O que deliberadamente NAO foi migrado
 

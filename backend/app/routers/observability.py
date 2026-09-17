@@ -10,9 +10,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from ..core.config import get_settings
-from ..core.observability import memory_sink
-from ..core.observability.langsmith import enabled as langsmith_enabled
-from ..core.observability.otel import available as otel_available
+from shared.observability import memory_sink
+from shared.observability.langsmith import enabled as langsmith_enabled
+from shared.observability.otel import available as otel_available
 from ..core.security import get_current_user
 
 router = APIRouter(

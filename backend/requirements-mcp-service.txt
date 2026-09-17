@@ -22,7 +22,7 @@ python-multipart==0.0.29
 
 # --- MCP ---------------------------------------------------------------------
 mcp==1.29.0
-# app/mcp/client.py:122 importa MultiServerMCPClient dentro da funcao: so e
+# shared/mcp/client.py:122 importa MultiServerMCPClient dentro da funcao: so e
 # exercitado quando o servico conecta de fato num servidor. Um teste que apenas
 # importa o modulo passaria sem este pacote, e o deploy quebraria na primeira
 # chamada.
@@ -33,7 +33,7 @@ loguru==0.7.3
 orjson==3.11.9
 
 # --- observabilidade (opcional em runtime, obrigatoria aqui) -----------------
-# app/core/observability/otel.py importa tudo dentro de try/except e degrada
+# shared/observability/otel.py importa tudo dentro de try/except e degrada
 # para log quando falta. Ficam na imagem porque OTEL_ENABLED e uma opcao
 # documentada deste servico: sem os pacotes, ligar a variavel nao daria erro -
 # daria silencio, que e pior.

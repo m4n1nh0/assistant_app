@@ -16,7 +16,7 @@ from typing import Any, Iterable
 
 from loguru import logger
 
-from ...ports.telemetry import SpanRecord, TelemetrySink, UsageRecord
+from shared.ports.telemetry import SpanRecord, TelemetrySink, UsageRecord
 
 
 class NullSink:

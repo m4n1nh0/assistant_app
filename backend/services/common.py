@@ -21,8 +21,8 @@ from typing import Any, Awaitable, Callable
 from fastapi import FastAPI
 from loguru import logger
 
-from app.core.config import get_settings
-from app.core.observability.middleware import (
+from shared.settings import get_service_settings as get_settings
+from shared.observability.middleware import (
     setup_observability,
     shutdown_observability,
 )

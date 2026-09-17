@@ -26,7 +26,7 @@ from typing import Any
 from loguru import logger
 
 from ..orchestration.agents import mcp_scopes
-from ..ports.tools import ToolDescriptor
+from shared.ports.tools import ToolDescriptor
 from ..toolkit.registry import ToolRegistry, ToolRunner
 
 #: Prefixo do nome no catalogo. Deixa obvio no trace e no prompt que a execucao

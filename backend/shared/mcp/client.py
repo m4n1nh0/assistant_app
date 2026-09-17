@@ -22,8 +22,8 @@ from typing import Any
 
 from loguru import logger
 
-from ..core.observability import span
-from ..ports.mcp import MCPError, MCPServerHealth, MCPToolRef, MCPUnavailable
+from shared.observability import span
+from shared.ports.mcp import MCPError, MCPServerHealth, MCPToolRef, MCPUnavailable
 from .config import MCPServerConfig, as_client_config, parse_servers
 
 

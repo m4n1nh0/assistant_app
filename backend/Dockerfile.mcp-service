@@ -4,8 +4,9 @@
 # CUDA (nvidia-cublas-cu12, nvidia-cudnn-cu12), que sozinhos passam de 2 GB e
 # que este servico nunca importa. Aqui sao ~100 MB de dependencias.
 #
-# O preco da escolha, para ficar registrado: um import novo em app/core/* ou
-# app/mcp/* quebra este servico em RUNTIME, e nao no build.
+# O preco da escolha, para ficar registrado: um import de `app` em shared/* ou
+# no entrypoint quebra este servico em RUNTIME, e nao no build - por isso ha
+# teste de fronteira de import.
 # tests/test_service_requirements.py cobre a deriva de versao; a de pacote so
 # aparece quando o servico sobe, e por isso o healthcheck do deploy importa.
 
@@ -57,9 +58,11 @@ COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
 
-# So o codigo que este processo carrega. `COPY . .` traria tests/, sql/,
-# static/ e o seed de desenvolvimento - nada disso e executado aqui.
-COPY --chown=app:app app ./app
+# So o codigo que este processo carrega: o nucleo e o proprio entrypoint.
+# `app/` nao entra - o mcp-service nao carrega nenhum modulo do produto, e
+# tests/test_import_boundaries.py reprova o import que mudar isso. Sem essa
+# garantia, faltar `app/` aqui so apareceria no boot do container.
+COPY --chown=app:app shared ./shared
 COPY --chown=app:app services ./services
 
 USER app

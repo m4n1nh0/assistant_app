@@ -22,7 +22,7 @@ from loguru import logger
 
 from app.adapters.container import build_local_tool_gateway
 from app.core.config import get_settings
-from app.ports.tools import ToolInvocation
+from shared.ports.tools import ToolInvocation
 
 from ..common import create_service, serve
 

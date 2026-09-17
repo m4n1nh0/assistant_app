@@ -22,7 +22,7 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from ...core.observability import span
+from shared.observability import span
 from ...models.schemas import ShortcutRegistrationAction
 from ..state import ChatGraphState, ChatRuntimeContext
 

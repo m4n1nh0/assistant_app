@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..ports.mcp import MCPServerHealth, MCPToolRef, MCPUnavailable
-from ..ports.tools import ToolDescriptor, ToolInvocation, ToolResult
+from shared.ports.mcp import MCPServerHealth, MCPToolRef, MCPUnavailable
+from shared.ports.tools import ToolDescriptor, ToolInvocation, ToolResult
 
 
 class FakeToolGateway:

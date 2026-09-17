@@ -23,8 +23,8 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from ...core.observability import current_context, span
-from ...ports.tools import ToolDescriptor, ToolInvocation, ToolResult
+from shared.observability import current_context, span
+from shared.ports.tools import ToolDescriptor, ToolInvocation, ToolResult
 
 
 class RemoteToolGateway:

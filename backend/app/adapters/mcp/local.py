@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...mcp.client import MCPClient
-from ...ports.mcp import MCPServerHealth, MCPToolRef
+from shared.mcp.client import MCPClient
+from shared.ports.mcp import MCPServerHealth, MCPToolRef
 
 
 class LocalMCPGateway:

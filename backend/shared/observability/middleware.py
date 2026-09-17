@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from ...ports.telemetry import SpanRecord
+from shared.ports.telemetry import SpanRecord
 from .context import (
     REQUEST_ID_HEADER,
     ObservabilityContext,

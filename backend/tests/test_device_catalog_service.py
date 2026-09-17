@@ -12,7 +12,7 @@ import asyncio
 import pytest
 
 from app.adapters.tools.local import LocalToolGateway
-from app.ports.tools import ToolInvocation
+from shared.ports.tools import ToolInvocation
 from app.services.client_capability_service import parse_manifest
 from app.services.device_catalog_service import (
     DeviceCatalog,

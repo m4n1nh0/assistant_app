@@ -18,7 +18,7 @@ from ..core.database import (
     ConversationModel,
     TutorModel,
 )
-from ..core.observability import bind
+from shared.observability import bind
 from ..core.security import get_current_user
 from ..models.schemas import ChatLogRequest, ChatRequest, ChatResponse, LLMResponse
 from ..services import llm_service

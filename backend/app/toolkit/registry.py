@@ -16,7 +16,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from ..ports.tools import ToolDescriptor, ToolSource
+from shared.ports.tools import ToolDescriptor, ToolSource
 
 ToolRunner = Callable[[dict[str, Any]], Awaitable[Any]]
 

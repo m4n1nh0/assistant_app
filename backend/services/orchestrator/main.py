@@ -30,7 +30,7 @@ from app.adapters.orchestration.wire import (
 )
 from app.core.config import get_settings
 from app.core.internal_auth import require_internal_token
-from app.core.observability import bind
+from shared.observability import bind
 from app.orchestration.graph import chat_graph, graph_state, run_chat_graph
 from app.services.device_catalog_service import bind_device, get_device_catalog, reset_device
 from app.services.user_llm_config_service import (

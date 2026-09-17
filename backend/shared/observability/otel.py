@@ -14,7 +14,7 @@ from typing import Any
 
 from loguru import logger
 
-from ...ports.telemetry import SpanKind, SpanRecord
+from shared.ports.telemetry import SpanKind, SpanRecord
 
 _tracer: Any = None
 _enabled = False

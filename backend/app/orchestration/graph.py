@@ -21,7 +21,7 @@ from langgraph.types import RetryPolicy
 from loguru import logger
 
 from ..core.config import get_settings
-from ..core.observability import bind, current_context, new_id, span
+from shared.observability import bind, current_context, new_id, span
 from ..models.schemas import LLMResponse, Message, ResponseModeEnum
 from .checkpoint import build_checkpointer, thread_config
 from .nodes.action_detection import detect_action, resolve_shortcut

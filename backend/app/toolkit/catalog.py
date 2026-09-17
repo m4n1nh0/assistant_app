@@ -19,8 +19,8 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 
 from ..orchestration.agents import mcp_scopes, scopes_for_tool
-from ..ports.mcp import MCPGateway
-from ..ports.tools import ToolDescriptor, ToolSource
+from shared.ports.mcp import MCPGateway
+from shared.ports.tools import ToolDescriptor, ToolSource
 from .registry import ToolRegistry, ToolRunner
 
 

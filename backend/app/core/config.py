@@ -8,30 +8,26 @@ provedor, parametros de voz e limites do modo educacao. Preferencia de usuario
 """
 
 import os
-from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import AliasChoices, Field, field_validator
 from typing import Dict, List
 from functools import lru_cache
 
-_ENV_FILE = Path(__file__).parent.parent.parent / ".env"
+from shared.settings import MCPSettings
 
 
-class Settings(BaseSettings):
+class Settings(MCPSettings):
     """Todas as variaveis de ambiente reconhecidas pelo backend.
 
     Herda de `BaseSettings` (pydantic-settings): cada atributo vira uma variavel de
     ambiente de mesmo nome em maiusculas, e o valor declarado aqui e o padrao usado
     quando ela nao existe. Campo ausente no ambiente nao quebra o boot - o que falta
     e tratado como recurso desligado (provedor sem chave, Redis inalcancavel).
-    """
-    model_config = SettingsConfigDict(
-        env_file=str(_ENV_FILE),
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
 
-    host: str = "0.0.0.0"
+    Processo, observabilidade, segredo interno e MCP vem de `shared.settings`,
+    que os servicos leem sem carregar esta classe. Os nomes de variavel sao os
+    mesmos; a heranca so mudou onde cada campo esta declarado.
+    """
+
     # `PORT` vem primeiro porque e a variavel que as plataformas injetam (Railway,
     # Render, Fly) e para a qual elas roteiam o trafego. Se `ASSISTANT_API_PORT`
     # tivesse precedencia, copiar o .env.example para as variaveis do deploy faria
@@ -41,8 +37,6 @@ class Settings(BaseSettings):
         8000,
         validation_alias=AliasChoices("PORT", "ASSISTANT_API_PORT"),
     )
-    reload: bool = True
-    log_level: str = "info"
     secret_key: str = "change-me-in-production"
     cors_origins: str = "http://localhost,http://127.0.0.1"
 
@@ -191,10 +185,6 @@ class Settings(BaseSettings):
     # baixa de novo.
     embedding_cache_dir: str = ""
 
-    # Servidores MCP em JSON. Aceita mapa {"nome": {...}} ou lista com "name".
-    # stdio: {"fs": {"command": "npx", "args": ["-y", "@mcp/server-fs", "/dir"]}}
-    # http:  {"docs": {"url": "http://localhost:3000/mcp"}}
-    mcp_servers: str = ""
     agent_max_tool_iterations: int = 3
     agent_max_handoffs: int = 2
 
@@ -210,19 +200,6 @@ class Settings(BaseSettings):
     tool_timeout_seconds: float = 20.0
     tool_max_retries: int = 1
     tool_retry_backoff_seconds: float = 0.5
-
-    # --- MCP Service ------------------------------------------------------
-    # Servidor MCP stdio sobe subprocesso; por isso `remote` aqui tem ganho real
-    # de isolamento, diferente do tool-service.
-    mcp_transport: str = "local"
-    mcp_service_url: str = ""
-    mcp_service_port: int = 8002
-    mcp_timeout_seconds: float = 30.0
-    mcp_max_retries: int = 2
-    mcp_retry_backoff_seconds: float = 0.5
-    mcp_circuit_failure_threshold: int = 3
-    mcp_circuit_reset_seconds: float = 60.0
-    mcp_tools_cache_ttl_seconds: float = 300.0
 
     # --- Orquestrador e portas de desenvolvimento -------------------------
     orchestrator_port: int = 8001
@@ -244,11 +221,6 @@ class Settings(BaseSettings):
     # capacidade local disparada no orquestrador volta ate ela.
     assistant_api_url: str = ""
 
-    # Segredo compartilhado das rotas entre servicos (`X-Internal-Token`). Vazio
-    # fecha essas rotas em vez de abri-las: a rota interna da API dispara
-    # script na maquina do usuario, e ela esta no mesmo dominio publico.
-    internal_service_token: str = ""
-
     # --- Checkpointing do grafo -------------------------------------------
     # `memory` nao sobrevive a restart, mas cobre o caso real de retomada dentro
     # da mesma sessao sem exigir dependencia extra. `sqlite` persiste entre
@@ -261,24 +233,6 @@ class Settings(BaseSettings):
     # util (as conversas recentes) e descarta as antigas, que ninguem retoma.
     checkpoint_max_threads: int = 200
     graph_node_max_retries: int = 2
-
-    # --- Observabilidade --------------------------------------------------
-    otel_enabled: bool = False
-    otel_service_name: str = "assistant-api"
-    otel_exporter_endpoint: str = ""
-    otel_console_export: bool = False
-    telemetry_memory_events: int = 2000
-    # Precos por milhao de tokens, sobrescrevendo a tabela interna:
-    # {"claude": {"input": 3.0, "output": 15.0}, "gpt:gpt-4o": {...}}
-    llm_pricing: str = ""
-
-    langsmith_enabled: bool = False
-    langsmith_api_key: str = Field(
-        "",
-        validation_alias=AliasChoices("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY"),
-    )
-    langsmith_project: str = "assistant-app"
-    langsmith_endpoint: str = ""
 
     education_segment_seconds: int = 60
     education_summary_max_chars: int = 24000
@@ -363,14 +317,6 @@ class Settings(BaseSettings):
         )
 
     @property
-    def mcp_service_base_url(self) -> str:
-        """Endereco do mcp-service, deduzido da porta quando a URL nao foi dada."""
-        return (
-            self.mcp_service_url.rstrip("/")
-            or f"http://127.0.0.1:{self.mcp_service_port}"
-        )
-
-    @property
     def orchestrator_base_url(self) -> str:
         """Endereco do agent-orchestrator, deduzido da porta quando a URL nao foi dada."""
         return (
@@ -396,11 +342,6 @@ class Settings(BaseSettings):
     def uses_remote_tools(self) -> bool:
         """Diz se o catalogo de ferramentas roda em outro processo."""
         return self.tool_transport.strip().lower() == "remote"
-
-    @property
-    def uses_remote_mcp(self) -> bool:
-        """Diz se o MCP roda em outro processo."""
-        return self.mcp_transport.strip().lower() == "remote"
 
     @property
     def active_llms(self) -> List[str]:

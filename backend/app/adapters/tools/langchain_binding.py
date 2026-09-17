@@ -18,7 +18,7 @@ from typing import Any, Sequence
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from ...ports.tools import ToolDescriptor, ToolGateway, ToolInvocation
+from shared.ports.tools import ToolDescriptor, ToolGateway, ToolInvocation
 
 
 def to_langchain_tool(

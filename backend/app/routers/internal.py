@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ..core.internal_auth import require_internal_token
-from ..ports.tools import ToolError, ToolTimeout
+from shared.ports.tools import ToolError, ToolTimeout
 from ..services.device_catalog_service import get_device_catalog
 
 router = APIRouter(

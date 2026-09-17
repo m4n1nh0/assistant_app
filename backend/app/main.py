@@ -23,7 +23,7 @@ from .core.config import get_settings
 from .core.database import init_db
 from .core.database_seed import apply_database_seed, database_seed_requested
 from .core.net import client_ip, client_ip_identifier
-from .core.observability.middleware import (
+from shared.observability.middleware import (
     setup_observability,
     shutdown_observability,
 )

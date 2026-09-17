@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from langgraph.runtime import Runtime
 
-from ...core.observability import span
+from shared.observability import span
 from ...ports.retrieval import RetrievalGateway, RetrievedChunk
 from ..state import NON_CHAT_KINDS, ChatGraphState, ChatRuntimeContext
 

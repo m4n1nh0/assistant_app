@@ -28,7 +28,7 @@ from loguru import logger
 from ..adapters.container import get_tool_gateway
 from ..adapters.tools.langchain_binding import to_langchain_tools
 from ..core.config import get_settings
-from ..core.observability import span
+from shared.observability import span
 from ..models.schemas import LLMResponse, Message
 from ..orchestration.agent_graph import (
     AgentRuntimeContext,
@@ -43,7 +43,7 @@ from ..orchestration.agents import (
     Specialist,
     select_specialist,
 )
-from ..ports.tools import ToolGateway
+from shared.ports.tools import ToolGateway
 from . import langchain_agent_service
 from .llm_routing_service import rank_auto_llms
 

@@ -16,10 +16,10 @@ from __future__ import annotations
 from loguru import logger
 
 from ..core.config import get_settings
-from ..ports.mcp import MCPGateway
+from shared.ports.mcp import MCPGateway
 from ..ports.orchestration import OrchestrationGateway
 from ..ports.retrieval import RetrievalGateway
-from ..ports.tools import ToolGateway
+from shared.ports.tools import ToolGateway
 
 _mcp_gateway: MCPGateway | None = None
 _tool_gateway: ToolGateway | None = None
@@ -94,24 +94,14 @@ def reset() -> None:
 
 
 def build_mcp_client():
-    """Cria um `MCPClient` com os parametros de resiliencia configurados.
+    """Cria o `MCPClient` deste processo com a configuracao da API.
 
-    Usado tanto pelo gateway local quanto pelo entrypoint do mcp-service, para
-    que os dois tenham exatamente o mesmo comportamento de timeout, retry e
-    disjuntor.
+    A construcao mora em `shared.mcp.factory`, a mesma que o mcp-service usa,
+    para os dois terem exatamente o mesmo timeout, retry e disjuntor.
     """
-    from ..mcp.client import MCPClient
+    from shared.mcp.factory import build_mcp_client as build
 
-    settings = get_settings()
-    return MCPClient(
-        settings.mcp_servers,
-        timeout_seconds=settings.mcp_timeout_seconds,
-        max_retries=settings.mcp_max_retries,
-        retry_backoff=settings.mcp_retry_backoff_seconds,
-        cache_ttl_seconds=settings.mcp_tools_cache_ttl_seconds,
-        failure_threshold=settings.mcp_circuit_failure_threshold,
-        circuit_reset_seconds=settings.mcp_circuit_reset_seconds,
-    )
+    return build(get_settings())
 
 
 def build_local_tool_gateway(*, mcp: MCPGateway | None = None) -> ToolGateway:

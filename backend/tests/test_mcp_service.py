@@ -11,9 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.adapters.mcp.local import LocalMCPGateway
-from app.mcp.client import CircuitBreaker, MCPClient
-from app.mcp.config import parse_servers
-from app.ports.mcp import MCPUnavailable
+from shared.mcp.client import CircuitBreaker, MCPClient
+from shared.mcp.config import parse_servers
+from shared.ports.mcp import MCPUnavailable
 from app.services import mcp_service as service
 
 pytestmark = pytest.mark.unit

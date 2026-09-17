@@ -34,7 +34,7 @@ from langgraph.types import Command, RetryPolicy
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ..core.observability import bind, span
+from shared.observability import bind, span
 from ..models.schemas import LLMResponse
 from .agents import HANDOFF_TOOL_NAME, SPECIALISTS, Specialist, handoff_targets
 

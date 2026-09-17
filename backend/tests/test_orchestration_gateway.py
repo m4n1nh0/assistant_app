@@ -30,7 +30,7 @@ from app.adapters.tools.remote import RemoteToolGateway
 from app.core.config import get_settings
 from app.models.schemas import LaunchAction, LLMResponse, Message, ResponseModeEnum, ShortcutType
 from app.ports.orchestration import ChatTurn
-from app.ports.tools import ToolInvocation, ToolTimeout
+from shared.ports.tools import ToolInvocation, ToolTimeout
 from app.services.client_capability_service import parse_manifest
 from app.services.device_catalog_service import (
     DeviceCatalog,

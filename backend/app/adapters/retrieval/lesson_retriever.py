@@ -19,7 +19,7 @@ from typing import Any, Sequence
 
 from loguru import logger
 
-from ...core.observability import span
+from shared.observability import span
 from ...ports.retrieval import RetrievedChunk
 
 

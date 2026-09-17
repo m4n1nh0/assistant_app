@@ -23,7 +23,7 @@ from typing import Any, Iterator
 
 from loguru import logger
 
-from ..ports.tools import ToolDescriptor
+from shared.ports.tools import ToolDescriptor
 from ..toolkit.executor import ToolExecutor
 from ..toolkit.registry import RegisteredTool, ToolRegistry
 from .client_capability_service import (

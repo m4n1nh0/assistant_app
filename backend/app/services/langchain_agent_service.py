@@ -32,7 +32,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from .user_llm_config_service import runtime_settings
-from ..core.observability import build_usage, current_context, record_usage, span
+from shared.observability import build_usage, current_context, record_usage, span
 from ..models.schemas import LLMResponse, Message
 from . import llm_service
 

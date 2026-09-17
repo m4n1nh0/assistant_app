@@ -9,6 +9,9 @@ O contrato e pequeno de proposito: listar servidores, listar capacidades,
 executar uma capacidade. Ele nao sabe o que e agente, especialista ou tool
 calling - quem transforma capacidade em ferramenta do assistente e o Tool
 Service, do outro lado do `MCPGateway`.
+
+Depende so de `shared`: nenhum modulo de `app` e carregado, e a imagem nem copia
+`app/`. `tests/test_import_boundaries.py` garante que continue assim.
 """
 
 from __future__ import annotations
@@ -18,13 +21,13 @@ from typing import Any
 from fastapi import Body, Query
 from loguru import logger
 
-from app.adapters.container import build_mcp_client
-from app.core.config import get_settings
-from app.ports.mcp import MCPUnavailable
+from shared.mcp.factory import build_mcp_client
+from shared.ports.mcp import MCPUnavailable
+from shared.settings import get_mcp_settings
 
 from ..common import create_service, serve
 
-settings = get_settings()
+settings = get_mcp_settings()
 client = build_mcp_client()
 
 

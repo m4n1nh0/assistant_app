@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from app.core.observability import configure_sink, default_sink
-from app.ports.tools import ToolDescriptor, ToolInvocation
+from shared.observability import configure_sink, default_sink
+from shared.ports.tools import ToolDescriptor, ToolInvocation
 from app.toolkit.executor import ToolExecutor
 from app.toolkit.registry import ToolRegistry
 

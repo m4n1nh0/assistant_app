@@ -15,9 +15,10 @@ import mkdocs_gen_files
 # Raiz do repositorio: este arquivo vive em <repo>/scripts/.
 ROOT = Path(__file__).parent.parent
 # `backend` entra no sys.path do griffe (ver `paths` em mkdocs.yml), por isso os
-# identificadores dos modulos comecam em `app.`.
+# identificadores dos modulos comecam em `app.` ou `shared.`.
 SRC = ROOT / "backend"
-PACKAGE = "app"
+PACKAGES = ("app", "shared")
+PACKAGE_TITLES = {"app": "Backend", "shared": "Shared - nucleo tecnico"}
 # Prefixo das paginas geradas dentro de docs_dir.
 REFERENCE_DIR = Path("referencia", "backend")
 
@@ -32,7 +33,7 @@ SECTION_TITLES = {
 
 nav = mkdocs_gen_files.Nav()
 
-for path in sorted((SRC / PACKAGE).rglob("*.py")):
+for path in sorted(p for package in PACKAGES for p in (SRC / package).rglob("*.py")):
     module_path = path.relative_to(SRC).with_suffix("")
     doc_path = path.relative_to(SRC).with_suffix(".md")
     full_doc_path = REFERENCE_DIR / doc_path
@@ -50,9 +51,9 @@ for path in sorted((SRC / PACKAGE).rglob("*.py")):
     if not parts:
         continue
 
-    # `app` vira "Backend"; subpacotes usam o titulo descritivo quando existir.
+    # O pacote raiz ganha titulo; subpacotes usam o descritivo quando existir.
     nav_parts = list(parts)
-    nav_parts[0] = "Backend"
+    nav_parts[0] = PACKAGE_TITLES[parts[0]]
     if len(nav_parts) > 1 and nav_parts[1] in SECTION_TITLES:
         nav_parts[1] = SECTION_TITLES[nav_parts[1]]
     nav[tuple(nav_parts)] = doc_path.as_posix()

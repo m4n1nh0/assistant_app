@@ -17,7 +17,7 @@ from typing import Any
 
 from ..adapters.container import get_mcp_gateway
 from ..core.config import get_settings
-from ..mcp.config import parse_servers
+from shared.mcp.config import parse_servers
 
 
 def configured() -> bool:

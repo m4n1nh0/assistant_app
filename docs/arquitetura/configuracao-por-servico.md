@@ -79,7 +79,7 @@ quebram um deploy em silêncio:
 | Chaves de provedor | Ficam num serviço que não fala com modelo nenhum | Só na `assistant-api`, e só para a migração inicial |
 
 O `RELOAD` merece um parágrafo porque o padrão do `Settings` é `True`
-(`app/core/config.py:44`) — quem **não** definir a variável também sobe com
+(`shared/settings.py`, campo `reload`) — quem **não** definir a variável também sobe com
 reload ligado. No `docker-compose.yml` isso não aparece porque os serviços
 extraídos são chamados com `python -m uvicorn ... --host --port`, desviando de
 `serve()`; num PaaS com `python -m services.<x>.main`, aparece.

@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from app.ports.tools import ToolTimeout
+from shared.ports.tools import ToolTimeout
 from app.services.client_capability_service import (
     parse_manifest,
     register_client_capabilities,
@@ -22,7 +22,7 @@ from app.services.remote_capability_gateway import (
 )
 from app.toolkit.executor import ToolExecutor
 from app.toolkit.registry import ToolRegistry
-from app.ports.tools import ToolInvocation
+from shared.ports.tools import ToolInvocation
 
 MANIFEST = {
     "platform": "windows",
