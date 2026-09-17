@@ -4,8 +4,15 @@ O backend cataloga, valida e persiste; a execucao e sempre da interface desktop.
 Por isso `POST /computer/actions/{id}/run` e `POST /computer/scripts/run`
 respondem 501 de proposito, em vez de tentar rodar no servidor.
 
-Todas as rotas exigem cliente local (`_require_local_client`): sao recursos da
-maquina do usuario e nao fazem sentido vindos da rede.
+Duas familias de rota, com regras diferentes:
+
+- **Acoes de computador** (`/actions`, `/actions/{id}/run`, `/scripts/run`)
+  exigem cliente local: dependem do sistema operacional de quem roda o backend.
+- **Scripts salvos** (`/scripts`, `/scripts/shells`) nao exigem. Sao texto por
+  usuario autenticado, gravado no banco; nada roda no servidor, e quem executa e
+  a interface, depois da confirmacao. Com o backend em nuvem, exigir cliente
+  local ali fazia todo salvamento responder 403 - "Detectei um script, mas nao
+  consegui salvar: Computer actions are available only from the local machine".
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -60,6 +67,13 @@ def _clean_script_fields(
 
 
 def _require_local_client(request: Request) -> None:
+    """Aceita so quem esta na mesma maquina (ou na rede bridge do Docker local).
+
+    `X-Forwarded-For` nao conta: e cabecalho que o cliente escreve, e aceitar
+    "127.0.0.1" vindo dele deixava qualquer um passar. Atras de proxy confiavel,
+    o uvicorn ja troca `request.client` pelo endereco real
+    (`FORWARDED_ALLOW_IPS`).
+    """
     host = request.client.host if request.client else ""
     if host in {"127.0.0.1", "::1", "localhost"} or host.startswith("127."):
         return
@@ -73,9 +87,6 @@ def _require_local_client(request: Request) -> None:
             return
     except ValueError:
         pass
-    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    if forwarded_for in {"127.0.0.1", "::1", "localhost"} or forwarded_for.startswith("127."):
-        return
     raise HTTPException(
         status_code=403,
         detail="Computer actions are available only from the local machine.",
@@ -114,7 +125,6 @@ async def run_computer_action(
 @router.get("/scripts/shells", response_model=ScriptShellsResponse)
 async def list_script_shells(request: Request):
     """Lista os shells aceitos e qual e o padrao da plataforma."""
-    _require_local_client(request)
     return {
         "default_shell": "powershell",
         "available_shells": ["powershell", "pwsh", "cmd", "bash", "sh", "zsh"],
@@ -129,7 +139,6 @@ async def list_saved_scripts(
     db: AsyncSession = Depends(get_db),
 ):
     """Lista os scripts salvos do usuario."""
-    _require_local_client(request)
     tutor_id = user["tutor_id"]
     result = await db.execute(
         select(ScriptSnippetModel)
@@ -147,7 +156,6 @@ async def create_saved_script(
     db: AsyncSession = Depends(get_db),
 ):
     """Salva um script para reexecucao posterior."""
-    _require_local_client(request)
     name, script, cwd, description = _clean_script_fields(
         name=body.name,
         script=body.script,
@@ -196,7 +204,6 @@ async def update_saved_script(
     db: AsyncSession = Depends(get_db),
 ):
     """Altera um script salvo do usuario."""
-    _require_local_client(request)
     item = await db.get(ScriptSnippetModel, script_id)
     if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Script nao encontrado")
@@ -237,7 +244,6 @@ async def delete_saved_script(
     db: AsyncSession = Depends(get_db),
 ):
     """Remove um script salvo do usuario."""
-    _require_local_client(request)
     item = await db.get(ScriptSnippetModel, script_id)
     if item is None or item.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Script nao encontrado")
