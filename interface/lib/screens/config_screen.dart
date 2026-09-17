@@ -437,7 +437,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
 
     if (mounted) {
       ref.read(isAuthenticatedProvider.notifier).state = false;
-      Navigator.pushReplacementNamed(context, '/main');
+      // A configuracao costuma ser aberta por cima da tela principal
+      // (`pushNamed('/config')`). `pushReplacementNamed` so trocaria esta rota
+      // por outra '/main', deixando a antiga embaixo: duas telas principais
+      // vivas, dois chats escutando o mesmo comando e dois WebSockets - cada
+      // clique em comando rapido ia duas vezes para o backend.
+      Navigator.pushNamedAndRemoveUntil(context, '/main', (_) => false);
     }
   }
 
@@ -1658,7 +1663,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                       ));
               if (ok == true) {
                 await StorageService.clearAll();
-                if (mounted) Navigator.pushReplacementNamed(context, '/config');
+                // Dados apagados: a tela principal que ficou embaixo nao pode
+                // continuar viva com a sessao antiga.
+                if (mounted) {
+                  Navigator.pushNamedAndRemoveUntil(
+                      context, '/config', (_) => false);
+                }
               }
             },
           ),

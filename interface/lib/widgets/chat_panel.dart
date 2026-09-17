@@ -3217,8 +3217,16 @@ ${result.promptText}
       if (next == null || previous?.id == next.id) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _sendMessage(next.text);
-        ref.read(queuedChatCommandProvider.notifier).state = null;
+        // O comando e consumido uma vez so: quem chega primeiro limpa a fila
+        // antes de enviar, e outro chat escutando o mesmo provider encontra a
+        // fila ja vazia. Antes o envio vinha antes da limpeza, e com duas telas
+        // principais na pilha as duas enviavam.
+        final claimed = claimQueuedChatCommand(
+          ref.read(queuedChatCommandProvider.notifier),
+          next.id,
+        );
+        if (claimed == null) return;
+        _sendMessage(claimed.text);
       });
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {

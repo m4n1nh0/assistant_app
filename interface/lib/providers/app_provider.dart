@@ -26,6 +26,21 @@ final queuedChatCommandProvider = StateProvider<QueuedChatCommand?>((ref) {
   return null;
 });
 
+/// Retira da fila o comando [id], se ele ainda estiver la.
+///
+/// Devolve o comando para quem o retirou e `null` para qualquer outro que
+/// tente depois. E o que garante um envio por clique mesmo com mais de um chat
+/// escutando a fila - caso real: duas telas principais na pilha de navegacao.
+QueuedChatCommand? claimQueuedChatCommand(
+  StateController<QueuedChatCommand?> queue,
+  String id,
+) {
+  final queued = queue.state;
+  if (queued == null || queued.id != id) return null;
+  queue.state = null;
+  return queued;
+}
+
 /// Estado da configuracao do app, carregado do Hive na inicializacao.
 class ConfigNotifier extends StateNotifier<AppConfig> {
   ConfigNotifier() : super(AppConfig()) {
