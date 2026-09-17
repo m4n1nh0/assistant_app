@@ -3,17 +3,18 @@
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
     QuizModel,
+    QuizParticipantModel,
     QuestionModel,
     StudentAnswerModel,
     get_db,
@@ -374,6 +375,72 @@ def _attach_student_cookie(
             httponly=True,
             samesite="lax",
         )
+    return response
+
+
+#: Intervalo minimo entre gravacoes de "ainda esta aqui". A tela do aluno se
+#: recarrega a cada 2s; gravar em toda recarga seria uma escrita por aluno por
+#: segundo so para o contador do lobby.
+PARTICIPANT_TOUCH_INTERVAL = timedelta(seconds=10)
+
+
+async def _touch_participant(
+    db: AsyncSession,
+    *,
+    quiz_id: str,
+    attempt_id: str,
+    student_name: str,
+    force: bool = False,
+) -> None:
+    """Registra que o aluno entrou ou continua com a tela aberta."""
+    name = (student_name or "").strip()[:80]
+    if not name:
+        return
+    now = datetime.now(timezone.utc)
+    participant = (await db.execute(
+        select(QuizParticipantModel).where(
+            QuizParticipantModel.quiz_id == quiz_id,
+            QuizParticipantModel.attempt_id == attempt_id,
+        )
+    )).scalar_one_or_none()
+    if participant is None:
+        db.add(QuizParticipantModel(
+            quiz_id=quiz_id,
+            attempt_id=attempt_id,
+            student_name=name,
+            joined_at=now,
+            last_seen_at=now,
+        ))
+    else:
+        last_seen = _as_utc(participant.last_seen_at)
+        if not force and last_seen and now - last_seen < PARTICIPANT_TOUCH_INTERVAL and participant.student_name == name:
+            return
+        participant.student_name = name
+        participant.last_seen_at = now
+    try:
+        await db.commit()
+    except Exception:
+        # Duas abas do mesmo aluno entrando juntas: a outra ja gravou.
+        await db.rollback()
+
+
+def _play_redirect(
+    *,
+    quiz_id: str,
+    attempt_id: str,
+    student_name: str,
+    language: str,
+) -> RedirectResponse:
+    """Depois de um POST, volta para a pagina por GET.
+
+    A tela do aluno se atualiza sozinha. Pagina que veio de POST, ao recarregar,
+    faz o navegador pedir confirmacao de reenvio do formulario - e a atualizacao
+    simplesmente nao acontece: o aluno ficava parado em "Resposta registrada"
+    enquanto o professor ja estava na pergunta seguinte.
+    """
+    response = RedirectResponse(url=f"play?lang={language}", status_code=303)
+    _attach_attempt_cookie(response, quiz_id=quiz_id, attempt_id=attempt_id)
+    _attach_student_cookie(response, quiz_id=quiz_id, student_name=student_name)
     return response
 
 
@@ -949,6 +1016,11 @@ p{{color:#6b7280;font-size:14px;margin:0}}
             attempt_id=attempt_id,
         )
 
+    if quiz.status == "open":
+        await _touch_participant(
+            db, quiz_id=quiz.id, attempt_id=attempt_id, student_name=student_name
+        )
+
     return await _render_live_quiz_page(
         quiz=quiz,
         questions=questions,
@@ -1004,7 +1076,15 @@ async def quiz_submit_answer(
             attempt_id=attempt_id,
         )
 
-    answered = False
+    if quiz.status == "open":
+        await _touch_participant(
+            db,
+            quiz_id=quiz.id,
+            attempt_id=attempt_id,
+            student_name=display_name,
+            force=True,
+        )
+
     submitted_question = _question_by_id(all_questions, question_id)
     if (
         quiz.live_phase == "question"
@@ -1034,14 +1114,12 @@ async def quiz_submit_answer(
                 pontuacao=_score_answer(correta=correta, elapsed_ms=elapsed_ms),
             ))
             await db.commit()
-        answered = True
 
-    return await _render_live_quiz_page(
-        quiz=quiz,
-        questions=all_questions,
-        request=request,
-        language=language,
+    # O GET decide o que mostrar a partir do banco: com a resposta gravada, a
+    # pergunta atual aparece como "Resposta registrada" ate o professor avancar.
+    return _play_redirect(
+        quiz_id=quiz.id,
+        attempt_id=attempt_id,
         student_name=display_name,
-        db=db,
-        answered=answered,
+        language=language,
     )

@@ -3,7 +3,7 @@
 import json
 import asyncio
 from typing import Set
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy import select, func
@@ -11,12 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
     QuizModel,
+    QuizParticipantModel,
     QuestionModel,
     StudentAnswerModel,
     get_db,
 )
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
+
+#: Aluno cuja tela nao se atualiza ha mais que isso saiu do quiz. A pagina se
+#: recarrega a cada 2s e grava presenca a cada 10s; 30s cobrem rede instavel.
+PARTICIPANT_ONLINE_WINDOW = timedelta(seconds=30)
+
+
+def _utc(value):
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 # Gerencia conexões WebSocket ativas por quiz
 class QuizConnectionManager:
@@ -197,6 +208,18 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     overall_ranking = _ranking_rows(all_answers)
     current_ranking = _ranking_rows(current_answers)
 
+    # Quem entrou, mesmo sem ter respondido: e o que o lobby precisa mostrar.
+    joined = list((await db.execute(
+        select(QuizParticipantModel)
+        .where(QuizParticipantModel.quiz_id == quiz_id)
+        .order_by(QuizParticipantModel.joined_at)
+    )).scalars().all())
+    online_since = datetime.now(timezone.utc) - PARTICIPANT_ONLINE_WINDOW
+    online = [
+        item for item in joined
+        if _utc(item.last_seen_at) and _utc(item.last_seen_at) >= online_since
+    ]
+
     return {
         "timestamp": datetime.now().isoformat(),
         "quiz_id": quiz_id,
@@ -239,7 +262,9 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
         "questions": questions_stats,
         "ranking_top10": overall_ranking[:10],
         "current_ranking_top10": current_ranking[:10],
-        "participants": len(overall_ranking),
+        "participants": max(len(joined), len(overall_ranking)),
+        "participants_online": len(online),
+        "participant_names": [item.student_name for item in online][:60],
         "active_connections": manager.get_connection_count(quiz_id),
     }
 

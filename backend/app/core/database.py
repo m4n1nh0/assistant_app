@@ -864,6 +864,26 @@ class QuestionModel(Base):
     created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class QuizParticipantModel(Base):
+    """Quem entrou num quiz ao vivo, antes mesmo de responder.
+
+    O ranking so conhece quem ja respondeu, entao o lobby mostrava sempre zero
+    participantes e o professor nao tinha como saber se a turma tinha entrado
+    antes de iniciar. `last_seen_at` e atualizado pela tela do aluno, que se
+    recarrega sozinha: e o que separa quem esta com a pagina aberta de quem ja
+    saiu.
+    """
+
+    __tablename__ = "quiz_participants"
+    __table_args__ = (UniqueConstraint("quiz_id", "attempt_id", name="uq_quiz_participant"),)
+    id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id      = Column(String(64), nullable=False, index=True)
+    attempt_id   = Column(String(64), nullable=False)
+    student_name = Column(String(80), nullable=False, default="")
+    joined_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class QuizJobModel(Base):
     """Um pedido de geracao de quiz na fila do professor.
 

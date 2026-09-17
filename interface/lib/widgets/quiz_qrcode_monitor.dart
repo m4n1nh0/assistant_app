@@ -82,7 +82,11 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
       _channel.stream.listen(
         (message) {
           final data = jsonDecode(message);
-          debugPrint('WebSocket message: $data');
+          // `stats_update` chega a cada 2s com o quiz inteiro: logar isso
+          // soterrava o console. So o que foge da rotina vai para o log.
+          if (data['type'] != 'stats_update') {
+            debugPrint('Quiz monitor: ${data['type']}');
+          }
 
           if (!mounted) return;
 
@@ -354,6 +358,11 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
     final correct = progress['correct'] as int? ?? 0;
     final incorrect = progress['incorrect'] as int? ?? 0;
     final participants = _stats!['participants'] as int? ?? 0;
+    final online = _stats!['participants_online'] as int? ?? participants;
+    final names = (_stats!['participant_names'] as List<dynamic>? ?? const [])
+        .map((name) => name.toString())
+        .where((name) => name.isNotEmpty)
+        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -403,10 +412,38 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         ],
         Row(
           children: [
-            Expanded(child: Text('Participantes: $participants')),
+            Expanded(
+              child: Text(
+                online == participants
+                    ? 'Participantes: $participants'
+                    : 'Participantes: $participants ($online com a tela aberta)',
+              ),
+            ),
             Text('Total: $totalAnswers | $correct acertos | $incorrect erros'),
           ],
         ),
+        // No lobby o professor precisa ver quem ja entrou antes de iniciar: e a
+        // unica confirmacao de que o QR Code funcionou na sala.
+        if (livePhase == 'lobby') ...[
+          const SizedBox(height: 10),
+          if (names.isEmpty)
+            Text(
+              'Ninguém entrou ainda. Peça para a turma escanear o QR Code.',
+              style: Theme.of(context).textTheme.bodySmall,
+            )
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final name in names)
+                  Chip(
+                    label: Text(name, style: const TextStyle(fontSize: 11)),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+        ],
         const SizedBox(height: 16),
         _buildLiveAction(livePhase),
         const SizedBox(height: 20),
