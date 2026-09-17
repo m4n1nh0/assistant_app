@@ -41,21 +41,28 @@ contexto local e comunicacao com a API.
 ```text
 assistant_app/
 |-- backend/                 FastAPI + Python
+|   |-- shared/              nucleo tecnico que nunca importa `app`
+|   |   |-- settings.py      configuracao de processo e de MCP
+|   |   |-- observability/   correlacao, spans, custo, OpenTelemetry
+|   |   |-- ports/           contratos de tools, MCP e telemetria
+|   |   |-- toolkit/         registry e executor de ferramentas
+|   |   `-- mcp/             cliente MCP: conexao, cache e disjuntor
 |   |-- app/
-|   |   |-- core/            configuracao, banco, seguranca e observabilidade
-|   |   |-- ports/           contratos (Protocol) sem SDK e sem I/O
+|   |   |-- core/            configuracao, banco, seguranca, token interno
+|   |   |-- ports/           contratos de dominio (orquestracao, busca)
 |   |   |-- orchestration/   LangGraph: estado, nos, arestas, checkpoint
-|   |   |-- toolkit/         Tool Service: registry, executor e catalogo
-|   |   |-- mcp/             MCP: configuracao, conexao e resiliencia
+|   |   |-- toolkit/         catalogo das ferramentas do produto
 |   |   |-- adapters/        implementacoes local/remota/fake dos contratos
 |   |   |-- models/          schemas Pydantic e contratos de API
-|   |   |-- routers/         endpoints REST, SSE e WebSocket
+|   |   |-- routers/         endpoints REST, SSE, WebSocket e rotas internas
 |   |   |-- services/        regras de negocio e integracoes externas
 |   |   `-- utils/           scheduler e utilitarios
-|   |-- services/            entrypoints de processo (mcp, tool, orchestrator)
-|   |-- tests/               testes unitarios, de integracao e de contrato
-|   |-- Dockerfile
-|   `-- requirements.txt
+|   |-- services/            entrypoints: mcp_service, tool_service, orchestrator
+|   |-- tests/               unitarios, integracao, contrato e fronteira de import
+|   |-- Dockerfile           imagem da assistant-api e do orquestrador
+|   |-- Dockerfile.mcp-service
+|   |-- Dockerfile.tool-service
+|   `-- requirements*.txt    imagem cheia e recortes por servico
 |
 |-- interface/               Flutter Desktop + Dart
 |   |-- lib/
@@ -68,7 +75,7 @@ assistant_app/
 |   `-- test/                testes da interface
 |
 |-- ollama/                  imagem auxiliar para modelo local
-|-- docker-compose.yml       MySQL, Qdrant, Redis, Ollama e backend
+|-- docker-compose.yml       MySQL, Qdrant, Redis, Ollama, backend e servicos
 |-- setup.bat
 `-- setup.sh
 ```
@@ -111,6 +118,25 @@ flowchart LR
     Scheduler --> Calendar
     Scheduler --> Notify
 ```
+
+### Servicos
+
+O backend pode rodar como um processo so ou dividido em quatro. A escolha e de
+configuracao, nao de codigo: `ORCHESTRATOR_TRANSPORT`, `TOOL_TRANSPORT` e
+`MCP_TRANSPORT` trocam entre `local` e `remote`.
+
+| Servico | Papel | Depende de |
+|---------|-------|------------|
+| `assistant-api` | autenticacao, rotas, WebSocket, modo educacao, voz | tudo |
+| `agent-orchestrator` | grafo do chat; decifra as chaves do usuario do banco | `shared` + dominio |
+| `tool-service` | catalogo e governanca das ferramentas | `shared` + catalogo, sem banco |
+| `mcp-service` | servidores MCP | so `shared` |
+
+Chave de provedor nao trafega entre servicos, e as rotas internas exigem
+`INTERNAL_SERVICE_TOKEN`. As fronteiras de import sao verificadas em
+`backend/tests/test_import_boundaries.py`. Detalhes em
+[Configuracao por servico](docs/arquitetura/configuracao-por-servico.md) e
+[Deploy na Railway](docs/arquitetura/deploy-railway.md).
 
 ### Componentes
 
@@ -1185,8 +1211,34 @@ Na raiz do projeto:
 docker compose up -d
 ```
 
-O compose sobe MySQL, Qdrant, Redis, Ollama e backend. A interface Flutter
-continua sendo executada localmente.
+O compose sobe MySQL, Qdrant, Redis, Ollama e backend, com o chat, as
+ferramentas e o MCP rodando dentro do backend. A interface Flutter continua
+sendo executada localmente.
+
+Para exercitar os servicos separados:
+
+```bash
+cp backend/.env.mcp-service.example  backend/.env.mcp-service
+cp backend/.env.tool-service.example backend/.env.tool-service
+cp backend/.env.orchestrator.example backend/.env.orchestrator
+# no backend/.env: ORCHESTRATOR_TRANSPORT, TOOL_TRANSPORT e MCP_TRANSPORT=remote,
+# as URLs dos servicos e o mesmo INTERNAL_SERVICE_TOKEN do .env.orchestrator
+docker compose --profile services up -d
+```
+
+### Deploy Na Railway
+
+O passo a passo completo — servicos a criar, ordem, root directory, Dockerfile,
+start command, healthcheck, volumes, watch paths e o bloco de variaveis de cada
+um — esta em [Deploy na Railway](docs/arquitetura/deploy-railway.md). Os pontos
+que mais quebram deploy:
+
+- `DATABASE_URL` precisa de `mysql+aiomysql://`; a `MYSQL_URL` da Railway usa
+  `mysql://`.
+- `SECRET_KEY`, `JWT_SECRET`, `CREDENTIAL_ENCRYPTION_KEY` e
+  `INTERNAL_SERVICE_TOKEN` iguais na `assistant-api` e no `agent-orchestrator`.
+- `RELOAD=false` em todo servico e `FORWARDED_ALLOW_IPS=*` na API.
+- O orquestrador precisa do start command `python -m services.orchestrator.main`.
 
 ### Ollama E LocalAI Na Railway
 
@@ -1197,7 +1249,8 @@ O backend trata Ollama e LocalAI como provedores separados:
 | Ollama | `11434` | `/api/tags` | `/api/chat` |
 | LocalAI | `8080` | `/v1/models` e configuração instalada | `/v1/chat/completions` |
 
-Crie estas variaveis **no servico do backend**:
+Crie estas variaveis **no servico do backend** e, com
+`ORCHESTRATOR_TRANSPORT=remote`, repita as de LocalAI no `agent-orchestrator`:
 
 ```dotenv
 OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PRIVATE_DOMAIN}}:11434

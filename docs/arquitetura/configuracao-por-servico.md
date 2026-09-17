@@ -9,7 +9,8 @@ separa os serviços (`MCP_TRANSPORT=remote`, `TOOL_TRANSPORT=remote`,
 serviço tem seu próprio conjunto de variáveis.
 
 Para o *porquê* de cada fronteira, veja
-[Arquitetura agentiva](agentes.md). Se você veio aqui para **criar
+[Arquitetura agentiva](agentes.md). Para os blocos prontos de variáveis e a
+configuração de cada serviço na Railway, veja [Deploy na Railway](deploy-railway.md). Se você veio aqui para **criar
 os serviços agora**, o caminho curto é [a receita](#receita-criar-os-servicos) —
 mas leia antes [o que não copiar do `.env.example`](#o-que-nao-copiar-do-envexample),
 que é onde o deploy costuma quebrar.

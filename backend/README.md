@@ -47,12 +47,48 @@ docker compose down
 ```
 
 O ambiente Docker sobe cinco serviços: backend, MySQL, Qdrant, Redis e Ollama.
+O perfil `services` acrescenta `mcp-service`, `tool-service` e
+`agent-orchestrator` (`docker compose --profile services up -d`); para o backend
+usá-los, veja [Serviços](#serviços).
 O MySQL guarda configurações, identificação do tutor, aprovações, automações e
 auditoria. O Qdrant guarda memórias aprovadas para preferências, comportamento,
 instruções e automações. O Redis guarda os contadores do rate limiting por IP
 (`fastapi-limiter`); sem ele o backend sobe normalmente, só sem esse limite. A
 imagem do Ollama baixa `llama3.2:3b`; mantenha `OLLAMA_MODEL=llama3.2:3b` no
 `backend/.env` para usar esse modelo no compose.
+
+---
+
+## Serviços
+
+O backend roda como um processo só por padrão. Quatro variáveis na
+`assistant-api` o dividem, sem mudar código:
+
+```dotenv
+ORCHESTRATOR_TRANSPORT=remote   # grafo do chat no agent-orchestrator
+TOOL_TRANSPORT=remote           # catálogo de ferramentas no tool-service
+MCP_TRANSPORT=remote            # servidores MCP no mcp-service
+INTERNAL_SERVICE_TOKEN=...      # mesmo valor na API e no orquestrador
+```
+
+| Serviço | Entrypoint | Dockerfile | Variáveis |
+|---|---|---|---|
+| `assistant-api` | `python run.py` | `Dockerfile` | `.env.example` |
+| `agent-orchestrator` | `python -m services.orchestrator.main` | `Dockerfile` | `.env.orchestrator.example` |
+| `tool-service` | `python -m services.tool_service.main` | `Dockerfile.tool-service` | `.env.tool-service.example` |
+| `mcp-service` | `python -m services.mcp_service.main` | `Dockerfile.mcp-service` | `.env.mcp-service.example` |
+
+- **Credenciais**: o orquestrador decifra as chaves do usuário do banco pelo
+  `tutor_id`; nenhuma chave decifrada atravessa a rede.
+- **Máquina do usuário**: o manifesto de capacidades vai junto com o turno, e a
+  execução volta por `POST /internal/devices/invoke` na API, dona do WebSocket.
+- **Fronteiras**: `shared/` nunca importa `app/`; o mcp-service não carrega nada
+  de `app`, e o tool-service não carrega banco nem cifra
+  (`tests/test_import_boundaries.py`).
+
+Qual variável pertence a qual processo:
+[configuração por serviço](../docs/arquitetura/configuracao-por-servico.md).
+Blocos prontos para a Railway: [deploy na Railway](../docs/arquitetura/deploy-railway.md).
 
 ---
 
@@ -178,7 +214,10 @@ verificação.
 
 ### Railway
 
-No serviço do **backend**, configure:
+Topologia completa, com todos os serviços: [deploy na Railway](../docs/arquitetura/deploy-railway.md).
+
+No serviço do **backend** (e no `agent-orchestrator`, quando o chat roda nele),
+configure:
 
 ```dotenv
 OLLAMA_BASE_URL=http://${{ollama-7c414367-1ecc-440a-99b9-5125eb1185e9.RAILWAY_PRIVATE_DOMAIN}}:11434
@@ -619,20 +658,33 @@ inválido ou está ausente.
 
 ```text
 backend/
+├── shared/                  # núcleo técnico — nunca importa app
+│   ├── settings.py          # ServiceSettings e MCPSettings
+│   ├── observability/       # correlação, spans, custo, OpenTelemetry
+│   ├── ports/               # contratos de tools, MCP e telemetria
+│   ├── toolkit/             # ToolRegistry e ToolExecutor
+│   └── mcp/                 # cliente MCP, parser de MCP_SERVERS e factory
 ├── app/
 │   ├── main.py              # FastAPI app + lifespan
 │   ├── core/
-│   │   ├── config.py        # Pydantic settings (.env)
+│   │   ├── config.py        # Settings da API (herda de shared.settings)
 │   │   ├── database.py      # SQLAlchemy async + modelos
 │   │   ├── security.py      # JWT + bcrypt
+│   │   ├── internal_auth.py # X-Internal-Token entre serviços
 │   │   ├── net.py           # IP real do cliente (X-Forwarded-For)
 │   │   └── rate_limit.py    # dependência de rate limit por IP (Redis)
+│   ├── ports/               # contratos de domínio: orquestração e busca
+│   ├── orchestration/       # grafo LangGraph: estado, nós, roteamento, checkpoint
+│   ├── toolkit/catalog.py   # registro das ferramentas do produto
+│   ├── adapters/            # local/remoto: tools, mcp, orchestration, devices, retrieval
 │   ├── models/
 │   │   └── schemas.py       # Pydantic schemas (request/response)
 │   ├── services/
 │   │   ├── assistant_tools.py  # tools tipadas do LangChain
-│   │   ├── chat_graph_service.py  # workflow LangGraph do chat
+│   │   ├── chat_graph_service.py  # fachada do chat → OrchestrationGateway
 │   │   ├── langchain_agent_service.py  # modelos e respostas estruturadas
+│   │   ├── launcher_intent_service.py  # detecção de atalho por texto (sem banco)
+│   │   ├── launcher_service.py  # atalhos no banco e descoberta de comando
 │   │   ├── llm_service.py   # chamadas e streaming dos provedores de LLM
 │   │   ├── llm_status_service.py  # disponibilidade e modelos dos LLMs
 │   │   ├── calendar_service.py  # Google + Microsoft OAuth
@@ -640,6 +692,7 @@ backend/
 │   │   └── voice_service.py  # transcrição + síntese de voz
 │   ├── routers/
 │   │   ├── chat.py          # REST chat + SSE stream
+│   │   ├── internal.py      # rotas entre serviços (capacidade da máquina)
 │   │   ├── computer.py      # catálogo de ações e snippets locais
 │   │   ├── desktop.py       # contexto de janelas do host local
 │   │   ├── launcher.py      # atalhos e auditoria de aberturas
@@ -649,12 +702,24 @@ backend/
 │   │   └── routes.py        # auth, calendário, notificações, voz e health
 │   └── utils/
 │       └── scheduler.py     # APScheduler (calendar polling)
-├── tests/                   # testes unitários e de contratos
-├── run.py                   # Entry point
+├── services/                # entrypoints de processo
+│   ├── common.py            # health live/ready, lifespan, porta
+│   ├── mcp_service/main.py
+│   ├── tool_service/main.py
+│   └── orchestrator/main.py
+├── tests/                   # unitários, contrato e fronteira de import
+├── run.py                   # entrypoint da assistant-api
 ├── seed_dev.py              # seed de demonstração manual
-├── requirements.txt
+├── requirements.txt         # imagem cheia
+├── requirements-mcp-service.txt
+├── requirements-tool-service.txt
 ├── Dockerfile
-└── .env.example
+├── Dockerfile.mcp-service
+├── Dockerfile.tool-service
+├── .env.example             # assistant-api
+├── .env.orchestrator.example
+├── .env.tool-service.example
+└── .env.mcp-service.example
 ```
 
 ## Testes

@@ -6,8 +6,9 @@ mudar, edite `docs/referencia/infra.md` junto com o arquivo alterado.
 
 ## Servicos do compose
 
-`docker-compose.yml` sobe cinco containers. O backend depende dos quatro outros e
-so inicia quando MySQL e Redis passam no healthcheck.
+`docker-compose.yml` sobe cinco containers por padrao. O backend depende dos
+quatro outros e so inicia quando MySQL e Redis passam no healthcheck. Os servicos
+extraidos ficam atras de perfis.
 
 | Servico | Imagem | Porta(s) | Volume | Papel |
 | --- | --- | --- | --- | --- |
@@ -16,6 +17,10 @@ so inicia quando MySQL e Redis passam no healthcheck.
 | `redis` | `redis:7-alpine` | 6379 | `assistant_redis` | Rate limiting por IP (`fastapi-limiter`). Opcional em runtime. |
 | `ollama` | build de `ollama/` | 11434 | `assistant_ollama` | LLM local. Reserva todas as GPUs NVIDIA disponiveis. |
 | `backend` | build de `backend/` | 8000 | `assistant_data`, `assistant_logs` | FastAPI. Monta `./backend` como bind mount. |
+| `mcp-service` | `Dockerfile.mcp-service` | 8002 | — | Perfis `services`, `mcp`. Le `backend/.env.mcp-service`. |
+| `tool-service` | `Dockerfile.tool-service` | 8003 | — | Perfis `services`, `tools`. Le `backend/.env.tool-service`. |
+| `agent-orchestrator` | `Dockerfile` | 8001 | — | Perfis `services`, `orchestrator`. Le `backend/.env.orchestrator`. |
+| `otel-collector` | `otel/opentelemetry-collector-contrib` | 8004, 4317 | — | Perfil `observability`. |
 
 O container `ollama` e uma imagem propria justamente para ja trazer o modelo:
 o `Dockerfile` em `ollama/` sobe o servidor durante o build, espera o
@@ -28,9 +33,10 @@ e sobrescreve o que estiver em `backend/.env` — esse arquivo entra como
 `env_file` opcional (`required: false`), entao o compose sobe mesmo sem ele.
 
 ```bash
-docker compose up -d          # sobe tudo
+docker compose up -d                       # backend + infraestrutura
+docker compose --profile services up -d    # + mcp, tool e orquestrador
 docker compose logs -f backend
-docker compose down           # preserva os volumes
+docker compose down                        # preserva os volumes
 ```
 
 ## Imagem do backend
@@ -49,6 +55,19 @@ sobre `app.main:app`, com ping de WebSocket a cada 30s.
 
 O healthcheck do compose bate em `/health/live` a cada 30s.
 
+### Imagens por servico
+
+| Dockerfile | Requisitos | Copia | CMD |
+| --- | --- | --- | --- |
+| `Dockerfile` | `requirements.txt` | tudo | `python run.py` (o orquestrador troca por `python -m services.orchestrator.main`) |
+| `Dockerfile.tool-service` | `requirements-tool-service.txt` | `shared/`, `app/`, `services/` | `python -m services.tool_service.main` |
+| `Dockerfile.mcp-service` | `requirements-mcp-service.txt` | `shared/`, `services/` | `python -m services.mcp_service.main` |
+
+As imagens enxutas nao levam faster-whisper nem os wheels de CUDA (~2,1 GB). A do
+mcp-service nao copia `app/`, e a do tool-service nao instala pacote de banco nem
+de JWT; `backend/tests/test_import_boundaries.py` reprova o import que quebraria
+essas imagens.
+
 ## Setup da interface
 
 `setup.sh` (bash) e `setup.bat` (Windows) fazem o mesmo caminho para o Flutter:
@@ -62,7 +81,9 @@ rodando em `localhost:8000`.
 
 ## Variaveis de ambiente
 
-`backend/.env.example` documenta apenas o que continua vindo do ambiente. A regra
+`backend/.env.example` documenta apenas o que continua vindo do ambiente (os
+servicos extraidos tem `.env.<servico>.example` proprios; blocos para a Railway em
+[Deploy na Railway](../arquitetura/deploy-railway.md)). A regra
 do projeto e: **configuracao de usuario mora no banco**, ambiente guarda
 infraestrutura e segredo de aplicacao. Os grupos:
 
@@ -76,6 +97,9 @@ infraestrutura e segredo de aplicacao. Os grupos:
 | LLM local | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `LOCALAI_*`, `LOCAL_LLM_CONTEXT_TOKENS` | Modelos por usuario ficam no banco; aqui so o endereco da infra. |
 | Embeddings | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_LOCAL_MODEL`, `EMBEDDING_CACHE_DIR`, `EMBEDDING_DIMENSIONS` | Em `auto` a ordem e endpoint proprio, LocalAI, Ollama, modelo local em processo, OpenAI e hash offline. |
 | Agentes e MCP | `MCP_SERVERS`, `AGENT_MAX_TOOL_ITERATIONS`, `AGENT_MAX_HANDOFFS` | `MCP_SERVERS` e um JSON; `command` vira stdio e `url` vira streamable_http. |
+| Servicos | `ORCHESTRATOR_TRANSPORT`, `ORCHESTRATOR_URL`, `TOOL_TRANSPORT`, `TOOL_SERVICE_URL`, `MCP_TRANSPORT`, `MCP_SERVICE_URL`, `INTERNAL_SERVICE_TOKEN`, `ASSISTANT_API_URL` | `local` roda in-process; `remote` usa o servico. O token e obrigatorio com orquestrador remoto; `ASSISTANT_API_URL` so e lida pelo orquestrador. |
+| Proxy | `FORWARDED_ALLOW_IPS` | Lida pelo uvicorn. `*` em PaaS, senao o redirect do OAuth sai em `http://`. |
+| OCR | `OCR_ENABLED`, `OCR_MAX_PAGES`, `OCR_DPI`, `OCR_MIN_SCORE` | OCR local do material didatico. |
 | Modo educacao | `EDUCATION_SEGMENT_SECONDS`, `EDUCATION_SUMMARY_MAX_CHARS`, `EDUCATION_SUMMARY_PROVIDER_TIMEOUT_SECONDS`, `EDUCATION_SUMMARY_MAX_PROVIDERS`, `EDUCATION_SUMMARY_ALLOW_PAID_FALLBACK` | Controlam o fatiamento do audio e o fallback entre provedores no resumo. |
 | Voz | `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `WHISPER_VAD_*`, `STT_PROVIDER`, `TTS_PROVIDER`, `OPENAI_TTS_*` | `cuda`/`float16` exige `nvidia-cublas-cu12` e `nvidia-cudnn-cu12`; sem GPU, volte para `cpu`/`int8`. |
 
