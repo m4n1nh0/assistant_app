@@ -1537,6 +1537,31 @@ class QuizCreateRequest(BaseModel):
         return _quiz_source_ids([self.material_id, *self.material_ids])
 
 
+class QuestionUpdate(BaseModel):
+    """Correcao de uma questao de rascunho pelo professor.
+
+    Campo ausente fica como esta. Com `opcoes`, o gabarito sai da alternativa
+    marcada como correta - e exatamente uma precisa estar marcada.
+    """
+    enunciado: Optional[str] = Field(default=None, max_length=2000)
+    opcoes: Optional[List[QuestionOption]] = Field(default=None, max_length=8)
+    resposta_correta: Optional[str] = None
+    justificativa: Optional[str] = Field(default=None, max_length=4000)
+    dificuldade: Optional[Literal["facil", "medio", "dificil"]] = None
+
+
+class QuizFromQuestionsRequest(BaseModel):
+    """Quiz novo montado com questoes ja existentes, sem chamar a IA."""
+    titulo: str = Field(min_length=1, max_length=255)
+    question_ids: List[str] = Field(min_length=1, max_length=50)
+    tipo_quiz: Literal["revisao", "diagnostico", "pratica"] = "pratica"
+
+
+class QuizJobSeenRequest(BaseModel):
+    """Pedidos cujo aviso de fim o professor ja viu."""
+    job_ids: List[str] = Field(default_factory=list, max_length=200)
+
+
 class QuizResponse(BaseModel):
     """Quiz com suas questoes, no formato consumido pelo player do aluno."""
     id: str

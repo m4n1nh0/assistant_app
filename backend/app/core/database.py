@@ -857,7 +857,44 @@ class QuestionModel(Base):
     topico_origem        = Column(String(255), nullable=True)
     grounding_score      = Column(Float, default=0.0)
     verificado           = Column(Boolean, default=False)
+    #: Tirada do banco de questoes sem apagar: questao de quiz ja aplicado tem
+    #: resposta de aluno apontando para ela, e o relatorio precisa continuar
+    #: fechando.
+    arquivada            = Column(Boolean, nullable=False, default=False)
     created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class QuizJobModel(Base):
+    """Um pedido de geracao de quiz na fila do professor.
+
+    Fica no banco, e nao em memoria, porque gerar leva minutos e deploy
+    reinicia o processo: com a fila em memoria, o pedido feito antes do deploy
+    sumia sem aviso. `request_json` guarda o pedido inteiro, para o worker
+    refazer o contexto das fontes na hora de gerar e o "tentar de novo" repetir
+    exatamente o mesmo pedido.
+
+    Estados: queued -> running -> done | error | canceled.
+    """
+
+    __tablename__ = "quiz_jobs"
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id      = Column(String(64), nullable=False, index=True)
+    user_id       = Column(String(64), nullable=False, default="")
+    titulo        = Column(String(255), nullable=False, default="")
+    status        = Column(String(16), nullable=False, default="queued", index=True)
+    total         = Column(Integer, nullable=False, default=1)
+    prontas       = Column(Integer, nullable=False, default=0)
+    request_json  = Column(Text, nullable=False, default="{}")
+    quiz_id       = Column(String(64), nullable=True)
+    message       = Column(Text, nullable=True)
+    error         = Column(Text, nullable=True)
+    attempts_json = Column(Text, nullable=True)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    started_at    = Column(DateTime, nullable=True)
+    finished_at   = Column(DateTime, nullable=True)
+    #: Quando o professor viu o aviso de fim. Nulo com o job terminado e o que a
+    #: interface mostra como notificacao pendente.
+    seen_at       = Column(DateTime, nullable=True)
 
 
 class StudentAnswerModel(Base):
@@ -994,6 +1031,9 @@ def _add_compatibility_columns(sync_conn) -> None:
             "current_question_id": "VARCHAR(64) NULL",
             "question_started_at": "DATETIME NULL",
             "closed_at": "DATETIME NULL",
+        },
+        "questions": {
+            "arquivada": "BOOLEAN NOT NULL DEFAULT FALSE",
         },
         "student_answers": {
             "student_name": "VARCHAR(180) NULL",

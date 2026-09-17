@@ -47,14 +47,15 @@ Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de for
 **Tipo de Quiz:** {tipo_quiz}
 **Tipos de Questão:** multipla_escolha
 **Dificuldade:** {dificuldade}
-{evitar}
+
 **Instruções:**
 1. Cada questão deve derivar diretamente do conteúdo acima (não invente conteúdo)
 2. Inclua justificativas que citam o trecho de onde a questão saiu
 3. Quando houver mais de uma fonte, distribua as questões entre elas
 4. Gere somente questões objetivas de múltipla escolha
 5. Distribua dificuldade equitativamente
-6. Inclua todos os tópicos principais encontrados no conteúdo
+6. Cubra os tópicos principais do conteúdo, priorizando os que ainda não
+   aparecem nas perguntas já geradas
 7. Para "multipla_escolha", gere exatamente 4 opções com labels A, B, C e D
 8. Marque exatamente uma opção como correta
 9. Alternativa curta: no máximo {max_palavras} palavras e {max_caracteres}
@@ -65,7 +66,7 @@ Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de for
 10. Enunciado direto, em uma linha
 11. Use "resposta_correta" com o label da alternativa correta
 12. Responda somente com JSON válido, sem markdown e sem comentários fora do JSON
-
+{evitar}
 **Formato de resposta (JSON):**
 {{
   "questoes": [
@@ -150,6 +151,11 @@ class QuizGraphState(dict):
     tipos_questao: List[str]
     dificuldade: str
     requested_llm: Optional[str]
+
+    #: Questoes de quizzes anteriores das mesmas fontes. Entram na lista de "ja
+    #: geradas" do prompt e na deteccao de repeticao, mas nao no quiz novo: sao
+    #: o que faz o segundo quiz da mesma aula nao sair igual ao primeiro.
+    previas: List[Dict[str, Any]]
 
     #: Chamado a cada lote com (questoes prontas, total pedido). Existe para a
     #: geracao em segundo plano poder dizer na tela em que ponto esta.
@@ -661,22 +667,115 @@ async def _shorten_long_options(
 # --- Geracao em lotes ------------------------------------------------------
 
 
+#: Quantas perguntas prontas entram no prompt do lote seguinte. Cobre um quiz
+#: inteiro de tamanho usual; acima disso a lista come contexto da aula.
+MAX_AVOID_QUESTIONS = 30
+MAX_AVOID_CONCEPTS = 25
+#: Parecenca de palavras a partir da qual uma pergunta conta como reformulacao
+#: de outra ja pronta ("O que e 3FN?" x "O que e a 3FN na normalizacao?").
+REPHRASE_SIMILARITY = 0.8
+
+
 def _dedupe_key(enunciado: str) -> str:
     return re.sub(r"[^0-9a-zà-ÿ ]", "", (enunciado or "").lower()).strip()
 
 
-def _avoid_block(ja_gerados: Sequence[Dict[str, Any]]) -> str:
-    """Lista os enunciados ja prontos, para o lote seguinte nao repetir."""
+def _key_words(enunciado: str) -> frozenset:
+    # Numero fica mesmo curto: "1FN" e "2FN", ou "1 byte" e "2 bytes", sao
+    # perguntas diferentes que so se distinguem por ele.
+    return frozenset(
+        word
+        for word in _dedupe_key(enunciado).split()
+        if len(word) > 2 or any(char.isdigit() for char in word)
+    )
+
+
+def _is_repeat(enunciado: str, vistos: Sequence[frozenset], chaves: set) -> bool:
+    """Diz se a pergunta ja existe, igual ou so com as palavras trocadas de lugar.
+
+    Comparar so o texto normalizado deixava passar a mesma pergunta com uma
+    palavra a mais - e o quiz saia com duas questoes sobre a mesma coisa.
+    """
+    chave = _dedupe_key(enunciado)
+    if not chave or chave in chaves:
+        return True
+    palavras = _key_words(enunciado)
+    if not palavras:
+        return False
+    for outras in vistos:
+        if not outras:
+            continue
+        comuns = len(palavras & outras) / len(palavras | outras)
+        if comuns >= REPHRASE_SIMILARITY:
+            return True
+    return False
+
+
+def _correct_option_text(questao: Dict[str, Any]) -> str:
+    for opcao in questao.get("opcoes") or []:
+        if isinstance(opcao, dict) and opcao.get("correta"):
+            return str(opcao.get("texto") or "").strip()
+    return ""
+
+
+def _avoid_block(
+    ja_gerados: Sequence[Dict[str, Any]],
+    *,
+    tentativa_repetiu: bool = False,
+) -> str:
+    """O que o lote seguinte precisa saber para nao repetir o que ja saiu.
+
+    Mandar so o enunciado nao bastava: com uma aula curta, o modelo relia a
+    instrucao de cobrir os topicos principais e voltava as mesmas perguntas -
+    varios provedores seguidos devolviam as quatro de antes. Aqui vao tambem a
+    resposta e os conceitos ja usados, e um caminho para variar quando os
+    conceitos acabam.
+
+    Args:
+        ja_gerados: perguntas aceitas ate agora.
+        tentativa_repetiu: o provedor anterior deste mesmo lote so devolveu
+            repeticao; o seguinte recebe isso escrito.
+    """
     if not ja_gerados:
         return ""
-    enunciados = "\n".join(
-        f"- {_compact_text(questao.get('enunciado', ''), limit=120)}"
-        for questao in list(ja_gerados)[-12:]
+
+    recentes = list(ja_gerados)[-MAX_AVOID_QUESTIONS:]
+    linhas = []
+    for questao in recentes:
+        resposta = _correct_option_text(questao)
+        sufixo = f" (resposta: {_compact_text(resposta, limit=60)})" if resposta else ""
+        linhas.append(f"- {_compact_text(questao.get('enunciado', ''), limit=160)}{sufixo}")
+
+    conceitos: List[str] = []
+    for questao in recentes:
+        for item in [*(questao.get("conceitos") or []), questao.get("topico_origem")]:
+            texto = str(item or "").strip()
+            if texto and texto.lower() not in {c.lower() for c in conceitos}:
+                conceitos.append(texto)
+
+    bloco = [
+        "\n**Perguntas já geradas — não repita, não reformule e não pergunte a "
+        "mesma coisa com outras palavras:**",
+        *linhas,
+    ]
+    if conceitos:
+        bloco.append(
+            "\n**Conceitos já cobertos:** "
+            + ", ".join(conceitos[:MAX_AVOID_CONCEPTS])
+        )
+    bloco.append(
+        "\n**Como variar:** cada questão nova precisa testar um conceito que ainda "
+        "não foi cobrido ou um ângulo novo de um conceito já usado — aplicação "
+        "prática, comparação entre dois conceitos, causa e consequência, exemplo "
+        "concreto, identificação de erro ou ordem de etapas. Trocar sinônimos ou a "
+        "ordem das palavras de uma pergunta existente não conta como pergunta nova."
     )
-    return (
-        "\n**Perguntas já geradas (não repita nem reformule estas):**\n"
-        f"{enunciados}\n"
-    )
+    if tentativa_repetiu:
+        bloco.append(
+            "\n**Atenção:** a tentativa anterior devolveu apenas perguntas que já "
+            "existiam. Não use nenhum enunciado acima como ponto de partida."
+        )
+    return "\n".join(bloco) + "\n"
 
 
 def _attempts_error(attempts: Sequence[Dict[str, Any]]) -> str:
@@ -792,18 +891,26 @@ async def _generate_batch(
 ) -> Dict[str, Any]:
     """Pede um lote de questoes, tentando cada modelo candidato em ordem."""
 
-    prompt = QUIZ_GENERATION_PROMPT.format(
-        quantidade_questoes=quantidade,
-        resumo=state["resumo"],
-        disciplina=state["disciplina"],
-        tipo_quiz=state["tipo_quiz"],
-        tipos_questao=", ".join(state["tipos_questao"]),
-        dificuldade=state["dificuldade"],
-        evitar=_avoid_block(ja_gerados),
-        max_palavras=MAX_OPTION_WORDS,
-        max_caracteres=MAX_OPTION_CHARS,
-    )
-    vistos = {_dedupe_key(questao.get("enunciado", "")) for questao in ja_gerados}
+    # O que ja existe de quizzes anteriores vem antes: o corte do bloco guarda as
+    # mais recentes, e as deste quiz sao as que mais importa nao repetir.
+    referencia = list(state.get("previas") or []) + list(ja_gerados)
+
+    def prompt_for(tentativa_repetiu: bool) -> str:
+        return QUIZ_GENERATION_PROMPT.format(
+            quantidade_questoes=quantidade,
+            resumo=state["resumo"],
+            disciplina=state["disciplina"],
+            tipo_quiz=state["tipo_quiz"],
+            tipos_questao=", ".join(state["tipos_questao"]),
+            dificuldade=state["dificuldade"],
+            evitar=_avoid_block(referencia, tentativa_repetiu=tentativa_repetiu),
+            max_palavras=MAX_OPTION_WORDS,
+            max_caracteres=MAX_OPTION_CHARS,
+        )
+
+    chaves = {_dedupe_key(questao.get("enunciado", "")) for questao in referencia}
+    vistos = [_key_words(questao.get("enunciado", "")) for questao in referencia]
+    tentativa_repetiu = False
     erro = "A IA não gerou perguntas aproveitáveis."
 
     # Copia: `_drop_provider` altera a fila original, e tirar item de lista
@@ -812,7 +919,7 @@ async def _generate_batch(
         try:
             response = await dispatch_single(
                 llm_name,
-                prompt,
+                prompt_for(tentativa_repetiu),
                 [],
                 "Responda somente com JSON válido para geração de quiz.",
                 max_tokens=_token_budget(quantidade),
@@ -846,10 +953,11 @@ async def _generate_batch(
 
         novas = []
         for questao in questoes:
-            chave = _dedupe_key(questao.get("enunciado", ""))
-            if not chave or chave in vistos:
+            enunciado = questao.get("enunciado", "")
+            if _is_repeat(enunciado, vistos, chaves):
                 continue
-            vistos.add(chave)
+            chaves.add(_dedupe_key(enunciado))
+            vistos.append(_key_words(enunciado))
             novas.append(questao)
             if len(novas) >= quantidade:
                 break
@@ -859,6 +967,9 @@ async def _generate_batch(
             # nao tinha como saber se o modelo falou fora do JSON, repetiu as
             # perguntas do lote anterior ou devolveu resposta vazia.
             erro = _empty_batch_reason(response.content, questoes)
+            # O proximo provedor deste lote precisa saber que "nao repita" nao
+            # bastou - senao recebe o mesmo prompt e tende ao mesmo resultado.
+            tentativa_repetiu = tentativa_repetiu or bool(questoes)
             attempts.append({
                 "llm": llm_name,
                 "success": False,
@@ -1137,6 +1248,7 @@ async def generate_quiz(
     dificuldade: str = "mista",
     llm: Optional[str] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
+    questoes_existentes: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Gera quiz automaticamente baseado em resumo de aula.
 
@@ -1150,6 +1262,8 @@ async def generate_quiz(
         dificuldade: 'facil', 'medio', 'dificil', 'mista'
         llm: LLM preferido ou 'auto' para seleção automática
         on_progress: Chamado a cada lote com (questões prontas, total pedido)
+        questoes_existentes: questões de quizzes anteriores das mesmas fontes,
+            para a IA não repeti-las
 
     Returns:
         Dict com questões geradas e metadata
@@ -1176,6 +1290,7 @@ async def generate_quiz(
         "dificuldade": dificuldade,
         "requested_llm": llm,
         "on_progress": on_progress,
+        "previas": list(questoes_existentes or []),
     })
 
     outcome = dict(result.get("outcome", {}))

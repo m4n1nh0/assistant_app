@@ -1,33 +1,30 @@
-/// Geracao de quiz a partir da aula, com revisao das questoes.
+/// Pedido de quiz a partir de aulas e materiais.
+///
+/// A tela so monta o pedido. A geracao vai para a fila do servidor e o
+/// professor acompanha pela central (aba FILA) - revisar, liberar o QR Code e
+/// reaproveitar questoes acontece la, com o quiz ja gravado.
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../services/api_service.dart';
 import '../services/education_service.dart';
-import 'quiz_preview_dialog.dart';
+import '../services/quiz_center_service.dart';
+import '../services/quiz_queue_watcher.dart';
 
-typedef QuizPublishedCallback = void Function(
-  String quizId,
-  int totalQuestions,
-);
-
-/// Widget para gerar e compartilhar quizzes no Modo Educação
+/// Widget para pedir quizzes no Modo Educação
 class QuizGeneratorWidget extends StatefulWidget {
   final String lessonId;
   final String lessonTitle;
   final String disciplineName;
-  final QuizPublishedCallback? onQuizPublished;
-  final bool showShareDialog;
+
+  /// Chamado depois que o pedido entrou na fila, com o pedido criado.
+  final ValueChanged<QuizJob>? onQueued;
 
   const QuizGeneratorWidget({
     super.key,
     required this.lessonId,
     required this.lessonTitle,
     required this.disciplineName,
-    this.onQuizPublished,
-    this.showShareDialog = true,
+    this.onQueued,
   });
 
   @override
@@ -35,29 +32,11 @@ class QuizGeneratorWidget extends StatefulWidget {
 }
 
 class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
-  bool _isGenerating = false;
-  bool _isPublishing = false;
+  bool _isSending = false;
   String? _error;
 
-  /// O que o servidor esta fazendo agora, para a espera nao ser uma tela parada.
-  String _progress = '';
-  String? _generatedQuizId;
-  bool _quizPublished = false;
-  List<Map<String, dynamic>> _generatedQuestions = const [];
-
-  /// Quantas perguntas a menos vieram em relacao ao pedido.
-  int _generatedShortfall = 0;
-
-  /// Resumo do servidor: de quantas fontes o quiz saiu e o que ficou de fora
-  /// por nao ter texto. Fonte marcada que nao entrou precisa aparecer aqui.
-  String _generatedMessage = '';
-
-  /// Quantas foram efetivamente liberadas para os alunos.
-  int _publishedCount = 0;
-
-  /// Tentativas por modelo, para a revisao explicar por que vieram menos
-  /// perguntas do que o pedido.
-  List<Map<String, dynamic>> _generationAttempts = const [];
+  /// Ultimo pedido enviado, para a confirmacao na tela.
+  QuizJob? _lastJob;
 
   /// Fontes marcadas. Aulas e materiais se somam, em qualquer combinacao: a
   /// revisao de prova junta as aulas do bimestre com a apostila.
@@ -144,13 +123,12 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     }
   }
 
-  /// Pede a geracao e acompanha ate terminar.
+  /// Coloca o pedido na fila e libera a tela na hora.
   ///
-  /// Escrever as perguntas com a IA passa dos 30s que o cliente HTTP espera, e
-  /// o timeout fazia parecer que a geracao tinha falhado quando ela seguia
-  /// rodando no servidor. Agora o servidor devolve um `job_id` na hora e a tela
-  /// pergunta o andamento; quando termina, o professor tambem e avisado pelos
-  /// canais que ele configurou, para poder sair desta tela enquanto espera.
+  /// Esperar a geracao aqui prendia o professor por minutos e se perdia ao
+  /// fechar a tela. Agora o servidor grava o pedido, a central acompanha e o
+  /// aviso chega quando o quiz fica pronto - com o app aberto ou na proxima vez
+  /// que abrir.
   Future<void> _generateQuiz() async {
     if (_lessonIds.isEmpty && _materialIds.isEmpty) {
       setState(() => _error = 'Marque ao menos uma aula ou material como fonte.');
@@ -159,269 +137,31 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     }
 
     setState(() {
-      _isGenerating = true;
+      _isSending = true;
       _error = null;
-      _progress = 'Enviando o conteúdo para a IA...';
     });
 
     try {
-      final response = await api.post(
-        '/education/quiz/generate/async',
-        body: {
-          // Quantas fontes o professor marcar: o servidor junta os textos e
-          // grava uma linha por fonte, para a revisao saber de onde cada
-          // pergunta saiu.
-          'lesson_ids': _lessonIds.toList(),
-          'material_ids': _materialIds.toList(),
-          'tipo_quiz': _quizType,
-          'quantidade_questoes': _questionCount,
-          'tipos_questao': ['multipla_escolha'],
-          'dificuldade': _difficulty,
-          'llm': 'auto', // Usa melhor LLM disponível
-        },
-      );
-
-      if (!response.success) {
-        throw Exception(response.error ?? 'Erro ao gerar quiz');
-      }
-
-      final jobId = response.data['job_id']?.toString() ?? '';
-      if (jobId.isEmpty) {
-        throw Exception('Resposta sem identificador da geração');
-      }
-
-      final quiz = await _waitForQuiz(jobId);
-      // Tela fechada no meio da espera: a geracao segue no servidor e o aviso
-      // chega pelos canais do professor. Mexer no estado aqui so quebraria.
-      if (quiz == null) return;
-      _applyGeneratedQuiz(quiz);
+      final job = await quizCenter.enqueue({
+        'lesson_ids': _lessonIds.toList(),
+        'material_ids': _materialIds.toList(),
+        'tipo_quiz': _quizType,
+        'quantidade_questoes': _questionCount,
+        'tipos_questao': ['multipla_escolha'],
+        'dificuldade': _difficulty,
+        'llm': 'auto',
+      });
+      if (!mounted) return;
+      setState(() => _lastJob = job);
+      await quizQueueWatcher.refresh();
+      widget.onQueued?.call(job);
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = 'Erro ao gerar quiz: $e';
-      });
+      setState(() => _error = 'Não foi possível pedir o quiz: $e');
       _showErrorSnackbar(_error!);
     } finally {
-      if (mounted) {
-        setState(() {
-          _isGenerating = false;
-          _progress = '';
-        });
-      }
+      if (mounted) setState(() => _isSending = false);
     }
-  }
-
-  /// Pergunta o andamento ate o quiz ficar pronto.
-  ///
-  /// O teto de espera e generoso de proposito: cinquenta perguntas em lotes,
-  /// com reescrita de alternativa longa, levam minutos em modelo local.
-  Future<Map<String, dynamic>?> _waitForQuiz(String jobId) async {
-    const intervalo = Duration(seconds: 3);
-    const limite = Duration(minutes: 20);
-    final comeco = DateTime.now();
-
-    while (DateTime.now().difference(comeco) < limite) {
-      await Future<void>.delayed(intervalo);
-      if (!mounted) return null;
-
-      final status = await api.get('/education/quiz/jobs/$jobId');
-      if (!status.success) {
-        throw Exception(status.error ?? 'Não foi possível acompanhar a geração');
-      }
-
-      final estado = status.data['status']?.toString() ?? '';
-      final mensagem = status.data['message']?.toString() ?? '';
-      if (mensagem.isNotEmpty && mensagem != _progress) {
-        setState(() => _progress = mensagem);
-      }
-
-      if (estado == 'done') {
-        final quiz = status.data['quiz'];
-        if (quiz is Map) {
-          return quiz.map((key, value) => MapEntry(key.toString(), value));
-        }
-        throw Exception('Geração terminou sem devolver o quiz');
-      }
-      if (estado == 'error') {
-        throw Exception(
-          status.data['error']?.toString() ?? 'A IA não gerou as perguntas',
-        );
-      }
-    }
-
-    throw Exception(
-      'A geração passou de 20 minutos. Ela continua no servidor: '
-      'você será avisado quando terminar.',
-    );
-  }
-
-  void _applyGeneratedQuiz(Map<String, dynamic> quiz) {
-    final quizId = quiz['quiz_id']?.toString() ?? '';
-    if (quizId.isEmpty) {
-      throw Exception('Resposta sem identificador do quiz');
-    }
-
-    final questions = quiz['questoes'];
-    final questionItems = questions is List
-        ? questions
-            .whereType<Map>()
-            .map((item) => item.map(
-                  (key, value) => MapEntry(key.toString(), value),
-                ))
-            .toList()
-        : <Map<String, dynamic>>[];
-
-    final rawAttempts = quiz['attempts'];
-
-    setState(() {
-      _generatedQuizId = quizId;
-      _quizPublished = false;
-      _generatedMessage = quiz['message']?.toString() ?? '';
-      _generatedQuestions = questionItems;
-      _generationAttempts = rawAttempts is List
-          ? rawAttempts
-              .whereType<Map>()
-              .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
-              .toList()
-          : const [];
-      // O controle guarda o que foi *pedido*. Sobrescrever com o que voltou
-      // fazia o numero recuar sozinho e parecer que o campo nao aceitava o
-      // valor; a diferenca agora e dita em texto, no lugar de escondida.
-      _generatedShortfall =
-          questionItems.isNotEmpty && questionItems.length < _questionCount
-              ? _questionCount - questionItems.length
-              : 0;
-    });
-  }
-
-  Future<void> _publishQuiz() async {
-    final quizId = _generatedQuizId;
-    if (quizId == null || _isPublishing) return;
-
-    setState(() {
-      _isPublishing = true;
-      _error = null;
-    });
-
-    try {
-      final response = await api.post(
-        '/education/quiz/$quizId/publish',
-        body: {},
-      );
-
-      if (!response.success) {
-        throw Exception(response.error ?? 'Erro ao liberar QR Code');
-      }
-
-      final questions = response.data['questoes'];
-      final totalQuestions =
-          questions is List ? questions.length : _questionCount;
-
-      setState(() {
-        _quizPublished = true;
-        // Campo proprio: `_questionCount` e o pedido do professor e nao pode
-        // ser reescrito pelo que saiu.
-        _publishedCount = totalQuestions.clamp(1, 50).toInt();
-      });
-
-      widget.onQuizPublished?.call(quizId, totalQuestions);
-
-      if (mounted && widget.showShareDialog) {
-        _showQuizShareDialog(quizId);
-      }
-    } catch (e) {
-      setState(() {
-        _error = 'Erro ao liberar QR Code: $e';
-      });
-      _showErrorSnackbar(_error!);
-    } finally {
-      setState(() {
-        _isPublishing = false;
-      });
-    }
-  }
-
-  void _showQuizShareDialog(String quizId) {
-    final link = _quizLink(quizId);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('✨ Quiz Liberado com Sucesso!'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Quiz: ${widget.lessonTitle}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text('Questões liberadas: $_publishedCount'),
-            const SizedBox(height: 16),
-            const Text('Compartilhe o link com seus alunos:'),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SelectableText(
-                link,
-                style: const TextStyle(
-                  fontFamily: 'Courier',
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Fechar'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              _copyToClipboard(link);
-              Navigator.pop(context);
-              _showSuccessSnackbar('Link copiado!');
-            },
-            child: const Text('Copiar Link'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              _openQuizInBrowser(quizId);
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
-            child: const Text('Abrir Quiz'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openQuizInBrowser(String quizId) async {
-    final url = Uri.parse(_quizLink(quizId));
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    } else {
-      _showErrorSnackbar('Não foi possível abrir o navegador');
-    }
-  }
-
-  String _quizLink(String quizId) =>
-      '${api.baseUrl}/education/quiz/$quizId/play';
-
-  Future<void> _copyToClipboard(String text) async {
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Copiado: $text')),
-    );
   }
 
   void _showErrorSnackbar(String message) {
@@ -433,19 +173,6 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
     );
   }
 
-  void _showSuccessSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  bool get _hasReviewWarnings => _generatedQuestions.any(
-        (question) => question['verificado'] == false,
-      );
-
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -455,20 +182,17 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Título
             Row(
               children: [
                 const Icon(Icons.quiz, color: Colors.purple),
                 const SizedBox(width: 12),
                 Text(
-                  'Gerar Quiz',
+                  'Pedir Quiz',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ],
             ),
             const SizedBox(height: 16),
-
-            // Configuração: Tipo de Quiz
             Row(
               children: [
                 Expanded(
@@ -504,10 +228,7 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                   ),
             ),
             const SizedBox(height: 12),
-
             _buildSourcePicker(),
-
-            // Configuração: Número de Questões
             _buildSlider(
               label: 'Número de Questões: $_questionCount',
               value: _questionCount.toDouble(),
@@ -518,11 +239,10 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
               },
             ),
             const SizedBox(height: 20),
-
-            // Erro (se houver)
             if (_error != null)
               Container(
                 padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
                   color: Colors.red[100],
                   borderRadius: BorderRadius.circular(8),
@@ -541,27 +261,19 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                   ],
                 ),
               ),
-            const SizedBox(height: 12),
-
-            // Botão de Gerar
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _isGenerating ? null : _generateQuiz,
-                icon: _isGenerating
-                    ? SizedBox(
+                onPressed: _isSending ? null : _generateQuiz,
+                icon: _isSending
+                    ? const SizedBox(
                         height: 20,
                         width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.purple[400] ?? Colors.purple,
-                          ),
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.auto_awesome),
+                    : const Icon(Icons.playlist_add),
                 label: Text(
-                  _isGenerating ? 'Gerando...' : 'Preparar Perguntas com IA',
+                  _isSending ? 'Enviando...' : 'Colocar na Fila de Geração',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -573,193 +285,28 @@ class _QuizGeneratorWidgetState extends State<QuizGeneratorWidget> {
                 ),
               ),
             ),
-
-            // Andamento: a geracao leva minutos, e barra parada sem texto
-            // parece travamento.
-            if (_isGenerating && _progress.isNotEmpty)
+            if (_lastJob != null)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  '$_progress Você pode fechar esta tela: o aviso chega '
-                  'quando o quiz ficar pronto.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-
-            // Se quiz foi gerado, mostra perguntas antes de liberar o QR Code.
-            if (_generatedQuizId != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
+                padding: const EdgeInsets.only(top: 12),
                 child: Container(
+                  width: double.infinity,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.green[50],
+                    color: Colors.green.withValues(alpha: 0.08),
                     border: Border.all(color: Colors.green),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.check_circle, color: Colors.green),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Perguntas preparadas',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (_generatedMessage.isNotEmpty) ...[
-                        Text(
-                          _generatedMessage,
+                      const Icon(Icons.check_circle_outline, color: Colors.green),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '"${_lastJob!.titulo}" entrou na fila. '
+                          '${_lastJob!.message} Você será avisado quando '
+                          'ficar pronto — pode continuar usando o app.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
-                        const SizedBox(height: 8),
-                      ],
-                      if (_generatedQuestions.isNotEmpty) ...[
-                        Text(
-                          'Confira as perguntas antes de liberar o QR Code:',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        const SizedBox(height: 8),
-                        if (_hasReviewWarnings) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.orange[50],
-                              border: Border.all(color: Colors.orange),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.warning_amber_rounded,
-                                  color: Colors.orange,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Há perguntas geradas com baixa confiança. Revise antes de liberar.',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                        ],
-                        ..._generatedQuestions
-                            .take(8)
-                            .toList()
-                            .asMap()
-                            .entries
-                            .map((entry) {
-                          final index = entry.key;
-                          final question = entry.value;
-                          final enunciado =
-                              question['enunciado']?.toString().trim() ?? '';
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: Text(
-                              '${index + 1}. $enunciado',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          );
-                        }),
-                        if (_generatedQuestions.length > 8)
-                          Text(
-                            '+ ${_generatedQuestions.length - 8} pergunta(s)',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        if (_generatedShortfall > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              'Você pediu $_questionCount e vieram '
-                              '${_generatedQuestions.length}. Abra a revisão '
-                              'para ver o motivo.',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(color: Colors.orange),
-                            ),
-                          ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: () => showQuizPreviewDialog(
-                            context,
-                            questions: _generatedQuestions,
-                            requested: _questionCount,
-                            attempts: _generationAttempts,
-                          ),
-                          icon: const Icon(Icons.fact_check_outlined, size: 16),
-                          label: const Text('REVISAR PERGUNTAS'),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      if (_quizPublished) ...[
-                        Text(
-                          'Link para compartilhar:',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        const SizedBox(height: 4),
-                        SelectableText(
-                          _quizLink(_generatedQuizId!),
-                          style: const TextStyle(
-                            fontFamily: 'Courier',
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          if (!_quizPublished)
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: _isPublishing ? null : _publishQuiz,
-                                icon: _isPublishing
-                                    ? const SizedBox(
-                                        height: 18,
-                                        width: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.qr_code_2),
-                                label: Text(
-                                  _isPublishing
-                                      ? 'Liberando...'
-                                      : 'Liberar QR Code',
-                                ),
-                              ),
-                            )
-                          else ...[
-                            ElevatedButton.icon(
-                              onPressed: () {
-                                _copyToClipboard(_quizLink(_generatedQuizId!));
-                              },
-                              icon: const Icon(Icons.content_copy),
-                              label: const Text('Copiar'),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: () =>
-                                  _openQuizInBrowser(_generatedQuizId!),
-                              icon: const Icon(Icons.open_in_browser),
-                              label: const Text('Abrir'),
-                            ),
-                          ],
-                        ],
                       ),
                     ],
                   ),

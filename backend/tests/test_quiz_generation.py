@@ -1059,116 +1059,17 @@ def test_aparo_nao_deixa_palavra_solta_no_fim():
 # --- Geracao em segundo plano ---------------------------------------------
 
 
-async def _aguarda_job(job):
-    for _ in range(500):
-        if job.finished_at is not None:
-            return
-        await asyncio.sleep(0.01)
-    raise AssertionError("o job não terminou")
-
-
-def test_job_guarda_o_quiz_pronto_e_avisa_no_fim():
-    """Gerar leva minutos: a rota devolve o job e o aviso fecha o ciclo."""
-    from app.services import quiz_job_service
-
-    quiz_job_service.reset()
-    avisos = []
-
-    async def runner(job):
-        job.report(2, 2)
-        return {"quiz_id": "quiz-1", "questoes": [{"id": "a"}, {"id": "b"}]}
-
-    async def notify(job):
-        avisos.append((job.status, job.prontas))
-
-    async def cenario():
-        job = quiz_job_service.submit(
-            tutor_id="tutor-1",
-            total=2,
-            titulo="Quiz: Aula",
-            runner=runner,
-            notify=notify,
-        )
-        await _aguarda_job(job)
-        return job
-
-    job = run(cenario())
-
-    assert job.status == "done"
-    assert job.result["quiz_id"] == "quiz-1"
-    assert job.prontas == 2
-    assert avisos == [("done", 2)]
-    assert quiz_job_service.get_job(job.id, "tutor-1") is job
-
-
-def test_job_que_falha_guarda_a_frase_escrita_para_o_professor():
-    """`repr` de excecao nao diz nada a quem esta esperando o quiz."""
-    from app.services import quiz_job_service
-
-    quiz_job_service.reset()
-    avisos = []
-
-    async def runner(_job):
-        raise HTTPException(status_code=502, detail="A IA não gerou perguntas válidas.")
-
-    async def notify(job):
-        avisos.append(job.error)
-
-    async def cenario():
-        job = quiz_job_service.submit(
-            tutor_id="tutor-1",
-            total=3,
-            titulo="Quiz: Aula",
-            runner=runner,
-            notify=notify,
-        )
-        await _aguarda_job(job)
-        return job
-
-    job = run(cenario())
-
-    assert job.status == "error"
-    assert job.error == "A IA não gerou perguntas válidas."
-    assert avisos == ["A IA não gerou perguntas válidas."]
-
-
-def test_job_de_outro_professor_nao_e_visivel():
-    """Quiz em preparo e material de prova: nao vaza entre contas."""
-    from app.services import quiz_job_service
-
-    quiz_job_service.reset()
-
-    async def runner(_job):
-        return {"quiz_id": "quiz-1", "questoes": []}
-
-    async def cenario():
-        job = quiz_job_service.submit(
-            tutor_id="tutor-1",
-            total=1,
-            titulo="Quiz: Aula",
-            runner=runner,
-        )
-        await _aguarda_job(job)
-        return job
-
-    job = run(cenario())
-
-    assert quiz_job_service.get_job(job.id, "tutor-2") is None
-
-
-def test_rota_assincrona_devolve_o_job_sem_esperar_a_ia(monkeypatch):
-    """A fonte e validada na hora; so a parte demorada vai para a task."""
-    from app.services import quiz_job_service
-
+def test_rota_assincrona_coloca_o_pedido_na_fila_sem_esperar_a_ia(monkeypatch):
+    """A fonte e validada na hora; so a parte demorada vai para a fila."""
     capturado = {}
 
-    def fake_submit(*, tutor_id, total, titulo, runner, notify):
-        capturado.update(tutor_id=tutor_id, total=total, titulo=titulo)
-        return quiz_job_service.QuizJob(
-            id="job-1", tutor_id=tutor_id, total=total, titulo=titulo
+    async def fake_enqueue(*, tutor_id, user_id, titulo, total, request):
+        capturado.update(
+            tutor_id=tutor_id, user_id=user_id, titulo=titulo, total=total, request=request
         )
+        return {"job_id": "job-1", "status": "queued", "position": 1}
 
-    monkeypatch.setattr(education.quiz_job_service, "submit", fake_submit)
+    monkeypatch.setattr(education.quiz_job_service.queue, "enqueue", fake_enqueue)
 
     resposta = run(
         education.generate_quiz_in_background(
@@ -1178,68 +1079,17 @@ def test_rota_assincrona_devolve_o_job_sem_esperar_a_ia(monkeypatch):
         )
     )
 
-    assert resposta["job_id"] == "job-1"
-    assert resposta["status"] == "pending"
-    assert capturado == {
-        "tutor_id": "tutor-1",
-        "total": 7,
-        "titulo": "Quiz: Normalizacao",
-    }
-
-
-def test_job_em_segundo_plano_enxerga_as_chaves_do_professor(monkeypatch):
-    """A geracao roda depois do 202, e precisa levar o contexto do professor.
-
-    As credenciais de nuvem vivem numa ContextVar desfeita no fim da
-    requisicao. Sem reativa-la dentro da task, `active_llms` so devolvia a
-    infraestrutura local e o quiz morria em "Nenhum modelo gerou o quiz" mesmo
-    com a chave salva na conta.
-    """
-    from app.services import quiz_job_service, user_llm_config_service
-
-    capturado = {}
-
-    def fake_submit(*, tutor_id, total, titulo, runner, notify):
-        capturado["runner"] = runner
-        return quiz_job_service.QuizJob(
-            id="job-ctx", tutor_id=tutor_id, total=total, titulo=titulo
-        )
-
-    async def fake_generation(*_args, **_kwargs):
-        capturado["provedores"] = list(
-            user_llm_config_service.runtime_settings.active_llms
-        )
-        return SimpleNamespace(model_dump=lambda mode="json": {"questoes": []})
-
-    monkeypatch.setattr(education.quiz_job_service, "submit", fake_submit)
-    monkeypatch.setattr(education, "_run_quiz_generation", fake_generation)
-
-    runtime = user_llm_config_service.UserLLMRuntime(
-        scope="tutor:1",
-        providers={
-            "claude": {"api_key": "k", "model": "claude-x", "enabled": True}
-        },
-    )
-    token = user_llm_config_service.activate_user_llms(runtime)
-    try:
-        run(
-            education.generate_quiz_in_background(
-                QuizCreateRequest(lesson_id="lesson-1", quantidade_questoes=2),
-                user={"tutor_id": "tutor-1", "uid": "user-1"},
-                db=QuizDb(_lesson()),
-            )
-        )
-    finally:
-        # O contexto some antes da task rodar, como na requisicao real.
-        user_llm_config_service.reset_user_llms(token)
-
-    assert user_llm_config_service.current_user_llms() is None
-    run(capturado["runner"](quiz_job_service.QuizJob(id="j", tutor_id="t", total=2)))
-    assert "claude" in capturado["provedores"]
+    assert resposta == {"job_id": "job-1", "status": "queued", "position": 1}
+    assert capturado["tutor_id"] == "tutor-1"
+    assert capturado["user_id"] == "user-1"
+    assert capturado["total"] == 7
+    assert capturado["titulo"] == "Quiz: Normalizacao"
+    # O pedido inteiro vai gravado: e dele que o worker refaz o contexto.
+    assert capturado["request"]["lesson_id"] == "lesson-1"
 
 
 def test_rota_assincrona_recusa_aula_sem_resumo():
-    """Job aceito que falha minutos depois e pior que um 400 imediato."""
+    """Pedido aceito que falha minutos depois e pior que um 400 imediato."""
     with pytest.raises(HTTPException) as error:
         run(
             education.generate_quiz_in_background(
@@ -1250,17 +1100,6 @@ def test_rota_assincrona_recusa_aula_sem_resumo():
         )
 
     assert error.value.status_code == 400
-
-
-def test_andamento_de_job_inexistente_responde_404():
-    from app.services import quiz_job_service
-
-    quiz_job_service.reset()
-
-    with pytest.raises(HTTPException) as error:
-        run(education.get_quiz_job("nao-existe", user={"tutor_id": "tutor-1"}))
-
-    assert error.value.status_code == 404
 
 
 def test_teto_de_tokens_acompanha_o_tamanho_do_quiz():
@@ -1800,3 +1639,122 @@ def test_fila_de_candidatos_nao_para_nos_tres_primeiros(monkeypatch):
     monkeypatch.setattr(quiz_generator_service, "rank_auto_llms", fake_rank)
 
     assert run(quiz_generator_service._candidate_llms_for_quiz()) == configurados
+
+
+def _questao(enunciado, resposta="Terceira forma normal", conceitos=None, topico=None):
+    return {
+        "enunciado": enunciado,
+        "opcoes": [
+            {"label": "A", "texto": resposta, "correta": True},
+            {"label": "B", "texto": "Chave estrangeira", "correta": False},
+        ],
+        "conceitos": conceitos or [],
+        "topico_origem": topico,
+    }
+
+
+def test_lote_seguinte_recebe_resposta_e_conceitos_das_perguntas_prontas():
+    """So o enunciado nao bastava: com aula curta o modelo voltava aos mesmos pontos."""
+    bloco = quiz_generator_service._avoid_block([
+        _questao(
+            "Qual forma normal elimina dependencia transitiva?",
+            conceitos=["dependencia transitiva"],
+            topico="Normalizacao",
+        ),
+    ])
+
+    assert "Qual forma normal elimina dependencia transitiva?" in bloco
+    assert "(resposta: Terceira forma normal)" in bloco
+    assert "Conceitos já cobertos:** dependencia transitiva, Normalizacao" in bloco
+    assert "Como variar" in bloco
+
+
+def test_lista_de_perguntas_prontas_nao_para_nas_doze_ultimas():
+    prontas = [_questao(f"Pergunta numero {i} da aula?") for i in range(20)]
+
+    bloco = quiz_generator_service._avoid_block(prontas)
+
+    assert "Pergunta numero 0 da aula?" in bloco
+    assert "Pergunta numero 19 da aula?" in bloco
+
+
+def test_instrucao_de_cobrir_topicos_prioriza_o_que_falta():
+    assert "priorizando os que ainda não" in quiz_generator_service.QUIZ_GENERATION_PROMPT
+
+
+def test_reformulacao_conta_como_repeticao():
+    vistos = [quiz_generator_service._key_words("O que e a terceira forma normal?")]
+    chaves = {quiz_generator_service._dedupe_key("O que e a terceira forma normal?")}
+
+    assert quiz_generator_service._is_repeat(
+        "O que e a terceira forma normal (normal)?", vistos, chaves
+    )
+    assert quiz_generator_service._is_repeat(
+        "A terceira forma normal e o que?", vistos, chaves
+    )
+    assert not quiz_generator_service._is_repeat(
+        "Qual a diferenca entre chave primaria e estrangeira?", vistos, chaves
+    )
+
+
+def test_numero_diferente_nao_e_reformulacao():
+    """"1FN" e "2FN" so se distinguem pelo numero, e sao perguntas diferentes."""
+    vistos = [quiz_generator_service._key_words("O que caracteriza a 1FN?")]
+
+    assert not quiz_generator_service._is_repeat("O que caracteriza a 2FN?", vistos, set())
+
+
+def test_provedor_seguinte_sabe_que_o_anterior_so_repetiu(monkeypatch):
+    """Mesmo prompt para o proximo provedor tende a dar a mesma repeticao."""
+    import json as _json
+
+    prompts = []
+
+    def questao(enunciado):
+        return {
+            "tipo": "multipla_escolha",
+            "enunciado": enunciado,
+            "opcoes": [
+                {"label": "A", "texto": "3FN", "correta": True},
+                {"label": "B", "texto": "1FN"},
+            ],
+            "resposta_correta": "A",
+        }
+
+    async def fake_dispatch_single(llm, prompt, _history, _system, *, max_tokens=None):
+        if "Valide as seguintes" in prompt:
+            return LLMResponse(llm=llm, content='{"validacoes": []}')
+        prompts.append((llm, prompt))
+        # "repetidor" sempre devolve a mesma pergunta; "variado", uma nova.
+        enunciado = (
+            "Qual forma normal elimina dependencia transitiva?"
+            if llm == "repetidor"
+            else "Qual a funcao de uma chave estrangeira?"
+        )
+        return LLMResponse(llm=llm, content=_json.dumps({"questoes": [questao(enunciado)]}))
+
+    async def fake_candidates(_preferred=None):
+        return ["repetidor", "variado"]
+
+    monkeypatch.setattr(quiz_generator_service, "_candidate_llms_for_quiz", fake_candidates)
+    monkeypatch.setattr(quiz_generator_service, "dispatch_single", fake_dispatch_single)
+    monkeypatch.setattr(quiz_generator_service, "QUESTIONS_PER_BATCH", 1)
+
+    result = run(
+        quiz_generator_service.generate_quiz(
+            resumo="Normalizacao, dependencia transitiva e chaves.",
+            disciplina="Banco de Dados",
+            titulo_aula="Normalizacao",
+            quantidade_questoes=2,
+        )
+    )
+
+    assert [q["enunciado"] for q in result["questoes"]] == [
+        "Qual forma normal elimina dependencia transitiva?",
+        "Qual a funcao de uma chave estrangeira?",
+    ]
+    # Lote 1: repetidor entrega. Lote 2: repetidor repete, variado entrega.
+    assert [llm for llm, _ in prompts] == ["repetidor", "repetidor", "variado"]
+    aviso = "tentativa anterior devolveu apenas perguntas"
+    assert aviso not in prompts[1][1]
+    assert aviso in prompts[2][1]

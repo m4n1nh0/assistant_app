@@ -19,6 +19,9 @@ import '../services/connected_ai_service.dart';
 import '../services/local_capability_channel.dart';
 import '../services/local_capability_registry.dart';
 import '../services/notification_service.dart';
+import '../services/in_app_notification_service.dart';
+import '../services/quiz_center_service.dart';
+import '../services/quiz_queue_watcher.dart';
 import '../services/storage_service.dart';
 import '../models/app_config.dart';
 import '../models/hive_adapters.dart';
@@ -30,6 +33,7 @@ import '../widgets/right_panel.dart';
 import '../widgets/auth_dialog.dart';
 import '../widgets/blurred_barrier.dart';
 import '../widgets/locked_backdrop.dart';
+import '../widgets/quiz_center.dart';
 
 /// Tela principal, com os paineis lateral, central e direito.
 class MainScreen extends ConsumerStatefulWidget {
@@ -87,7 +91,37 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
       _startWelcome();
       _startCalendarSync();
       _startCapabilityChannel();
+      _startQuizWatcher();
     }
+  }
+
+  /// Acompanha a fila de quizzes da conta e avisa quando uma geracao termina.
+  ///
+  /// Fica na tela principal, e nao no Modo Aula: o professor pede o quiz e
+  /// fecha a janela, e e justamente ai que o aviso precisa chegar.
+  void _startQuizWatcher() {
+    quizQueueWatcher.onFinished = (job) {
+      InAppNotificationService.showQuizFinished(
+        title: job.titulo,
+        success: job.status == QuizJobStatus.done,
+        message: job.message,
+        onOpen: () {
+          final navigatorContext = appNavigatorKey.currentContext;
+          if (navigatorContext == null) return;
+          if (job.canReview) {
+            openQuizReview(
+              navigatorContext,
+              quizId: job.quizId,
+              attempts: job.attempts,
+              requested: job.total,
+            );
+          } else {
+            showQuizCenterDialog(navigatorContext);
+          }
+        },
+      );
+    };
+    quizQueueWatcher.start();
   }
 
   /// Abre o canal da sessao e declara ao backend o que esta maquina sabe fazer.
@@ -516,6 +550,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
   @override
   void dispose() {
     _stopCapabilityChannel();
+    quizQueueWatcher.stop();
     _calendarTimer?.cancel();
     _backendStatusTimer?.cancel();
     _clearEventNotificationTimers();

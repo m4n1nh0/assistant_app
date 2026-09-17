@@ -15,6 +15,8 @@ Future<void> showQuizPreviewDialog(
   required List<Map<String, dynamic>> questions,
   required int requested,
   List<Map<String, dynamic>> attempts = const [],
+  String title = 'Revisar perguntas',
+  List<Widget> Function(BuildContext dialogContext)? actionsBuilder,
 }) {
   return showDialog<void>(
     context: context,
@@ -25,6 +27,8 @@ Future<void> showQuizPreviewDialog(
           questions: questions,
           requested: requested,
           attempts: attempts,
+          title: title,
+          actions: actionsBuilder?.call(dialogContext) ?? const [],
         ),
       ),
     ),
@@ -35,11 +39,18 @@ class _QuizPreview extends StatelessWidget {
   final List<Map<String, dynamic>> questions;
   final int requested;
   final List<Map<String, dynamic>> attempts;
+  final String title;
+
+  /// Botoes do fluxo do quiz (liberar, abrir QR, descartar), quando a revisao
+  /// foi aberta a partir da central.
+  final List<Widget> actions;
 
   const _QuizPreview({
     required this.questions,
     required this.requested,
     required this.attempts,
+    this.title = 'Revisar perguntas',
+    this.actions = const [],
   });
 
   /// Modelos que falharam, com o motivo. Explica por que vieram menos
@@ -69,7 +80,7 @@ class _QuizPreview extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Revisar perguntas',
+                      title,
                       style: theme.textTheme.titleMedium,
                     ),
                     const SizedBox(height: 2),
@@ -81,6 +92,10 @@ class _QuizPreview extends StatelessWidget {
                   ],
                 ),
               ),
+              for (final action in actions) ...[
+                action,
+                const SizedBox(width: 6),
+              ],
               IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => Navigator.pop(context),

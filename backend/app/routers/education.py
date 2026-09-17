@@ -86,8 +86,11 @@ from ..models.schemas import (
     QuestionResponse,
     MaterialResponse,
     QuizCreateRequest,
+    QuizFromQuestionsRequest,
+    QuizJobSeenRequest,
     QuizResponse,
     QuizGenerateResponse,
+    QuestionUpdate,
     StudentAnswerRequest,
     StudentAnswerResponse,
 )
@@ -100,7 +103,7 @@ from ..services import (
 from ..services.voice_service import transcribe_audio, trim_transcript_overlap
 from ..services.user_llm_config_service import (
     activate_user_llms,
-    current_user_llms,
+    load_user_llm_runtime,
     reset_user_llms,
     user_llm_context,
 )
@@ -2995,6 +2998,7 @@ async def _run_quiz_generation(
     tutor_id: str,
     db: AsyncSession,
     on_progress: Optional[Callable[[int, int], None]] = None,
+    questoes_existentes: Sequence[Dict[str, Any]] = (),
 ) -> QuizGenerateResponse:
     """Gera as perguntas com a IA e grava o quiz para revisao."""
 
@@ -3008,6 +3012,7 @@ async def _run_quiz_generation(
         dificuldade=request.dificuldade,
         llm=request.llm,
         on_progress=on_progress,
+        questoes_existentes=questoes_existentes,
     )
 
     return await _persist_generated_quiz(
@@ -3046,33 +3051,121 @@ async def generate_quiz_from_lesson(
     )
 
 
-def _quiz_job_notifier(user_id: str):
-    """Aviso de fim de geracao pelos canais que o professor ja configurou.
+async def _notify_quiz_job(job) -> None:
+    """Aviso de fim de geracao pelos canais externos que o professor configurou.
 
-    O professor pede o quiz e sai da tela - e o objetivo de gerar em segundo
-    plano. Sem o aviso, ele so descobre que ficou pronto voltando para olhar.
+    O aviso dentro do app sai da propria central, que acompanha a fila; este e o
+    de fora - Telegram e WhatsApp -, para quem pediu o quiz e fechou o app.
     """
+    if not job.user_id:
+        return
+    async with AsyncSessionLocal() as session:
+        config = await load_notif_config(session, user_id=job.user_id)
 
-    async def notify(job) -> None:
-        if not user_id:
-            return
+    if job.status == "done":
+        mensagem = (
+            f'Quiz "{job.titulo}" pronto: {job.prontas} pergunta(s) '
+            "escritas pela IA, esperando sua revisão."
+        )
+    else:
+        mensagem = (
+            f'A geração do quiz "{job.titulo}" não terminou: '
+            f"{job.error or 'falha desconhecida'}"
+        )
+
+    await send_notification(mensagem, config, assistant_name="Modo Educação")
+
+
+async def _existing_questions_for_sources(
+    db: AsyncSession,
+    tutor_id: str,
+    fontes: Sequence[Dict[str, str]],
+    *,
+    limit: int = 60,
+) -> List[Dict[str, Any]]:
+    """Questoes ja geradas a partir das mesmas fontes, para a IA nao repetir.
+
+    Sem isso, o segundo quiz da mesma aula saia com as mesmas perguntas do
+    primeiro: cada geracao so conhecia as proprias perguntas. Arquivadas ficam de
+    fora - o professor tirou do banco o que nao queria ver de novo.
+    """
+    source_ids = [fonte.get("id") for fonte in fontes if fonte.get("id")]
+    if not source_ids:
+        return []
+
+    quiz_ids = (await db.execute(
+        select(QuizSourceModel.quiz_id)
+        .join(QuizModel, QuizModel.id == QuizSourceModel.quiz_id)
+        .where(
+            QuizSourceModel.source_id.in_(source_ids),
+            QuizModel.tutor_id == tutor_id,
+        )
+        .distinct()
+    )).scalars().all()
+    if not quiz_ids:
+        return []
+
+    rows = (await db.execute(
+        select(QuestionModel)
+        .where(
+            QuestionModel.quiz_id.in_(quiz_ids),
+            QuestionModel.arquivada.is_(False),
+        )
+        .order_by(QuestionModel.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+
+    existentes = []
+    for row in reversed(rows):
+        try:
+            conceitos = json.loads(row.conceitos_relacionados or "[]")
+        except (TypeError, ValueError):
+            conceitos = []
+        existentes.append({
+            "enunciado": row.enunciado,
+            "opcoes": _quiz_question_options(row),
+            "conceitos": conceitos if isinstance(conceitos, list) else [],
+            "topico_origem": row.topico_origem,
+        })
+    return existentes
+
+
+async def _run_quiz_job(job, progress) -> Dict[str, Any]:
+    """Gera o quiz de um pedido da fila.
+
+    Roda no worker, longe da requisicao que fez o pedido: por isso refaz o
+    contexto das fontes a partir do pedido gravado e carrega as chaves de
+    provedor do professor direto do banco - a ContextVar da requisicao ja nao
+    existe quando a fila chega neste pedido.
+    """
+    request = QuizCreateRequest.model_validate(json.loads(job.request_json or "{}"))
+    runtime = await load_user_llm_runtime(job.tutor_id)
+    token = activate_user_llms(runtime)
+    try:
         async with AsyncSessionLocal() as session:
-            config = await load_notif_config(session, user_id=user_id)
-
-        if job.status == "done":
-            mensagem = (
-                f'Quiz "{job.titulo}" pronto: {job.prontas} pergunta(s) '
-                "escritas pela IA, esperando sua revisão."
+            context = await _quiz_generation_context(request, job.tutor_id, session)
+            existentes = await _existing_questions_for_sources(
+                session, job.tutor_id, context["fontes"]
             )
-        else:
-            mensagem = (
-                f'A geração do quiz "{job.titulo}" não terminou: '
-                f"{job.error or 'falha desconhecida'}"
+            response = await _run_quiz_generation(
+                context,
+                request=request,
+                tutor_id=job.tutor_id,
+                db=session,
+                on_progress=progress,
+                questoes_existentes=existentes,
             )
+    finally:
+        reset_user_llms(token)
+    return {
+        "quiz_id": response.quiz_id,
+        "prontas": len(response.questoes),
+        "message": response.message,
+        "attempts": response.attempts,
+    }
 
-        await send_notification(mensagem, config, assistant_name="Modo Educação")
 
-    return notify
+quiz_job_service.queue.configure(runner=_run_quiz_job, notifier=_notify_quiz_job)
 
 
 @router.post("/quiz/generate/async", status_code=202)
@@ -3080,70 +3173,545 @@ async def generate_quiz_in_background(
     request: QuizCreateRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    _llm_context: None = Depends(user_llm_context),
 ):
-    """Registra a geracao e devolve o `job_id` na hora.
+    """Coloca o pedido na fila do professor e responde na hora.
 
     A fonte e validada aqui, ainda na requisicao: aula inexistente ou material
-    sem texto responde 404/400 imediato, em vez de virar um job que falha
-    minutos depois. O que vai para segundo plano e so o que demora - as
-    chamadas de IA e a gravacao.
+    sem texto responde 404/400 imediato, em vez de virar um pedido que falha
+    minutos depois na fila.
     """
 
     tutor_id = user["tutor_id"]
-    user_id = str(user.get("uid") or "")
     context = await _quiz_generation_context(request, tutor_id, db)
-    # Os provedores do professor vivem em ContextVar desfeita no fim da
-    # requisicao, e o 202 sai antes da geracao comecar. Guardar aqui e reativar
-    # dentro da task e o que faz o quiz enxergar as chaves de nuvem da conta;
-    # sem isso so sobrava a infraestrutura local e a geracao morria em
-    # "Nenhum modelo gerou o quiz".
-    llm_runtime = current_user_llms()
-
-    async def runner(job) -> Dict[str, Any]:
-        token = activate_user_llms(llm_runtime) if llm_runtime else None
-        try:
-            # Sessao propria: a da requisicao fecha assim que o 202 sai.
-            async with AsyncSessionLocal() as session:
-                response = await _run_quiz_generation(
-                    context,
-                    request=request,
-                    tutor_id=tutor_id,
-                    db=session,
-                    on_progress=job.report,
-                )
-        finally:
-            if token is not None:
-                reset_user_llms(token)
-        return response.model_dump(mode="json")
-
-    job = quiz_job_service.submit(
+    return await quiz_job_service.queue.enqueue(
         tutor_id=tutor_id,
-        total=request.quantidade_questoes,
+        user_id=str(user.get("uid") or ""),
         titulo=context["titulo"],
-        runner=runner,
-        notify=_quiz_job_notifier(user_id),
+        total=request.quantidade_questoes,
+        request=request.model_dump(mode="json"),
     )
-    return job.to_dict()
+
+
+@router.get("/quiz/jobs")
+async def list_quiz_jobs(
+    limit: int = Query(50, ge=1, le=200),
+    user: dict = Depends(get_current_user),
+):
+    """Pedidos de geracao do professor: em andamento primeiro, depois recentes."""
+
+    jobs = await quiz_job_service.queue.list_jobs(user["tutor_id"], limit=limit)
+    return {
+        "jobs": jobs,
+        "active": sum(1 for job in jobs if job["status"] in ("queued", "running")),
+        "unseen": sum(
+            1 for job in jobs
+            if job["status"] in ("done", "error") and not job["seen"]
+        ),
+    }
+
+
+@router.post("/quiz/jobs/seen")
+async def mark_quiz_jobs_seen(
+    body: QuizJobSeenRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Marca avisos de fim como vistos, para nao aparecerem de novo."""
+
+    changed = await quiz_job_service.queue.mark_seen(user["tutor_id"], body.job_ids)
+    return {"updated": changed}
+
+
+async def _quiz_job_or_404(job_id: str, tutor_id: str) -> Dict[str, Any]:
+    job = await quiz_job_service.queue.get(job_id, tutor_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Pedido de quiz não encontrado.")
+    return job
 
 
 @router.get("/quiz/jobs/{job_id}")
 async def get_quiz_job(
     job_id: str,
     user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Andamento de uma geracao em segundo plano."""
+    """Andamento de um pedido; pronto, vem junto com o quiz para revisao."""
 
-    job = quiz_job_service.get_job(job_id, user["tutor_id"])
+    job = await _quiz_job_or_404(job_id, user["tutor_id"])
+    job["quiz"] = None
+    if job["status"] == "done" and job.get("quiz_id"):
+        quiz = await db.get(QuizModel, job["quiz_id"])
+        if quiz is not None and quiz.tutor_id == user["tutor_id"]:
+            detalhe = (await _build_quiz_response(db, quiz)).model_dump(mode="json")
+            detalhe.update(
+                quiz_id=quiz.id,
+                message=job["message"],
+                attempts=job["attempts"],
+            )
+            job["quiz"] = detalhe
+    return job
+
+
+@router.post("/quiz/jobs/{job_id}/cancel")
+async def cancel_quiz_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Cancela um pedido na fila ou em andamento."""
+
+    job = await quiz_job_service.queue.cancel(job_id, user["tutor_id"])
     if job is None:
+        raise HTTPException(status_code=404, detail="Pedido de quiz não encontrado.")
+    return job
+
+
+@router.post("/quiz/jobs/{job_id}/retry", status_code=202)
+async def retry_quiz_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Enfileira de novo, com o mesmo pedido, o que falhou ou foi cancelado."""
+
+    try:
+        job = await quiz_job_service.queue.retry(job_id, user["tutor_id"])
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Pedido de quiz não encontrado.")
+    return job
+
+
+# --- Quizzes e banco de questoes -------------------------------------------
+
+
+async def _quiz_catalog(
+    db: AsyncSession,
+    tutor_id: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Quizzes do professor com fontes e disciplinas, indexados pelo id.
+
+    Quiz nao guarda disciplina: ela vem das fontes (aula ou material). Montar o
+    mapa uma vez serve a listagem de quizzes e ao filtro do banco de questoes.
+    """
+    quizzes = (await db.execute(
+        select(QuizModel)
+        .where(QuizModel.tutor_id == tutor_id)
+        .order_by(QuizModel.created_at.desc())
+    )).scalars().all()
+    if not quizzes:
+        return {}
+
+    quiz_ids = [quiz.id for quiz in quizzes]
+    sources = (await db.execute(
+        select(QuizSourceModel).where(QuizSourceModel.quiz_id.in_(quiz_ids))
+    )).scalars().all()
+
+    lesson_ids = {s.source_id for s in sources if s.source_type == "lesson"}
+    lesson_ids |= {quiz.lesson_id for quiz in quizzes if quiz.lesson_id}
+    material_ids = {s.source_id for s in sources if s.source_type == "material"}
+
+    lesson_discipline: Dict[str, str] = {}
+    if lesson_ids:
+        for lesson_id, discipline in (await db.execute(
+            select(LessonModel.id, LessonModel.discipline)
+            .where(LessonModel.id.in_(lesson_ids), LessonModel.tutor_id == tutor_id)
+        )).all():
+            lesson_discipline[lesson_id] = discipline or ""
+    material_discipline: Dict[str, str] = {}
+    if material_ids:
+        for material_id, discipline in (await db.execute(
+            select(MaterialModel.id, MaterialModel.discipline)
+            .where(MaterialModel.id.in_(material_ids), MaterialModel.tutor_id == tutor_id)
+        )).all():
+            material_discipline[material_id] = discipline or ""
+
+    by_quiz: Dict[str, List[QuizSourceModel]] = defaultdict(list)
+    for source in sources:
+        by_quiz[source.quiz_id].append(source)
+
+    catalog: Dict[str, Dict[str, Any]] = {}
+    for quiz in quizzes:
+        fontes = [
+            {"type": s.source_type, "id": s.source_id, "label": s.label}
+            for s in by_quiz.get(quiz.id, [])
+        ]
+        if not fontes and quiz.lesson_id:
+            fontes = [{"type": "lesson", "id": quiz.lesson_id, "label": ""}]
+        disciplinas = []
+        for fonte in fontes:
+            mapa = lesson_discipline if fonte["type"] == "lesson" else material_discipline
+            nome = mapa.get(fonte["id"], "")
+            if nome and nome not in disciplinas:
+                disciplinas.append(nome)
+        catalog[quiz.id] = {"quiz": quiz, "fontes": fontes, "disciplinas": disciplinas}
+    return catalog
+
+
+def _catalog_matches(
+    item: Dict[str, Any],
+    *,
+    discipline: str = "",
+    lesson_id: str = "",
+) -> bool:
+    if discipline:
+        alvo = discipline.strip().lower()
+        if not any(alvo == nome.strip().lower() for nome in item["disciplinas"]):
+            return False
+    if lesson_id and not any(
+        fonte["type"] == "lesson" and fonte["id"] == lesson_id for fonte in item["fontes"]
+    ):
+        return False
+    return True
+
+
+def _quiz_summary(item: Dict[str, Any], question_count: int) -> Dict[str, Any]:
+    quiz = item["quiz"]
+    return {
+        "id": quiz.id,
+        "titulo": quiz.titulo,
+        "tipo_quiz": quiz.tipo_quiz,
+        "status": quiz.status or "open",
+        "live_phase": quiz.live_phase or "lobby",
+        "total_questoes": question_count,
+        "tempo_estimado": quiz.tempo_estimado or 0,
+        "disciplinas": item["disciplinas"],
+        "fontes": item["fontes"],
+        "created_at": quiz.created_at.isoformat() if quiz.created_at else None,
+        "closed_at": quiz.closed_at.isoformat() if quiz.closed_at else None,
+    }
+
+
+@router.get("/quiz")
+async def list_quizzes(
+    status: str = Query("", description="draft, open ou closed"),
+    discipline: str = Query(""),
+    lesson_id: str = Query(""),
+    q: str = Query("", description="busca no titulo"),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Quizzes do professor, com disciplina e fontes, para a central."""
+
+    catalog = await _quiz_catalog(db, user["tutor_id"])
+    busca = q.strip().lower()
+    selecionados = [
+        item for item in catalog.values()
+        if (not status or (item["quiz"].status or "open") == status)
+        and (not busca or busca in (item["quiz"].titulo or "").lower())
+        and _catalog_matches(item, discipline=discipline, lesson_id=lesson_id)
+    ]
+
+    counts: Dict[str, int] = {}
+    if selecionados:
+        for quiz_id, count in (await db.execute(
+            select(QuestionModel.quiz_id, func.count(QuestionModel.id))
+            .where(QuestionModel.quiz_id.in_([i["quiz"].id for i in selecionados]))
+            .group_by(QuestionModel.quiz_id)
+        )).all():
+            counts[quiz_id] = int(count)
+
+    disciplinas = sorted({nome for item in catalog.values() for nome in item["disciplinas"]})
+    return {
+        "quizzes": [_quiz_summary(item, counts.get(item["quiz"].id, 0)) for item in selecionados],
+        "disciplinas": disciplinas,
+    }
+
+
+@router.delete("/quiz/{quiz_id}")
+async def discard_quiz_draft(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Descarta um rascunho. Quiz ja liberado guarda respostas e fica."""
+
+    quiz = await db.get(QuizModel, quiz_id)
+    if quiz is None or quiz.tutor_id != user["tutor_id"]:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status != "draft":
         raise HTTPException(
-            status_code=404,
+            status_code=409,
+            detail="Só rascunho pode ser descartado: este quiz já foi liberado para a turma.",
+        )
+    await db.execute(sql_delete(QuestionModel).where(QuestionModel.quiz_id == quiz_id))
+    await db.execute(sql_delete(QuizSourceModel).where(QuizSourceModel.quiz_id == quiz_id))
+    await db.delete(quiz)
+    await db.commit()
+    return {"deleted": True}
+
+
+def _bank_question(row: QuestionModel, item: Dict[str, Any]) -> Dict[str, Any]:
+    quiz = item["quiz"]
+    try:
+        conceitos = json.loads(row.conceitos_relacionados or "[]")
+    except (TypeError, ValueError):
+        conceitos = []
+    return {
+        "id": row.id,
+        "quiz_id": row.quiz_id,
+        "quiz_titulo": quiz.titulo,
+        "quiz_status": quiz.status or "open",
+        "tipo": row.tipo,
+        "dificuldade": row.dificuldade or "medio",
+        "enunciado": row.enunciado,
+        "opcoes": _quiz_question_options(row),
+        "resposta_correta": row.resposta_correta,
+        "justificativa": row.justificativa or "",
+        "conceitos_relacionados": conceitos if isinstance(conceitos, list) else [],
+        "topico_origem": row.topico_origem,
+        "verificado": bool(row.verificado),
+        "arquivada": bool(row.arquivada),
+        "disciplinas": item["disciplinas"],
+        "fontes": item["fontes"],
+        # Rascunho ainda nao foi respondido por ninguem: editar e seguro. Em quiz
+        # liberado a correcao das respostas ja gravadas mudaria por baixo.
+        "editavel": (quiz.status or "open") == "draft",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/quiz/questions")
+async def list_bank_questions(
+    discipline: str = Query(""),
+    lesson_id: str = Query(""),
+    q: str = Query(""),
+    dificuldade: str = Query(""),
+    include_archived: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Banco de questoes: tudo que ja foi gerado, com filtro e paginacao."""
+
+    catalog = await _quiz_catalog(db, user["tutor_id"])
+    quiz_ids = [
+        quiz_id for quiz_id, item in catalog.items()
+        if _catalog_matches(item, discipline=discipline, lesson_id=lesson_id)
+    ]
+    disciplinas = sorted({nome for item in catalog.values() for nome in item["disciplinas"]})
+    if not quiz_ids:
+        return {"questions": [], "total": 0, "disciplinas": disciplinas}
+
+    filtros = [QuestionModel.quiz_id.in_(quiz_ids)]
+    if not include_archived:
+        filtros.append(QuestionModel.arquivada.is_(False))
+    if dificuldade:
+        filtros.append(QuestionModel.dificuldade == dificuldade)
+    busca = q.strip()
+    if busca:
+        padrao = f"%{busca}%"
+        filtros.append(or_(
+            QuestionModel.enunciado.ilike(padrao),
+            QuestionModel.topico_origem.ilike(padrao),
+            QuestionModel.conceitos_relacionados.ilike(padrao),
+        ))
+
+    total = int((await db.execute(
+        select(func.count(QuestionModel.id)).where(*filtros)
+    )).scalar() or 0)
+    rows = (await db.execute(
+        select(QuestionModel)
+        .where(*filtros)
+        .order_by(QuestionModel.created_at.desc(), QuestionModel.id)
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+
+    return {
+        "questions": [_bank_question(row, catalog[row.quiz_id]) for row in rows],
+        "total": total,
+        "disciplinas": disciplinas,
+    }
+
+
+async def _owned_question(
+    db: AsyncSession,
+    question_id: str,
+    tutor_id: str,
+) -> tuple[QuestionModel, QuizModel]:
+    question = await db.get(QuestionModel, question_id)
+    quiz = await db.get(QuizModel, question.quiz_id) if question else None
+    if question is None or quiz is None or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Questão não encontrada")
+    return question, quiz
+
+
+@router.patch("/quiz/questions/{question_id}")
+async def update_bank_question(
+    question_id: str,
+    body: QuestionUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Corrige uma questao de rascunho."""
+
+    question, quiz = await _owned_question(db, question_id, user["tutor_id"])
+    if (quiz.status or "open") != "draft":
+        raise HTTPException(
+            status_code=409,
             detail=(
-                "Geração não encontrada. Ela é descartada algumas horas depois "
-                "de terminar, e também quando o servidor reinicia."
+                "Este quiz já foi liberado: alterar a questão mudaria a correção "
+                "das respostas gravadas. Monte um novo quiz com ela e edite lá."
             ),
         )
-    return job.to_dict()
+
+    if body.enunciado is not None:
+        enunciado = body.enunciado.strip()
+        if not enunciado:
+            raise HTTPException(status_code=422, detail="O enunciado não pode ficar vazio.")
+        question.enunciado = enunciado
+    if body.opcoes is not None:
+        opcoes = [
+            {"label": o.label.strip(), "texto": o.texto.strip(), "correta": bool(o.correta)}
+            for o in body.opcoes
+            if o.texto.strip()
+        ]
+        if question.tipo == "multipla_escolha":
+            if len(opcoes) < 2:
+                raise HTTPException(status_code=422, detail="Informe ao menos duas alternativas.")
+            corretas = [o for o in opcoes if o["correta"]]
+            if len(corretas) != 1:
+                raise HTTPException(status_code=422, detail="Marque exatamente uma alternativa correta.")
+            question.resposta_correta = corretas[0]["label"]
+        question.opcoes = json.dumps(opcoes, ensure_ascii=False)
+    elif body.resposta_correta is not None:
+        question.resposta_correta = body.resposta_correta.strip()
+    if body.justificativa is not None:
+        question.justificativa = body.justificativa.strip()
+    if body.dificuldade is not None:
+        question.dificuldade = body.dificuldade
+    # Revisada pelo professor: deixa de ser "baixa confianca".
+    question.verificado = True
+    await db.commit()
+    await db.refresh(question)
+
+    catalog = await _quiz_catalog(db, user["tutor_id"])
+    return _bank_question(question, catalog[quiz.id])
+
+
+@router.delete("/quiz/questions/{question_id}")
+async def delete_bank_question(
+    question_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tira a questao do banco.
+
+    Em rascunho ela e apagada. Em quiz ja liberado e arquivada: sai do banco e
+    das proximas geracoes, mas continua ligada as respostas que a turma deu.
+    """
+
+    question, quiz = await _owned_question(db, question_id, user["tutor_id"])
+    if (quiz.status or "open") == "draft":
+        await db.delete(question)
+        quiz.total_questoes = max(0, (quiz.total_questoes or 1) - 1)
+        await db.commit()
+        return {"deleted": True, "archived": False}
+
+    question.arquivada = True
+    await db.commit()
+    return {"deleted": False, "archived": True}
+
+
+@router.post("/quiz/questions/{question_id}/restore")
+async def restore_bank_question(
+    question_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Devolve ao banco uma questao arquivada."""
+
+    question, quiz = await _owned_question(db, question_id, user["tutor_id"])
+    question.arquivada = False
+    await db.commit()
+    await db.refresh(question)
+    catalog = await _quiz_catalog(db, user["tutor_id"])
+    return _bank_question(question, catalog[quiz.id])
+
+
+@router.post("/quiz/from-questions", status_code=201)
+async def create_quiz_from_questions(
+    body: QuizFromQuestionsRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Monta um quiz novo com questoes do banco, sem chamar a IA.
+
+    As questoes sao copiadas, nao movidas: o quiz de origem continua inteiro, e
+    corrigir a copia no rascunho novo nao mexe no quiz ja aplicado.
+    """
+
+    tutor_id = user["tutor_id"]
+    ids = list(dict.fromkeys(item for item in body.question_ids if item))
+    if not ids:
+        raise HTTPException(status_code=422, detail="Escolha ao menos uma questão.")
+
+    rows = (await db.execute(
+        select(QuestionModel).where(QuestionModel.id.in_(ids))
+    )).scalars().all()
+    by_id = {row.id: row for row in rows}
+    catalog = await _quiz_catalog(db, tutor_id)
+    faltando = [
+        item for item in ids
+        if item not in by_id or by_id[item].quiz_id not in catalog
+    ]
+    if faltando:
+        raise HTTPException(status_code=404, detail="Alguma questão escolhida não foi encontrada.")
+    arquivadas = [item for item in ids if by_id[item].arquivada]
+    if arquivadas:
+        raise HTTPException(status_code=409, detail="Questão arquivada não entra em quiz novo: restaure antes.")
+
+    fontes: List[Dict[str, str]] = []
+    vistas = set()
+    for item in ids:
+        for fonte in catalog[by_id[item].quiz_id]["fontes"]:
+            chave = (fonte["type"], fonte["id"])
+            if fonte["id"] and chave not in vistas:
+                vistas.add(chave)
+                fontes.append(fonte)
+    lesson_id = next((f["id"] for f in fontes if f["type"] == "lesson"), "")
+
+    quiz = QuizModel(
+        id=str(uuid.uuid4()),
+        tutor_id=tutor_id,
+        lesson_id=lesson_id,
+        titulo=body.titulo.strip()[:255],
+        tipo_quiz=body.tipo_quiz,
+        status="draft",
+        total_questoes=len(ids),
+        tempo_estimado=max(5, len(ids) * 2),
+    )
+    db.add(quiz)
+    for fonte in fontes:
+        db.add(QuizSourceModel(
+            quiz_id=quiz.id,
+            source_type=fonte["type"],
+            source_id=fonte["id"],
+            label=(fonte.get("label") or "")[:255],
+        ))
+    agora = datetime.now(timezone.utc)
+    for ordem, item in enumerate(ids):
+        origem = by_id[item]
+        db.add(QuestionModel(
+            id=str(uuid.uuid4()),
+            quiz_id=quiz.id,
+            tipo=origem.tipo,
+            dificuldade=origem.dificuldade,
+            enunciado=origem.enunciado,
+            opcoes=origem.opcoes,
+            resposta_correta=origem.resposta_correta,
+            justificativa=origem.justificativa,
+            conceitos_relacionados=origem.conceitos_relacionados,
+            topico_origem=origem.topico_origem,
+            grounding_score=origem.grounding_score,
+            verificado=origem.verificado,
+            # Ordem de escolha vira ordem do quiz: a apresentacao segue
+            # created_at, e o DATETIME do MySQL nao guarda fracao de segundo.
+            created_at=datetime.fromtimestamp(agora.timestamp() + ordem, timezone.utc),
+        ))
+    await db.commit()
+    await db.refresh(quiz)
+    return await _build_quiz_response(db, quiz)
 
 
 def _mensagem_do_quiz(

@@ -53,6 +53,7 @@ from .routers.quiz_play import router as quiz_play_router
 from .routers.quiz_websocket import router as quiz_websocket_router
 from .routers.quiz_qrcode import router as quiz_qrcode_router
 from .routers.sia_integration import router as sia_router
+from .services import quiz_job_service
 from .services.qdrant_service import ensure_collections, ensure_lesson_collection
 from .services.embedding_service import describe as embedding_describe
 from .services.user_llm_config_service import runtime_settings
@@ -154,9 +155,16 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Rate limiter unavailable (Redis): {e}")
     start_scheduler()
     logger.info("Scheduler started")
+    try:
+        # Pedidos de quiz que estavam gerando quando o processo caiu voltam para
+        # a fila; sem isso sumiriam a cada deploy.
+        await quiz_job_service.queue.recover()
+    except Exception as e:
+        logger.warning(f"Fila de quiz nao retomada: {e}")
     logger.info(f"Local AI services: {runtime_settings.active_llms}")
     logger.info(f"Listening on {settings.host}:{settings.port}")
     yield
+    await quiz_job_service.queue.shutdown()
     stop_scheduler()
     shutdown_observability()
     if FastAPILimiter.redis is not None:

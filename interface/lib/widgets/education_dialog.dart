@@ -33,7 +33,7 @@ import 'attendance_tab.dart';
 import 'education_dashboard.dart';
 import 'quiz_generator_widget.dart';
 import 'materials_panel.dart';
-import 'quiz_qrcode_monitor.dart';
+import 'quiz_center.dart';
 import 'sia_attendance_importer.dart';
 import 'study_time_tab.dart';
 import 'project_groups_tab.dart';
@@ -1654,9 +1654,7 @@ class _QuizTab extends StatefulWidget {
 class _QuizTabState extends State<_QuizTab> {
   List<Lesson> _lessons = [];
   Lesson? _selected;
-  String? _generatedQuizId;
-  String? _generatedQuizTitle;
-  int _generatedQuestionCount = 0;
+  final _centerKey = GlobalKey<QuizCenterTabsState>();
   var _loading = false;
   var _status = '';
 
@@ -1717,9 +1715,6 @@ class _QuizTabState extends State<_QuizTab> {
       setState(() {
         _lessons = lessons;
         _selected = selected ?? (lessons.isEmpty ? null : lessons.first);
-        _generatedQuizId = null;
-        _generatedQuizTitle = null;
-        _generatedQuestionCount = 0;
       });
     } catch (e) {
       if (mounted) setState(() => _status = 'Falha ao carregar aulas: $e');
@@ -1729,12 +1724,7 @@ class _QuizTabState extends State<_QuizTab> {
   }
 
   void _selectLesson(Lesson lesson) {
-    setState(() {
-      _selected = lesson;
-      _generatedQuizId = null;
-      _generatedQuizTitle = null;
-      _generatedQuestionCount = 0;
-    });
+    setState(() => _selected = lesson);
   }
 
   String _when(Lesson lesson) {
@@ -1749,19 +1739,6 @@ class _QuizTabState extends State<_QuizTab> {
 
   String _lessonTitle(Lesson lesson) =>
       lesson.title.isEmpty ? lesson.discipline : lesson.title;
-
-  void _openMonitor() {
-    final quizId = _generatedQuizId;
-    if (quizId == null) return;
-    showDialog(
-      context: context,
-      builder: (_) => QuizQRCodeMonitor(
-        quizId: quizId,
-        quizTitle: _generatedQuizTitle ?? 'Quiz',
-        totalQuestions: _generatedQuestionCount,
-      ),
-    );
-  }
 
   Widget _buildList() {
     return _Panel(
@@ -1897,16 +1874,6 @@ class _QuizTabState extends State<_QuizTab> {
                     ),
                   ),
                 ),
-                if (_generatedQuizId != null)
-                  OutlinedButton.icon(
-                    onPressed: _openMonitor,
-                    icon: const Icon(Icons.qr_code_2, size: 15),
-                    label: const Text('ABRIR QR'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AssistantTheme.c3,
-                      side: const BorderSide(color: AssistantTheme.border2),
-                    ),
-                  ),
               ],
             ),
             const SizedBox(height: 4),
@@ -1920,18 +1887,16 @@ class _QuizTabState extends State<_QuizTab> {
             ),
             const SizedBox(height: 12),
             QuizGeneratorWidget(
+              // Chave pela aula: trocar de aula recomeca o pedido com a fonte
+              // certa marcada, em vez de herdar a selecao da anterior.
+              key: ValueKey(lesson.id),
               lessonId: lesson.id,
               lessonTitle: _lessonTitle(lesson),
               disciplineName: lesson.discipline,
-              showShareDialog: false,
-              onQuizPublished: (quizId, totalQuestions) {
-                setState(() {
-                  _generatedQuizId = quizId;
-                  _generatedQuizTitle = _lessonTitle(lesson);
-                  _generatedQuestionCount = totalQuestions;
-                  _status = 'Quiz liberado para a turma.';
-                });
-                _openMonitor();
+              onQueued: (job) {
+                setState(() => _status =
+                    'Pedido "${job.titulo}" na fila. Acompanhe na aba FILA.');
+                _centerKey.currentState?.showQueue();
               },
             ),
           ],
@@ -1957,13 +1922,21 @@ class _QuizTabState extends State<_QuizTab> {
               ),
             ),
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(width: 360, child: _buildList()),
-                const SizedBox(width: 14),
-                Expanded(child: _buildGenerator()),
-              ],
+            // Gerar, acompanhar a fila, revisar quizzes e reaproveitar questoes
+            // ficam no mesmo lugar: sao etapas do mesmo fluxo.
+            child: QuizCenterTabs(
+              key: _centerKey,
+              generator: Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 360, child: _buildList()),
+                    const SizedBox(width: 14),
+                    Expanded(child: _buildGenerator()),
+                  ],
+                ),
+              ),
             ),
           ),
         ],

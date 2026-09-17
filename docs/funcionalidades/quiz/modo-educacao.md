@@ -194,53 +194,77 @@ Response:
 }
 ```
 
-### Gerar Quiz em Segundo Plano (Autenticado)
+### Fila de Geração (Autenticado)
 
-Escrever as perguntas com a IA passa do tempo que o cliente HTTP espera, então
-a tela usa este caminho: a fonte é validada na hora e o trabalho segue em uma
-task própria. Ao terminar, o professor também é avisado pelos canais de
-notificação que ele já configurou (Telegram/WhatsApp).
+Gerar um quiz leva minutos, então a tela não espera: o pedido entra numa **fila
+persistente** (`quiz_jobs`) e o professor segue usando o app. A central de
+quizzes acompanha o andamento, e o aviso chega no fim — dentro do app, com botão
+para revisar, e pelos canais externos configurados (Telegram/WhatsApp).
+
+Regras da fila:
+
+- **uma geração por professor por vez**; os pedidos seguintes esperam na ordem.
+  Professores diferentes não esperam um pelo outro;
+- **sobrevive a deploy e reinício**: o que estava gerando volta para a fila na
+  subida e é gerado de novo;
+- a fonte é validada na hora do pedido: aula inexistente ou sem texto responde
+  `404`/`400` imediato, e não um pedido que falha minutos depois;
+- as questões já geradas **das mesmas fontes** vão para a IA como "já geradas",
+  para o segundo quiz da mesma aula não repetir o primeiro.
+
+Estados de um pedido:
 
 ```
-POST /education/quiz/generate/async
-Content-Type: application/json
-Authorization: Bearer {token}
+queued (na fila) → running (gerando) → done (pronto) | error (com erro)
+queued | running → canceled (cancelado)
+error | canceled → [tentar de novo] → novo pedido queued
+```
 
-(mesmo corpo de /education/quiz/generate)
+```
+POST /education/quiz/generate/async      (mesmo corpo de /education/quiz/generate)
 
 Response 202:
 {
-  "job_id": "job-abc123",
-  "status": "pending",
+  "job_id": "…",
+  "status": "queued",
+  "titulo": "Quiz: Tema",
   "total": 10,
   "prontas": 0,
-  "titulo": "Quiz: Tema",
-  "message": "Lendo o conteúdo e preparando as perguntas...",
-  "quiz": null,
-  "error": null
+  "position": 2,
+  "message": "Na fila: 1 pedido(s) antes deste.",
+  "quiz_id": null,
+  "can_cancel": true, "can_retry": false, "can_review": false
 }
 ```
 
-Andamento:
+| Rota | O que faz |
+|---|---|
+| `GET /education/quiz/jobs` | Pedidos do professor (ativos primeiro), com `active` e `unseen` |
+| `GET /education/quiz/jobs/{job_id}` | Um pedido; pronto, traz o quiz em `quiz` para revisão |
+| `POST /education/quiz/jobs/{job_id}/cancel` | Cancela na fila ou em andamento |
+| `POST /education/quiz/jobs/{job_id}/retry` | Enfileira de novo o mesmo pedido (só `error` ou `canceled`) |
+| `POST /education/quiz/jobs/seen` | `{"job_ids": [...]}` — marca avisos de fim como vistos |
 
-```
-GET /education/quiz/jobs/{job_id}
-Authorization: Bearer {token}
+### Quizzes e Banco de Questões (Autenticado)
 
-Response:
-{
-  "job_id": "job-abc123",
-  "status": "pending|running|done|error",
-  "total": 10,
-  "prontas": 6,
-  "message": "Escrevendo perguntas com a IA (6/10)...",
-  "quiz": { ...mesma resposta de /quiz/generate, quando status=done... },
-  "error": null
-}
-```
+Estados de um quiz: `draft` (rascunho, em revisão) → `open` (liberado pelo QR
+Code) → `closed` (encerrado). Só rascunho é editado ou descartado: quiz liberado
+já tem resposta de aluno apontando para as questões.
 
-O job vive no processo: reinício do backend descarta os que estavam em
-andamento, e os terminados saem depois de algumas horas.
+| Rota | O que faz |
+|---|---|
+| `GET /education/quiz?status=&discipline=&lesson_id=&q=` | Quizzes com disciplinas (vindas das fontes) e contagem de questões |
+| `DELETE /education/quiz/{quiz_id}` | Descarta rascunho (`409` se já liberado) |
+| `GET /education/quiz/questions?discipline=&lesson_id=&q=&dificuldade=&include_archived=&limit=&offset=` | Banco de questões com filtro e paginação |
+| `PATCH /education/quiz/questions/{id}` | Corrige questão de rascunho; com `opcoes`, exatamente uma correta |
+| `DELETE /education/quiz/questions/{id}` | Apaga (rascunho) ou **arquiva** (quiz liberado): some do banco e das próximas gerações, mas continua ligada às respostas |
+| `POST /education/quiz/questions/{id}/restore` | Devolve ao banco uma questão arquivada |
+| `POST /education/quiz/from-questions` | `{"titulo", "question_ids", "tipo_quiz"}` — novo rascunho com cópias das questões, na ordem escolhida, sem chamar a IA |
+
+Na interface, tudo isso fica na aba **Quiz** do Modo Aula, em quatro sub-abas:
+**Gerar** (pedido), **Fila** (andamento, cancelar, tentar de novo, revisar),
+**Quizzes** (revisar, liberar QR Code, descartar rascunho) e **Banco de
+questões** (buscar, editar, arquivar, montar quiz).
 
 ### Responder Quiz (Público)
 
@@ -318,7 +342,20 @@ questions
 ├─ justificativa
 ├─ grounding_score
 ├─ verificado
+├─ arquivada (fora do banco de questões, mantida para as respostas)
 └─ created_at
+
+quiz_jobs (fila de geração)
+├─ id (PK)
+├─ tutor_id / user_id
+├─ titulo
+├─ status (queued | running | done | error | canceled)
+├─ total / prontas
+├─ request_json (pedido completo, para gerar e tentar de novo)
+├─ quiz_id (quando pronto)
+├─ message / error / attempts_json
+├─ created_at / started_at / finished_at
+└─ seen_at (aviso de fim visto)
 
 student_answers
 ├─ id (PK)

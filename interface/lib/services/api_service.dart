@@ -1386,6 +1386,45 @@ class ApiService {
       );
     }
   }
+
+  Future<GenericApiResponse> patch(
+    String endpoint, {
+    required Map<String, dynamic> body,
+  }) =>
+      _send(() => http.patch(
+            Uri.parse('$baseUrl$endpoint'),
+            headers: _headers,
+            body: jsonEncode(body),
+          ));
+
+  Future<GenericApiResponse> delete(String endpoint) =>
+      _send(() => http.delete(Uri.parse('$baseUrl$endpoint'), headers: _headers));
+
+  Future<GenericApiResponse> _send(Future<http.Response> Function() call) async {
+    try {
+      final r = await call().timeout(const Duration(seconds: 30));
+      final decoded = r.body.isEmpty ? null : jsonDecode(r.body);
+      final data = decoded is Map<String, dynamic> ? decoded : null;
+      String? error;
+      if (r.statusCode >= 400) {
+        final detail = data?['detail'];
+        error = detail is String ? detail : r.body;
+      }
+      return GenericApiResponse(
+        success: r.statusCode < 400,
+        statusCode: r.statusCode,
+        data: data ?? {},
+        error: error,
+      );
+    } catch (e) {
+      return GenericApiResponse(
+        success: false,
+        statusCode: 0,
+        data: {},
+        error: friendlyNetworkError(e),
+      );
+    }
+  }
 }
 
 final api = ApiService();
