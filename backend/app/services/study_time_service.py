@@ -142,7 +142,56 @@ async def preview_study_times(db, tutor_id: str, rows: list[dict]) -> dict:
                                      for row in matched),
         by_period=dict(sorted(Counter(row["semester"] for row in rows).items())),
         by_discipline=dict(sorted(Counter(row["discipline_code"] for row in rows).items())),
+        group_mapping=await _group_mapping(db, tutor_id, rows, by_enrollment),
     )
+
+
+async def _group_mapping(
+    db, tutor_id: str, rows: list[dict],
+    by_enrollment: dict[str, list[StudentModel]],
+) -> list[dict]:
+    """Turma da planilha x turma do cadastro, para conferir antes de gravar.
+
+    A planilha traz a sequencia da instituicao ("15034853"); em sala o professor
+    chama a mesma turma de "3001". Sao dois identificadores do mesmo grupo, e
+    nada no arquivo diz isso - quem liga os dois e o aluno, pela matricula. Se a
+    correspondencia sair torta, e aqui que da para ver antes da importacao.
+    """
+    from ..core.database import ClassGroupModel
+
+    classes = {
+        item.id: item
+        for item in (await db.execute(select(ClassGroupModel).where(
+            ClassGroupModel.tutor_id == tutor_id
+        ))).scalars().all()
+    }
+
+    porta_de_entrada: dict[tuple[str, str], Counter] = {}
+    total: Counter = Counter()
+    for row in rows:
+        chave = (row["discipline_code"], row["group_sequence"])
+        total[chave] += 1
+        aluno = match_study_student(row, by_enrollment)
+        destino = porta_de_entrada.setdefault(chave, Counter())
+        turma = classes.get(aluno.class_id) if aluno and aluno.class_id else None
+        if turma is None:
+            destino["__sem_turma__"] += 1
+        else:
+            rotulo = " ".join(part for part in (turma.code, turma.name) if part)
+            destino[rotulo or turma.id] += 1
+
+    mapeamento = []
+    for (disciplina, sequencia), destino in sorted(porta_de_entrada.items()):
+        sem_turma = destino.pop("__sem_turma__", 0)
+        mapeamento.append(dict(
+            discipline_code=disciplina,
+            group_sequence=sequencia,
+            rows=total[(disciplina, sequencia)],
+            classes=[dict(label=rotulo, rows=quantidade)
+                     for rotulo, quantidade in destino.most_common()],
+            without_class=sem_turma,
+        ))
+    return mapeamento
 
 
 async def remove_unmatched_existing(db, tutor_id: str, rows: list[dict]) -> int:

@@ -521,9 +521,18 @@ async def list_study_times(
     from ..services.study_time_service import belongs_to_scope, owned_discipline_scope
 
     scope = await owned_discipline_scope(db, user["tutor_id"])
-    query = select(StudyTimeModel, StudentModel.name).outerjoin(
+    # A turma da planilha ("15034853") e a sequencia da instituicao, que nao e o
+    # codigo que o professor usa em sala ("3001"). As duas viajam juntas: a
+    # importada para conferir a origem, a do cadastro para agrupar e filtrar.
+    query = select(
+        StudyTimeModel, StudentModel.name,
+        ClassGroupModel.id, ClassGroupModel.code, ClassGroupModel.name,
+    ).outerjoin(
         StudentModel, (StudentModel.id == StudyTimeModel.student_id)
         & (StudentModel.tutor_id == user["tutor_id"])
+    ).outerjoin(
+        ClassGroupModel, (ClassGroupModel.id == StudentModel.class_id)
+        & (ClassGroupModel.tutor_id == user["tutor_id"])
     ).where(StudyTimeModel.tutor_id == user["tutor_id"])
     if discipline:
         query = query.where(StudyTimeModel.discipline_code == discipline)
@@ -540,8 +549,13 @@ async def list_study_times(
     return [dict(id=item.id, enrollment=item.enrollment, student_id=item.student_id,
                  student_name=name, discipline_code=item.discipline_code,
                  group_sequence=item.group_sequence, course=item.course,
-                 semester=item.semester, minutes=item.minutes)
-            for item, name in records
+                 semester=item.semester, minutes=item.minutes,
+                 class_id=class_id,
+                 class_code=class_code or "",
+                 class_label=" ".join(
+                     part for part in (class_code or "", class_name or "") if part
+                 ))
+            for item, name, class_id, class_code, class_name in records
             if belongs_to_scope(item.discipline_code, scope)]
 
 

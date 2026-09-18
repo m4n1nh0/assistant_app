@@ -15,7 +15,7 @@ class StudyTimeTab extends StatefulWidget {
 
 class _StudyTimeTabState extends State<StudyTimeTab> {
   List<Map<String, dynamic>> rows = [];
-  String? discipline, group, course, semester;
+  String? discipline, group, course, semester, classLabel;
   bool pendingOnly = false, busy = false;
   String message = '';
 
@@ -86,6 +86,28 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
                 Text('No modo padrão, ${preview['existing_rows_removed_by_default']} registros da planilha já guardados serão removidos porque a matrícula não encontra aluno agora.'),
                 Text('${preview['outside_my_disciplines']} linhas de outras disciplinas excluídas desta importação.'),
                 Text('${preview['blank_minutes_in_my_disciplines']} linhas das suas disciplinas com tempo vazio não serão importadas.'),
+                const SizedBox(height: 12),
+                // A planilha traz a sequência da instituição; em sala a turma
+                // tem outro código. Quem liga as duas é o aluno, pela
+                // matrícula - e é aqui que dá para ver se ligou certo.
+                const Text('Turma da planilha → turma do seu cadastro',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+                for (final item in (preview['group_mapping'] as List? ?? []))
+                  Padding(padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '${item['discipline_code']}  ${item['group_sequence']}  '
+                      '(${item['rows']} linhas)  →  '
+                      '${(item['classes'] as List).isEmpty
+                          ? 'nenhuma turma encontrada'
+                          : (item['classes'] as List).map((c) =>
+                              '${c['label']} (${c['rows']})').join(', ')}'
+                      '${(item['without_class'] as num) > 0
+                          ? '  •  ${item['without_class']} sem turma'
+                          : ''}',
+                      style: TextStyle(fontSize: 11,
+                        color: (item['classes'] as List).isEmpty
+                          ? AssistantTheme.c4
+                          : AssistantTheme.textSecondary))),
                 const SizedBox(height: 10),
                 const Text('Por padrão, linhas sem aluno no cadastro não serão gravadas.'),
                 CheckboxListTile(contentPadding: EdgeInsets.zero,
@@ -176,12 +198,15 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
         onChanged: change,
       ));
     }
-    final visible = rows.where((r) =>
-      (discipline == null || r['discipline_code'] == discipline) &&
-      (group == null || r['group_sequence'] == group) &&
-      (course == null || r['course'] == course) &&
-      (semester == null || r['semester'] == semester) &&
-      (!pendingOnly || r['student_id'] == null)).toList();
+    final recorte = StudyTimeFilter(
+      discipline: discipline,
+      classLabel: classLabel,
+      course: course,
+      semester: semester,
+      importedGroup: group,
+      pendingOnly: pendingOnly,
+    );
+    final visible = recorte.apply(rows);
     visible.sort((a, b) {
       final compare = sortByMinutes
           ? ((a['minutes'] as num?) ?? 0).compareTo((b['minutes'] as num?) ?? 0)
@@ -199,7 +224,8 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
               icon: const Icon(Icons.upload_file), label: const Text('Importar ou corrigir XLSX')),
             ElevatedButton.icon(onPressed: busy ? null : () {
               showDialog<void>(context: context, builder: (_) => StudyTimeDashboard(
-                records: visible,
+                records: rows,
+                initialFilter: recorte,
                 title: [if (discipline != null) discipline!,
                         if (group != null) 'Turma $group',
                         if (course != null) course!].join(' • ').isEmpty
@@ -213,7 +239,16 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
             Text('${visible.length} registros'),
             filter('Disciplina', 'discipline_code', discipline,
               (v) => setState(() => discipline = v)),
-            filter('Turma (sequência)', 'group_sequence', group,
+            SizedBox(width: 230, child: DropdownButtonFormField<String>(
+              value: classLabel, isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Turma (cadastro)'),
+              items: [const DropdownMenuItem(value: null, child: Text('Todas')),
+                ...{for (final r in rows) StudyTimeStats.classOf(r)}.toList().map(
+                  (v) => DropdownMenuItem(value: v,
+                    child: Text(v, overflow: TextOverflow.ellipsis)))],
+              onChanged: (v) => setState(() => classLabel = v),
+            )),
+            filter('Turma na planilha', 'group_sequence', group,
               (v) => setState(() => group = v)),
             filter('Curso', 'course', course,
               (v) => setState(() => course = v)),
@@ -255,7 +290,7 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
           SingleChildScrollView(child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
-              sortColumnIndex: sortByMinutes ? 5 : 0,
+              sortColumnIndex: sortByMinutes ? 6 : 0,
               sortAscending: sortAscending,
               columns: [
               DataColumn(label: const Text('Matrícula / aluno'),
@@ -264,7 +299,8 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
                   sortAscending = ascending;
                 })),
               const DataColumn(label: Text('Disciplina')),
-              const DataColumn(label: Text('Turma')),
+              const DataColumn(label: Text('Turma (cadastro)')),
+              const DataColumn(label: Text('Turma na planilha')),
               const DataColumn(label: Text('Curso')),
               const DataColumn(label: Text('Semestre')),
               DataColumn(label: const Text('Minutos'), numeric: true,
@@ -276,6 +312,7 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
             ], rows: visible.map((r) => DataRow(cells: [
               DataCell(Text('${r['enrollment']}\n${r['student_name'] ?? 'Aluno não cadastrado'}')),
               DataCell(Text('${r['discipline_code']}')),
+              DataCell(Text(StudyTimeStats.classOf(r))),
               DataCell(Text('${r['group_sequence']}')),
               DataCell(Text('${r['course']}')),
               DataCell(Text('${r['semester']}')),
