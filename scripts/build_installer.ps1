@@ -165,12 +165,22 @@ Write-Host "    ISCC: $iscc"
 
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
+# A licenca e exibida na tela de aceite do instalador. O Inno Setup so le
+# texto UTF-8 com BOM; sem isso os acentos do texto em portugues aparecem
+# trocados. A copia com BOM fica no dist, e o LICENSE do repositorio
+# continua limpo.
+$licenseForSetup = Join-Path $distDir 'LICENSE-setup.txt'
+[System.IO.File]::WriteAllText(
+    $licenseForSetup,
+    [System.IO.File]::ReadAllText((Join-Path $repoRoot 'LICENSE')),
+    (New-Object System.Text.UTF8Encoding $true))
+
 & $iscc `
     "/DAppVersion=$Version" `
     "/DSourceDir=$releaseDir" `
     "/DOutputDir=$distDir" `
     "/DIconFile=$(Join-Path $interfaceDir 'windows\runner\resources\app_icon.ico')" `
-    "/DLicenseFile=$(Join-Path $repoRoot 'LICENSE')" `
+    "/DLicenseFile=$licenseForSetup" `
     $issFile
 
 if ($LASTEXITCODE -ne 0) { throw 'ISCC falhou ao compilar o instalador.' }

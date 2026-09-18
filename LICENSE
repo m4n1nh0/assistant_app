@@ -1,33 +1,116 @@
-Non-Commercial Software License
+INTARQ — Licença de código visível, todos os direitos reservados
+Copyright (c) 2026 Mariano Florencio Mendonça. Todos os direitos reservados.
 
-Copyright (c) 2026 Project authors
+(English summary at the end / resumo em inglês no final.)
 
-Permission is granted to use, copy, modify, and distribute this software and
-its documentation for personal, educational, research, or internal
-non-commercial purposes only, subject to the conditions below.
+1. NATUREZA DESTE REPOSITÓRIO
 
-Commercial use is not permitted without prior written permission from the
-copyright holder. Commercial use includes, but is not limited to:
+Este repositório é público para fins de transparência técnica, portfólio,
+estudo e avaliação do trabalho. Ser público NÃO o torna software livre nem
+software de código aberto, e NÃO concede licença de uso.
 
-- selling, licensing, sublicensing, renting, or hosting the software as part of
-  a paid product or service;
-- using the software to provide paid consulting, managed services, automation,
-  software-as-a-service, or similar commercial offerings;
-- incorporating the software into proprietary or commercial products;
-- using the software primarily to generate revenue or commercial advantage.
+Esta é uma PRODUÇÃO INDEPENDENTE, desenvolvida pelo autor por conta própria,
+com recursos próprios e fora de qualquer vínculo empregatício, contrato de
+trabalho, bolsa, convênio ou projeto institucional. O software não é produto,
+serviço nem posição oficial de nenhuma instituição de ensino, empresa ou
+órgão citado no código, na documentação ou nas integrações.
 
-You may distribute copies or modified versions only if you:
+Menções a sistemas, marcas ou instituições de terceiros (por exemplo, sistemas
+acadêmicos com os quais o software se integra) existem apenas para
+interoperabilidade e identificação técnica. Elas não implicam parceria,
+patrocínio, endosso, homologação ou representação por parte dessas entidades.
 
-- keep this license notice and copyright notice;
-- clearly mark material modifications;
-- do not remove attribution notices;
-- do not use the project name, author names, or trademarks to imply
-  endorsement.
+2. O QUE NÃO É PERMITIDO
 
-This software is provided "as is", without warranty of any kind, express or
-implied, including but not limited to the warranties of merchantability,
-fitness for a particular purpose, and noninfringement. In no event shall the
-authors or copyright holders be liable for any claim, damages, or other
-liability arising from the software or the use of the software.
+Salvo autorização prévia, expressa e por escrito do titular do copyright, NÃO
+é permitido:
 
-For commercial licensing, contact the copyright holder.
+a) usar, executar ou operar o software, no todo ou em parte, em qualquer
+   ambiente, inclusive pessoal, acadêmico, interno ou de avaliação;
+b) copiar, reproduzir ou hospedar o software ou partes substanciais dele;
+c) modificar, adaptar, traduzir, refatorar ou criar obras derivadas;
+d) distribuir, sublicenciar, vender, alugar, emprestar ou disponibilizar a
+   terceiros, de forma gratuita ou onerosa;
+e) usar o software, seu código, sua arquitetura, seus prompts ou sua
+   documentação para prestar serviços, oferecer produtos ou obter vantagem
+   comercial;
+f) usar o conteúdo deste repositório para treinar, ajustar ou avaliar modelos
+   de aprendizado de máquina, ou para compor conjuntos de dados, incluindo
+   coleta automatizada para esse fim;
+g) usar o nome "INTARQ", o nome do autor, a identidade visual ou demais marcas
+   do projeto de modo a sugerir autoria, afiliação ou endosso.
+
+3. O QUE É PERMITIDO
+
+É permitido, sem necessidade de autorização:
+
+a) visualizar e ler o código e a documentação diretamente neste repositório;
+b) clonar ou baixar cópia local exclusivamente para leitura e avaliação
+   técnica do trabalho do autor, sem execução em produção e sem uso
+   operacional;
+c) citar trechos curtos, com atribuição clara ao autor e a este repositório,
+   para fins de crítica, análise, ensino sobre o próprio projeto, notícia ou
+   discussão técnica, respeitada a legislação aplicável;
+d) abrir issues, relatar problemas e sugerir melhorias.
+
+Contribuições enviadas (por exemplo, em pull request) são oferecidas ao titular
+do copyright, que pode incorporá-las, modificá-las ou recusá-las, mantendo os
+direitos sobre o resultado; enviar uma contribuição não concede ao autor dela
+qualquer licença de uso sobre o restante do projeto.
+
+4. LICENCIAMENTO SOB CONSULTA
+
+Uso em instituição de ensino, uso comercial, implantação, integração, revenda
+ou qualquer hipótese do item 2 podem ser licenciados mediante acordo escrito.
+Contato: marianofmendonca@gmail.com
+
+5. COMPONENTES DE TERCEIROS
+
+O software depende de bibliotecas e serviços de terceiros, cada um sob a
+própria licença, que permanece válida e não é alterada por este documento. Esta
+licença cobre apenas o código e a documentação originais deste repositório.
+
+6. DADOS E RESPONSABILIDADE DE USO
+
+Quem obtiver autorização de uso é o único responsável pelo tratamento de dados
+pessoais que fizer com o software — inclusive gravações de aula, transcrições,
+listas de alunos, presença e notas — e pelo cumprimento da legislação
+aplicável, entre ela a Lei Geral de Proteção de Dados (Lei 13.709/2018). O
+autor não atua como controlador nem como operador desses dados.
+
+7. AUSÊNCIA DE GARANTIA
+
+O SOFTWARE É FORNECIDO "COMO ESTÁ", SEM GARANTIA DE QUALQUER NATUREZA, EXPRESSA
+OU IMPLÍCITA, INCLUINDO, SEM LIMITAÇÃO, GARANTIAS DE COMERCIALIZAÇÃO,
+ADEQUAÇÃO A UMA FINALIDADE ESPECÍFICA, DISPONIBILIDADE, EXATIDÃO DOS
+RESULTADOS GERADOS POR MODELOS DE INTELIGÊNCIA ARTIFICIAL E NÃO VIOLAÇÃO. EM
+NENHUMA HIPÓTESE O AUTOR RESPONDERÁ POR QUALQUER RECLAMAÇÃO, DANO OU OUTRA
+RESPONSABILIDADE DECORRENTE DO SOFTWARE OU DE SEU USO.
+
+8. VIGÊNCIA
+
+A autorização concedida no item 3 cessa automaticamente em caso de
+descumprimento desta licença. Versões distribuídas anteriormente sob outra
+licença permanecem sob os termos daquela versão; este documento vale para o
+conteúdo publicado a partir da data de sua adoção.
+
+---
+
+ENGLISH SUMMARY (informative; the Portuguese text prevails)
+
+This repository is source-available for transparency, portfolio and technical
+evaluation. It is NOT open source and grants NO license to use, run, copy,
+modify, distribute or build upon the software, nor to use its content for
+training machine learning models.
+
+This is an INDEPENDENT WORK by the author, not produced under employment or on
+behalf of any institution or company. References to third-party systems or
+institutions are for interoperability only and imply no partnership or
+endorsement.
+
+You may read the code, clone it solely to evaluate the author's work, quote
+short excerpts with attribution, and open issues. Any other use requires prior
+written permission: marianofmendonca@gmail.com
+
+Third-party dependencies remain under their own licenses. The software is
+provided "as is", without warranty of any kind.

@@ -1375,11 +1375,22 @@ flutter test
 
 ## Licenca
 
-Este projeto e disponibilizado sob uma licenca de uso nao comercial. Uso,
-copia, modificacao e distribuicao sao permitidos apenas para fins pessoais,
-educacionais, de pesquisa ou internos sem finalidade comercial.
+**Codigo visivel, todos os direitos reservados.** Este repositorio e publico
+para transparencia tecnica, portfolio e avaliacao do trabalho - o que nao o
+torna software livre nem concede licenca de uso.
 
-Uso comercial exige permissao previa por escrito. Consulte [LICENSE](LICENSE).
+Sem autorizacao previa por escrito, nao e permitido usar, executar, copiar,
+modificar, distribuir o software, nem usar seu conteudo para treinar modelos de
+aprendizado de maquina. E permitido ler o codigo, clonar para avaliacao,
+citar trechos com atribuicao e abrir issues.
+
+Esta e uma **producao independente**, feita pelo autor com recursos proprios e
+fora de qualquer vinculo empregaticio ou projeto institucional. Mencoes a
+sistemas academicos e outras marcas existem so para interoperabilidade e nao
+implicam parceria nem endosso.
+
+Bibliotecas de terceiros seguem as licencas delas. Para licenciar uso,
+implantacao ou integracao, veja [LICENSE](LICENSE).
 
 ## Documentacao Do Codigo-Fonte
 
