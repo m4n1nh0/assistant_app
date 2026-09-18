@@ -29,11 +29,12 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 
 **Ainda roadmap:**
 
-- [ ] Quiz consolidado de múltiplas aulas/período.
+- [x] Quiz consolidado de múltiplas aulas e materiais (as fontes se somam).
 - [ ] Exportação de exercícios para PDF/material impresso.
-- [ ] Preview e edição das questões antes de salvar.
+- [x] Revisão antes de liberar o QR Code e edição das questões do rascunho.
 - [ ] Relatório completo de desempenho por aluno.
-- [ ] Banco de questões reutilizável e regeneração com feedback.
+- [x] Banco de questões reutilizável (buscar, editar, arquivar, montar quiz).
+- [ ] Regeneração com feedback do que a turma errou.
 
 ---
 

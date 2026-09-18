@@ -110,4 +110,5 @@ nav:
           - Guia de testes: funcionalidades/quiz/testes.md
   - Produto:
       - Identidade INTARQ: produto/identidade.md
+      - Roadmap do produto: produto/roadmap.md
       - Roadmap comercial: produto/roadmap-comercial.md

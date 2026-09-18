@@ -540,12 +540,12 @@ wscat -c ws://localhost:8000/ws/quiz/quiz-123/monitor
 ## 🎯 Próximas Features
 
 - [ ] WebSocket autenticado (JWT)
-- [ ] Notificação push quando quiz fica pronto
+- [x] Aviso ao professor quando o quiz fica pronto (no app, Telegram e WhatsApp)
 - [ ] Análise de desempenho por aluno
 - [ ] Exportar resultados em PDF
 - [ ] Gráficos de desempenho em tempo real
 - [ ] Chat entre professor e alunos durante quiz
-- [ ] Banco de questões (reusar em vários quizzes)
+- [x] Banco de questões (reusar em vários quizzes)
 
 ---
 

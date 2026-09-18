@@ -14,7 +14,7 @@
 - [x] Links copiados usam `api.baseUrl`, não domínio placeholder.
 - [x] QR autenticado carrega com header `Authorization`.
 - [x] Monitor inclui botão `Encerrar Quiz`, com confirmação e bloqueio de novas respostas.
-- [ ] Preview/revisão das questões antes de salvar ainda não foi implementado.
+- [x] Revisão das perguntas antes de liberar o QR Code, na central de quizzes.
 - [ ] Relatórios de desempenho e exportação seguem como roadmap.
 
 > Nota: exemplos antigos neste documento mostram o widget dentro de uma tela de detalhes da aula. No app atual, a decisão de produto é manter quiz em aba própria e somente após encerrar a gravação.
@@ -578,10 +578,10 @@ Share.share('Responda meu quiz: $quizUrl')
 
 ## 🚀 Próximas Features
 
-- [ ] WebSocket para atualizar monitoramento em tempo real (sem polling)
+- [x] WebSocket para atualizar monitoramento em tempo real (sem polling)
 - [ ] Gráfico de desempenho por questão
 - [ ] Exportar resultados em PDF
-- [ ] Notificação de alunos quando quiz fica pronto
+- [ ] Notificação de alunos quando quiz fica pronto (o professor já é avisado no app, no Telegram e no WhatsApp)
 - [ ] Análise de quais alunos erraram mais
 - [ ] Regenerar quiz com feedback
 - [ ] Integrar com notas da turma

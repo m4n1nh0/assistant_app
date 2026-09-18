@@ -50,7 +50,7 @@ lateral:
 
 - :material-rocket-launch: **[Produto](produto/identidade.md)**
 
-    Identidade visual e roadmap comercial.
+    Identidade visual, roadmap do produto e roadmap comercial.
 
 </div>
 

@@ -526,7 +526,7 @@ GROUNDING_THRESHOLD=0.70     # Score mínimo para aceitar questão
 - [ ] Relatório de desempenho
 - [ ] Remixagem de questões (embaralhar opções)
 - [ ] Integração com calendário
-- [ ] Notificações de quiz disponível
+- [x] Aviso ao professor quando a geração termina
 
 ---
 
