@@ -4566,6 +4566,88 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
     }
   }
 
+  /// Corrige codigo, nome e semestre de uma disciplina ja cadastrada.
+  ///
+  /// O codigo e o que liga a disciplina a planilha de tempo de estudo e ao
+  /// sistema academico: disciplina salva sem codigo - ou com o codigo colado
+  /// dentro do nome - fica fora de toda importacao, em silencio. Sem esta tela
+  /// a unica saida era apagar e recadastrar, perdendo turmas e historico.
+  Future<void> _editDiscipline(Discipline discipline) async {
+    final codeCtrl = TextEditingController(text: discipline.code);
+    final nameCtrl = TextEditingController(text: discipline.name);
+    final semesterCtrl = TextEditingController(text: discipline.semester);
+    final salvou = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Editar disciplina'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'O codigo precisa ser igual ao da instituicao (ex.: ARA0040), '
+                'sozinho no campo. E por ele que a planilha de tempo de estudo '
+                'encontra a disciplina.',
+                style: TextStyle(
+                    fontSize: 11, color: AssistantTheme.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              _Field(controller: codeCtrl, label: 'CODIGO', hint: 'ARA0040'),
+              const SizedBox(height: 10),
+              _Field(
+                  controller: nameCtrl,
+                  label: 'NOME',
+                  hint: 'BANCO DE DADOS'),
+              const SizedBox(height: 10),
+              _Field(
+                  controller: semesterCtrl,
+                  label: 'SEMESTRE',
+                  hint: '2026.2'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('SALVAR'),
+          ),
+        ],
+      ),
+    );
+    final code = codeCtrl.text.trim();
+    final name = nameCtrl.text.trim();
+    final semester = semesterCtrl.text.trim();
+    codeCtrl.dispose();
+    nameCtrl.dispose();
+    semesterCtrl.dispose();
+    if (salvou != true || !mounted) return;
+    if (code.isEmpty || name.isEmpty) {
+      setState(() => _status = 'Codigo e nome sao obrigatorios.');
+      return;
+    }
+    try {
+      await education.updateDiscipline(
+        discipline.id,
+        code: code,
+        name: name,
+        semester: semester.isEmpty ? null : semester,
+      );
+      await _reload();
+      if (mounted) {
+        setState(() => _status = '');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = '$e');
+    }
+  }
+
   Future<void> _setActive(Discipline discipline, bool active) async {
     if (!active) {
       final confirmed = await showDialog<bool>(
@@ -4740,8 +4822,24 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                                         fontSize: 10,
                                         color: AssistantTheme.textMuted),
                                   ),
+                                  // Sem codigo, a planilha de tempo de estudo
+                                  // ignora a disciplina inteira sem avisar.
+                                  if (discipline.code.trim().isEmpty)
+                                    const Text(
+                                      'SEM CODIGO  -  nao entra na importacao '
+                                      'de tempo de estudo. Use o lapis.',
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          color: AssistantTheme.c4),
+                                    ),
                                 ],
                               ),
+                            ),
+                            IconButton(
+                              tooltip: 'Editar codigo, nome e semestre',
+                              icon: const Icon(Icons.edit_outlined, size: 15),
+                              color: AssistantTheme.c1,
+                              onPressed: () => _editDiscipline(discipline),
                             ),
                             IconButton(
                               tooltip: discipline.active

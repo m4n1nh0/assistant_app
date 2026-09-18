@@ -73,6 +73,18 @@ sem implementação correspondente. Eles descrevem o alvo, não o que existe:
 Antes de implementar, vale decidir se ainda é o alvo: os três foram escritos
 antes da arquitetura atual.
 
+### Aplicativo mobile
+
+Hoje existe uma interface só, Flutter para Windows (`interface/windows` é a
+única pasta de plataforma). Tudo depende do notebook aberto — inclusive gravar,
+que é a função mais usada e a que menos precisa de tela: hoje, para registrar
+uma aula, uma palestra ou a apresentação de um grupo, o professor tem que
+carregar e abrir o notebook antes de começar.
+
+Chamada pelo SIA, QR Code do quiz e monitor ao vivo continuam melhores no
+desktop: são feitos sentado, projetando, com a tela grande. Num tablet, parte
+deles volta a fazer sentido.
+
 ### Plataforma
 
 - fila de quiz e WebSocket presos a uma réplica (ver Segurança);
@@ -110,7 +122,112 @@ Objetivo: o professor usa o resultado, não só aplica o quiz.
 
 *Pronto quando:* depois da aula, o professor sai com um relatório pronto para lançar nota e um quiz de reforço.
 
-### Onda 3 — Sair do SIA (4 a 8 semanas)
+### Onda 3 — Aplicativo mobile (3 a 5 semanas)
+
+Objetivo: o celular vira o gravador e o consulente. **Não** vira um clone da
+desktop.
+
+**Mesmo projeto, não um segundo app.** O caminho é acrescentar os alvos Android
+e iOS ao projeto Flutter que já existe e tornar o layout responsivo, e não
+duplicar o código. Duas interfaces separadas significariam dois lugares para
+corrigir cada regra, e a experiência das últimas entregas mostra que regra
+duplicada diverge na primeira correção.
+
+**O recorte por tamanho de tela**, que é o que decide o que vale portar:
+
+| Função | Celular | Tablet | Desktop |
+|---|---|---|---|
+| Gravar — aula, palestra e apresentação de grupo | **Melhor aqui**: o professor está em pé, o microfone vai junto, e não precisa abrir o notebook para começar | sim | sim |
+| Pontuar aluno citando o nome em voz alta | **vem junto com a gravação**: é o mesmo áudio, não é tela nova | sim | sim |
+| Marcar presença na mão, andando pela sala | **melhor aqui**: lista de nomes com um toque cada | sim | sim |
+| Enviar material fotografando o quadro ou o slide | **só faz sentido aqui**: o backend já lê foto por OCR (`extract_image_sync`), falta a câmera — no desktop é seletor de arquivo | sim | parcial |
+| Consultar aulas, transcrições e resumos; chat | sim | sim | sim |
+| Ouvir o resumo da aula pela narração que já existe | **bom aqui**: serve no deslocamento, sem tela | sim | sim |
+| Consultar a agenda e o histórico de conversas | sim | sim | sim |
+| Receber aviso de quiz pronto na fila | sim (com notificação do sistema, não só aviso no app) | sim | sim |
+| Ver relatório de pontuação e de presença; gerar o PDF | leitura sim; gerar e enviar, avaliar | **sim** | sim |
+| Consultar grupos de projeto e seus integrantes | leitura sim | **sim** | sim |
+| Revisar e editar as questões geradas | ruim: texto longo em tela estreita | **sim** | sim |
+| Central de quizzes | não | **sim** | sim |
+| Cadastrar turmas, alunos e disciplinas | não: formulário longo | sim | **sim** |
+| Importar tempo de estudo (planilha) | não: confirmação com dezenas de linhas | avaliar | **sim** |
+| Configurar chaves de IA, atalhos e integrações | só o login | parcial | **sim** |
+| Chamada pelo SIA | não: é WebView autenticado, feito sentado | avaliar | **sim** |
+| QR Code da chamada e monitor ao vivo do quiz | não: a tela é projetada para a turma | avaliar | **sim** |
+| Rodar script, abrir projeto, ler janela e apps (`local_*_service`) | não existe: o sistema não permite | não | **sim** |
+| Atalho que abre o app da instituição, disca, compartilha ou põe na agenda | **só existe aqui**: é o equivalente móvel do atalho de app | sim | não: no desktop o alvo é executável ou URL |
+
+Os três primeiros itens são o argumento da onda: **o que ganha no celular é o
+que acontece de pé, em sala** — gravar, pontuar, marcar presença e fotografar o
+quadro. O resto é consulta, e consulta cabe em qualquer tela.
+
+**O assistente continua sendo assistente no celular** — o que muda é o
+catálogo, não o mecanismo. O registro de capacidades já foi escrito assim: cada
+entrada *declara e executa*, e a mesma lista vira o manifesto que a interface
+publica para o backend (`local_capability_registry.dart`). No desktop ele
+anuncia diagnóstico de rede, inspeção de workspace e execução de script; no
+celular ele anunciaria outro conjunto, sem tocar no backend:
+
+- **abrir o app da instituição** no ponto certo — Estácio, e depois o app de
+  qualquer instituição que publique um esquema de URL;
+- **compartilhar** o resumo, o PDF da aula ou o relatório pelo que já está
+  instalado no aparelho;
+- **pôr na agenda** do celular a aula, a entrega do trabalho ou a data do quiz;
+- **discar ou mandar mensagem** para um contato da coordenação.
+
+Os atalhos já cobrem isso no modelo de dados: `ShortcutModel` guarda `type` =
+`app` | `url` | `command` com um `target` livre e apelidos de voz. No celular,
+`app` passa a ser um deep link e `command` simplesmente não é anunciado — de
+novo, o aparelho declara o que sabe fazer.
+
+> **Limite honesto:** abrir o app da instituição não é integrar com ele. O
+> assistente leva o professor até a porta; ele não lê nem lança nada lá dentro.
+> A chamada pelo SIA continua vindo do WebView autenticado que já existe, e um
+> app de instituição não substitui isso. Além disso, deep link depende de a
+> instituição publicar um esquema (no iOS, ainda declarado no
+> `LSApplicationQueriesSchemes`): **antes de prometer, é preciso testar aparelho
+> a aparelho** — isso não dá para verificar pelo código daqui.
+
+As duas telas maiores (chat e Modo Aula, ~10 mil linhas juntas) foram escritas
+para três painéis lado a lado. No celular só o chat, a gravação e as três ações
+de sala precisam de versão estreita; o Modo Aula inteiro fica para o tablet,
+onde o layout de painéis ainda cabe.
+
+Etapas:
+
+1. **Fatiar o que é local.** Isolar as capacidades de desktop atrás do registro
+   de capacidades que já existe, para o app anunciar ao backend só o que aquele
+   aparelho sabe fazer — o mecanismo já é esse, falta o app não depender delas.
+   Sem isso o chat no celular quebra ao tentar rodar script ou abrir projeto.
+2. **Catálogo de capacidades do celular**: abrir app da instituição,
+   compartilhar, agenda e contato. Mesma estrutura do registro atual, entradas
+   diferentes — e um teste de fumaça por aparelho, porque deep link que não
+   existe falha só em produção.
+3. **Alvos Android e iOS**, com permissão de microfone, câmera e notificação.
+   Áudio sai do `media_kit` com libs do Windows para o caminho nativo do Flutter
+   mobile; PDF sai da impressora do sistema para compartilhar arquivo.
+4. **Layout estreito** das quatro ações de sala — gravar, pontuar, marcar
+   presença e fotografar material — mais chat e lista de conteúdos. A gravação
+   precisa dos três tipos (aula, palestra, apresentação), o que inclui escolher
+   disciplina e turma da aula: é formulário curto, cabe na tela.
+5. **Câmera como entrada de material**: fotografar o quadro e mandar para a
+   mesma rota de material. O OCR do backend já trata imagem; falta o caminho da
+   câmera e o recorte da foto.
+6. **Notificação do sistema** em lugar do aviso só dentro do app — o professor
+   não fica com o app aberto esperando a fila de quiz terminar.
+7. **Layout de tablet** (breakpoint largo) reaproveitando os painéis do
+   desktop: revisão de questões, central de quizzes, relatórios e grupos.
+8. **Publicação**: assinatura, conta de desenvolvedor Apple e Google, política
+   de privacidade e o texto de consentimento de gravação — as lojas exigem.
+
+*Pronto quando:* o professor dá a aula inteira com o celular no bolso — grava,
+pontua quem participou, marca quem faltou e fotografa o quadro — e depois
+revisa as questões no tablet antes de aplicar o quiz pelo notebook.
+
+> **Primeiro a Onda 1.** Mais um aparelho com a conta do professor amplia o
+> alcance do que hoje está sem autenticação no monitor do quiz.
+
+### Onda 4 — Sair do SIA (4 a 8 semanas)
 
 1. Contrato de adaptador acadêmico, com o SIA como primeira implementação.
 2. Credenciais por sistema, cifradas como já são as chaves de IA.
@@ -119,7 +236,7 @@ Objetivo: o professor usa o resultado, não só aplica o quiz.
 
 *Pronto quando:* trocar de instituição é configuração, não desenvolvimento.
 
-### Onda 4 — Escala e inteligência (depois do piloto)
+### Onda 5 — Escala e inteligência (depois do piloto)
 
 1. **Escalar horizontalmente**: sessão do WebSocket e fila de quiz compartilhadas (Redis), o que hoje limita a uma réplica.
 2. **Memória multi-turno com cache**, se a latência do chat virar queixa real.
@@ -133,7 +250,9 @@ Objetivo: o professor usa o resultado, não só aplica o quiz.
 1. **Identidade do aluno**: código por turma (simples, anônimo) ou vínculo com o cadastro (permite nota, exige mais cuidado com dado pessoal)?
 2. **Os três documentos de "Fase 3"**: viram roadmap de verdade, ou são arquivados como estudo?
 3. **Multi-instituição**: vale investir nos adaptadores antes de ter um segundo cliente pedindo?
-4. **Escala**: o piloto vai ter quantas turmas simultâneas? Abaixo de uma centena de alunos ao mesmo tempo, a réplica única aguenta e a Onda 4 pode esperar.
+4. **Escala**: o piloto vai ter quantas turmas simultâneas? Abaixo de uma centena de alunos ao mesmo tempo, a réplica única aguenta e a Onda 5 pode esperar.
+5. **Mobile**: Android primeiro (custo baixo, publicação simples) ou Android e iOS juntos (iOS exige conta paga e revisão da Apple)?
+6. **Tablet**: entra junto com o celular ou é uma etapa depois? A chamada pelo SIA e o monitor do quiz cabem no tablet em sala, ou o notebook continua sendo o aparelho de sala de aula?
 
 ---
 
@@ -149,3 +268,4 @@ Objetivo: o professor usa o resultado, não só aplica o quiz.
 | `sistema-academico.md` | Tudo além do SIA |
 | `agentes-por-disciplina.md`, `deteccao-alucinacao.md`, `memoria-multi-turno.md` | Especificações inteiras, sem implementação |
 | `arquitetura/agentes.md` | Réplica única; orquestrador como ponto único |
+| `interface/` (código, sem doc própria) | Só o alvo Windows existe; celular e tablet são a Onda 3 |

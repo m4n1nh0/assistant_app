@@ -2,6 +2,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/education_service.dart';
+import '../services/study_time_stats.dart';
+import '../utils/theme.dart';
 import 'study_time_dashboard.dart';
 
 class StudyTimeTab extends StatefulWidget {
@@ -16,6 +18,10 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
   String? discipline, group, course, semester;
   bool pendingOnly = false, busy = false;
   String message = '';
+
+  /// Ordenacao da tabela: por padrao o maior tempo primeiro, que e a pergunta
+  /// que se faz olhando esta lista.
+  bool sortByMinutes = true, sortAscending = false;
 
   @override
   void initState() {
@@ -157,8 +163,13 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
     List<String> options(String field) =>
         rows.map((r) => '${r[field] ?? ''}').where((v) => v.isNotEmpty).toSet().toList()..sort();
     Widget filter(String label, String field, String? value, ValueChanged<String?> change) {
+      // `isExpanded` e obrigatorio aqui: o nome do curso e longo
+      // ("ANALISE E DESENVOLVIMENTO DE SISTEMAS") e sem ele o item selecionado
+      // nao recebe a restricao de largura - o ellipsis nao chega a valer e a
+      // linha estoura com o aviso amarelo de overflow.
       return SizedBox(width: 210, child: DropdownButtonFormField<String>(
-        value: value, decoration: InputDecoration(labelText: label),
+        value: value, isExpanded: true,
+        decoration: InputDecoration(labelText: label),
         items: [const DropdownMenuItem(value: null, child: Text('Todos')),
           ...options(field).map((v) => DropdownMenuItem(value: v, child: Text(v,
               overflow: TextOverflow.ellipsis)))],
@@ -171,6 +182,14 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
       (course == null || r['course'] == course) &&
       (semester == null || r['semester'] == semester) &&
       (!pendingOnly || r['student_id'] == null)).toList();
+    visible.sort((a, b) {
+      final compare = sortByMinutes
+          ? ((a['minutes'] as num?) ?? 0).compareTo((b['minutes'] as num?) ?? 0)
+          : '${a['student_name'] ?? a['enrollment']}'
+              .compareTo('${b['student_name'] ?? b['enrollment']}');
+      return sortAscending ? compare : -compare;
+    });
+    final stats = StudyTimeStats.fromRecords(visible);
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -230,18 +249,30 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
           ]),
         if (message.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 8),
           child: Text(message)),
+        if (visible.isNotEmpty) _SummaryStrip(stats: stats),
         const SizedBox(height: 10),
         Expanded(child: busy ? const Center(child: CircularProgressIndicator()) :
           SingleChildScrollView(child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: DataTable(columns: const [
-              DataColumn(label: Text('Matrícula / aluno')),
-              DataColumn(label: Text('Disciplina')),
-              DataColumn(label: Text('Turma')),
-              DataColumn(label: Text('Curso')),
-              DataColumn(label: Text('Semestre')),
-              DataColumn(label: Text('Minutos')),
-              DataColumn(label: Text('Corrigir')),
+            child: DataTable(
+              sortColumnIndex: sortByMinutes ? 5 : 0,
+              sortAscending: sortAscending,
+              columns: [
+              DataColumn(label: const Text('Matrícula / aluno'),
+                onSort: (_, ascending) => setState(() {
+                  sortByMinutes = false;
+                  sortAscending = ascending;
+                })),
+              const DataColumn(label: Text('Disciplina')),
+              const DataColumn(label: Text('Turma')),
+              const DataColumn(label: Text('Curso')),
+              const DataColumn(label: Text('Semestre')),
+              DataColumn(label: const Text('Minutos'), numeric: true,
+                onSort: (_, ascending) => setState(() {
+                  sortByMinutes = true;
+                  sortAscending = ascending;
+                })),
+              const DataColumn(label: Text('Corrigir')),
             ], rows: visible.map((r) => DataRow(cells: [
               DataCell(Text('${r['enrollment']}\n${r['student_name'] ?? 'Aluno não cadastrado'}')),
               DataCell(Text('${r['discipline_code']}')),
@@ -268,6 +299,50 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
                 })),
             ])).toList(),
           )))),
+      ]),
+    );
+  }
+}
+
+/// Leitura rápida do que está filtrado, acima da tabela.
+///
+/// A tabela responde "quem estudou quanto"; esta faixa responde "como está a
+/// turma" sem precisar abrir o painel de projeção.
+class _SummaryStrip extends StatelessWidget {
+  final StudyTimeStats stats;
+
+  const _SummaryStrip({required this.stats});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget item(String label, String value, {String note = '', bool alert = false}) =>
+      Padding(padding: const EdgeInsets.only(right: 22),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(fontSize: 10,
+            color: AssistantTheme.textMuted)),
+          Text(value, style: TextStyle(fontSize: 15,
+            color: alert ? AssistantTheme.c4 : AssistantTheme.textPrimary)),
+          if (note.isNotEmpty) Text(note, style: const TextStyle(fontSize: 9,
+            color: AssistantTheme.textMuted)),
+        ]));
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AssistantTheme.surface,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AssistantTheme.border),
+      ),
+      child: Wrap(runSpacing: 8, children: [
+        item('TEMPO TOTAL', '${stats.totalHours.toStringAsFixed(1)} h'),
+        item('ALUNOS', '${stats.studentCount}'),
+        item('MEDIANA', '${(stats.medianMinutes / 60).toStringAsFixed(1)} h',
+          note: 'metade estudou menos'),
+        item('5 PRIMEIROS', '${(stats.topShare() * 100).round()}%',
+          note: 'do tempo da turma'),
+        if (stats.unlinkedRecords > 0)
+          item('SEM ALUNO', '${stats.unlinkedRecords}',
+            note: 'fora do ranking', alert: true),
       ]),
     );
   }
