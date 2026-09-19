@@ -873,6 +873,12 @@ class QuestionModel(Base):
     #: resposta de aluno apontando para ela, e o relatorio precisa continuar
     #: fechando.
     arquivada            = Column(Boolean, nullable=False, default=False)
+    #: De qual questao esta e copia, quando veio de "montar quiz com questoes
+    #: existentes". A copia existe para o rascunho novo poder ser editado sem
+    #: mexer no quiz ja aplicado - mas ela nao e questao nova, e por isso o
+    #: banco de questoes lista so as originais: senao cada quiz montado
+    #: duplicaria o banco inteiro.
+    origem_id            = Column(String(64), nullable=True, index=True)
     created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -1068,6 +1074,7 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "questions": {
             "arquivada": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "origem_id": "VARCHAR(64) NULL",
         },
         "student_answers": {
             "student_name": "VARCHAR(180) NULL",

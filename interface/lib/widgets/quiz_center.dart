@@ -762,6 +762,7 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
   String _dificuldade = '';
   String _status = '';
   bool _archived = false;
+  bool _copies = false;
 
   /// Ids de tudo que o filtro alcanca, para "selecionar todas" poder passar
   /// alem da pagina carregada.
@@ -799,6 +800,7 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
         search: _search.text.trim(),
         dificuldade: _dificuldade,
         status: _status,
+        includeCopies: _copies,
         includeArchived: _archived,
         limit: _pageSize,
         offset: append ? _questions.length : 0,
@@ -1057,6 +1059,18 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
                   _load();
                 },
               ),
+              const SizedBox(width: 6),
+              FilterChip(
+                label: const Text('Cópias'),
+                tooltip: 'Montar quiz copia a questão para o rascunho novo. '
+                    'A cópia fica fora do banco para ele não duplicar; '
+                    'marque para vê-las.',
+                selected: _copies,
+                onSelected: (value) {
+                  setState(() => _copies = value);
+                  _load();
+                },
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1171,6 +1185,10 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
             difficultyLabel(question.dificuldade),
             if (question.disciplinas.isNotEmpty) question.disciplinas.join(', '),
             'de "${question.quizTitulo}" (${quizStatusLabel(question.quizStatus).toLowerCase()})',
+            if (question.copias > 0)
+              'já usada em ${question.copias} quiz'
+                  '${question.copias == 1 ? '' : 'zes'} montado'
+                  '${question.copias == 1 ? '' : 's'}',
             if (!question.verificado) 'não verificada',
           ].join(' · '),
           style: const TextStyle(fontSize: 10, color: AssistantTheme.textSecondary),

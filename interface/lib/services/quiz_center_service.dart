@@ -192,6 +192,9 @@ class BankQuestion {
   final bool editavel;
   final List<String> disciplinas;
 
+  /// Em quantos quizzes montados esta questao foi reaproveitada.
+  final int copias;
+
   const BankQuestion({
     required this.id,
     required this.quizId,
@@ -209,6 +212,7 @@ class BankQuestion {
     this.arquivada = false,
     this.editavel = false,
     this.disciplinas = const [],
+    this.copias = 0,
   });
 
   factory BankQuestion.fromJson(Map<String, dynamic> json) => BankQuestion(
@@ -228,6 +232,7 @@ class BankQuestion {
         arquivada: json['arquivada'] == true,
         editavel: json['editavel'] == true,
         disciplinas: _strings(json['disciplinas']),
+        copias: _int(json['copias']),
       );
 
   /// Texto da alternativa correta, para mostrar na lista.
@@ -362,6 +367,7 @@ class QuizCenterService {
     String search = '',
     String dificuldade = '',
     String status = '',
+    bool includeCopies = false,
     bool includeArchived = false,
     int limit = 50,
     int offset = 0,
@@ -371,6 +377,7 @@ class QuizCenterService {
       'q': search,
       'dificuldade': dificuldade,
       'status': status,
+      'include_copies': includeCopies ? 'true' : '',
       'include_archived': includeArchived ? 'true' : '',
       'limit': limit,
       'offset': offset,

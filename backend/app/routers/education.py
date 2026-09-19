@@ -3574,6 +3574,8 @@ async def list_bank_questions(
     q: str = Query(""),
     dificuldade: str = Query(""),
     status: str = Query("", description="draft para so os rascunhos"),
+    include_copies: bool = Query(
+        False, description="inclui as copias feitas ao montar quiz"),
     include_archived: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -3598,6 +3600,11 @@ async def list_bank_questions(
         return {"questions": [], "total": 0, "disciplinas": disciplinas}
 
     filtros = [QuestionModel.quiz_id.in_(quiz_ids)]
+    if not include_copies:
+        # Montar quiz com questoes existentes copia as questoes, para o rascunho
+        # novo poder ser corrigido sem mexer no quiz ja aplicado. A copia nao e
+        # questao nova: sem este filtro, cada quiz montado duplicava o banco.
+        filtros.append(QuestionModel.origem_id.is_(None))
     if not include_archived:
         filtros.append(QuestionModel.arquivada.is_(False))
     if dificuldade:
@@ -3628,8 +3635,24 @@ async def list_bank_questions(
         select(QuestionModel.id).where(*filtros)
     )).scalars().all())
 
+    # Em quantos quizzes cada original foi reaproveitada. A copia some da
+    # lista, mas o reaproveitamento continua visivel - e o que evita o professor
+    # montar duas vezes o mesmo simulado sem perceber.
+    copias: Dict[str, int] = {}
+    if rows:
+        for origem_id, quantidade in (await db.execute(
+            select(QuestionModel.origem_id, func.count(QuestionModel.id))
+            .where(QuestionModel.origem_id.in_([row.id for row in rows]))
+            .group_by(QuestionModel.origem_id)
+        )).all():
+            copias[origem_id] = int(quantidade)
+
     return {
-        "questions": [_bank_question(row, catalog[row.quiz_id]) for row in rows],
+        "questions": [
+            {**_bank_question(row, catalog[row.quiz_id]),
+             "copias": copias.get(row.id, 0)}
+            for row in rows
+        ],
         "total": total,
         "disciplinas": disciplinas,
         "all_ids": todos_os_ids,
@@ -3873,6 +3896,9 @@ async def create_quiz_from_questions(
             topico_origem=origem.topico_origem,
             grounding_score=origem.grounding_score,
             verificado=origem.verificado,
+            # Copia de copia continua apontando para a questao raiz: o banco
+            # lista a origem uma vez so, por mais quizzes que ela componha.
+            origem_id=origem.origem_id or origem.id,
             # Ordem de escolha vira ordem do quiz: a apresentacao segue
             # created_at, e o DATETIME do MySQL nao guarda fracao de segundo.
             created_at=datetime.fromtimestamp(agora.timestamp() + ordem, timezone.utc),

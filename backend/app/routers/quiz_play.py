@@ -9,7 +9,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
@@ -419,9 +421,18 @@ async def _touch_participant(
         participant.last_seen_at = now
     try:
         await db.commit()
-    except Exception:
+    except IntegrityError:
         # Duas abas do mesmo aluno entrando juntas: a outra ja gravou.
         await db.rollback()
+    except SQLAlchemyError as exc:
+        # Qualquer outra falha aqui deixava o professor com "Participantes: 0"
+        # sem explicacao nenhuma - o lobby mentia em silencio. Engolir para a
+        # aula nao parar continua certo; engolir sem deixar rastro, nao.
+        await db.rollback()
+        logger.error(
+            "Nao registrei o participante {} no quiz {}: {}",
+            name, quiz_id, exc,
+        )
 
 
 def _play_redirect(

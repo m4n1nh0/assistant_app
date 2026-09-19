@@ -55,6 +55,7 @@ class FakeQuizCenter extends QuizCenterService {
     String search = '',
     String dificuldade = '',
     String status = '',
+    bool includeCopies = false,
     bool includeArchived = false,
     int limit = 50,
     int offset = 0,
@@ -195,6 +196,26 @@ void main() {
       expect(find.textContaining('#1 na seleção'), findsOneWidget);
       expect(find.textContaining('#2 na seleção'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'MONTAR QUIZ (2)'), findsOneWidget);
+    });
+
+    testWidgets('questão reaproveitada mostra em quantos quizzes entrou',
+        (tester) async {
+      final service = FakeQuizCenter()
+        ..questions = [
+          BankQuestion.fromJson({
+            'id': 'q1',
+            'quiz_id': 'quiz-q1',
+            'quiz_titulo': 'Quiz da aula',
+            'quiz_status': 'open',
+            'enunciado': 'O que é 1FN?',
+            'dificuldade': 'medio',
+            'copias': 2,
+          }),
+        ];
+      await pumpBank(tester, service);
+
+      expect(find.textContaining('já usada em 2 quizzes montados'),
+          findsOneWidget);
     });
 
     testWidgets('filtrar por rascunho chega ao serviço', (tester) async {
