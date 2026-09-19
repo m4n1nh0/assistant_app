@@ -760,7 +760,12 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
   Timer? _debounce;
   String _discipline = '';
   String _dificuldade = '';
+  String _status = '';
   bool _archived = false;
+
+  /// Ids de tudo que o filtro alcanca, para "selecionar todas" poder passar
+  /// alem da pagina carregada.
+  List<String> _allIds = const [];
   List<BankQuestion> _questions = const [];
   List<String> _disciplinas = const [];
   int _total = 0;
@@ -793,6 +798,7 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
         discipline: _discipline,
         search: _search.text.trim(),
         dificuldade: _dificuldade,
+        status: _status,
         includeArchived: _archived,
         limit: _pageSize,
         offset: append ? _questions.length : 0,
@@ -802,6 +808,10 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
         _questions = append ? [..._questions, ...result.questions] : result.questions;
         _total = result.total;
         _disciplinas = result.disciplinas;
+        _allIds = result.allIds;
+        // Marcada que saiu do filtro nao fica marcada em segredo: o botao de
+        // excluir diz um numero, e ele tem de ser o que esta a vista.
+        _selected.removeWhere((id) => !_allIds.contains(id));
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -815,6 +825,42 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
       _selected.remove(question.id);
       if (selected) _selected.add(question.id);
     });
+  }
+
+  void _selectAll() => setState(() {
+        _selected
+          ..clear()
+          ..addAll(_allIds);
+      });
+
+  /// Limpeza em lote. O aviso e explicito sobre o que nao sera apagado: quiz ja
+  /// aplicado so arquiva, e descobrir isso depois seria ruim.
+  Future<void> _removeSelected() async {
+    final marcadas = List.of(_selected);
+    if (marcadas.isEmpty) return;
+    final naPagina = _questions.where((q) => marcadas.contains(q.id));
+    final arquivaveis = naPagina.where((q) => !q.editavel).length;
+    final ok = await _confirm(
+      context,
+      'Excluir ${marcadas.length} questão(ões)?',
+      'As de rascunho são apagadas de vez.'
+      '${arquivaveis > 0 ? ' Pelo menos $arquivaveis são de quiz já liberado: '
+          'essas são arquivadas, não apagadas, porque continuam ligadas às '
+          'respostas da turma.' : ''}'
+      ' Não dá para desfazer o que for apagado.',
+      confirm: 'Excluir',
+    );
+    if (!ok) return;
+    try {
+      final resultado = await _service.removeQuestions(marcadas);
+      if (mounted) {
+        setState(_selected.clear);
+        _snack(context, resultado.resumo);
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) _snack(context, '$e', error: true);
+    }
   }
 
   Future<void> _remove(BankQuestion question) async {
@@ -982,6 +1028,26 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
                   },
                 ),
               ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 170,
+                child: DropdownButtonFormField<String>(
+                  value: _status,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                      isDense: true, labelText: 'Situação do quiz'),
+                  items: const [
+                    DropdownMenuItem(value: '', child: Text('Todas')),
+                    DropdownMenuItem(value: 'draft', child: Text('Rascunho')),
+                    DropdownMenuItem(value: 'open', child: Text('Liberado')),
+                    DropdownMenuItem(value: 'closed', child: Text('Encerrado')),
+                  ],
+                  onChanged: (value) {
+                    _status = value ?? '';
+                    _load();
+                  },
+                ),
+              ),
               const SizedBox(width: 6),
               FilterChip(
                 label: const Text('Arquivadas'),
@@ -1002,19 +1068,43 @@ class _QuestionBankPanelState extends State<QuestionBankPanel> {
                 style: const TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
               ),
               const Spacer(),
-              if (_selected.isNotEmpty) ...[
-                TextButton(
-                  onPressed: () => setState(_selected.clear),
-                  child: const Text('LIMPAR SELEÇÃO'),
+              // Sao quatro acoes e os rotulos crescem com o numero marcado:
+              // numa janela estreita elas descem de linha em vez de vazar.
+              Flexible(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (_allIds.isNotEmpty && _selected.length < _allIds.length)
+                      TextButton.icon(
+                        onPressed: _selectAll,
+                        icon: const Icon(Icons.checklist, size: 16),
+                        label: Text('SELECIONAR TODAS ($_total)'),
+                      ),
+                    if (_selected.isNotEmpty) ...[
+                      TextButton(
+                        onPressed: () => setState(_selected.clear),
+                        child: const Text('LIMPAR SELEÇÃO'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _removeSelected,
+                        icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                        label: Text('EXCLUIR (${_selected.length})'),
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: AssistantTheme.danger),
+                      ),
+                    ],
+                    FilledButton.icon(
+                      onPressed: _selected.isEmpty ? null : _buildQuiz,
+                      icon: const Icon(Icons.playlist_add_check, size: 16),
+                      label: Text(_selected.isEmpty
+                          ? 'MONTAR QUIZ'
+                          : 'MONTAR QUIZ (${_selected.length})'),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-              ],
-              FilledButton.icon(
-                onPressed: _selected.isEmpty ? null : _buildQuiz,
-                icon: const Icon(Icons.playlist_add_check, size: 16),
-                label: Text(_selected.isEmpty
-                    ? 'MONTAR QUIZ'
-                    : 'MONTAR QUIZ (${_selected.length})'),
               ),
             ],
           ),

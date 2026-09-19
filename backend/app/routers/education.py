@@ -39,6 +39,7 @@ from ..core.database import (
 )
 from ..core.security import get_current_user
 from ..models.schemas import (
+    BankQuestionBulkDelete,
     ClassGroupCreate,
     ClassGroupResponse,
     ClassGroupUpdate,
@@ -3445,6 +3446,7 @@ def _catalog_matches(
     *,
     discipline: str = "",
     lesson_id: str = "",
+    status: str = "",
 ) -> bool:
     if discipline:
         alvo = discipline.strip().lower()
@@ -3453,6 +3455,8 @@ def _catalog_matches(
     if lesson_id and not any(
         fonte["type"] == "lesson" and fonte["id"] == lesson_id for fonte in item["fontes"]
     ):
+        return False
+    if status and (item["quiz"].status or "open") != status:
         return False
     return True
 
@@ -3569,18 +3573,25 @@ async def list_bank_questions(
     lesson_id: str = Query(""),
     q: str = Query(""),
     dificuldade: str = Query(""),
+    status: str = Query("", description="draft para so os rascunhos"),
     include_archived: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Banco de questoes: tudo que ja foi gerado, com filtro e paginacao."""
+    """Banco de questoes: tudo que ja foi gerado, com filtro e paginacao.
+
+    `status` recorta pelo estado do quiz de origem: "draft" traz so o que ainda
+    nao foi aplicado - que e o que se pode apagar de verdade.
+    """
 
     catalog = await _quiz_catalog(db, user["tutor_id"])
     quiz_ids = [
         quiz_id for quiz_id, item in catalog.items()
-        if _catalog_matches(item, discipline=discipline, lesson_id=lesson_id)
+        if _catalog_matches(
+            item, discipline=discipline, lesson_id=lesson_id, status=status
+        )
     ]
     disciplinas = sorted({nome for item in catalog.values() for nome in item["disciplinas"]})
     if not quiz_ids:
@@ -3611,10 +3622,17 @@ async def list_bank_questions(
         .limit(limit)
     )).scalars().all()
 
+    # Os ids de todo o filtro, nao so da pagina: "selecionar todos" precisa
+    # alcancar o que a paginacao esconde, e id e barato de trafegar.
+    todos_os_ids = list((await db.execute(
+        select(QuestionModel.id).where(*filtros)
+    )).scalars().all())
+
     return {
         "questions": [_bank_question(row, catalog[row.quiz_id]) for row in rows],
         "total": total,
         "disciplinas": disciplinas,
+        "all_ids": todos_os_ids,
     }
 
 
@@ -3705,6 +3723,62 @@ async def delete_bank_question(
     question.arquivada = True
     await db.commit()
     return {"deleted": False, "archived": True}
+
+
+@router.post("/quiz/questions/bulk-delete")
+async def delete_bank_questions(
+    body: BankQuestionBulkDelete,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tira varias questoes do banco de uma vez.
+
+    A regra por questao e a mesma da exclusao individual, e nao se afrouxa por
+    ser em lote: rascunho e apagado, questao de quiz ja aplicado e arquivada -
+    ela tem resposta de aluno apontando para ela e o relatorio precisa continuar
+    fechando. Por isso a resposta separa as duas contas, em vez de dizer so
+    "pronto": o professor pediu para apagar e precisa saber o que sobrou.
+
+    Id que nao existe ou nao e do professor e ignorado, nao derruba o lote.
+    """
+
+    ids = [item for item in dict.fromkeys(body.ids) if item]
+    if not ids:
+        return {"deleted": 0, "archived": 0, "ignored": 0}
+
+    questions = (await db.execute(
+        select(QuestionModel).where(QuestionModel.id.in_(ids))
+    )).scalars().all()
+    quizzes = {
+        quiz.id: quiz
+        for quiz in (await db.execute(
+            select(QuizModel).where(
+                QuizModel.id.in_({item.quiz_id for item in questions}),
+                QuizModel.tutor_id == user["tutor_id"],
+            )
+        )).scalars().all()
+    }
+
+    apagadas = 0
+    arquivadas = 0
+    for question in questions:
+        quiz = quizzes.get(question.quiz_id)
+        if quiz is None:
+            continue
+        if (quiz.status or "open") == "draft":
+            await db.delete(question)
+            quiz.total_questoes = max(0, (quiz.total_questoes or 1) - 1)
+            apagadas += 1
+        elif not question.arquivada:
+            question.arquivada = True
+            arquivadas += 1
+
+    await db.commit()
+    return {
+        "deleted": apagadas,
+        "archived": arquivadas,
+        "ignored": len(ids) - apagadas - arquivadas,
+    }
 
 
 @router.post("/quiz/questions/{question_id}/restore")

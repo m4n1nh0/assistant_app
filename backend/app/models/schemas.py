@@ -1155,6 +1155,12 @@ class DisciplineCreate(BaseModel):
     semester: str = ""
 
 
+class BankQuestionBulkDelete(BaseModel):
+    """Ids das questoes que saem do banco de uma vez."""
+
+    ids: List[str] = Field(default_factory=list, max_length=500)
+
+
 class DisciplineUpdate(BaseModel):
     """Alteracao de disciplina."""
     code: Optional[str] = None

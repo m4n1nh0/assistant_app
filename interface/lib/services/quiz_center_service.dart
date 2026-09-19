@@ -249,7 +249,36 @@ class QuestionBankResult {
   final List<BankQuestion> questions;
   final int total;
   final List<String> disciplinas;
-  const QuestionBankResult(this.questions, this.total, this.disciplinas);
+
+  /// Ids de tudo que o filtro alcanca, nao so da pagina. E o que permite
+  /// "selecionar todas" sem carregar o banco inteiro na tela.
+  final List<String> allIds;
+
+  const QuestionBankResult(
+    this.questions,
+    this.total,
+    this.disciplinas, [
+    this.allIds = const [],
+  ]);
+}
+
+/// O que sobrou depois de uma limpeza em lote.
+class BankCleanupResult {
+  final int deleted;
+  final int archived;
+  final int ignored;
+
+  const BankCleanupResult(this.deleted, this.archived, this.ignored);
+
+  String get resumo {
+    final partes = [
+      if (deleted > 0) '$deleted apagada${deleted == 1 ? "" : "s"}',
+      if (archived > 0)
+        '$archived arquivada${archived == 1 ? "" : "s"} (quiz já aplicado)',
+      if (ignored > 0) '$ignored ignorada${ignored == 1 ? "" : "s"}',
+    ];
+    return partes.isEmpty ? 'Nada mudou.' : '${partes.join(', ')}.';
+  }
 }
 
 /// Monta a query string sem os filtros vazios.
@@ -332,6 +361,7 @@ class QuizCenterService {
     String discipline = '',
     String search = '',
     String dificuldade = '',
+    String status = '',
     bool includeArchived = false,
     int limit = 50,
     int offset = 0,
@@ -340,6 +370,7 @@ class QuizCenterService {
       'discipline': discipline,
       'q': search,
       'dificuldade': dificuldade,
+      'status': status,
       'include_archived': includeArchived ? 'true' : '',
       'limit': limit,
       'offset': offset,
@@ -348,6 +379,20 @@ class QuizCenterService {
       _maps(data['questions']).map(BankQuestion.fromJson).toList(),
       _int(data['total']),
       _strings(data['disciplinas']),
+      _strings(data['all_ids']),
+    );
+  }
+
+  /// Tira varias questoes do banco de uma vez, com a mesma regra da individual.
+  Future<BankCleanupResult> removeQuestions(List<String> questionIds) async {
+    final data = await _ok(api.post(
+      '/education/quiz/questions/bulk-delete',
+      body: {'ids': questionIds},
+    ));
+    return BankCleanupResult(
+      _int(data['deleted']),
+      _int(data['archived']),
+      _int(data['ignored']),
     );
   }
 

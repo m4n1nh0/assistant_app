@@ -38,16 +38,41 @@ class FakeQuizCenter extends QuizCenterService {
   @override
   Future<void> markSeen(List<String> jobIds) async => seenCalls.add(jobIds);
 
+  /// Filtros com que a tela chamou a listagem, na ordem.
+  final List<String> statusFilters = [];
+
+  /// Ids pedidos em cada limpeza em lote.
+  final List<List<String>> bulkDeletes = [];
+
+  /// Ids que o filtro alcanca alem da pagina; vazio usa os da pagina.
+  List<String> allIds = const [];
+
+  BankCleanupResult cleanup = const BankCleanupResult(0, 0, 0);
+
   @override
   Future<QuestionBankResult> listQuestions({
     String discipline = '',
     String search = '',
     String dificuldade = '',
+    String status = '',
     bool includeArchived = false,
     int limit = 50,
     int offset = 0,
-  }) async =>
-      QuestionBankResult(questions, questions.length, const ['BANCO DE DADOS']);
+  }) async {
+    statusFilters.add(status);
+    return QuestionBankResult(
+      questions,
+      questions.length,
+      const ['BANCO DE DADOS'],
+      allIds.isEmpty ? questions.map((q) => q.id).toList() : allIds,
+    );
+  }
+
+  @override
+  Future<BankCleanupResult> removeQuestions(List<String> questionIds) async {
+    bulkDeletes.add(questionIds);
+    return cleanup;
+  }
 }
 
 BankQuestion question(String id, {bool editavel = true, String status = 'draft'}) =>
@@ -170,6 +195,73 @@ void main() {
       expect(find.textContaining('#1 na seleção'), findsOneWidget);
       expect(find.textContaining('#2 na seleção'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'MONTAR QUIZ (2)'), findsOneWidget);
+    });
+
+    testWidgets('filtrar por rascunho chega ao serviço', (tester) async {
+      final service = FakeQuizCenter()..questions = [question('q1')];
+      await pumpBank(tester, service);
+
+      await tester.tap(find.text('Situação do quiz'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rascunho').last);
+      await tester.pumpAndSettle();
+
+      expect(service.statusFilters.last, 'draft');
+    });
+
+    testWidgets('selecionar todas alcança além da página carregada',
+        (tester) async {
+      final service = FakeQuizCenter()
+        ..questions = [question('q1'), question('q2')]
+        ..allIds = ['q1', 'q2', 'q3-fora-da-pagina'];
+      await pumpBank(tester, service);
+
+      await tester.tap(find.textContaining('SELECIONAR TODAS'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(OutlinedButton, 'EXCLUIR (3)'), findsOneWidget);
+    });
+
+    testWidgets('excluir selecionadas confirma e manda os ids', (tester) async {
+      final service = FakeQuizCenter()
+        ..questions = [question('q1'), question('q2')]
+        ..cleanup = const BankCleanupResult(2, 0, 0);
+      await pumpBank(tester, service);
+
+      await tester.tap(find.textContaining('SELECIONAR TODAS'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'EXCLUIR (2)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Excluir 2 questão(ões)?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
+      await tester.pumpAndSettle();
+      expect(service.bulkDeletes, isEmpty, reason: 'cancelar não apaga nada');
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'EXCLUIR (2)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
+      await tester.pumpAndSettle();
+
+      expect(service.bulkDeletes.single, ['q1', 'q2']);
+    });
+
+    testWidgets('aviso diz que quiz liberado será arquivado, não apagado',
+        (tester) async {
+      final service = FakeQuizCenter()
+        ..questions = [
+          question('q1'),
+          question('q2', editavel: false, status: 'closed'),
+        ];
+      await pumpBank(tester, service);
+
+      await tester.tap(find.textContaining('SELECIONAR TODAS'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'EXCLUIR (2)'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('1 são de quiz já liberado'), findsOneWidget);
+      expect(find.textContaining('arquivadas, não apagadas'), findsOneWidget);
     });
 
     testWidgets('questão de quiz liberado não edita e é arquivada', (tester) async {
