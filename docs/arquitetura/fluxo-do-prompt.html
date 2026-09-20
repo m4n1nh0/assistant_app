@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>INTARQ — o caminho de um prompt que chama uma ferramenta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body { margin: 0; background: #070d18; font-family: 'Rajdhani', system-ui, sans-serif; }
+    a { color: #00d6ff; } a:hover { color: #7ee6ff; }
+
+    /* Uma única linha do tempo governa tudo: cada passo ocupa 1/8 do ciclo, e
+       o atraso negativo é o que coloca cada elemento na sua fatia. */
+    .s1 { animation-delay: calc(var(--cycle) * -1); }
+    .s2 { animation-delay: calc(var(--cycle) * -0.875); }
+    .s3 { animation-delay: calc(var(--cycle) * -0.75); }
+    .s4 { animation-delay: calc(var(--cycle) * -0.625); }
+    .s5 { animation-delay: calc(var(--cycle) * -0.5); }
+    .s6 { animation-delay: calc(var(--cycle) * -0.375); }
+    .s7 { animation-delay: calc(var(--cycle) * -0.25); }
+    .s8 { animation-delay: calc(var(--cycle) * -0.125); }
+
+    .dot-x, .dot-xr, .dot-y {
+      position: absolute; width: 13px; height: 13px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 16px 4px var(--accent);
+      opacity: 0; animation-duration: var(--cycle);
+      animation-timing-function: cubic-bezier(.4,0,.2,1); animation-iteration-count: infinite;
+    }
+    .dot-x  { top: -6px; animation-name: flowX; }
+    .dot-xr { top: -6px; animation-name: flowXrev; }
+    .dot-y  { left: -6px; animation-name: flowY; }
+
+    @keyframes flowX {
+      0%   { left: -6px; opacity: 0; }
+      1.5% { opacity: 1; }
+      11%  { opacity: 1; }
+      12.5%{ left: calc(100% - 7px); opacity: 0; }
+      100% { left: calc(100% - 7px); opacity: 0; }
+    }
+    @keyframes flowXrev {
+      0%   { left: calc(100% - 7px); opacity: 0; }
+      1.5% { opacity: 1; }
+      11%  { opacity: 1; }
+      12.5%{ left: -6px; opacity: 0; }
+      100% { left: -6px; opacity: 0; }
+    }
+    @keyframes flowY {
+      0%   { top: -6px; opacity: 0; }
+      1.5% { opacity: 1; }
+      11%  { opacity: 1; }
+      12.5%{ top: calc(100% - 7px); opacity: 0; }
+      100% { top: calc(100% - 7px); opacity: 0; }
+    }
+
+    .ring {
+      position: absolute; border-radius: 16px; border: 2px solid var(--accent);
+      opacity: 0; pointer-events: none;
+      animation-name: ring; animation-duration: var(--cycle);
+      animation-timing-function: ease-out; animation-iteration-count: infinite;
+    }
+    @keyframes ring {
+      0%   { opacity: 0; box-shadow: 0 0 0 0 transparent; }
+      2%   { opacity: 1; box-shadow: 0 0 28px 2px var(--accent); }
+      11%  { opacity: 1; box-shadow: 0 0 20px 0 var(--accent); }
+      13.5%{ opacity: 0; box-shadow: 0 0 0 0 transparent; }
+      100% { opacity: 0; }
+    }
+
+    .caption {
+      position: absolute; left: 0; top: 0; width: 100%; opacity: 0;
+      animation-name: caption; animation-duration: var(--cycle);
+      animation-timing-function: ease-out; animation-iteration-count: infinite;
+    }
+    @keyframes caption {
+      0%   { opacity: 0; transform: translateY(6px); }
+      2%   { opacity: 1; transform: translateY(0); }
+      11%  { opacity: 1; transform: translateY(0); }
+      13%  { opacity: 0; transform: translateY(-6px); }
+      100% { opacity: 0; transform: translateY(-6px); }
+    }
+
+    @keyframes sweep { from { width: 0%; } to { width: 100%; } }
+
+  /* Autônomo: centraliza o quadro de 1280x720 e encolhe junto com a janela,
+     para gravar a tela em qualquer monitor sem cortar nada. */
+  html, body { height: 100%; }
+  body { display: grid; place-items: center; background: #070d18; }
+  .palco { width: 1280px; height: 720px; transform-origin: center;
+            transform: scale(min(calc(100vw / 1320), calc(100vh / 760))); }
+</style>
+</head>
+<body>
+<div class="palco">
+<div style="width: 1280px; height: 720px; box-sizing: border-box; position: relative; overflow: hidden; background: #0a1324; color: #e8eef5; --accent: #00d6ff; --cycle: 12.8s;">
+
+  <!-- fundo: malha discreta -->
+  <div style="position: absolute; inset: 0; background-image: radial-gradient(#13243c 1px, transparent 1px); background-size: 32px 32px; opacity: 0.55;"></div>
+
+  <!-- cabeçalho -->
+  <div style="position: absolute; left: 48px; top: 36px; width: 536px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 3px; color: #68839e;">INTARQ · ARQUITETURA EM PRODUÇÃO</div>
+    <h1 style="margin: 8px 0 0; font-size: 38px; font-weight: 700; letter-spacing: 0.5px; color: #e8eef5;">O caminho de um prompt que chama uma ferramenta</h1>
+    <p style="margin: 6px 0 0; font-size: 17px; color: #9fb4cc;">Sete serviços na Railway. As credenciais do professor nunca entram na requisição.</p>
+  </div>
+
+  <!-- ============================ ARESTAS ============================ -->
+
+  <!-- 1. interface -> api -->
+  <div style="position: absolute; left: 248px; top: 372px; width: 72px; height: 1px; background: #24476b;">
+    <div class="dot-x s1"></div>
+    <div style="position: absolute; right: -1px; top: -4px; width: 0; height: 0; border-left: 7px solid #24476b; border-top: 4px solid transparent; border-bottom: 4px solid transparent;"></div>
+  </div>
+
+  <!-- 2. api -> orquestrador (e a volta, no passo 8) -->
+  <div style="position: absolute; left: 536px; top: 372px; width: 72px; height: 1px; background: #24476b;">
+    <div class="dot-x s2"></div>
+    <div class="dot-xr s8" style="background: #34d399; box-shadow: 0 0 16px 4px #34d399;"></div>
+    <div style="position: absolute; right: -1px; top: -4px; width: 0; height: 0; border-left: 7px solid #24476b; border-top: 4px solid transparent; border-bottom: 4px solid transparent;"></div>
+  </div>
+  <!-- a volta final também desce até a interface -->
+  <div style="position: absolute; left: 248px; top: 384px; width: 72px; height: 1px; background: transparent;">
+    <div class="dot-xr s8" style="background: #34d399; box-shadow: 0 0 16px 4px #34d399;"></div>
+  </div>
+
+  <!-- 3. orquestrador -> mysql -->
+  <div style="position: absolute; left: 660px; top: 428px; width: 1px; height: 120px; background: #24476b;">
+    <div class="dot-y s3"></div>
+    <div style="position: absolute; bottom: -1px; left: -4px; width: 0; height: 0; border-top: 7px solid #24476b; border-left: 4px solid transparent; border-right: 4px solid transparent;"></div>
+  </div>
+
+  <!-- 4. orquestrador -> qdrant -->
+  <div style="position: absolute; left: 788px; top: 428px; width: 1px; height: 120px; background: #24476b;">
+    <div class="dot-y s4"></div>
+    <div style="position: absolute; bottom: -1px; left: -4px; width: 0; height: 0; border-top: 7px solid #24476b; border-left: 4px solid transparent; border-right: 4px solid transparent;"></div>
+  </div>
+
+  <!-- 5. orquestrador -> modelo -->
+  <div style="position: absolute; left: 716px; top: 242px; width: 1px; height: 74px; background: #24476b;">
+    <div class="dot-y s5" style="animation-direction: reverse;"></div>
+  </div>
+
+  <!-- 6. orquestrador -> ferramentas: uma saída que se bifurca, para as duas
+       caixas ficarem longe uma da outra e os halos não se encostarem -->
+  <div style="position: absolute; left: 824px; top: 372px; width: 44px; height: 1px; background: #24476b;">
+    <div class="dot-x s6"></div>
+  </div>
+  <div style="position: absolute; left: 868px; top: 306px; width: 1px; height: 66px; background: #24476b;">
+    <div class="dot-y s6" style="animation-direction: reverse;"></div>
+  </div>
+  <div style="position: absolute; left: 868px; top: 372px; width: 1px; height: 68px; background: #24476b;">
+    <div class="dot-y s6"></div>
+  </div>
+  <div style="position: absolute; left: 868px; top: 306px; width: 28px; height: 1px; background: #24476b;">
+    <div style="position: absolute; right: -1px; top: -4px; width: 0; height: 0; border-left: 7px solid #24476b; border-top: 4px solid transparent; border-bottom: 4px solid transparent;"></div>
+  </div>
+  <div style="position: absolute; left: 868px; top: 440px; width: 28px; height: 1px; background: #24476b;">
+    <div style="position: absolute; right: -1px; top: -4px; width: 0; height: 0; border-left: 7px solid #24476b; border-top: 4px solid transparent; border-bottom: 4px solid transparent;"></div>
+  </div>
+
+  <!-- 7. volta pela API e desce pelo WebSocket até a máquina do professor -->
+  <div style="position: absolute; left: 716px; top: 428px; width: 1px; height: 52px; background: #3c5a2e;"></div>
+  <div style="position: absolute; left: 148px; top: 480px; width: 568px; height: 1px; background: #3c5a2e;">
+    <div class="dot-xr s7" style="background: #d4af37; box-shadow: 0 0 16px 4px #d4af37;"></div>
+    <div style="position: absolute; left: -1px; top: -4px; width: 0; height: 0; border-right: 7px solid #3c5a2e; border-top: 4px solid transparent; border-bottom: 4px solid transparent;"></div>
+  </div>
+  <div style="position: absolute; left: 148px; top: 428px; width: 1px; height: 52px; background: #3c5a2e;"></div>
+  <div style="position: absolute; left: 372px; top: 488px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #a9922f;">/internal/devices/invoke → WebSocket</div>
+
+  <!-- ============================ NÓS ============================ -->
+
+  <!-- interface -->
+  <div style="position: absolute; left: 48px; top: 316px; width: 200px; height: 112px; box-sizing: border-box; padding: 16px 18px; border-radius: 16px; background: #101b2c; border: 1px solid #1a3a58;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: #68839e;">FLUTTER · WINDOWS</div>
+    <div style="margin-top: 6px; font-size: 20px; font-weight: 700; color: #e8eef5;">Interface</div>
+    <div style="margin-top: 4px; font-size: 14px; line-height: 1.25; color: #9fb4cc;">publica o catálogo do que a máquina sabe fazer</div>
+  </div>
+  <div class="ring s1" style="left: 48px; top: 316px; width: 200px; height: 112px;"></div>
+  <div class="ring s7" style="left: 48px; top: 316px; width: 200px; height: 112px; border-color: #d4af37;"></div>
+  <div class="ring s8" style="left: 48px; top: 316px; width: 200px; height: 112px; border-color: #34d399;"></div>
+
+  <!-- assistant_app -->
+  <div style="position: absolute; left: 320px; top: 316px; width: 216px; height: 112px; box-sizing: border-box; padding: 16px 18px; border-radius: 16px; background: #101b2c; border: 1px solid #1a3a58;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: #68839e;">FASTAPI</div>
+    <div style="margin-top: 6px; font-size: 20px; font-weight: 700; color: #e8eef5;">assistant_app</div>
+    <div style="margin-top: 4px; font-size: 14px; line-height: 1.25; color: #9fb4cc;">autentica, guarda o WebSocket do aparelho</div>
+  </div>
+  <div class="ring s2" style="left: 320px; top: 316px; width: 216px; height: 112px;"></div>
+  <div class="ring s7" style="left: 320px; top: 316px; width: 216px; height: 112px; border-color: #d4af37;"></div>
+
+  <!-- orquestrador -->
+  <div style="position: absolute; left: 608px; top: 316px; width: 216px; height: 112px; box-sizing: border-box; padding: 16px 18px; border-radius: 16px; background: #0f2036; border: 1px solid #24476b;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: #68839e;">LANGGRAPH</div>
+    <div style="margin-top: 6px; font-size: 20px; font-weight: 700; color: #00d6ff;">orchestrator</div>
+    <div style="margin-top: 4px; font-size: 14px; line-height: 1.25; color: #9fb4cc;">roda o grafo do turno e escolhe a ferramenta</div>
+  </div>
+  <div class="ring s5" style="left: 608px; top: 316px; width: 216px; height: 112px;"></div>
+  <div class="ring s6" style="left: 608px; top: 316px; width: 216px; height: 112px;"></div>
+
+  <!-- modelo -->
+  <div style="position: absolute; left: 608px; top: 150px; width: 216px; height: 92px; box-sizing: border-box; padding: 14px 18px; border-radius: 16px; background: #101b2c; border: 1px dashed #24476b;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: #68839e;">PROVEDOR DE IA</div>
+    <div style="margin-top: 6px; font-size: 19px; font-weight: 700; color: #e8eef5;">modelo do professor</div>
+    <div style="margin-top: 2px; font-size: 13px; color: #9fb4cc;">chave dele, conta dele</div>
+  </div>
+  <div class="ring s5" style="left: 608px; top: 150px; width: 216px; height: 92px;"></div>
+
+  <!-- tool-service -->
+  <div style="position: absolute; left: 896px; top: 262px; width: 208px; height: 88px; box-sizing: border-box; padding: 14px 16px; border-radius: 16px; background: #101b2c; border: 1px solid #1a3a58;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: #68839e;">POST /tools/{nome}/invoke</div>
+    <div style="margin-top: 5px; font-size: 19px; font-weight: 700; color: #e8eef5;">tool-service</div>
+    <div style="margin-top: 2px; font-size: 13px; color: #9fb4cc;">sem banco, sem JWT</div>
+  </div>
+  <div class="ring s6" style="left: 896px; top: 262px; width: 208px; height: 88px;"></div>
+
+  <!-- mcp-service -->
+  <div style="position: absolute; left: 896px; top: 396px; width: 208px; height: 88px; box-sizing: border-box; padding: 14px 16px; border-radius: 16px; background: #101b2c; border: 1px solid #1a3a58;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: #68839e;">MODEL CONTEXT PROTOCOL</div>
+    <div style="margin-top: 5px; font-size: 19px; font-weight: 700; color: #e8eef5;">mcp-service</div>
+    <div style="margin-top: 2px; font-size: 13px; color: #9fb4cc;">ferramentas de terceiros</div>
+  </div>
+  <div class="ring s6" style="left: 896px; top: 396px; width: 208px; height: 88px;"></div>
+
+  <!-- mysql -->
+  <div style="position: absolute; left: 520px; top: 548px; width: 176px; height: 72px; box-sizing: border-box; padding: 12px 15px; border-radius: 14px; background: #101b2c; border: 1px solid #1a3a58;">
+    <div style="font-size: 18px; font-weight: 700; color: #e8eef5;">mysql</div>
+    <div style="margin-top: 2px; font-size: 13px; line-height: 1.2; color: #9fb4cc;">chaves de IA cifradas por professor</div>
+  </div>
+  <div class="ring s3" style="left: 520px; top: 548px; width: 176px; height: 72px;"></div>
+
+  <!-- qdrant -->
+  <div style="position: absolute; left: 712px; top: 548px; width: 176px; height: 72px; box-sizing: border-box; padding: 12px 15px; border-radius: 14px; background: #101b2c; border: 1px solid #1a3a58;">
+    <div style="font-size: 18px; font-weight: 700; color: #e8eef5;">qdrant</div>
+    <div style="margin-top: 2px; font-size: 13px; line-height: 1.2; color: #9fb4cc;">aulas, transcrições e materiais</div>
+  </div>
+  <div class="ring s4" style="left: 712px; top: 548px; width: 176px; height: 72px;"></div>
+
+  <!-- redis, fora do caminho do turno -->
+  <div style="position: absolute; left: 904px; top: 548px; width: 200px; height: 72px; box-sizing: border-box; padding: 12px 15px; border-radius: 14px; background: #0c1626; border: 1px dashed #1a3a58;">
+    <div style="font-size: 18px; font-weight: 700; color: #7f95ad;">redis</div>
+    <div style="margin-top: 2px; font-size: 13px; line-height: 1.2; color: #68839e;">cache de status dos provedores — fora do turno</div>
+  </div>
+
+  <!-- selo: o que não trafega -->
+  <div style="position: absolute; left: 520px; top: 272px; padding: 5px 12px; border-radius: 999px; background: rgba(212,175,55,0.12); border: 1px solid #6b5a22;">
+    <span style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.6px; color: #d4af37;">X-Internal-Token · só o tutor_id no corpo</span>
+  </div>
+
+  <!-- ============================ LEGENDA DO PASSO ============================ -->
+
+  <div style="position: absolute; left: 48px; top: 644px; width: 1184px; height: 56px;">
+    <div style="position: absolute; left: 0; top: 0; width: 100%; height: 2px; background: #16283f;">
+      <div style="height: 2px; background: var(--accent); animation: sweep var(--cycle) linear infinite;"></div>
+    </div>
+    <div style="position: absolute; left: 0; top: 14px; width: 100%; height: 40px;">
+      <div class="caption s1"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d6ff;">1/8</span> <span style="font-size: 17px; color: #cfdcea;">O professor manda o prompt. O app envia junto o catálogo do que aquela máquina sabe executar.</span></div>
+      <div class="caption s2"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d6ff;">2/8</span> <span style="font-size: 17px; color: #cfdcea;">A API chama o orquestrador com token interno. Nenhuma credencial vai no corpo — só o <code style="font-family: 'JetBrains Mono', monospace;">tutor_id</code>.</span></div>
+      <div class="caption s3"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d6ff;">3/8</span> <span style="font-size: 17px; color: #cfdcea;">O orquestrador busca no banco a chave de IA daquele professor, cifrada, e decifra só em memória.</span></div>
+      <div class="caption s4"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d6ff;">4/8</span> <span style="font-size: 17px; color: #cfdcea;">Recupera o contexto da pergunta no Qdrant: aulas gravadas, transcrições e materiais da disciplina.</span></div>
+      <div class="caption s5"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d6ff;">5/8</span> <span style="font-size: 17px; color: #cfdcea;">O grafo chama o modelo — que responde pedindo uma ferramenta, não texto.</span></div>
+      <div class="caption s6"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d6ff;">6/8</span> <span style="font-size: 17px; color: #cfdcea;">Ferramenta remota: o orquestrador invoca o tool-service (ou o mcp-service) por HTTP interno.</span></div>
+      <div class="caption s7"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #d4af37;">7/8</span> <span style="font-size: 17px; color: #cfdcea;">Ferramenta que só existe na máquina do professor: volta pela API e desce pelo WebSocket até o app, que executa ali.</span></div>
+      <div class="caption s8"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #34d399;">8/8</span> <span style="font-size: 17px; color: #cfdcea;">O resultado sobe ao grafo, vira resposta e refaz o caminho de volta até o chat.</span></div>
+    </div>
+  </div>
+
+</div>
+</div>
+</body>
+</html>
