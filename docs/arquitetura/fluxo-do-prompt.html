@@ -73,22 +73,24 @@ body { margin: 0; background: #070d18; font-family: 'Rajdhani', system-ui, sans-
       animation-name: caption; animation-duration: var(--cycle);
       animation-timing-function: ease-out; animation-iteration-count: infinite;
     }
+    /* O deslocamento é `margin-top`, e não `transform`: animação só de
+       opacity/transform roda no compositor, que ignora o relógio virtual do
+       navegador headless — ao exportar o vídeo, as legendas congelavam na
+       primeira e as oito viravam uma só. Uma propriedade de layout na mesma
+       regra traz a animação de volta para a thread principal. */
     @keyframes caption {
-      0%   { opacity: 0; transform: translateY(6px); }
-      2%   { opacity: 1; transform: translateY(0); }
-      11%  { opacity: 1; transform: translateY(0); }
-      13%  { opacity: 0; transform: translateY(-6px); }
-      100% { opacity: 0; transform: translateY(-6px); }
+      0%   { opacity: 0; margin-top: 6px; }
+      2%   { opacity: 1; margin-top: 0; }
+      11%  { opacity: 1; margin-top: 0; }
+      13%  { opacity: 0; margin-top: -6px; }
+      100% { opacity: 0; margin-top: -6px; }
     }
 
     @keyframes sweep { from { width: 0%; } to { width: 100%; } }
 
-  /* Autônomo: centraliza o quadro de 1280x720 e encolhe junto com a janela,
-     para gravar a tela em qualquer monitor sem cortar nada. */
   html, body { height: 100%; }
   body { display: grid; place-items: center; background: #070d18; }
-  .palco { width: 1280px; height: 720px; transform-origin: center;
-            transform: scale(min(calc(100vw / 1320), calc(100vh / 760))); }
+  .palco { width: 1280px; height: 720px; transform-origin: center; transform: scale(min(calc(100vw / 1320), calc(100vh / 760))); }
 </style>
 </head>
 <body>
