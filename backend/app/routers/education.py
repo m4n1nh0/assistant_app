@@ -4049,7 +4049,13 @@ async def _persist_generated_quiz(
 async def _build_quiz_response(db: AsyncSession, quiz: QuizModel) -> QuizResponse:
     """Monta um quiz com questoes no contrato consumido pela interface."""
 
-    stmt = select(QuestionModel).where(QuestionModel.quiz_id == quiz.id)
+    # Mesma ordem que o quiz ao vivo usa para avancar: sem isso a numeracao
+    # das perguntas na interface nao bate com a que a turma esta vendo.
+    stmt = (
+        select(QuestionModel)
+        .where(QuestionModel.quiz_id == quiz.id)
+        .order_by(QuestionModel.created_at, QuestionModel.id)
+    )
     questions = (await db.execute(stmt)).scalars().all()
 
     questoes_responses = []

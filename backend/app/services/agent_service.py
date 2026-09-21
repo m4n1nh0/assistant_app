@@ -43,7 +43,7 @@ from ..orchestration.agents import (
     Specialist,
     select_specialist,
 )
-from shared.ports.tools import ToolGateway
+from shared.ports.tools import ToolGateway, ToolPrincipal
 from . import langchain_agent_service
 from .llm_routing_service import rank_auto_llms
 
@@ -77,6 +77,7 @@ async def build_tools(
     *,
     allow_handoff: bool,
     gateway: ToolGateway | None = None,
+    principal: ToolPrincipal | None = None,
 ) -> list[BaseTool]:
     """Monta as ferramentas disponiveis para um especialista.
 
@@ -89,6 +90,9 @@ async def build_tools(
         specialist: quem vai atender.
         allow_handoff: se ainda ha salto disponivel para transferir a conversa.
         gateway: porta de acesso ao catalogo; `None` usa a do processo.
+        principal: dono dos dados desta requisicao, que fica preso nas tools
+            montadas aqui. Por isso as tools sao montadas a cada requisicao e
+            nao guardadas em cache global.
 
     Returns:
         As tools no formato que o `ToolNode` do LangGraph executa.
@@ -102,7 +106,9 @@ async def build_tools(
         logger.warning(f"Catalogo de ferramentas indisponivel: {exc}")
         descriptors = []
 
-    tools = to_langchain_tools(resolved, descriptors, agent_id=specialist.id)
+    tools = to_langchain_tools(
+        resolved, descriptors, agent_id=specialist.id, principal=principal
+    )
     if allow_handoff:
         tools.append(build_handoff_tool(specialist.id))
     return tools
@@ -180,8 +186,18 @@ async def _finalize(
     )
 
 
-async def _tools_for(specialist: Specialist, allow_handoff: bool) -> list[BaseTool]:
-    return await build_tools(specialist, allow_handoff=allow_handoff)
+async def _tools_for(
+    specialist: Specialist,
+    allow_handoff: bool,
+    context: AgentRuntimeContext,
+) -> list[BaseTool]:
+    return await build_tools(
+        specialist,
+        allow_handoff=allow_handoff,
+        principal=ToolPrincipal(
+            tutor_id=context.tutor_id, user_id=context.user_id
+        ),
+    )
 
 
 def _build_graph():
@@ -205,6 +221,8 @@ async def run_agents(
     task: str,
     active_llms: list[str],
     requested_llm: str | None = None,
+    tutor_id: str = "",
+    user_id: str = "",
 ) -> AgentOutcome:
     """Roda o especialista escolhido, seguindo transferencias ate o teto.
 
@@ -216,6 +234,9 @@ async def run_agents(
         active_llms: provedores disponiveis nesta requisicao.
         requested_llm: provedor pedido explicitamente; `None` deixa o roteamento
             decidir e habilita o fallback.
+        tutor_id: perfil de dados dono da conversa, repassado as ferramentas que
+            leem o banco.
+        user_id: conta autenticada que fez o pedido.
 
     Returns:
         A resposta final, o agente que respondeu e o rastro de ferramentas e
@@ -228,6 +249,8 @@ async def run_agents(
         active_llms=tuple(active_llms),
         max_tool_iterations=max(1, settings.agent_max_tool_iterations),
         max_hops=max(0, settings.agent_max_handoffs),
+        tutor_id=tutor_id,
+        user_id=user_id,
     )
 
     seed: AgentState = {

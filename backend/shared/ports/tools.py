@@ -13,6 +13,7 @@ cabe e devolve `ToolResult` normalizado.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -60,6 +61,30 @@ class ToolDescriptor:
 
 
 @dataclass(frozen=True)
+class ToolPrincipal:
+    """De quem sao os dados que esta execucao pode alcancar.
+
+    Existe por uma razao de seguranca, nao de conveniencia: ferramenta que le o
+    banco precisa saber de qual tutor ler, e esse dado **nao pode** chegar como
+    argumento do modelo. Argumento e conteudo gerado a partir da conversa; quem
+    conseguisse escrever "liste as questoes do tutor X" faria o modelo preencher
+    o campo e leria dado alheio. O principal e preenchido pelo grafo com a
+    identidade autenticada da requisicao e viaja fora de `args`.
+
+    Attributes:
+        tutor_id: perfil de dados dono da conversa.
+        user_id: conta autenticada que fez o pedido.
+    """
+
+    tutor_id: str = ""
+    user_id: str = ""
+
+    def identified(self) -> bool:
+        """Diz se ha um dono de dados definido para esta execucao."""
+        return bool(self.tutor_id)
+
+
+@dataclass(frozen=True)
 class ToolInvocation:
     """Um pedido de execucao, ja atribuido a um agente."""
 
@@ -68,6 +93,8 @@ class ToolInvocation:
     agent_id: str = ""
     timeout_seconds: float | None = None
     call_id: str = ""
+    #: Identidade dona dos dados, preenchida pelo grafo - nunca pelo modelo.
+    principal: ToolPrincipal = field(default_factory=ToolPrincipal)
 
 
 @dataclass(frozen=True)
@@ -89,9 +116,32 @@ class ToolResult:
     call_id: str = ""
 
     def as_text(self, *, limit: int = 4000) -> str:
-        """Texto que volta para o modelo como resultado da ferramenta."""
-        body = self.error if not self.ok else self.output
+        """Texto que volta para o modelo como resultado da ferramenta.
+
+        Ferramenta que le dados devolve um envelope com `text` ja redigido: o
+        modelo recebe a leitura em portugues em vez do `repr` de um dicionario,
+        que ele costuma copiar cru para a resposta.
+        """
+        if not self.ok:
+            return str(self.error)[:limit]
+        body = self.output
+        if isinstance(body, Mapping) and isinstance(body.get("text"), str):
+            return body["text"][:limit]
         return str(body)[:limit]
+
+    def data(self) -> dict[str, Any] | None:
+        """A leitura estruturada, quando a ferramenta devolveu uma.
+
+        E o que a interface desenha como resultado para o usuario decidir. O
+        `kind` e o que distingue um envelope de dados de uma saida qualquer:
+        sem ele, nao ha card a montar e so o texto segue para o modelo.
+        """
+        body = self.output
+        if not self.ok or not isinstance(body, Mapping):
+            return None
+        if not body.get("kind"):
+            return None
+        return dict(body)
 
 
 class ToolError(Exception):

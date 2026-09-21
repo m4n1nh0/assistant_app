@@ -31,6 +31,7 @@ from shared.ports.tools import (
     ToolResult,
     ToolTimeout,
 )
+from shared.toolkit.principal import use_principal
 from shared.toolkit.registry import ToolRegistry
 
 
@@ -120,9 +121,14 @@ class ToolExecutor:
                     observed.retry()
                     await asyncio.sleep(self._retry_backoff * attempt)
                 try:
-                    output = await asyncio.wait_for(
-                        runner(dict(invocation.args)), timeout=timeout
-                    )
+                    # A identidade da requisicao vale so enquanto esta
+                    # ferramenta roda, e fica fora de `args` de proposito: o
+                    # modelo escreve `args`, e dono de dado nao se escolhe pela
+                    # conversa.
+                    with use_principal(invocation.principal):
+                        output = await asyncio.wait_for(
+                            runner(dict(invocation.args)), timeout=timeout
+                        )
                     return ToolResult(
                         name=invocation.name,
                         ok=True,

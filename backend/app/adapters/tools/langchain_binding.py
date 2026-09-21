@@ -18,7 +18,12 @@ from typing import Any, Sequence
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from shared.ports.tools import ToolDescriptor, ToolGateway, ToolInvocation
+from shared.ports.tools import (
+    ToolDescriptor,
+    ToolGateway,
+    ToolInvocation,
+    ToolPrincipal,
+)
 
 
 def to_langchain_tool(
@@ -26,6 +31,7 @@ def to_langchain_tool(
     descriptor: ToolDescriptor,
     *,
     agent_id: str = "",
+    principal: ToolPrincipal | None = None,
 ) -> BaseTool:
     """Embrulha uma ferramenta do catalogo como `BaseTool`.
 
@@ -33,21 +39,31 @@ def to_langchain_tool(
         gateway: por onde a execucao passa.
         descriptor: contrato publico da ferramenta.
         agent_id: agente que vai dispara-la, usado na autorizacao e no trace.
+        principal: dono dos dados desta requisicao. Fica preso na tool no
+            momento em que ela e montada - uma tool por requisicao - em vez de
+            sair de `kwargs`: `kwargs` e o que o modelo escreve, e de la nao
+            pode sair a resposta de "dados de quem".
 
     Returns:
         Uma tool sincronizavel pelo LangChain, cuja execucao real acontece no
         gateway.
     """
+    owner = principal or ToolPrincipal()
 
-    async def _run(**kwargs: Any) -> str:
+    async def _run(**kwargs: Any) -> tuple[str, Any]:
         result = await gateway.invoke(
             ToolInvocation(
                 name=descriptor.name,
                 args=dict(kwargs),
                 agent_id=agent_id,
+                principal=owner,
             )
         )
-        return result.as_text()
+        # Dois destinos, um resultado: o texto alimenta o modelo e a leitura
+        # estruturada viaja pelo `artifact` da ToolMessage ate a interface. Sem
+        # esse segundo canal, mostrar a tabela na tela exigiria pedir ao modelo
+        # que reescrevesse os dados - e o modelo erra numero.
+        return result.as_text(), result.data()
 
     def _blocking(**kwargs: Any) -> str:
         # O caminho sincrono existe so porque `StructuredTool` exige um `func`.
@@ -64,6 +80,7 @@ def to_langchain_tool(
         args_schema=descriptor.args_schema or {"type": "object", "properties": {}},
         func=_blocking,
         coroutine=_run,
+        response_format="content_and_artifact",
         metadata={
             "source": descriptor.source,
             "server": descriptor.server,
@@ -77,9 +94,12 @@ def to_langchain_tools(
     descriptors: Sequence[ToolDescriptor],
     *,
     agent_id: str = "",
+    principal: ToolPrincipal | None = None,
 ) -> list[BaseTool]:
     """Embrulha um conjunto de ferramentas do catalogo."""
     return [
-        to_langchain_tool(gateway, descriptor, agent_id=agent_id)
+        to_langchain_tool(
+            gateway, descriptor, agent_id=agent_id, principal=principal
+        )
         for descriptor in descriptors
     ]

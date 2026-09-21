@@ -8,6 +8,48 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
 
+/// Mescla nas estatisticas da tela o quiz devolvido por um comando ao vivo.
+///
+/// O endpoint de "proxima pergunta" ja responde com a fase atualizada. Esperar
+/// o WebSocket para mudar o botao deixava o professor preso em "Iniciar Quiz"
+/// -- e cada clique repetido avancava mais uma pergunta para a turma, que
+/// pulava sem ter respondido. Devolve `null` quando a resposta nao traz fase,
+/// caso em que a tela continua com o que tinha.
+Map<String, dynamic>? mesclarQuizAoVivo(
+  Map<String, dynamic>? stats,
+  dynamic payload,
+) {
+  if (payload is! Map) return null;
+  final quiz = Map<String, dynamic>.from(payload);
+  final phase = quiz['live_phase']?.toString();
+  if (phase == null || phase.isEmpty) return null;
+
+  final questions = (quiz['questoes'] as List<dynamic>? ?? const [])
+      .whereType<Map>()
+      .toList();
+  final currentId = quiz['current_question_id']?.toString();
+  final index = currentId == null
+      ? -1
+      : questions.indexWhere((q) => q['id']?.toString() == currentId);
+
+  final atual = Map<String, dynamic>.from(stats ?? <String, dynamic>{});
+  atual['live_phase'] = phase;
+  atual['current_question_id'] = currentId;
+  atual['status'] = quiz['status'] ?? atual['status'];
+  atual['current_question'] = index < 0
+      ? null
+      : {
+          'question_id': currentId,
+          'index': index,
+          'question_text': questions[index]['enunciado']?.toString() ?? '',
+          // A contagem real vem na proxima rodada do WebSocket; abrir a
+          // pergunta ja com o total da anterior seria mentira na tela.
+          'total_answers': 0,
+        };
+  atual['progress'] = atual['progress'] ?? <String, dynamic>{};
+  return atual;
+}
+
 /// Widget que exibe QR Code do quiz + monitoramento em tempo real via WebSocket
 class QuizQRCodeMonitor extends StatefulWidget {
   final String quizId;
@@ -28,23 +70,52 @@ class QuizQRCodeMonitor extends StatefulWidget {
 }
 
 class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
-  late WebSocketChannel _channel;
+  /// Sem novidade do backend por mais que isso, a tela do professor esta
+  /// velha: o servidor manda estatisticas a cada 2s. Reconecta em vez de
+  /// continuar mostrando numeros parados como se fossem os de agora.
+  static const Duration _silenceLimit = Duration(seconds: 12);
+
+  WebSocketChannel? _channel;
+  StreamSubscription? _subscription;
+  Timer? _freshnessTimer;
+  Timer? _retryTimer;
+  DateTime? _lastReconnect;
 
   String? _qrCodeUrl;
   Map<String, dynamic>? _stats;
+  DateTime? _lastUpdate;
   bool _isConnecting = true;
   bool _isClosingQuiz = false;
   bool _isChangingQuestion = false;
   bool _quizClosed = false;
   String? _error;
   int _connectRetries = 0;
-  final int _maxRetries = 3;
+
+  /// Ha quanto tempo o backend nao manda estatisticas novas.
+  Duration get _sinceLastUpdate => _lastUpdate == null
+      ? Duration.zero
+      : DateTime.now().difference(_lastUpdate!);
+
+  bool get _isStale => _lastUpdate == null || _sinceLastUpdate > _silenceLimit;
 
   @override
   void initState() {
     super.initState();
     _loadQRCode();
     _connectWebSocket();
+    // Reconstroi o rodape de "atualizado ha Xs" e vigia o silencio do servidor.
+    _freshnessTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+      // Uma tentativa por janela de silencio: reconectar a cada segundo so
+      // empilharia conexoes sem dar tempo do servidor responder.
+      final ultima = _lastReconnect;
+      final podeTentar =
+          ultima == null || DateTime.now().difference(ultima) > _silenceLimit;
+      if (_stats != null && _isStale && _retryTimer == null && podeTentar) {
+        _reconnectNow();
+      }
+    });
   }
 
   Future<void> _loadQRCode() async {
@@ -65,21 +136,30 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
   }
 
   void _connectWebSocket() {
-    try {
-      // Fecha conexão anterior se existir
-      try {
-        _channel.sink.close();
-      } catch (_) {}
+    _retryTimer?.cancel();
+    _retryTimer = null;
 
+    // Cancela a escuta anterior antes de abrir outra: sem isso, cada
+    // reconexao deixava um listener vivo no canal velho e as mensagens
+    // chegavam duplicadas.
+    _subscription?.cancel();
+    _subscription = null;
+    try {
+      _channel?.sink.close();
+    } catch (_) {}
+    _channel = null;
+
+    try {
       // Conecta ao WebSocket para monitoramento em tempo real. A URL vem do
       // backend configurado, nao de localhost: o app pode apontar para outra
       // maquina ou para um deploy remoto.
-      _channel = WebSocketChannel.connect(
+      final channel = WebSocketChannel.connect(
         Uri.parse('${api.wsUrl}/ws/quiz/${widget.quizId}/monitor'),
       );
+      _channel = channel;
 
       // Escuta mensagens
-      _channel.stream.listen(
+      _subscription = channel.stream.listen(
         (message) {
           final data = jsonDecode(message);
           // `stats_update` chega a cada 2s com o quiz inteiro: logar isso
@@ -100,6 +180,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
               data['type'] == 'stats_update') {
             setState(() {
               _stats = data['data'];
+              _lastUpdate = DateTime.now();
               _quizClosed = data['data']?['status'] == 'closed';
             });
           }
@@ -136,16 +217,36 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
     }
   }
 
+  /// Reconecta agora, sem esperar a espera progressiva.
+  void _reconnectNow() {
+    _connectRetries = 0;
+    _lastReconnect = DateTime.now();
+    _connectWebSocket();
+  }
+
   void _retryConnection() {
-    if (_connectRetries < _maxRetries) {
-      _connectRetries++;
-      Future.delayed(const Duration(seconds: 3), _connectWebSocket);
-    }
+    // A aula nao para porque o wifi oscilou: tenta sempre, so espacando as
+    // tentativas ate 15s. O limite antigo de 3 tentativas desistia calado e
+    // deixava o professor olhando numeros congelados.
+    if (_retryTimer != null) return;
+    _connectRetries++;
+    final espera = Duration(
+      seconds: (_connectRetries * 2).clamp(2, 15),
+    );
+    _retryTimer = Timer(espera, () {
+      _retryTimer = null;
+      if (mounted) _connectWebSocket();
+    });
   }
 
   @override
   void dispose() {
-    _channel.sink.close();
+    _freshnessTimer?.cancel();
+    _retryTimer?.cancel();
+    _subscription?.cancel();
+    try {
+      _channel?.sink.close();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -464,11 +565,48 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
           const Text('Aguardando iniciar a primeira pergunta.'),
         ],
         const SizedBox(height: 12),
+        _buildFreshness(),
+      ],
+    );
+  }
+
+  /// Mostra se o que esta na tela e de agora.
+  ///
+  /// Quando o backend parava de mandar novidade, a tela continuava exibindo os
+  /// mesmos numeros sem avisar nada -- o professor nao tinha como saber que o
+  /// lobby vazio era so uma leitura velha.
+  Widget _buildFreshness() {
+    final estilo = Theme.of(context).textTheme.bodySmall;
+    if (_isStale) {
+      return Row(
+        children: [
+          Icon(Icons.sync_problem, size: 16, color: Colors.orange[800]),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Sem atualização do servidor há ${_sinceLastUpdate.inSeconds}s. '
+              'Reconectando...',
+              style: estilo?.copyWith(color: Colors.orange[900]),
+            ),
+          ),
+          TextButton(
+            onPressed: _reconnectNow,
+            child: const Text('Reconectar'),
+          ),
+        ],
+      );
+    }
+
+    final segundos = _sinceLastUpdate.inSeconds;
+    return Row(
+      children: [
+        Icon(Icons.wifi_tethering, size: 16, color: Colors.green[700]),
+        const SizedBox(width: 6),
         Text(
-          'Atualização em tempo real via WebSocket',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey[600],
-              ),
+          segundos <= 1
+              ? 'Ao vivo · atualizado agora'
+              : 'Ao vivo · atualizado há ${segundos}s',
+          style: estilo?.copyWith(color: Colors.grey[600]),
         ),
       ],
     );
@@ -579,6 +717,16 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
     );
   }
 
+  /// Aplica na tela o quiz que o proprio comando devolveu.
+  void _applyQuizResponse(dynamic payload) {
+    final mesclado = mesclarQuizAoVivo(_stats, payload);
+    if (mesclado == null) return;
+    setState(() {
+      _stats = mesclado;
+      _quizClosed = mesclado['status'] == 'closed';
+    });
+  }
+
   Future<void> _runLiveCommand(String endpoint, String successMessage) async {
     setState(() {
       _isChangingQuestion = true;
@@ -590,6 +738,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         throw Exception(response.error ?? 'Falha ao atualizar quiz');
       }
       if (!mounted) return;
+      _applyQuizResponse(response.data);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(successMessage)),
       );

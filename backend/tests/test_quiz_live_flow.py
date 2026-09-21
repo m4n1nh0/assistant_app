@@ -174,3 +174,39 @@ def test_aluno_que_fechou_a_tela_sai_dos_online_mas_continua_contado(sala):
     assert numeros["participants"] == 1
     assert numeros["participants_online"] == 0
     assert numeros["participant_names"] == []
+
+
+def test_monitor_do_professor_nao_reaproveita_o_snapshot_da_leitura_anterior(sala):
+    """O monitor recalcula as estatisticas numa sessao que vive o WebSocket
+    inteiro. Enquanto cada rodada continuava na transacao da anterior, o MySQL
+    (REPEATABLE READ) devolvia sempre o snapshot da primeira leitura: o
+    professor ficava preso em "Iniciar Quiz" e cada clique avancava uma
+    pergunta de verdade, jogando a turma adiante sem ninguem ter respondido.
+    """
+
+    entrar(sala)
+
+    async def monitorar():
+        async with sala.sessions() as db:
+            primeira = await quiz_websocket.get_quiz_stats(QUIZ, db)
+            transacao_da_primeira = db.get_transaction()
+
+            # O professor abre a pergunta por outra sessao, como faz o endpoint.
+            async with sala.sessions() as professor:
+                quiz = await professor.get(QuizModel, QUIZ)
+                quiz.live_phase = "question"
+                quiz.current_question_id = "p1"
+                quiz.question_started_at = datetime.now(timezone.utc)
+                await professor.commit()
+
+            segunda = await quiz_websocket.get_quiz_stats(QUIZ, db)
+            return primeira, segunda, transacao_da_primeira, db.get_transaction()
+
+    primeira, segunda, transacao_antiga, transacao_nova = asyncio.run(monitorar())
+
+    assert transacao_antiga is not None
+    assert transacao_nova is not transacao_antiga
+    assert primeira["live_phase"] == "lobby"
+    assert segunda["live_phase"] == "question"
+    assert segunda["current_question_id"] == "p1"
+    assert segunda["current_question"]["index"] == 0

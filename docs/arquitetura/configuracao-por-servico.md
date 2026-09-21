@@ -17,6 +17,10 @@ que é onde o deploy costuma quebrar.
 
 ---
 
+> Esta página responde **quais variáveis vão no `.env` de cada serviço**. Para
+> **que valores cada uma aceita e o que cada valor faz**, veja
+> [Valores aceitos por variável](../referencia/variaveis.md).
+
 ## Como ler as tabelas
 
 | Marca | Significado |
@@ -154,6 +158,44 @@ O que a migração agentiva acrescentou está agrupado abaixo.
 Com transporte `local`, este serviço também precisa do bloco de MCP e de
 ferramentas listado nas seções seguintes — é ele quem executa tudo.
 
+> **O nome engana: `TOOL_TRANSPORT` não é do `tool-service`.** É uma variável de
+> **cliente** — decide *como alcançar* o catálogo, in-process ou por HTTP — e
+> quem a lê é quem precisa alcançá-lo.
+>
+> O `tool-service` **não** a lê: ele monta o catálogo local direto
+> (`services/tool_service/main.py`), sem consultar transporte nenhum. Defini-la
+> no ambiente dele não faz nada — nem erro. Vale o mesmo para `MCP_TRANSPORT`,
+> que o `mcp-service` também não lê.
+>
+> | Variável | Quem lê | Sobre o quê decide |
+> |---|---|---|
+> | `TOOL_TRANSPORT` | `assistant-api` e `agent-orchestrator` | como cada um chega ao catálogo de ferramentas |
+> | `MCP_TRANSPORT` | `assistant-api`, `agent-orchestrator` **e** `tool-service` | como cada um chega aos servidores MCP |
+> | `ORCHESTRATOR_TRANSPORT` | `assistant-api` | se o grafo roda aqui ou no orquestrador |
+>
+> `MCP_TRANSPORT` aparece em três porque o `tool-service` também é cliente de
+> MCP: é o gateway dele que publica as capacidades MCP no catálogo.
+>
+> **Os dois leitores de `TOOL_TRANSPORT` usam o catálogo para coisas
+> diferentes.** Quem *dispara* ferramenta é o processo que roda o grafo. Na
+> `assistant-api` com `ORCHESTRATOR_TRANSPORT=remote`, o gateway sobra só para
+> a tela de status (`GET /system/agents/status`), que lista o catálogo efetivo
+> por especialista — deixá-la em `local` ali não quebra nada, só faz a tela
+> mostrar o catálogo deste processo em vez do que o agente enxerga. Já no
+> orquestrador ela é o que decide de fato: é lá que o agente roda.
+
+#### O que `TOOL_TRANSPORT=remote` **não** move
+
+As ferramentas de leitura do Modo Educação (`services/education_tools.py`)
+continuam executando no processo do chat mesmo com o catálogo remoto: elas
+consultam o banco, e a imagem do `tool-service` não tem banco nem SQLAlchemy.
+O `RemoteToolGateway` soma esse catálogo local ao que o serviço publica — como
+já faz com as capacidades da máquina do usuário.
+
+Consequência prática para configuração: ligar `remote` **não** cria necessidade
+de `DATABASE_URL` no `tool-service`. Se você sentir falta dela lá, o que está
+faltando é o catálogo do produto no processo do chat, não banco no serviço.
+
 ### Rede e sessão
 
 | Variável | Padrão | Efeito |
@@ -234,6 +276,11 @@ de MCP porque **publica as capacidades MCP no catálogo**: é o gateway dele que
 fala com o `mcp-service`.
 
 Arquivo pronto: `backend/.env.tool-service.example` → `backend/.env.tool-service`.
+
+> **`TOOL_TRANSPORT` e `TOOL_SERVICE_URL` não entram aqui.** As duas são de
+> quem *chama* este serviço — a `assistant-api` ou o `agent-orchestrator`. Este
+> processo é o destino; ele não decide como ser alcançado. `MCP_TRANSPORT`, ao
+> contrário, entra: aqui ele é cliente.
 
 ```bash
 # --- porta -----------------------------------------------------------------
@@ -379,7 +426,7 @@ de fornecedor no código da aplicação.
 | `MCP_TOOLS_CACHE_TTL_SECONDS` / `MCP_CIRCUIT_*` | se local | opcional | se local | — |
 | `MCP_TRANSPORT` / `MCP_SERVICE_URL` | opcional | — | opcional | — |
 | `TOOL_TIMEOUT_SECONDS` / `TOOL_MAX_RETRIES` | opcional | — | opcional | — |
-| `TOOL_TRANSPORT` / `TOOL_SERVICE_URL` | opcional | — | — | opcional |
+| `TOOL_TRANSPORT` / `TOOL_SERVICE_URL` | opcional¹ | — | — (é o destino) | opcional¹ |
 | `ORCHESTRATOR_TRANSPORT` / `ORCHESTRATOR_URL` | opcional | — | — | — |
 | `INTERNAL_SERVICE_TOKEN` | **obrig.** se orquestrador remoto | — | — | **obrig.** |
 | `ASSISTANT_API_URL` | — | — | — | **obrig.** |
@@ -400,6 +447,10 @@ de fornecedor no código da aplicação.
 | `TELEGRAM_*` / `WA_*` | opcional | — | — | — |
 | `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` | opcional | — | — | — |
 | `WHISPER_*` / `STT_*` / `TTS_*` | opcional | — | — | — |
+
+¹ Variável de **cliente**: quem a lê é o processo que roda o grafo do chat.
+Com `ORCHESTRATOR_TRANSPORT=remote`, é o `agent-orchestrator` — defini-la só na
+`assistant-api` não tem efeito sobre o agente. O `tool-service` nunca a lê.
 
 As chaves de provedor no `.env` servem apenas para a migração única da primeira
 conta administrativa; cada usuário cadastra as suas pela aba **Agentes**, e elas

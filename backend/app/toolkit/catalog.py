@@ -109,6 +109,27 @@ def build_local_registry() -> ToolRegistry:
     return registry
 
 
+def build_product_registry() -> ToolRegistry:
+    """Catalogo do processo que atende o chat: acao proposta mais leitura.
+
+    As ferramentas de leitura do Modo Educacao ficam fora de
+    `build_local_registry` de proposito. Aquele catalogo tambem sobe dentro do
+    tool-service, uma imagem que nao copia o banco nem instala SQLAlchemy -
+    montar proposta nunca precisou de banco. Publicar consulta ao banco la
+    quebraria o servico no boot.
+
+    A separacao e de **empacotamento**, nao de regra: os dois catalogos usam o
+    mesmo registry e o mesmo executor, e a leitura passa pela mesma
+    autorizacao, timeout, auditoria e identidade que qualquer outra ferramenta.
+    """
+    from ..services.education_tools import EDUCATION_TOOLS
+
+    registry = build_local_registry()
+    register_langchain_tools(registry, EDUCATION_TOOLS)
+    logger.debug(f"Catalogo do produto com {len(registry)} ferramentas")
+    return registry
+
+
 async def sync_mcp_tools(
     registry: ToolRegistry,
     gateway: MCPGateway,

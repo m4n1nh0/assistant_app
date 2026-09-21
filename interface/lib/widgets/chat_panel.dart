@@ -36,6 +36,7 @@ import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../utils/chat_input_shortcuts.dart';
 import 'education_dialog.dart';
+import 'tool_read_card.dart';
 import 'workspace_diff_dialog.dart';
 import 'workspace_editor_dialog.dart';
 
@@ -1050,6 +1051,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             multiResponses: responses,
             changedFiles: primary.changedFiles,
             workspaceRoot: _editableWorkspaceRoot,
+            toolResults: result.toolResults,
           );
           ref.read(chatProvider.notifier).addMessage(msg);
           if (config.ttsEnabled && !primary.isError) {
@@ -1072,6 +1074,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             llm: resp.llm,
             changedFiles: resp.changedFiles,
             workspaceRoot: _editableWorkspaceRoot,
+            toolResults: result.toolResults,
           );
           ref.read(chatProvider.notifier).addMessage(msg);
           if (config.ttsEnabled && !resp.isError) {
@@ -1094,6 +1097,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             llm: resp.llm,
             changedFiles: resp.changedFiles,
             workspaceRoot: _editableWorkspaceRoot,
+            toolResults: result.toolResults,
           );
           ref.read(chatProvider.notifier).addMessage(msg);
           if (config.ttsEnabled && !resp.isError) {
@@ -1147,9 +1151,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   /// depois da resposta, como as extensões do VSCode fazem.
   void _maybeAddAgentStepsSummary(AppConfig config, String? routedAgent) {
     if (routedAgent == null && !config.selectedIsConnectedAgent) return;
-    final steps = _agentActivityLog
-        .where((step) => !step.startsWith('💬'))
-        .toList();
+    final steps =
+        _agentActivityLog.where((step) => !step.startsWith('💬')).toList();
     if (steps.length < 2) return;
     const maxSteps = 12;
     final shown = steps.take(maxSteps).toList();
@@ -1645,7 +1648,8 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     await _executeLaunchAction(result.action);
   }
 
-  Future<void> _suggestProjectGroupImport(ProjectGroupImportAction action) async {
+  Future<void> _suggestProjectGroupImport(
+      ProjectGroupImportAction action) async {
     if (!mounted || action.sourceText.isEmpty) return;
     await showDialog<void>(
       context: context,
@@ -3758,9 +3762,8 @@ class ChatServiceChips extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final available = config.availableAgents;
-    final services = available.isEmpty
-        ? ['backend']
-        : [AppConfig.autoAgent, ...available];
+    final services =
+        available.isEmpty ? ['backend'] : [AppConfig.autoAgent, ...available];
     final selected = config.effectiveAgent;
 
     // Quebra para a linha de baixo em vez de estourar: esconder um servico
@@ -4008,6 +4011,14 @@ class _MessageBubble extends StatelessWidget {
                                 rootPath: msg.workspaceRoot!,
                               ),
                             ],
+                            // As leituras vem depois do texto: o parágrafo
+                            // responde, o card mostra de onde saiu e abre a
+                            // tela onde o usuário decide o que fazer.
+                            for (final leitura in msg.toolResults ?? const [])
+                              Padding(
+                                padding: const EdgeInsets.only(top: 10),
+                                child: ToolReadCard(result: leitura),
+                              ),
                           ],
                         ),
                       ),

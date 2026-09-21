@@ -104,6 +104,11 @@ def build_dispatch_single(run_agents=None):
                 task=task,
                 active_llms=list(context.active_llms),
                 requested_llm=context.requested_llm,
+                # Quem e o dono dos dados vem da requisicao autenticada e
+                # atravessa ate a ferramenta. Sem isso, uma ferramenta de
+                # leitura teria que perguntar ao modelo de quem ler.
+                tutor_id=context.tutor_id,
+                user_id=context.user_id,
             )
         return {
             "responses": [outcome.response],

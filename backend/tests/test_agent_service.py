@@ -25,8 +25,15 @@ def run(coro):
 
 
 def local_gateway(monkeypatch, *, mcp: FakeMCPGateway | None = None):
-    """Catalogo real do projeto, com MCP simulado."""
-    gateway = build_local_tool_gateway(mcp=mcp or FakeMCPGateway(available=False))
+    """Catalogo real do processo que atende o chat, com MCP simulado.
+
+    `product_tools=True` e o que o processo da API usa: acao proposta mais as
+    ferramentas de leitura do produto. Sem isso o teste mediria o catalogo do
+    tool-service, que e outro.
+    """
+    gateway = build_local_tool_gateway(
+        mcp=mcp or FakeMCPGateway(available=False), product_tools=True
+    )
     monkeypatch.setattr(service, "get_tool_gateway", lambda: gateway)
     return gateway
 
@@ -160,6 +167,10 @@ def test_tool_catalog_failure_does_not_break_the_agent(monkeypatch):
     assert tools == []
 
 
+def _origens(tools) -> set[str]:
+    return {tool.metadata.get("source") for tool in tools}
+
+
 def test_mcp_failure_does_not_break_tool_building(monkeypatch):
     local_gateway(monkeypatch, mcp=FakeMCPGateway(available=False))
 
@@ -167,7 +178,11 @@ def test_mcp_failure_does_not_break_tool_building(monkeypatch):
         service.SPECIALISTS["general"], allow_handoff=False
     ))
 
-    assert tools == []
+    # Servidor MCP fora do ar tira as capacidades dele, e so elas: as
+    # ferramentas locais do agente continuam de pe, senao uma oscilacao de rede
+    # deixaria o assistente sem conseguir consultar o proprio banco.
+    assert "mcp" not in _origens(tools)
+    assert tools
 
 
 def test_mcp_tools_reach_specialists_that_use_them(monkeypatch):
@@ -180,11 +195,13 @@ def test_mcp_tools_reach_specialists_that_use_them(monkeypatch):
     ))
     assert "mcp_read_file" in [tool.name for tool in tools]
 
-    # O agente de estudos nao usa MCP; suas ferramentas nao devem incluir isso.
+    # O agente de estudos nao usa MCP. Ele tem ferramentas - as de leitura do
+    # Modo Educacao -, e nenhuma delas vem de servidor MCP.
     study = run(service.build_tools(
         service.SPECIALISTS["study"], allow_handoff=False
     ))
-    assert study == []
+    assert _origens(study) == {"local"}
+    assert "mcp_read_file" not in [tool.name for tool in study]
 
 
 def test_mcp_tool_keeps_its_origin_in_the_metadata(monkeypatch):

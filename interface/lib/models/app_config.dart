@@ -572,6 +572,13 @@ class ChatMessage {
   /// Raiz do workspace onde as alterações aconteceram.
   final String? workspaceRoot;
 
+  /// O que o assistente leu do banco para montar esta resposta.
+  ///
+  /// Fica na mensagem, e não numa área separada da tela, porque a leitura só
+  /// faz sentido junto da resposta que ela sustenta: rolar a conversa leva as
+  /// duas juntas, e amanhã ainda dá para conferir de onde saiu o número.
+  final List<ToolReadResult>? toolResults;
+
   ChatMessage({
     required this.id,
     required this.role,
@@ -581,6 +588,7 @@ class ChatMessage {
     this.multiResponses,
     this.changedFiles,
     this.workspaceRoot,
+    this.toolResults,
   }) : timestamp = timestamp ?? DateTime.now();
 }
 
@@ -603,12 +611,56 @@ class LlmResponse {
   });
 }
 
+/// Uma leitura que o assistente fez no banco para responder.
+///
+/// O texto da resposta e o modelo relendo esses dados; aqui eles vem do banco
+/// sem intermediario. E por isso que a tela mostra os dois: o paragrafo explica,
+/// e o card deixa o usuario conferir e decidir o proximo passo.
+class ToolReadResult {
+  /// Ferramenta que fez a leitura, como aparece no catalogo.
+  final String tool;
+
+  /// Que tipo de leitura e: `question_bank`, `quiz`, `lessons`, `students`...
+  final String kind;
+  final String title;
+  final int total;
+
+  /// True quando ha mais linhas no banco do que as trazidas.
+  final bool truncated;
+  final List<Map<String, dynamic>> items;
+
+  const ToolReadResult({
+    required this.tool,
+    required this.kind,
+    this.title = '',
+    this.total = 0,
+    this.truncated = false,
+    this.items = const [],
+  });
+
+  factory ToolReadResult.fromJson(Map<String, dynamic> json) => ToolReadResult(
+        tool: json['tool']?.toString() ?? '',
+        kind: json['kind']?.toString() ?? '',
+        title: json['title']?.toString() ?? '',
+        total: (json['total'] as num?)?.toInt() ?? 0,
+        truncated: json['truncated'] == true,
+        items: (json['items'] as List<dynamic>? ?? const [])
+            .whereType<Map>()
+            .map((item) =>
+                item.map((key, value) => MapEntry(key.toString(), value)))
+            .toList(),
+      );
+}
+
 /// Resultado de uma rodada de chat: respostas mais a acao proposta.
 ///
 /// Quando o backend reconhece um pedido de acao, ela vem aqui para a interface
 /// confirmar com o usuario antes de executar.
 class ChatResult {
   final List<LlmResponse> responses;
+
+  /// O que o assistente leu do banco para montar a resposta.
+  final List<ToolReadResult> toolResults;
   final LaunchAction? action;
   final ShortcutRegistrationAction? registrationAction;
   final ComputerAction? computerAction;
@@ -619,6 +671,7 @@ class ChatResult {
 
   const ChatResult({
     required this.responses,
+    this.toolResults = const [],
     this.action,
     this.registrationAction,
     this.computerAction,
@@ -631,6 +684,23 @@ class ChatResult {
   LlmResponse get firstResponse => responses.isEmpty
       ? LlmResponse(llm: 'backend', content: 'Sem resposta', isError: true)
       : responses.first;
+
+  /// O mesmo resultado com as leituras anexadas.
+  ///
+  /// Existe para a analise da resposta nao ter que repetir `toolResults` em
+  /// cada um dos varios retornos antecipados de `_parseResult` -- repeticao em
+  /// que se esquece um e o card some sem ninguem notar.
+  ChatResult withToolResults(List<ToolReadResult> results) => ChatResult(
+        responses: responses,
+        toolResults: results,
+        action: action,
+        registrationAction: registrationAction,
+        computerAction: computerAction,
+        codingAction: codingAction,
+        calendarCreateAction: calendarCreateAction,
+        educationOpenAction: educationOpenAction,
+        projectGroupImportAction: projectGroupImportAction,
+      );
 }
 
 /// Pedido do assistente para abrir o modo educacao em um contexto.
@@ -654,24 +724,25 @@ class EducationOpenAction {
       );
 }
 
-
 class ProjectGroupImportAction {
   final String sourceText;
   final String disciplineCode;
   final String disciplineHint;
   final int groupCount;
 
-  const ProjectGroupImportAction({required this.sourceText,
-    this.disciplineCode = '', this.disciplineHint = '',
-    required this.groupCount});
+  const ProjectGroupImportAction(
+      {required this.sourceText,
+      this.disciplineCode = '',
+      this.disciplineHint = '',
+      required this.groupCount});
 
   factory ProjectGroupImportAction.fromJson(Map<String, dynamic> json) =>
-    ProjectGroupImportAction(
-      sourceText: json['source_text']?.toString() ?? '',
-      disciplineCode: json['discipline_code']?.toString() ?? '',
-      disciplineHint: json['discipline_hint']?.toString() ?? '',
-      groupCount: (json['group_count'] as num?)?.toInt() ?? 0,
-    );
+      ProjectGroupImportAction(
+        sourceText: json['source_text']?.toString() ?? '',
+        disciplineCode: json['discipline_code']?.toString() ?? '',
+        disciplineHint: json['discipline_hint']?.toString() ?? '',
+        groupCount: (json['group_count'] as num?)?.toInt() ?? 0,
+      );
 }
 
 /// Pedido de abertura de app, URL ou comando ja cadastrado como atalho.

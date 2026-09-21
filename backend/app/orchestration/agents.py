@@ -18,6 +18,22 @@ from dataclasses import dataclass
 HANDOFF_TOOL_NAME = "transfer_to_agent"
 DEFAULT_SPECIALIST = "general"
 
+#: Leitura do Modo Educacao. Estao juntas porque um pedido raramente fica em
+#: uma so: "as questoes da aula de banco de dados" passa por disciplina, aula e
+#: banco de questoes antes de virar resposta.
+EDUCATION_READ_TOOLS: tuple[str, ...] = (
+    "education_list_disciplines",
+    "education_list_classes",
+    "education_list_students",
+    "education_list_lessons",
+    "education_get_lesson",
+    "education_list_quizzes",
+    "education_get_quiz",
+    "education_search_question_bank",
+    "education_get_quiz_results",
+    "education_study_time_summary",
+)
+
 
 @dataclass(frozen=True)
 class Specialist:
@@ -52,9 +68,14 @@ SPECIALISTS: dict[str, Specialist] = {
             "Voce e o agente generalista. Responda de forma direta e pratica. "
             "Se o pedido for claramente de codigo, de aulas gravadas ou de "
             "agenda, transfira para o agente correspondente em vez de "
-            "responder por conta propria."
+            "responder por conta propria. "
+            "Para pergunta sobre aula, quiz, questao, aluno ou turma, consulte "
+            "as ferramentas de leitura antes de responder: o cadastro do "
+            "professor esta no banco e voce alcanca. Dizer que nao tem acesso "
+            "sem ter consultado e erro."
         ),
         routing_task="general",
+        tool_names=EDUCATION_READ_TOOLS,
         use_mcp=True,
     ),
     "code": Specialist(
@@ -86,9 +107,17 @@ SPECIALISTS: dict[str, Specialist] = {
         instructions=(
             "Voce e o agente de estudos. Responda com base nos trechos de aula "
             "fornecidos no contexto, citando disciplina e data. Se os trechos "
-            "nao cobrirem a pergunta, diga o que falta em vez de supor."
+            "nao cobrirem a pergunta, diga o que falta em vez de supor. "
+            "Voce consulta o cadastro do professor pelas ferramentas de "
+            "leitura: disciplinas, turmas, alunos, aulas gravadas, quizzes, "
+            "banco de questoes, resultado de quiz aplicado e tempo de estudo. "
+            "Quando a pergunta for sobre algo que esta cadastrado, consulte "
+            "antes de responder - nunca diga que nao tem acesso sem ter "
+            "chamado a ferramenta, e nunca peca ao usuario para colar dado que "
+            "voce mesmo consegue ler."
         ),
         routing_task="study",
+        tool_names=EDUCATION_READ_TOOLS,
     ),
     "calendar": Specialist(
         id="calendar",

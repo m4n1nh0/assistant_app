@@ -22,7 +22,7 @@ from loguru import logger
 
 from app.adapters.container import build_local_tool_gateway
 from app.core.config import get_settings
-from shared.ports.tools import ToolInvocation
+from shared.ports.tools import ToolInvocation, ToolPrincipal
 
 from ..common import create_service, serve
 
@@ -86,6 +86,7 @@ async def invoke_tool(name: str, body: dict[str, Any] = Body(default={})):
     devolver ao modelo um texto que ele consiga contornar, e nao um erro HTTP
     que interromperia a resposta.
     """
+    principal = body.get("principal") or {}
     result = await gateway.invoke(
         ToolInvocation(
             name=name,
@@ -93,6 +94,13 @@ async def invoke_tool(name: str, body: dict[str, Any] = Body(default={})):
             agent_id=str(body.get("agent_id") or ""),
             timeout_seconds=body.get("timeout_seconds"),
             call_id=str(body.get("call_id") or ""),
+            # A identidade vem do corpo e nao dos argumentos, do mesmo jeito
+            # que sai do lado de la. Cliente que nao mandar cai em principal
+            # vazio, e toda ferramenta de dado recusa - nao le de todo mundo.
+            principal=ToolPrincipal(
+                tutor_id=str(principal.get("tutor_id") or ""),
+                user_id=str(principal.get("user_id") or ""),
+            ),
         )
     )
     return {

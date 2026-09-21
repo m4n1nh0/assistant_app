@@ -49,14 +49,22 @@ def asgi_client(app) -> httpx.AsyncClient:
 # --- Tool Gateway -----------------------------------------------------------
 
 
-def tool_gateways(monkeypatch, mcp=None):
-    """Os dois gateways de ferramenta apontando para o mesmo catalogo."""
+def tool_gateways(monkeypatch, mcp=None, *, product=None):
+    """Os dois gateways de ferramenta apontando para o mesmo catalogo.
+
+    `product` e o catalogo que so existe no processo do chat - as ferramentas
+    que leem o banco. O gateway remoto o recebe para somar ao que o
+    tool-service publica, como ja faz com as capacidades da maquina.
+    """
     from services.tool_service import main as tool_service
 
     local = build_local_tool_gateway(mcp=mcp or FakeMCPGateway(available=False))
     monkeypatch.setattr(tool_service, "gateway", local)
     remote = RemoteToolGateway(
-        "http://contract", client=asgi_client(tool_service.app), max_retries=0
+        "http://contract",
+        client=asgi_client(tool_service.app),
+        max_retries=0,
+        local=product,
     )
     return local, remote
 
@@ -216,3 +224,37 @@ def test_remote_mcp_gateway_reports_an_unreachable_service():
     assert health[0].reachable is False
     # Depois de descobrir que nao ha servico, o gateway para de anunciar MCP.
     assert gateway.configured() is False
+
+
+def test_leitura_do_produto_sobrevive_ao_transporte_remoto(monkeypatch):
+    """Ligar TOOL_TRANSPORT=remote nao pode tirar o acesso ao cadastro.
+
+    As ferramentas que leem o banco vivem no processo do chat, porque a imagem
+    do tool-service nao tem banco. Sem soma-las ao catalogo remoto, trocar o
+    transporte deixava o agente de volta ao "nao tenho acesso" -- sem erro
+    nenhum para denunciar a perda.
+    """
+    produto = build_local_tool_gateway(
+        mcp=FakeMCPGateway(available=False), product_tools=True
+    )
+    _, remote = tool_gateways(monkeypatch, product=produto)
+
+    nomes = [item.name for item in run(remote.list_tools(agent_id="study"))]
+
+    assert "education_search_question_bank" in nomes
+
+
+def test_leitura_do_produto_executa_no_processo_que_tem_o_banco(monkeypatch):
+    produto = build_local_tool_gateway(
+        mcp=FakeMCPGateway(available=False), product_tools=True
+    )
+    _, remote = tool_gateways(monkeypatch, product=produto)
+
+    # Sem identidade a leitura e recusada -- e essa recusa so pode vir do
+    # executor local, porque o tool-service nem conhece esta ferramenta.
+    result = run(remote.invoke(ToolInvocation(
+        name="education_list_disciplines", args={}, agent_id="study"
+    )))
+
+    assert result.ok is False
+    assert "identidade" in result.error

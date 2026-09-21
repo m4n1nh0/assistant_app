@@ -207,6 +207,23 @@ class LlmService {
     Map<String, dynamic> data, {
     required String fallbackLlm,
   }) {
+    // As leituras sao anexadas depois, uma vez so: `_parseAction` tem um
+    // retorno para cada tipo de acao, e repetir o campo em todos era garantia
+    // de esquecer um.
+    final result = _parseAction(data, fallbackLlm: fallbackLlm);
+    final leituras = (data['tool_results'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map((item) => ToolReadResult.fromJson(
+            item.map((key, value) => MapEntry(key.toString(), value))))
+        .where((item) => item.kind.isNotEmpty)
+        .toList();
+    return leituras.isEmpty ? result : result.withToolResults(leituras);
+  }
+
+  ChatResult _parseAction(
+    Map<String, dynamic> data, {
+    required String fallbackLlm,
+  }) {
     final rawResponses = data['responses'] as List<dynamic>? ?? const [];
     final responses = rawResponses.map((item) {
       final response = item as Map<String, dynamic>;
@@ -242,7 +259,8 @@ class LlmService {
       } else if (actionType == 'project_group_import') {
         return ChatResult(
           responses: responses,
-          projectGroupImportAction: ProjectGroupImportAction.fromJson(actionData),
+          projectGroupImportAction:
+              ProjectGroupImportAction.fromJson(actionData),
         );
       } else if (actionType == 'calendar_create') {
         return ChatResult(

@@ -74,6 +74,10 @@ class AgentRuntimeContext:
         active_llms: provedores disponiveis nesta requisicao.
         max_tool_iterations: quantas rodadas de ferramenta sao permitidas.
         max_hops: quantas transferencias entre agentes sao permitidas.
+        tutor_id: perfil de dados dono da conversa. Chega ate aqui porque a
+            ferramenta que le o banco precisa saber de quem ler, e essa resposta
+            nao pode vir do modelo.
+        user_id: conta autenticada que fez o pedido.
     """
 
     system_prompt: str = ""
@@ -81,6 +85,8 @@ class AgentRuntimeContext:
     active_llms: tuple[str, ...] = ()
     max_tool_iterations: int = 3
     max_hops: int = 2
+    tutor_id: str = ""
+    user_id: str = ""
 
 
 # Assinaturas dos colaboradores injetados na construcao do grafo. Sao portas:
@@ -89,7 +95,9 @@ CallModel = Callable[
     [AgentState, Specialist, Sequence[BaseTool], AgentRuntimeContext],
     Awaitable[tuple[AIMessage, LLMResponse]],
 ]
-ToolsFor = Callable[[Specialist, bool], Awaitable[list[BaseTool]]]
+ToolsFor = Callable[
+    [Specialist, bool, AgentRuntimeContext], Awaitable[list[BaseTool]]
+]
 Finalize = Callable[
     [AgentState, Specialist, AgentRuntimeContext], Awaitable[LLMResponse]
 ]
@@ -146,7 +154,7 @@ def build_agent_graph(
         context = runtime.context
         specialist = SPECIALISTS[state["current_agent"]]
         allow_handoff = state.get("hops", 0) < context.max_hops
-        tools = await tools_for(specialist, allow_handoff)
+        tools = await tools_for(specialist, allow_handoff, context)
 
         with bind(agent_id=specialist.id):
             async with span(
@@ -176,7 +184,9 @@ def build_agent_graph(
     async def _tools(state: AgentState, runtime: Runtime[AgentRuntimeContext]):
         specialist = SPECIALISTS[state["current_agent"]]
         allow_handoff = state.get("hops", 0) < runtime.context.max_hops
-        node = ToolNode(await tools_for(specialist, allow_handoff))
+        node = ToolNode(
+            await tools_for(specialist, allow_handoff, runtime.context)
+        )
         result = await node.ainvoke(state)
         produced = result.get("messages", []) if isinstance(result, dict) else []
         return {
@@ -348,13 +358,18 @@ def _trace_from(
         call = calls.get(str(getattr(message, "tool_call_id", "")))
         if call is None:
             continue
-        trace.append(
-            {
-                "tool": call.get("name", ""),
-                "args": call.get("args") or {},
-                "output": str(getattr(message, "content", ""))[:2000],
-            }
-        )
+        entry = {
+            "tool": call.get("name", ""),
+            "args": call.get("args") or {},
+            "output": str(getattr(message, "content", ""))[:2000],
+        }
+        # A leitura estruturada, quando a ferramenta devolveu uma, segue junto
+        # no rastro: e dela que a interface monta o resultado para o usuario
+        # decidir, em vez de reprocessar o texto que foi para o modelo.
+        data = getattr(message, "artifact", None)
+        if isinstance(data, dict) and data.get("kind"):
+            entry["data"] = data
+        trace.append(entry)
     return trace
 
 

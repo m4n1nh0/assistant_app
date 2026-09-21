@@ -71,6 +71,14 @@ MCP_TRANSPORT=remote            # servidores MCP no mcp-service
 INTERNAL_SERVICE_TOKEN=...      # mesmo valor na API e no orquestrador
 ```
 
+As `*_TRANSPORT` são de **cliente**: quem as lê é o processo que precisa
+alcançar a capacidade, não o serviço que leva o nome dela — o `tool-service`
+não lê `TOOL_TRANSPORT`, o `mcp-service` não lê `MCP_TRANSPORT`. Com
+`ORCHESTRATOR_TRANSPORT=remote`, quem roda o agente passa a ser o
+`agent-orchestrator`, então é no `.env` **dele** que `TOOL_TRANSPORT` decide
+como o agente chega às ferramentas. Detalhes em
+[configuracao-por-servico.md](../docs/arquitetura/configuracao-por-servico.md#transporte-das-capacidades).
+
 | Serviço | Entrypoint | Dockerfile | Variáveis |
 |---|---|---|---|
 | `assistant-api` | `python run.py` | `Dockerfile` | `.env.example` |

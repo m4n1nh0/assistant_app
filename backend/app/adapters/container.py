@@ -104,18 +104,30 @@ def build_mcp_client():
     return build(get_settings())
 
 
-def build_local_tool_gateway(*, mcp: MCPGateway | None = None) -> ToolGateway:
+def build_local_tool_gateway(
+    *,
+    mcp: MCPGateway | None = None,
+    product_tools: bool = False,
+) -> ToolGateway:
     """Monta o gateway local completo: registry, executor e MCP acoplado.
 
     O tool-service usa a mesma funcao, e e isso que garante que rodar o catalogo
     fora do processo nao muda a regra de execucao.
+
+    Args:
+        mcp: porta de acesso ao MCP; `None` usa a do processo.
+        product_tools: inclui as ferramentas de leitura do produto, que falam
+            com o banco. Fica desligado por padrao porque o tool-service chama
+            esta mesma funcao e a imagem dele nao tem banco nem SQLAlchemy -
+            ligar por engano la quebraria o servico no boot. Quem atende o chat
+            liga explicitamente.
     """
-    from ..toolkit.catalog import build_local_registry
+    from ..toolkit.catalog import build_local_registry, build_product_registry
     from shared.toolkit.executor import ToolExecutor
     from .tools.local import LocalToolGateway
 
     settings = get_settings()
-    registry = build_local_registry()
+    registry = build_product_registry() if product_tools else build_local_registry()
     executor = ToolExecutor(
         registry,
         default_timeout=settings.tool_timeout_seconds,
@@ -159,9 +171,15 @@ def _build_tool_gateway() -> ToolGateway:
             timeout_seconds=settings.tool_timeout_seconds,
             max_retries=settings.tool_max_retries,
             retry_backoff=settings.tool_retry_backoff_seconds,
+            # As ferramentas que leem o banco ficam neste processo mesmo com o
+            # catalogo remoto, pelo mesmo motivo das capacidades da maquina do
+            # usuario: elas nao existem do outro lado. Sem isso, ligar
+            # TOOL_TRANSPORT=remote tirava do agente o acesso ao cadastro sem
+            # erro nenhum - ele so voltaria a dizer que nao tem acesso.
+            local=build_local_tool_gateway(product_tools=True),
         )
 
-    return build_local_tool_gateway()
+    return build_local_tool_gateway(product_tools=True)
 
 
 def _build_orchestration_gateway() -> OrchestrationGateway:

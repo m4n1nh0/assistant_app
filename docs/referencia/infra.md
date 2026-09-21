@@ -97,11 +97,15 @@ infraestrutura e segredo de aplicacao. Os grupos:
 | LLM local | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `LOCALAI_*`, `LOCAL_LLM_CONTEXT_TOKENS` | Modelos por usuario ficam no banco; aqui so o endereco da infra. |
 | Embeddings | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_LOCAL_MODEL`, `EMBEDDING_CACHE_DIR`, `EMBEDDING_DIMENSIONS` | Em `auto` a ordem e endpoint proprio, LocalAI, Ollama, modelo local em processo, OpenAI e hash offline. |
 | Agentes e MCP | `MCP_SERVERS`, `AGENT_MAX_TOOL_ITERATIONS`, `AGENT_MAX_HANDOFFS` | `MCP_SERVERS` e um JSON; `command` vira stdio e `url` vira streamable_http. |
-| Servicos | `ORCHESTRATOR_TRANSPORT`, `ORCHESTRATOR_URL`, `TOOL_TRANSPORT`, `TOOL_SERVICE_URL`, `MCP_TRANSPORT`, `MCP_SERVICE_URL`, `INTERNAL_SERVICE_TOKEN`, `ASSISTANT_API_URL` | `local` roda in-process; `remote` usa o servico. O token e obrigatorio com orquestrador remoto; `ASSISTANT_API_URL` so e lida pelo orquestrador. |
+| Servicos | `ORCHESTRATOR_TRANSPORT`, `ORCHESTRATOR_URL`, `TOOL_TRANSPORT`, `TOOL_SERVICE_URL`, `MCP_TRANSPORT`, `MCP_SERVICE_URL`, `INTERNAL_SERVICE_TOKEN`, `ASSISTANT_API_URL` | `local` roda in-process; `remote` usa o servico. As `*_TRANSPORT` sao de **cliente**: o tool-service nao le `TOOL_TRANSPORT` e o mcp-service nao le `MCP_TRANSPORT` - quem le e quem precisa alcancar a capacidade. Com o orquestrador remoto, `TOOL_TRANSPORT` vale no `.env` dele, nao no da API. O token e obrigatorio com orquestrador remoto; `ASSISTANT_API_URL` so e lida pelo orquestrador. |
 | Proxy | `FORWARDED_ALLOW_IPS` | Lida pelo uvicorn. `*` em PaaS, senao o redirect do OAuth sai em `http://`. |
 | OCR | `OCR_ENABLED`, `OCR_MAX_PAGES`, `OCR_DPI`, `OCR_MIN_SCORE` | OCR local do material didatico. |
 | Modo educacao | `EDUCATION_SEGMENT_SECONDS`, `EDUCATION_SUMMARY_MAX_CHARS`, `EDUCATION_SUMMARY_PROVIDER_TIMEOUT_SECONDS`, `EDUCATION_SUMMARY_MAX_PROVIDERS`, `EDUCATION_SUMMARY_ALLOW_PAID_FALLBACK` | Controlam o fatiamento do audio e o fallback entre provedores no resumo. |
 | Voz | `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `WHISPER_VAD_*`, `STT_PROVIDER`, `TTS_PROVIDER`, `OPENAI_TTS_*` | `cuda`/`float16` exige `nvidia-cublas-cu12` e `nvidia-cudnn-cu12`; sem GPU, volte para `cpu`/`int8`. |
+
+Os valores aceitos por cada variavel, e o que cada valor faz - inclusive onde
+um valor invalido cai em silencio -, estao em
+[Valores aceitos por variavel](variaveis.md).
 
 ## Outros arquivos do backend
 

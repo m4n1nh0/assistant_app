@@ -317,20 +317,83 @@ sequenceDiagram
 
     A->>N: tool_calls
     N->>B: ainvoke(args)
-    B->>G: ToolInvocation(name, args, agent_id)
+    B->>G: ToolInvocation(name, args, agent_id, principal)
     G->>E: invoke
     E->>R: descriptor(name)
     R-->>E: ToolDescriptor(scopes, schema, source)
     E->>E: autoriza · valida · timeout · retry · span
+    E->>E: publica o principal (ContextVar)
     E->>I: runner(args)
     I-->>E: saida
     E-->>G: ToolResult(ok, output, duration, retries)
-    G-->>B: as_text()
-    B-->>N: ToolMessage
+    G-->>B: as_text() + data()
+    B-->>N: ToolMessage(content, artifact)
 ```
 
 **O agente nunca executa codigo de ferramenta.** Ele monta uma `ToolInvocation`
 e entrega ao gateway.
+
+### Identidade: quem le, le o proprio dado
+
+Ferramenta que consulta o banco precisa saber **de quem** ler, e essa resposta
+nao pode estar em `args`: argumento e o que o modelo escreve a partir da
+conversa, e quem escrevesse "liste as questoes do tutor X" faria o modelo
+preencher o campo e leria dado alheio.
+
+Por isso `ToolInvocation.principal` viaja fora de `args`. Ele e preenchido pelo
+grafo com a identidade autenticada da requisicao (`ChatRuntimeContext.tutor_id`
+→ `AgentRuntimeContext` → binding → invocacao) e fica preso na `BaseTool` no
+momento em que ela e montada — uma montagem por requisicao. O executor publica
+esse principal num `ContextVar` proprio enquanto a ferramenta roda, e a
+implementacao le com `require_principal()`.
+
+O `ContextVar` e separado do `tenant_id` da observabilidade de proposito:
+aquele contexto existe para observar e e montado por middleware de trace;
+transformar o campo de um log em fronteira de autorizacao faria a seguranca
+depender de a instrumentacao estar ligada e correta.
+
+Chegou sem identidade, `require_principal()` levanta — e o executor transforma
+em `ToolResult(ok=False)`. Nao cai para "le tudo" nem para "le nada em
+silencio".
+
+### Dois destinos para um resultado
+
+`ToolResult.as_text()` e o que volta para o modelo; `ToolResult.data()` e a
+leitura estruturada, que sobe pelo `artifact` da `ToolMessage`, entra no
+`tool_trace` e chega a interface em `ChatResponse.tool_results`.
+
+A separacao existe porque o texto da resposta e o modelo **relendo** os dados, e
+modelo erra numero. O card na interface mostra as linhas como vieram do banco,
+junto do paragrafo que as explica, e oferece a tela onde o usuario decide o que
+fazer com elas.
+
+### Leitura do Modo Educacao
+
+`services/education_tools.py` publica as consultas somente-leitura do produto —
+disciplinas, turmas, alunos, aulas, quizzes, banco de questoes, resultado de
+quiz aplicado e tempo de estudo. Antes delas, o assistente so alcancava conteudo
+pelos trechos de transcricao que o RAG injetava no prompt; perguntado sobre o
+que estava no banco, respondia que nao tinha acesso e pedia que o usuario
+colasse o dado.
+
+Elas passam pelo mesmo registry, executor, escopo, timeout e auditoria das
+`propose_*` — o executor nao distingue ler de propor. O que muda e o
+**empacotamento**, e ha dois catalogos por isso:
+
+| Funcao | Contem | Quem monta |
+|---|---|---|
+| `build_local_registry()` | so as `propose_*` | tool-service e API |
+| `build_product_registry()` | as `propose_*` mais a leitura do banco | so quem atende o chat |
+
+A imagem do tool-service nao copia o banco nem instala SQLAlchemy — montar
+proposta nunca precisou de banco, e `test_import_boundaries` guarda isso.
+Publicar consulta ao banco naquele catalogo quebraria o servico no boot.
+
+Por isso o `RemoteToolGateway` recebe o catalogo do produto e o soma ao que o
+tool-service publica, pelo mesmo motivo que ja soma as capacidades da maquina do
+usuario: elas nao existem do outro lado. Sem essa soma, ligar
+`TOOL_TRANSPORT=remote` tirava do agente o acesso ao cadastro **sem erro
+nenhum** — ele so voltaria a dizer que nao tem acesso.
 
 ### Escopo: negar por omissao
 

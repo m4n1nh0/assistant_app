@@ -103,6 +103,14 @@ def _ranking_rows(answers: list[StudentAnswerModel]) -> list[dict]:
 async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
     """Calcula estatísticas do quiz em tempo real."""
 
+    # A sessao do monitor vive enquanto o WebSocket durar e recalcula tudo a
+    # cada 2s dentro da MESMA transacao. O MySQL le em REPEATABLE READ: sem
+    # encerrar a transacao anterior, toda rodada devolve o snapshot da
+    # primeira leitura. Era isso que prendia o professor em "Iniciar Quiz"
+    # enquanto cada clique avancava uma pergunta de verdade no banco e jogava
+    # a turma adiante. O rollback abre snapshot novo e expira o cache do ORM.
+    await db.rollback()
+
     stmt = select(QuizModel).where(QuizModel.id == quiz_id)
     quiz = (await db.execute(stmt)).scalar_one_or_none()
 
@@ -148,8 +156,14 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
         )
     )).scalar() or 0
 
-    # Estatísticas por questão
-    stmt = select(QuestionModel).where(QuestionModel.quiz_id == quiz_id)
+    # Estatisticas por questao. A ordem tem que ser a mesma que o quiz ao vivo
+    # usa para avancar, senao o numero da pergunta no monitor nao bate com o
+    # que a turma esta vendo.
+    stmt = (
+        select(QuestionModel)
+        .where(QuestionModel.quiz_id == quiz_id)
+        .order_by(QuestionModel.created_at, QuestionModel.id)
+    )
     questions = (await db.execute(stmt)).scalars().all()
 
     question_ids = [q.id for q in questions]

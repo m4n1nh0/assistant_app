@@ -20,7 +20,13 @@ from ..core.database import (
 )
 from shared.observability import bind
 from ..core.security import get_current_user
-from ..models.schemas import ChatLogRequest, ChatRequest, ChatResponse, LLMResponse
+from ..models.schemas import (
+    ChatLogRequest,
+    ChatRequest,
+    ChatResponse,
+    LLMResponse,
+    ToolReadResult,
+)
 from ..services import llm_service
 from ..services.chat_graph_service import run_chat_graph
 from ..services.device_catalog_service import session_device
@@ -207,8 +213,39 @@ async def chat(
         session_id=session_id,
         mode=body.mode.value,
         responses=responses,
+        tool_results=_tool_results(graph_result.get("tool_trace")),
         action=action,
     )
+
+
+def _tool_results(trace: object) -> list[ToolReadResult]:
+    """Leituras estruturadas do rastro de ferramentas, para a interface.
+
+    So passa o que veio com `data`: ferramenta de acao nao tem leitura a
+    mostrar, e rastro sem dado viraria card vazio na tela. Entrada malformada e
+    descartada em silencio - o rastro e informacao de apoio, e derrubar a
+    resposta do chat por causa dele seria trocar o essencial pelo acessorio.
+    """
+    results: list[ToolReadResult] = []
+    for entry in trace or []:
+        if not isinstance(entry, dict):
+            continue
+        data = entry.get("data")
+        if not isinstance(data, dict) or not data.get("kind"):
+            continue
+        try:
+            results.append(ToolReadResult(
+                tool=str(entry.get("tool") or ""),
+                kind=str(data.get("kind")),
+                title=str(data.get("title") or ""),
+                total=int(data.get("total") or 0),
+                truncated=bool(data.get("truncated")),
+                items=[item for item in data.get("items") or []
+                       if isinstance(item, dict)],
+            ))
+        except (TypeError, ValueError):
+            continue
+    return results
 
 
 @router.post("/log")

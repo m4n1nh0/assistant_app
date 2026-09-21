@@ -39,6 +39,7 @@ class RemoteToolGateway:
         retry_backoff: float = 0.5,
         client: httpx.AsyncClient | None = None,
         devices: Any = None,
+        local: Any = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
@@ -46,6 +47,9 @@ class RemoteToolGateway:
         self._backoff = max(0.0, retry_backoff)
         self._client = client
         self._devices = devices
+        #: Ferramentas que so existem neste processo - as que leem o banco do
+        #: produto. Somam-se ao catalogo remoto e executam aqui.
+        self._local = local
 
     def _device_catalog(self):
         if self._devices is None:
@@ -95,9 +99,22 @@ class RemoteToolGateway:
                 last = exc
         raise last
 
+    async def _local_tools(self, agent_id: str) -> list[ToolDescriptor]:
+        """As ferramentas deste processo, que o tool-service nao publica."""
+        if self._local is None:
+            return []
+        try:
+            return await self._local.list_tools(agent_id=agent_id)
+        except Exception as exc:
+            logger.warning(f"Catalogo local nao consultado: {exc}")
+            return []
+
     async def list_tools(self, *, agent_id: str = "") -> list[ToolDescriptor]:
-        """Catalogo publicado pelo tool-service, mais a maquina da sessao."""
+        """Catalogo do tool-service, mais o deste processo e a maquina da sessao."""
         devices = self._device_catalog().descriptors(agent_id=agent_id)
+        locais = await self._local_tools(agent_id)
+        # Nome repetido fica com a versao remota: o tool-service e a fonte do
+        # catalogo compartilhado, e o local complementa em vez de sobrescrever.
         async with span("tool_service.list", "tool", agent=agent_id or None):
             try:
                 payload = await self._request(
@@ -106,10 +123,17 @@ class RemoteToolGateway:
             except Exception as exc:
                 # Catalogo indisponivel nao pode derrubar a conversa: o agente
                 # responde sem ferramenta, como ja faz quando o MCP cai. A
-                # maquina do usuario nao depende do tool-service e continua.
+                # maquina do usuario e o catalogo local nao dependem do
+                # tool-service e continuam.
                 logger.warning(f"tool-service indisponivel: {exc}")
-                return devices
-        return [_descriptor(item) for item in payload.get("tools", [])] + devices
+                return locais + devices
+        remotas = [_descriptor(item) for item in payload.get("tools", [])]
+        vistos = {item.name for item in remotas}
+        return (
+            remotas
+            + [item for item in locais if item.name not in vistos]
+            + devices
+        )
 
     async def invoke(self, invocation: ToolInvocation) -> ToolResult:
         """Executa uma ferramenta no tool-service, ou na maquina da sessao."""
@@ -117,6 +141,8 @@ class RemoteToolGateway:
         device_executor = devices.executor()
         if device_executor is not None and devices.find(invocation.name):
             return await device_executor.invoke(invocation)
+        if self._local is not None and await self._knows_locally(invocation.name):
+            return await self._local.invoke(invocation)
         async with span(
             f"tool.{invocation.name}",
             "tool",
@@ -133,6 +159,14 @@ class RemoteToolGateway:
                         "agent_id": invocation.agent_id,
                         "call_id": invocation.call_id,
                         "timeout_seconds": invocation.timeout_seconds,
+                        # Fora de `args` tambem no fio: do outro lado o
+                        # executor publica isso como identidade da execucao, e
+                        # misturar com os argumentos do modelo apagaria a
+                        # distincao entre o que o usuario e e o que ele pediu.
+                        "principal": {
+                            "tutor_id": invocation.principal.tutor_id,
+                            "user_id": invocation.principal.user_id,
+                        },
                     },
                     timeout=(invocation.timeout_seconds or self._timeout) + 5,
                 )
@@ -146,6 +180,12 @@ class RemoteToolGateway:
                     call_id=invocation.call_id,
                 )
         return _result(invocation, payload)
+
+    async def _knows_locally(self, name: str) -> bool:
+        registry = getattr(self._local, "registry", None)
+        if registry is None:
+            return False
+        return name in registry.names()
 
     async def health(self) -> dict[str, Any]:
         """Health do tool-service, ou o motivo de nao responder."""

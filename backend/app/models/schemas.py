@@ -105,11 +105,30 @@ class LLMResponse(BaseModel):
     cached_tokens: Optional[int] = None
 
 
+class ToolReadResult(BaseModel):
+    """Uma leitura que uma ferramenta fez, no formato que a interface desenha.
+
+    Existe para o usuario poder agir sobre o dado em vez de so ler o paragrafo
+    do modelo. Os numeros aqui saem do banco direto; o texto da resposta e uma
+    releitura do modelo, e modelo erra numero.
+    """
+
+    tool: str
+    kind: str
+    title: str = ""
+    total: int = 0
+    truncated: bool = False
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     """Resposta do chat, com o texto e qual provedor efetivamente atendeu."""
     session_id: str
     mode: str
     responses: List[LLMResponse]
+    #: Leituras feitas por ferramenta nesta resposta, para a interface mostrar
+    #: a fonte e oferecer o proximo passo.
+    tool_results: List[ToolReadResult] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     action: Optional[Union["LaunchAction", "ShortcutRegistrationAction", "ComputerAction", "CodingAction", "CalendarCreateAction", "EducationOpenAction", "ProjectGroupImportAction"]] = None
 

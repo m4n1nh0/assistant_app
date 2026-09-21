@@ -468,6 +468,18 @@ CHECKPOINT_MAX_THREADS="200"
 # TELEGRAM_BOT_TOKEN=""   TELEGRAM_CHAT_ID=""
 ```
 
+> **`TOOL_TRANSPORT` e `MCP_TRANSPORT` aparecem aqui e no
+> `agent-orchestrator`, e as duas cópias fazem coisas diferentes.** São
+> variáveis de *cliente*: quem as lê é o processo que vai alcançar a
+> capacidade, nunca o serviço que leva o nome dela.
+>
+> Com o grafo no orquestrador, é a cópia **dele** que decide como o agente
+> chega às ferramentas. A cópia daqui atende só a tela de status
+> (`GET /system/agents/status`), que lista o catálogo efetivo de cada
+> especialista — a API não dispara ferramenta fora do grafo. Deixá-la em
+> `local` aqui não quebra nada; só faz a tela mostrar o catálogo deste
+> processo em vez do que o agente realmente enxerga.
+
 **Watch paths**
 
 ```
