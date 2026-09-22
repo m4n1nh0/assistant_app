@@ -183,3 +183,108 @@ def test_pick_for_message_returns_provider_and_task(monkeypatch):
 
     assert task == "code"
     assert provider == "gpt"
+
+
+# --- Pergunta que depende do cadastro ---------------------------------------
+
+
+def test_registry_questions_are_detected():
+    """O gatilho e a pergunta que so se responde lendo o cadastro."""
+    assert service.needs_registry_read(
+        "Pode acessar o banco de questoes de banco de dados no modo aula?"
+    )
+    assert service.needs_registry_read("Quais quizzes eu tenho cadastrados?")
+    assert service.needs_registry_read("Como foi o desempenho da turma?")
+    assert service.needs_registry_read("Quanto tempo de estudo o aluno teve?")
+
+
+def test_plain_lesson_questions_are_not_registry_reads():
+    """Resumo de aula o RAG resolve; encarecer isso nao compra qualidade."""
+    assert not service.needs_registry_read("Resuma a ultima aula de banco de dados")
+    assert not service.needs_registry_read("O que o professor falou sobre normalizacao?")
+    assert not service.needs_registry_read("Bom dia, tudo bem?")
+
+
+def test_registry_turn_demotes_weak_model_without_changing_the_task(monkeypatch):
+    """O turno entra exigente, e a tarefa `study` continua barata por padrao."""
+    fake_statuses(
+        monkeypatch,
+        {"llama": status("llama"), "claude": status("claude", balance_ok=True)},
+    )
+
+    exigente = run(service.rank_auto_llms(
+        ["llama", "claude"], "study", demanding=True
+    ))
+    normal = run(service.rank_auto_llms(["llama", "claude"], "study"))
+
+    assert exigente[0] == "claude"
+    assert normal[0] == "llama"
+
+
+def test_registry_turn_still_answers_with_the_only_model(monkeypatch):
+    """Rebaixar nao e eliminar, tambem aqui."""
+    fake_statuses(monkeypatch, {"llama": status("llama")})
+
+    assert run(service.rank_auto_llms(["llama"], "study", demanding=True)) == ["llama"]
+
+
+# --- O modelo configurado sobrepoe o provedor --------------------------------
+
+
+def test_model_size_is_read_from_the_name():
+    assert service.model_handles_tools("qwen/qwen3-8b") is False
+    assert service.model_handles_tools("meta-llama/Llama-3.3-70B-Instruct") is True
+    assert service.model_handles_tools("gemma2-9b-it") is False
+    assert service.model_handles_tools("gpt-4o-mini") is False
+
+
+def test_unknown_or_automatic_model_gives_no_verdict():
+    """Modelo automatico nao vira palpite: quem chama volta a julgar o provedor."""
+    assert service.model_handles_tools("") is None
+    assert service.model_handles_tools("claude-sonnet-4-5") is None
+    assert service.model_handles_tools("deepseek-chat") is None
+
+
+def test_mini_marker_does_not_match_inside_a_family_name():
+    """"gemini" contem "mini"; a borda e o que impede rebaixar o Gemini inteiro."""
+    assert service.model_handles_tools("gemini-2.0-flash") is None
+    assert service.model_handles_tools("gemini-1.5-flash-8b") is False
+
+
+def test_strong_provider_with_a_small_model_loses_the_registry_turn(monkeypatch):
+    """O caso real: `grok` esta em STRONG_LLMS apontando para um 8B."""
+    fake_statuses(
+        monkeypatch,
+        {
+            "grok": status("grok", balance_ok=True),
+            "hf": status("hf", balance_ok=True),
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "configured_model",
+        lambda provider: {
+            "grok": "qwen/qwen3-8b",
+            "hf": "meta-llama/Llama-3.3-70B-Instruct",
+        }[provider],
+    )
+
+    ranked = run(service.rank_auto_llms(["grok", "hf"], "study", demanding=True))
+
+    assert ranked[0] == "hf"
+
+
+def test_automatic_model_keeps_the_provider_judgement(monkeypatch):
+    """Sem nome de modelo, vale o que se sabe: o provedor."""
+    fake_statuses(
+        monkeypatch,
+        {
+            "claude": status("claude", balance_ok=True),
+            "llama": status("llama"),
+        },
+    )
+    monkeypatch.setattr(service, "configured_model", lambda provider: "")
+
+    ranked = run(service.rank_auto_llms(["llama", "claude"], "study", demanding=True))
+
+    assert ranked[0] == "claude"

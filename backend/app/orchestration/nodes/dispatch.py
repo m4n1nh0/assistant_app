@@ -56,14 +56,22 @@ async def unavailable_response(llm: str | None = None) -> LLMResponse:
     )
 
 
-async def _providers(context: ChatRuntimeContext, task: str) -> list[str] | None:
+async def _providers(
+    context: ChatRuntimeContext,
+    task: str,
+    message: str = "",
+) -> list[str] | None:
     """Provedores a usar, ou `None` quando nao ha nenhum atendendo.
 
     Um provedor pedido explicitamente que nao esta ativo devolve lista vazia -
     e o chamador transforma isso na explicacao daquele provedor, e nao numa
     troca silenciosa por outro.
+
+    Pergunta que depende do cadastro entra como turno exigente: ela so se
+    responde chamando ferramenta, e emitir a chamada e depois responder a partir
+    do resultado e justamente o que modelo pequeno erra.
     """
-    from ...services.llm_routing_service import rank_auto_llms
+    from ...services.llm_routing_service import needs_registry_read, rank_auto_llms
 
     if context.requested_llm:
         return (
@@ -72,7 +80,10 @@ async def _providers(context: ChatRuntimeContext, task: str) -> list[str] | None
             else []
         )
     ranked = await rank_auto_llms(
-        list(context.active_llms), task, available_only=True
+        list(context.active_llms),
+        task,
+        available_only=True,
+        demanding=needs_registry_read(message),
     )
     return ranked or None
 
@@ -136,7 +147,9 @@ def build_dispatch_multi(dispatch=None):
         if context.requested_llm and context.requested_llm not in context.active_llms:
             return {"responses": [await unavailable_response(context.requested_llm)]}
 
-        llms = await _providers(context, state.get("task_kind") or "general")
+        llms = await _providers(
+            context, state.get("task_kind") or "general", state["message"]
+        )
         if not llms:
             return {"responses": [await unavailable_response()]}
 
@@ -169,7 +182,9 @@ def build_dispatch_chain(dispatch=None):
         if context.requested_llm and context.requested_llm not in context.active_llms:
             return {"responses": [await unavailable_response(context.requested_llm)]}
 
-        llms = await _providers(context, state.get("task_kind") or "general")
+        llms = await _providers(
+            context, state.get("task_kind") or "general", state["message"]
+        )
         if not llms:
             return {"responses": [await unavailable_response()]}
 

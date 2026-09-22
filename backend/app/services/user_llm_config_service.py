@@ -217,6 +217,26 @@ class RuntimeSettingsProxy:
         return labels
 
 
+def model_for(provider: str) -> str:
+    """Modelo que um provedor usa no contexto ativo, ou vazio quando automatico.
+
+    Existe para quem decide *fora* daqui - o roteamento, por exemplo, que
+    precisa saber se o provedor esta apontando para um modelo pequeno. Sem uma
+    entrada publica, quem perguntasse teria que adivinhar o nome do atributo de
+    cada provedor.
+    """
+    if provider in ("llama", "localai"):
+        return str(getattr(runtime_settings, f"{provider_alias(provider)}_model", "") or "")
+    if provider not in PROVIDER_SPECS:
+        return ""
+    return str(getattr(runtime_settings, _model_property(provider), "") or "")
+
+
+def provider_alias(provider: str) -> str:
+    """Nome do provedor local nas settings: `llama` mora em `ollama_*`."""
+    return "ollama" if provider == "llama" else provider
+
+
 def _model_property(provider: str) -> str:
     return {
         "claude": "claude_model", "gpt": "openai_model",

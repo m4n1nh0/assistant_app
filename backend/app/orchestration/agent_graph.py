@@ -78,6 +78,9 @@ class AgentRuntimeContext:
             ferramenta que le o banco precisa saber de quem ler, e essa resposta
             nao pode vir do modelo.
         user_id: conta autenticada que fez o pedido.
+        prefer_strong: o turno depende de ler o cadastro, entao modelo fraco
+            entra no fim da fila. Vale para o turno, e nao para a tarefa:
+            resumir uma aula pelo RAG continua barato.
     """
 
     system_prompt: str = ""
@@ -87,6 +90,7 @@ class AgentRuntimeContext:
     max_hops: int = 2
     tutor_id: str = ""
     user_id: str = ""
+    prefer_strong: bool = False
 
 
 # Assinaturas dos colaboradores injetados na construcao do grafo. Sao portas:

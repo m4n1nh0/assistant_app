@@ -197,6 +197,38 @@ acesso a um quiz que estava no banco, a uma chamada de distancia.
 O rastro da leitura sobe pelos tres ramos, entao o card de dados no chat
 aparece em qualquer modo de resposta.
 
+#### Quem atende uma pergunta sobre o cadastro
+
+Ter a ferramenta nao basta: o tool-calling deste projeto e textual - o modelo
+escreve `{"tool": ..., "args": ...}` e nada mais - e depois ainda precisa
+responder a partir da tabela que voltou. Modelo pequeno erra os dois passos.
+
+Por isso `llm_routing_service.needs_registry_read` marca o **turno** como
+exigente quando a pergunta fala de quiz, questao, aluno, turma, nota, resultado
+ou tempo de estudo. A marca viaja como `demanding` ate `rank_auto_llms`, que
+aplica a mesma degradacao ja usada em tarefa de codigo: quem esta fora de
+`STRONG_LLMS` cai dez tiers. Rebaixa, nao elimina - sem alternativa, o modelo
+fraco responde.
+
+A marca e por turno, e nao por tarefa, de proposito. "Resuma a ultima aula" o
+RAG resolve com qualquer modelo; encarecer isso nao compraria qualidade. No
+ramo `single` a marca viaja no `AgentRuntimeContext.prefer_strong`; em `multi` e
+`chain`, direto no `_providers` do no.
+
+O provedor, porem, e so o que se sabe sem olhar a configuracao. Quando o
+modelo esta nomeado, ele decide: `model_handles_tools` le o tamanho do proprio
+identificador (`qwen3-8b`, `llama-3.3-70b-instruct`) e os apelidos de versao
+reduzida (`mini`, `nano`, `tiny`, `small`, `lite`). Abaixo de
+`MIN_TOOL_PARAMS_B` o provedor cai de tier mesmo estando em `STRONG_LLMS` - e o
+caso do `grok` apontando para um 8B -, e acima dele sobe mesmo estando fora da
+lista - o caso do `hf` com um 70B.
+
+**Modelo automatico nao vira palpite.** Nome vazio, ou familia fechada que nao
+publica tamanho (`claude-sonnet-4-5`, `deepseek-chat`), devolve `None`, e o
+julgamento volta a ser o do provedor, que e o que se sabe de fato. A mesma
+borda vale para a grafia: `gemini` contem `mini`, e sem delimitador o Gemini
+inteiro seria rebaixado por acidente.
+
 #### Agenda de aulas x aula dada
 
 `query_academic` responde "quando tenho aula?" projetando as proximas quatro

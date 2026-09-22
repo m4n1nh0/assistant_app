@@ -46,7 +46,7 @@ from ..orchestration.agents import (
 )
 from shared.ports.tools import ToolGateway, ToolPrincipal
 from . import langchain_agent_service
-from .llm_routing_service import rank_auto_llms
+from .llm_routing_service import needs_registry_read, rank_auto_llms
 
 settings = get_settings()
 
@@ -164,6 +164,7 @@ async def _providers_for(
         list(context.active_llms),
         specialist.routing_task,
         available_only=True,
+        demanding=context.prefer_strong,
     )
 
 
@@ -291,6 +292,10 @@ async def run_agents(
         max_hops=max(0, settings.agent_max_handoffs),
         tutor_id=tutor_id,
         user_id=user_id,
+        # Pergunta sobre o cadastro so se responde chamando ferramenta, e
+        # escrever a chamada e depois responder a partir da tabela e onde o
+        # modelo pequeno falha. O turno entra exigente; a tarefa nao muda.
+        prefer_strong=needs_registry_read(message),
     )
 
     seed: AgentState = {

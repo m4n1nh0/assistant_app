@@ -101,7 +101,7 @@ def test_computer_action_short_circuits_llm_dispatch(monkeypatch):
 def test_workspace_context_message_skips_action_detection_and_goes_to_llm(
     monkeypatch,
 ):
-    async def rank_providers(candidates, task="general", available_only=False):
+    async def rank_providers(candidates, task="general", available_only=False, demanding=False):
         return ["gpt"]
 
     monkeypatch.setattr(
@@ -134,7 +134,7 @@ def test_workspace_context_message_skips_action_detection_and_goes_to_llm(
 def test_local_action_result_skips_action_detection_and_goes_to_llm(
     monkeypatch,
 ):
-    async def rank_providers(candidates, task="general", available_only=False):
+    async def rank_providers(candidates, task="general", available_only=False, demanding=False):
         return ["gpt"]
 
     monkeypatch.setattr(
@@ -212,7 +212,7 @@ def test_registration_tool_routes_structured_action_to_interface():
 def test_asking_for_a_script_goes_to_the_llm_instead_of_registering_a_shortcut(
     monkeypatch,
 ):
-    async def rank_providers(candidates, task="general", available_only=False):
+    async def rank_providers(candidates, task="general", available_only=False, demanding=False):
         return ["gpt"]
 
     monkeypatch.setattr(
@@ -337,7 +337,7 @@ def test_single_route_chooses_provider_and_dispatches(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""
 
-    async def rank_providers(candidates, task="general", available_only=False):
+    async def rank_providers(candidates, task="general", available_only=False, demanding=False):
         assert candidates == ["llama", "gpt"]
         assert task == "general"
         assert available_only is True
@@ -385,7 +385,7 @@ def test_multi_route_dispatches_all_active_providers(monkeypatch):
             LLMResponse(llm="claude", content="B"),
         ]
 
-    async def rank(llms, task="general", available_only=False):
+    async def rank(llms, task="general", available_only=False, demanding=False):
         assert available_only is True
         return llms
 
@@ -416,7 +416,7 @@ def test_chain_route_dispatches_providers_in_order(monkeypatch):
         assert llms == ["claude", "gpt"]
         return LLMResponse(llm="gpt", content="Resposta refinada")
 
-    async def rank(llms, task="general", available_only=False):
+    async def rank(llms, task="general", available_only=False, demanding=False):
         assert available_only is True
         return llms
 
@@ -560,7 +560,7 @@ def test_shortcut_does_not_propose_what_the_machine_cannot_do(monkeypatch):
     """A maquina publicou catalogo e o diagnostico de rede nao esta nele."""
     from app.services import device_catalog_service
 
-    async def rank_providers(candidates, task="general", available_only=False):
+    async def rank_providers(candidates, task="general", available_only=False, demanding=False):
         return ["gpt"]
 
     monkeypatch.setattr(
@@ -615,7 +615,7 @@ def test_chain_route_reads_registry_and_surfaces_the_trace(monkeypatch):
         })
         return LLMResponse(llm="gpt", content="Voce tem 1 quiz cadastrado")
 
-    async def rank(llms, task="general", available_only=False):
+    async def rank(llms, task="general", available_only=False, demanding=False):
         return llms
 
     monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)

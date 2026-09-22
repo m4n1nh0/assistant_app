@@ -32,6 +32,22 @@ STRONG_LLMS = {
 # Tarefas em que um modelo fraco costuma devolver resposta inaproveitavel.
 DEMANDING_TASKS = {"code"}
 
+# Pergunta que so se responde lendo o cadastro do Modo Aula. Exige mais do
+# modelo do que parece: o tool-calling deste projeto e textual (o modelo escreve
+# `{"tool": ..., "args": ...}` e nada mais), e depois ainda precisa responder a
+# partir da tabela que voltou. Modelo pequeno erra os dois passos - responde em
+# prosa sem chamar nada, ou chama e pede ao usuario o dado que acabou de ler.
+#
+# O recorte e de proposito mais estreito que a tarefa `study`: "resuma a ultima
+# aula" o RAG resolve com qualquer modelo, e encarecer isso nao compraria
+# qualidade nenhuma.
+_REGISTRY_PATTERNS = (
+    r"\bquiz\w*\b", r"\bquestao\b", r"\bquestoes\b", r"\bbanco\s+de\s+questoes\b",
+    r"\balun\w+\b", r"\bturma\b", r"\bturmas\b", r"\bnota\b", r"\bnotas\b",
+    r"\bgabarito\b", r"\bdesempenho\b", r"\branking\b", r"\bresultad\w+\b",
+    r"\btempo\s+de\s+estudo\b", r"\bcadastrad\w+\b", r"\bmodo\s+aula\b",
+)
+
 TASK_KINDS = ("general", "code", "study", "calendar")
 
 _CODE_PATTERNS = (
@@ -90,6 +106,86 @@ def detect_task(message: str) -> str:
     return best if scores[best] > 0 else "general"
 
 
+#: Abaixo disto, o modelo costuma falhar no protocolo textual de ferramenta:
+#: responde em prosa em vez de emitir a chamada, ou chama e depois pede ao
+#: usuario o dado que acabou de receber. O corte e empirico e grosso de
+#: proposito - ele so decide ordem de fila, nunca exclui ninguem.
+MIN_TOOL_PARAMS_B = 30.0
+
+#: Nomes que a industria usa para a versao reduzida de uma familia. Um
+#: provedor forte com um destes configurado nao e um provedor forte para
+#: chamada de ferramenta. As bordas nao sao decoracao: sem elas, "gemini"
+#: contem "mini" e o Gemini inteiro seria rebaixado por um acidente de grafia.
+_SMALL_MODEL_MARKERS = re.compile(
+    r"(?<![a-z0-9])(mini|nano|tiny|small|lite)(?![a-z0-9])"
+)
+
+#: "qwen3-8b", "llama-3.3-70b-instruct", "gemma2-9b-it". O `(?![a-z0-9])` evita
+#: casar o "b" que abre outra palavra, como em "8bit".
+_PARAM_SIZE = re.compile(r"(\d+(?:[.,]\d+)?)\s*b(?![a-z0-9])")
+
+
+def configured_model(provider: str) -> str:
+    """O modelo que este provedor vai usar agora, ou vazio quando automatico.
+
+    Le do contexto do usuario ativo, e nao das variaveis globais: cada professor
+    configura o proprio modelo por provedor.
+    """
+    from .user_llm_config_service import model_for
+
+    try:
+        return model_for(provider)
+    except Exception:
+        # Configuracao ilegivel nao pode derrubar a escolha de provedor: sem
+        # nome, o julgamento volta a ser o do provedor.
+        return ""
+
+
+def model_handles_tools(model: str) -> bool | None:
+    """Diz se o modelo aguenta o ciclo de ferramenta, pelo nome.
+
+    Args:
+        model: identificador configurado, como `qwen/qwen3-8b`.
+
+    Returns:
+        `True` para modelo grande o bastante, `False` para modelo reduzido, e
+        **`None` quando nao da para saber** - nome vazio (modelo automatico) ou
+        familia fechada que nao publica tamanho, como `claude-sonnet-4-5`.
+        `None` nao e um palpite disfarcado de resposta: quem chama volta a
+        julgar pelo provedor, que e o que se sabe de fato.
+    """
+    name = _normalize(model).strip()
+    if not name:
+        return None
+
+    if _SMALL_MODEL_MARKERS.search(name):
+        return False
+
+    sizes = [
+        float(match.group(1).replace(",", "."))
+        for match in _PARAM_SIZE.finditer(name)
+    ]
+    if not sizes:
+        return None
+    return max(sizes) >= MIN_TOOL_PARAMS_B
+
+
+def needs_registry_read(message: str) -> bool:
+    """Diz se a pergunta depende de ler o cadastro do Modo Aula.
+
+    Serve a uma decisao so: se o turno vai exigir chamada de ferramenta, ele
+    nao deveria cair num modelo que nao sabe emitir a chamada.
+
+    Args:
+        message: a pergunta do usuario, como ela chegou.
+
+    Returns:
+        `True` quando a mensagem fala de quiz, questao, aluno, turma, nota,
+        resultado ou tempo de estudo.
+    """
+    return _matches(_normalize(message), _REGISTRY_PATTERNS) > 0
+
+
 def _tier(provider: str, balance_ok: bool | None) -> int:
     if provider in FREE_LOCAL_LLMS:
         return 0
@@ -100,9 +196,24 @@ def _tier(provider: str, balance_ok: bool | None) -> int:
     return 3
 
 
-def _task_tier(provider: str, balance_ok: bool | None, task: str) -> int:
+def _task_tier(
+    provider: str,
+    balance_ok: bool | None,
+    task: str,
+    demanding: bool = False,
+) -> int:
     base = _tier(provider, balance_ok)
-    if task in DEMANDING_TASKS and provider not in STRONG_LLMS:
+    exigente = demanding or task in DEMANDING_TASKS
+    if not exigente:
+        return base
+
+    # O provedor e o que se sabe sem olhar a configuracao; o modelo, quando
+    # nomeado, sabe mais. `grok` esta em STRONG_LLMS, mas apontando para um 8B
+    # nao aguenta o ciclo de ferramenta - e `hf` fora da lista, com um 70B,
+    # aguenta. Modelo automatico nao inventa veredito: cai de volta no provedor.
+    verdict = model_handles_tools(configured_model(provider))
+    forte = provider in STRONG_LLMS if verdict is None else verdict
+    if not forte:
         # Rebaixa, mas nao elimina: se o local for a unica opcao, ele responde.
         return base + 10
     return base
@@ -127,6 +238,7 @@ async def rank_auto_llms(
     task: str = "general",
     *,
     available_only: bool = False,
+    demanding: bool = False,
 ) -> list[str]:
     """Ordena provedores por custo/capacidade preservando desempates.
 
@@ -134,6 +246,10 @@ async def rank_auto_llms(
     provedor configurado explique a propria indisponibilidade. Workflows com
     fallback, por outro lado, usam ``available_only`` para nao gastar uma
     tentativa com um provedor que o health check ja marcou como offline.
+
+    ``demanding`` aplica a mesma degradacao de `DEMANDING_TASKS` a um turno
+    especifico, e nao a tarefa inteira: e como uma pergunta sobre o cadastro
+    entra na fila dos provedores fortes sem arrastar junto todo pedido de aula.
     """
     if not candidates:
         return []
@@ -151,6 +267,7 @@ async def rank_auto_llms(
                 provider,
                 statuses[provider].balance_ok if provider in statuses else None,
                 task,
+                demanding,
             ),
             candidates.index(provider),
         ),

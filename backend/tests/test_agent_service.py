@@ -39,7 +39,7 @@ def local_gateway(monkeypatch, *, mcp: FakeMCPGateway | None = None):
 
 
 def fake_provider(monkeypatch, provider: str = "llama"):
-    async def _rank(candidates, task="general", available_only=False):
+    async def _rank(candidates, task="general", available_only=False, demanding=False):
         return [provider]
 
     monkeypatch.setattr(service, "rank_auto_llms", _rank)
@@ -382,7 +382,7 @@ def test_handoff_swaps_the_instructions_of_the_new_agent(monkeypatch):
 def test_requested_provider_overrides_the_router(monkeypatch):
     local_gateway(monkeypatch)
 
-    async def _rank(candidates, task="general", available_only=False):
+    async def _rank(candidates, task="general", available_only=False, demanding=False):
         raise AssertionError("roteador nao deve ser consultado")
 
     monkeypatch.setattr(service, "rank_auto_llms", _rank)
@@ -404,7 +404,7 @@ def test_requested_provider_overrides_the_router(monkeypatch):
 def test_no_provider_available_returns_controlled_error(monkeypatch):
     local_gateway(monkeypatch)
 
-    async def _rank(candidates, task="general", available_only=False):
+    async def _rank(candidates, task="general", available_only=False, demanding=False):
         return []
 
     monkeypatch.setattr(service, "rank_auto_llms", _rank)
@@ -424,7 +424,7 @@ def test_no_provider_available_returns_controlled_error(monkeypatch):
 def test_automatic_agent_falls_back_until_local_provider_answers(monkeypatch):
     local_gateway(monkeypatch)
 
-    async def _rank(candidates, task="general", available_only=False):
+    async def _rank(candidates, task="general", available_only=False, demanding=False):
         assert available_only is True
         return ["claude", "localai"]
 
@@ -494,3 +494,39 @@ def test_read_tools_keep_education_reads_and_drop_action_tools(monkeypatch):
     assert names == set(service.EDUCATION_READ_TOOLS)
     assert not any(name.startswith("propose_") for name in names)
     assert service.HANDOFF_TOOL_NAME not in names
+
+
+def test_registry_question_asks_the_ranking_for_a_strong_model(monkeypatch):
+    """Pergunta sobre o cadastro chega ao roteamento marcada como exigente.
+
+    O turno so se resolve chamando ferramenta, e escrever a chamada e depois
+    responder a partir da tabela e onde o modelo pequeno falha.
+    """
+    local_gateway(monkeypatch)
+    pedidos: list[bool] = []
+
+    async def _rank(candidates, task="general", *, available_only=False,
+                    demanding=False):
+        pedidos.append(demanding)
+        return list(candidates)
+
+    monkeypatch.setattr(service, "rank_auto_llms", _rank)
+    scripted_models(monkeypatch, [answer("ok", provider="claude")])
+
+    run(service.run_agents(
+        message="Quais questoes estao no quiz de banco de dados?",
+        history=[],
+        system_prompt="system",
+        task="study",
+        active_llms=["llama", "claude"],
+    ))
+    run(service.run_agents(
+        message="Resuma a ultima aula de banco de dados",
+        history=[],
+        system_prompt="system",
+        task="study",
+        active_llms=["llama", "claude"],
+    ))
+
+    assert pedidos[0] is True
+    assert pedidos[-1] is False
