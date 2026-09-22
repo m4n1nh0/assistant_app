@@ -316,3 +316,32 @@ def test_structured_reading_travels_with_the_trace(monkeypatch):
 
     assert trace[0]["data"] == {"kind": "quizzes", "total": 1}
     assert trace[0]["output"] == "1 quiz sobre banco de dados"
+
+
+def test_tool_result_turn_carries_the_answer_directive(monkeypatch):
+    """O resultado volta enquadrado como dado lido, nao como fala do usuario.
+
+    Sem isso o modelo respondia "posso consultar, me diga a disciplina" com as
+    questoes ja lidas na mesma tela: o provedor so aceita user/assistant/system,
+    entao a leitura chegava como dado cru no lugar da pergunta.
+    """
+    sent = fake_gateway(monkeypatch, [
+        '{"tool": "echo", "args": {"text": "ola"}}',
+        "Encontrei isto.",
+    ])
+
+    run(service.run_with_tools("llama", "repete ola", [], "system", [echo_tool()]))
+
+    segunda = sent[1]["message"]
+    assert "Resultado da ferramenta echo: eco: ola" in segunda
+    assert "cadastro do próprio usuário" in segunda
+    assert "Não peça ao usuário informação que já está acima" in segunda
+
+
+def test_turn_without_tool_result_has_no_directive(monkeypatch):
+    """Conversa normal nao ganha instrucao de ferramenta nenhuma."""
+    sent = fake_gateway(monkeypatch, ["Oi!"])
+
+    run(service.dispatch_single("llama", "bom dia", [], "system"))
+
+    assert sent[0]["message"] == "bom dia"

@@ -95,11 +95,32 @@ def _provider_request(
         role = "assistant" if isinstance(item, AIMessage) else "user"
         history.append(Message(role=role, content=_render(item)))
 
+    current = _render(current_message)
+    if isinstance(current_message, ToolMessage):
+        # O provedor so aceita user/assistant/system, entao o resultado da
+        # ferramenta chega como se fosse fala do usuario - dado cru, sem pedido
+        # nenhum. Modelo menor le isso como assunto novo e responde pedindo os
+        # parametros que acabou de receber: "posso consultar o banco, me diga a
+        # disciplina", com as questoes ja lidas na mesma tela. A diretiva devolve
+        # o enquadramento que o papel `tool` daria.
+        current += _TOOL_RESULT_DIRECTIVE
+
     return (
         "\n".join(system_parts),
         history,
-        _render(current_message),
+        current,
     )
+
+
+_TOOL_RESULT_DIRECTIVE = (
+    "\n\nEsses dados saíram agora do cadastro do próprio usuário, pela "
+    "ferramenta que você chamou - não são exemplo nem sugestão. Responda com "
+    "eles a pergunta original: diga o que foi encontrado e cite os itens que "
+    "importam. Não peça ao usuário informação que já está acima, e não ofereça "
+    "consultar o que você acabou de consultar. Se a leitura voltou vazia, diga "
+    "que não há registro com esse recorte; se faltar outro recorte, chame a "
+    "ferramenta de novo em vez de pedir que ele faça a busca."
+)
 
 
 def _render(message: BaseMessage) -> str:
@@ -110,7 +131,12 @@ def _render(message: BaseMessage) -> str:
     mensagem. Por isso a chamada e o resultado viram texto explicito.
     """
     if isinstance(message, ToolMessage):
-        return f"Resultado da ferramenta: {_text_content(message)}"
+        # Com varias leituras no mesmo turno, "Resultado da ferramenta" sozinho
+        # nao diz de qual: o modelo precisa saber se aquilo e a lista de quizzes
+        # ou o banco de questoes para citar a coisa certa.
+        name = (message.name or "").strip()
+        label = f"Resultado da ferramenta {name}" if name else "Resultado da ferramenta"
+        return f"{label}: {_text_content(message)}"
     if isinstance(message, AIMessage) and message.tool_calls:
         calls = ", ".join(
             f"{call['name']}({json.dumps(call.get('args', {}), ensure_ascii=False)})"
@@ -459,7 +485,11 @@ async def run_with_tools(
                 entry["data"] = data
             trace.append(entry)
             messages.append(
-                ToolMessage(content=str(output), tool_call_id=call["id"])
+                ToolMessage(
+                    content=str(output),
+                    tool_call_id=call["id"],
+                    name=call["name"],
+                )
             )
 
     # Estourou o teto: pede a resposta final sem ferramentas para nao devolver
