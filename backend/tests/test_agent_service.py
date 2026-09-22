@@ -475,3 +475,22 @@ def test_agent_subgraph_exposes_explicit_nodes():
     nodes = set(service.agent_graph.get_graph().nodes)
 
     assert {"agent", "tools", "handoff", "finalize"} <= nodes
+
+
+# --- Leitura fora do subgrafo de agente -------------------------------------
+
+
+def test_read_tools_keep_education_reads_and_drop_action_tools(monkeypatch):
+    """Modo `multi`/`chain` le o cadastro, mas nao monta acao.
+
+    O recorte e por efeito: consultar duas vezes custa consulta, enquanto N
+    provedores chamando `propose_*` montariam N propostas para o mesmo pedido.
+    """
+    gateway = local_gateway(monkeypatch)
+
+    tools = run(service.build_read_tools("study", gateway=gateway))
+    names = {tool.name for tool in tools}
+
+    assert names == set(service.EDUCATION_READ_TOOLS)
+    assert not any(name.startswith("propose_") for name in names)
+    assert service.HANDOFF_TOOL_NAME not in names

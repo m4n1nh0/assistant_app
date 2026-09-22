@@ -178,8 +178,24 @@ o VS Code.
 | `query_academic` | Projeta as proximas aulas a partir dos horarios semanais | Mensagem de erro controlada |
 | `query_study_time` | Responde o tempo de estudo registrado | Mensagem de erro controlada |
 | `dispatch_single` | Entrega ao subgrafo de agente | Fallback entre provedores |
-| `dispatch_multi` | Varios provedores em paralelo | Provedor que falha nao derruba |
-| `dispatch_chain` | Provedores encadeados | Provedor que falha e pulado |
+| `dispatch_multi` | Varios provedores em paralelo, cada um com a leitura do cadastro | Provedor que falha nao derruba |
+| `dispatch_chain` | Provedores encadeados, todos com a leitura do cadastro | Provedor que falha e pulado |
+
+#### Quem ganha ferramenta em cada ramo
+
+So `dispatch_single` passa pelo subgrafo de agente, e so ele recebe o catalogo
+inteiro: acao proposta (`propose_*`), capacidades da maquina do usuario e
+transferencia entre agentes.
+
+`multi` e `chain` recebem **apenas a leitura do Modo Educacao**
+(`agent_service.build_read_tools`). O corte e por efeito, nao por conveniencia:
+N provedores chamando `propose_*` montariam N propostas para o mesmo pedido,
+enquanto N leituras custam consulta e nada mais. O contrario tambem custava
+caro - sem ferramenta nenhuma, "Paralelo" e "Etapas" respondiam que nao tinham
+acesso a um quiz que estava no banco, a uma chamada de distancia.
+
+O rastro da leitura sobe pelos tres ramos, entao o card de dados no chat
+aparece em qualquer modo de resposta.
 
 #### Agenda de aulas x aula dada
 

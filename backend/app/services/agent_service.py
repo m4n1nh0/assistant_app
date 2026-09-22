@@ -38,6 +38,7 @@ from ..orchestration.agent_graph import (
 )
 from ..orchestration.agents import (
     DEFAULT_SPECIALIST,
+    EDUCATION_READ_TOOLS,
     HANDOFF_TOOL_NAME,
     SPECIALISTS,
     Specialist,
@@ -55,6 +56,7 @@ __all__ = [
     "HANDOFF_TOOL_NAME",
     "SPECIALISTS",
     "Specialist",
+    "build_read_tools",
     "build_tools",
     "run_agents",
     "select_specialist",
@@ -112,6 +114,44 @@ async def build_tools(
     if allow_handoff:
         tools.append(build_handoff_tool(specialist.id))
     return tools
+
+
+async def build_read_tools(
+    task: str,
+    *,
+    principal: ToolPrincipal | None = None,
+    gateway: ToolGateway | None = None,
+) -> list[BaseTool]:
+    """So a leitura do cadastro, para os modos `multi` e `chain`.
+
+    Esses dois ramos comparam e refinam resposta entre provedores; nao sao
+    trabalho de especialista, e por isso nao passam pelo subgrafo de agente. Mas
+    ficar sem ferramenta nenhuma custava caro: perguntado sobre quiz ou questao
+    em "Paralelo" ou "Etapas", o modelo nao tinha como consultar e respondia que
+    nao tinha acesso ao que estava no banco.
+
+    O recorte e por efeito, nao por conveniencia. Leitura pode repetir por N
+    provedores - o que muda e o custo da consulta. Ja as `propose_*` montam acao
+    para a interface confirmar, e N provedores montariam N propostas para o
+    mesmo pedido; elas continuam exclusivas do ramo `single`, junto com as
+    capacidades da maquina do usuario.
+
+    Args:
+        task: tarefa detectada, que escolhe de qual especialista sai o escopo.
+        principal: dono dos dados desta requisicao.
+        gateway: porta de acesso ao catalogo; `None` usa a do processo.
+
+    Returns:
+        As tools de leitura liberadas para o especialista da tarefa, sem
+        handoff - nao ha para onde transferir fora do subgrafo.
+    """
+    tools = await build_tools(
+        select_specialist(task),
+        allow_handoff=False,
+        gateway=gateway,
+        principal=principal,
+    )
+    return [tool for tool in tools if tool.name in EDUCATION_READ_TOOLS]
 
 
 async def _providers_for(

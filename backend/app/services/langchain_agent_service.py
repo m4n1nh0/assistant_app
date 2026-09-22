@@ -350,8 +350,29 @@ async def dispatch_single(
     message: str,
     history: list[Message],
     system_prompt: str,
+    tools: Sequence[BaseTool] = (),
+    trace_sink: list[dict[str, Any]] | None = None,
 ) -> LLMResponse:
-    """Resposta de um provedor pelo caminho LangChain, com ferramentas disponiveis."""
+    """Resposta de um provedor pelo caminho LangChain.
+
+    Args:
+        provider: chave do provedor.
+        message: pergunta do usuario.
+        history: historico da conversa.
+        system_prompt: instrucao de sistema ja enriquecida pelos nos de contexto.
+        tools: ferramentas desta rodada. Vazio responde direto, sem ciclo.
+        trace_sink: lista onde o rastro das ferramentas e acumulado. Existe
+            porque `multi` e `chain` devolvem resposta, nao tupla, e o rastro
+            precisa chegar ao no do grafo para virar card na interface.
+    """
+    if tools:
+        response, trace = await run_with_tools(
+            provider, message, history, system_prompt, tools
+        )
+        if trace_sink is not None:
+            trace_sink.extend(trace)
+        return response
+
     model = ProviderChatModel(provider=provider)
     chain = model | RunnableLambda(_structured_response)
     structured = await chain.ainvoke(
@@ -410,19 +431,33 @@ async def run_with_tools(
         messages.append(result)
         for call in result.tool_calls:
             tool = by_name.get(call["name"])
+            data: Any = None
             if tool is None:
                 output: Any = f"ferramenta desconhecida: {call['name']}"
             else:
                 try:
-                    output = await tool.ainvoke(call.get("args") or {})
+                    # Invocar com a chamada inteira, e nao so com os argumentos,
+                    # devolve `ToolMessage`: e de la que sai o `artifact`, a
+                    # leitura estruturada que vira card na interface. Chamar com
+                    # `args` traz so o texto, e a tabela teria que ser reescrita
+                    # pelo modelo - que erra numero.
+                    message = await tool.ainvoke(dict(call))
+                    if isinstance(message, ToolMessage):
+                        output = message.content
+                        data = message.artifact
+                    else:
+                        output = message
                 except Exception as e:
                     logger.warning(f"Ferramenta {call['name']} falhou: {e}")
                     output = f"erro ao executar: {e}"
-            trace.append({
+            entry: dict[str, Any] = {
                 "tool": call["name"],
                 "args": call.get("args") or {},
                 "output": str(output)[:2000],
-            })
+            }
+            if isinstance(data, dict):
+                entry["data"] = data
+            trace.append(entry)
             messages.append(
                 ToolMessage(content=str(output), tool_call_id=call["id"])
             )
@@ -445,13 +480,27 @@ async def dispatch_multi(
     message: str,
     history: list[Message],
     system_prompt: str,
+    tools: Sequence[BaseTool] = (),
+    trace_sink: list[dict[str, Any]] | None = None,
 ) -> list[LLMResponse]:
-    """Versao com ferramentas do modo `multi`: varios provedores em paralelo."""
+    """Versao com ferramentas do modo `multi`: varios provedores em paralelo.
+
+    Cada provedor consulta por conta propria: a comparacao so vale se todos
+    olharem o mesmo dado real. Como as ferramentas daqui sao de leitura, repetir
+    a consulta N vezes custa consulta - nao gera N efeitos.
+    """
+    sinks: list[list[dict[str, Any]]] = [[] for _ in providers]
     tasks = [
-        dispatch_single(provider, message, history, system_prompt)
-        for provider in providers
+        dispatch_single(
+            provider, message, history, system_prompt, tools, sinks[index]
+        )
+        for index, provider in enumerate(providers)
     ]
-    return await asyncio.gather(*tasks)
+    responses = await asyncio.gather(*tasks)
+    if trace_sink is not None:
+        for sink in sinks:
+            trace_sink.extend(sink)
+    return responses
 
 
 async def dispatch_chain(
@@ -459,8 +508,15 @@ async def dispatch_chain(
     message: str,
     history: list[Message],
     system_prompt: str,
+    tools: Sequence[BaseTool] = (),
+    trace_sink: list[dict[str, Any]] | None = None,
 ) -> LLMResponse:
-    """Versao com ferramentas do modo `chain`: provedores encadeados."""
+    """Versao com ferramentas do modo `chain`: provedores encadeados.
+
+    Todos os elos recebem as ferramentas, e nao so o primeiro: o refinamento
+    tambem e uma resposta ao usuario, e um elo sem acesso ao cadastro voltaria a
+    dizer que nao tem acesso ao que o elo anterior acabou de ler.
+    """
     current = message
     last_success: LLMResponse | None = None
     for index, provider in enumerate(providers):
@@ -469,6 +525,8 @@ async def dispatch_chain(
             current,
             history,
             system_prompt,
+            tools,
+            trace_sink,
         )
         if response.is_error:
             continue

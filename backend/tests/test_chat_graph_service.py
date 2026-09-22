@@ -378,7 +378,7 @@ def test_multi_route_dispatches_all_active_providers(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""
 
-    async def dispatch(llms, message, history, system_prompt):
+    async def dispatch(llms, message, history, system_prompt, tools=(), trace_sink=None):
         assert llms == ["gpt", "claude"]
         return [
             LLMResponse(llm="gpt", content="A"),
@@ -412,7 +412,7 @@ def test_chain_route_dispatches_providers_in_order(monkeypatch):
     async def no_shortcut(message, tutor_id):
         return None, "chat", ""
 
-    async def dispatch(llms, message, history, system_prompt):
+    async def dispatch(llms, message, history, system_prompt, tools=(), trace_sink=None):
         assert llms == ["claude", "gpt"]
         return LLMResponse(llm="gpt", content="Resposta refinada")
 
@@ -590,3 +590,50 @@ def test_shortcut_does_not_propose_what_the_machine_cannot_do(monkeypatch):
     # catalogo que aquela maquina publicou.
     assert result["action_kind"] == "chat"
     assert result.get("action") is None
+
+
+def test_chain_route_reads_registry_and_surfaces_the_trace(monkeypatch):
+    """Em "Etapas" o modelo consulta o cadastro, e a leitura chega a interface.
+
+    Antes, `chain` e `multi` iam ao provedor sem ferramenta nenhuma: perguntado
+    sobre um quiz cadastrado, o assistente dizia que nao tinha acesso.
+    """
+    async def no_shortcut(message, tutor_id):
+        return None, "chat", ""
+
+    async def read_tools(task, principal=None, gateway=None):
+        assert principal.tutor_id == "tutor-1"
+        return ["education_list_quizzes"]
+
+    async def dispatch(llms, message, history, system_prompt, tools=(), trace_sink=None):
+        assert tools == ["education_list_quizzes"]
+        trace_sink.append({
+            "tool": "education_list_quizzes",
+            "args": {},
+            "output": "1 quiz",
+            "data": {"kind": "quizzes", "title": "Quizzes", "total": 1, "items": []},
+        })
+        return LLMResponse(llm="gpt", content="Voce tem 1 quiz cadastrado")
+
+    async def rank(llms, task="general", available_only=False):
+        return llms
+
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(
+        chat_graph_service.agent_service, "build_read_tools", read_tools
+    )
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service, "dispatch_chain", dispatch
+    )
+    monkeypatch.setattr(llm_routing_service, "rank_auto_llms", rank)
+
+    result = run_graph(
+        message="Quais quizzes eu tenho cadastrados?",
+        mode=ResponseModeEnum.chain,
+        active_llms=["gpt"],
+    )
+
+    assert result["responses"][0].content == "Voce tem 1 quiz cadastrado"
+    assert [entry["tool"] for entry in result["tool_trace"]] == [
+        "education_list_quizzes"
+    ]

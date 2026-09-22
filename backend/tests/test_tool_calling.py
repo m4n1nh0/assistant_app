@@ -287,3 +287,32 @@ def test_tool_catalog_includes_argument_schema():
 
     assert "echo" in payload
     assert "text" in payload
+
+
+def test_structured_reading_travels_with_the_trace(monkeypatch):
+    """A leitura estruturada chega ao rastro, e nao so o texto.
+
+    E o que permite `multi` e `chain` mostrarem o mesmo card do ramo `single`:
+    o numero exibido vem da ferramenta, nao do modelo reescrevendo a tabela.
+    """
+    def _read(text: str) -> tuple[str, dict]:
+        return f"1 quiz sobre {text}", {"kind": "quizzes", "total": 1}
+
+    reader = StructuredTool.from_function(
+        func=_read,
+        name="echo",
+        description="Le o cadastro.",
+        args_schema=EchoInput,
+        response_format="content_and_artifact",
+    )
+    fake_gateway(monkeypatch, [
+        '{"tool": "echo", "args": {"text": "banco de dados"}}',
+        "Voce tem 1 quiz cadastrado.",
+    ])
+
+    _, trace = run(service.run_with_tools(
+        "llama", "quais quizzes?", [], "system", [reader]
+    ))
+
+    assert trace[0]["data"] == {"kind": "quizzes", "total": 1}
+    assert trace[0]["output"] == "1 quiz sobre banco de dados"

@@ -52,6 +52,11 @@ _PREAMBLE = (
     "pergunta. Use-os como fonte e cite a disciplina e a data quando "
     "responder. Se nao responderem o que foi perguntado, diga isso em vez "
     "de completar com suposicao.\n"
+    "Os trechos nao sao a unica fonte: o que esta cadastrado no Modo Aula "
+    "(quizzes, banco de questoes, turmas, alunos, resultado de quiz) voce le "
+    "por ferramenta. Antes de dizer que a transcricao nao cobre o assunto, "
+    "consulte o cadastro - a aula nao mencionar o quiz nao significa que o "
+    "quiz nao exista.\n"
 )
 
 

@@ -83,7 +83,7 @@ def test_langchain_model_adapter_preserves_provider_errors(monkeypatch):
 def test_langchain_multi_dispatch_uses_model_adapter(monkeypatch):
     called: list[str] = []
 
-    async def single(provider, message, history, system_prompt):
+    async def single(provider, message, history, system_prompt, tools=(), trace_sink=None):
         called.append(provider)
         return LLMResponse(llm=provider, content=provider.upper())
 
@@ -105,7 +105,7 @@ def test_langchain_multi_dispatch_uses_model_adapter(monkeypatch):
 def test_langchain_chain_passes_previous_structured_content(monkeypatch):
     requests: list[tuple[str, str]] = []
 
-    async def single(provider, message, history, system_prompt):
+    async def single(provider, message, history, system_prompt, tools=(), trace_sink=None):
         requests.append((provider, message))
         return LLMResponse(llm=provider, content=f"Resposta de {provider}")
 
@@ -130,7 +130,7 @@ def test_langchain_chain_passes_previous_structured_content(monkeypatch):
 def test_langchain_chain_keeps_local_answer_when_cloud_refinement_fails(
     monkeypatch,
 ):
-    async def single(provider, message, history, system_prompt):
+    async def single(provider, message, history, system_prompt, tools=(), trace_sink=None):
         if provider == "localai":
             return LLMResponse(llm=provider, content="Resposta local valida")
         return LLMResponse(

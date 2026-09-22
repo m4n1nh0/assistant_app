@@ -6,9 +6,14 @@ distribuido: um especialista com ferramentas, varios provedores em paralelo, ou
 provedores encadeados refinando a resposta anterior.
 
 O ramo `single` e o unico que passa pelo subgrafo de agente. `multi` e `chain`
-sao comparacao e refinamento entre provedores, nao trabalho de especialista:
-dar ferramenta a eles multiplicaria efeito colateral por N sem melhorar a
-resposta.
+sao comparacao e refinamento entre provedores, nao trabalho de especialista, e
+por isso nao ganham o catalogo inteiro: ferramenta de acao ali multiplicaria
+efeito colateral por N - N provedores montando N propostas para o mesmo pedido.
+
+A leitura do cadastro e outra coisa. Consultar duas vezes custa consulta, nao
+efeito, e negar a consulta custava a resposta: no modo "Etapas" o assistente
+dizia nao ter acesso ao quiz que estava no banco, a uma chamada de distancia.
+Os tres ramos leem; so `single` age.
 """
 
 from __future__ import annotations
@@ -137,11 +142,18 @@ def build_dispatch_multi(dispatch=None):
 
         send = dispatch or _default_dispatch("dispatch_multi")
         message = await _message_with_project_groups(state, runtime)
+        tools = await _read_tools(context, state.get("task_kind") or "general")
+        trace: list[dict[str, Any]] = []
         async with span("graph.dispatch_multi", "node", providers=len(llms)):
             responses = await send(
-                llms, message, state["history"], state["system_prompt"]
+                llms,
+                message,
+                state["history"],
+                state["system_prompt"],
+                tools=tools,
+                trace_sink=trace,
             )
-        return {"responses": responses}
+        return {"responses": responses, "tool_trace": trace}
 
     return dispatch_multi
 
@@ -163,13 +175,43 @@ def build_dispatch_chain(dispatch=None):
 
         send = dispatch or _default_dispatch("dispatch_chain")
         message = await _message_with_project_groups(state, runtime)
+        tools = await _read_tools(context, state.get("task_kind") or "general")
+        trace: list[dict[str, Any]] = []
         async with span("graph.dispatch_chain", "node", providers=len(llms)):
             response = await send(
-                llms, message, state["history"], state["system_prompt"]
+                llms,
+                message,
+                state["history"],
+                state["system_prompt"],
+                tools=tools,
+                trace_sink=trace,
             )
-        return {"responses": [response]}
+        return {"responses": [response], "tool_trace": trace}
 
     return dispatch_chain
+
+
+async def _read_tools(
+    context: ChatRuntimeContext,
+    task: str,
+) -> list[Any]:
+    """Leitura do cadastro para os ramos que nao passam pelo agente.
+
+    Sem identidade nao ha o que ler: a ferramenta recusaria a consulta, e montar
+    o catalogo so encheria o prompt com ferramenta que nao responde.
+    """
+    if not context.tutor_id:
+        return []
+
+    from ...services import agent_service
+    from shared.ports.tools import ToolPrincipal
+
+    return await agent_service.build_read_tools(
+        task,
+        principal=ToolPrincipal(
+            tutor_id=context.tutor_id, user_id=context.user_id
+        ),
+    )
 
 
 async def _message_with_project_groups(

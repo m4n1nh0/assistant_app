@@ -125,6 +125,14 @@ def _desktop_interface_guidance() -> str:
         "sugira usar a interface para selecionar a IDE/editor/projeto/documento aberto, ou trabalhe diretamente com o contexto ja recebido. "
         "Quando a mensagem ja trouxer 'Contexto da janela escolhida pelo usuario', 'Contexto local do workspace' ou resultado local, use esses dados como contexto real. "
         "Quando sugerir alteracoes de codigo, prefira passos pequenos, comandos de teste claros e, se for editar arquivos, descreva exatamente os arquivos e trechos a alterar."
+        "\n\nO que vale para a tela do computador nao vale para o Modo Aula. "
+        "O cadastro do professor - disciplinas, turmas, alunos, aulas gravadas, "
+        "quizzes, banco de questoes, resultado de quiz aplicado e tempo de "
+        "estudo - esta no banco de dados do proprio app e voce le por ferramenta, "
+        "sem depender de captura de janela. Quando a pergunta for sobre esses "
+        "dados, consulte a ferramenta antes de responder: dizer que nao tem "
+        "acesso, ou pedir que o usuario cole a questao ou autorize a captura da "
+        "tela para ler o que ja esta cadastrado, e erro."
     )
 
 
