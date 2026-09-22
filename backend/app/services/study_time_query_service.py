@@ -50,9 +50,33 @@ async def study_time_chat_response(tutor_id: str, message: str) -> str:
     if len(matching_courses) == 1:
         records = [(item, name) for item, name in records
                    if item.course == matching_courses[0]]
+    # "em 2026.2", "2026/2": o periodo pedido na propria pergunta.
+    periodo = re.search(r"(?<![\d.])(20\d{2})[.\-/](\d)(?!\d)", text)
+    if periodo:
+        alvo = f"{periodo.group(1)}.{periodo.group(2)}"
+        records = [(item, name) for item, name in records if item.semester == alvo]
     if not records:
         return "Não encontrei tempo de estudo importado para esse recorte nas suas disciplinas."
 
+    # Somar semestres diferentes num numero so seria juntar turmas que nunca
+    # existiram juntas: a mesma matricula aparece nos dois, e o "total da turma"
+    # sairia inflado sem nada na resposta dizendo isso. Com mais de um periodo
+    # no recorte, cada um responde por si.
+    periodos = sorted({item.semester for item, _ in records}, reverse=True)
+    if len(periodos) > 1:
+        return "\n\n".join(
+            _resposta_de_um_periodo(
+                [(item, name) for item, name in records if item.semester == atual],
+                text,
+                atual,
+            )
+            for atual in periodos
+        )
+    return _resposta_de_um_periodo(records, text, periodos[0])
+
+
+def _resposta_de_um_periodo(records: list, text: str, semester: str) -> str:
+    """Total, ranking e distribuicao de um unico periodo."""
     total = sum(item.minutes for item, _ in records)
     linked = sum(bool(item.student_id) for item, _ in records)
     pending = len(records) - linked
@@ -64,9 +88,9 @@ async def study_time_chat_response(tutor_id: str, message: str) -> str:
     ranking = sorted(by_student.values(), key=lambda pair: (-pair[1], pair[0]))[:10]
     lines = [f"- {name}: {minutes} min ({minutes / 60:.1f} h)"
              for name, minutes in ranking]
-    headline = (f"Tempo de estudo importado: {total} minutos ({total / 60:.1f} horas) "
-                f"em {len(records)} registros; {linked} com aluno cadastrado e "
-                f"{pending} sem aluno no cadastro. "
+    headline = (f"Período {semester} — tempo de estudo importado: {total} minutos "
+                f"({total / 60:.1f} horas) em {len(records)} registros; "
+                f"{linked} com aluno cadastrado e {pending} sem aluno no cadastro. "
                 f"Média por registro: {total / len(records):.1f} minutos.")
     breakdown_field = None
     if "por disciplina" in text:

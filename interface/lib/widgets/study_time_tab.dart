@@ -101,13 +101,58 @@ class _StudyTimeTabState extends State<StudyTimeTab> {
                           ? 'nenhuma turma encontrada'
                           : (item['classes'] as List).map((c) =>
                               '${c['label']} (${c['rows']})').join(', ')}'
-                      '${(item['without_class'] as num) > 0
+                      '${(item['without_class'] as num? ?? 0) > 0
                           ? '  •  ${item['without_class']} sem turma'
+                          : ''}'
+                      '${(item['without_student'] as num? ?? 0) > 0
+                          ? '  •  ${item['without_student']} sem aluno'
                           : ''}',
                       style: TextStyle(fontSize: 11,
                         color: (item['classes'] as List).isEmpty
                           ? AssistantTheme.c4
                           : AssistantTheme.textSecondary))),
+                // Saber quantas linhas ficam de fora nao permite agir; saber
+                // quais, sim. A planilha nao tem nome, entao quem identifica e
+                // a matricula - com curso, disciplina e turma para achar a
+                // pessoa no sistema da instituicao.
+                if ((preview['unmatched'] as List? ?? []).isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text('Matrículas sem aluno no seu cadastro',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                  for (final item in (preview['unmatched'] as List))
+                    Padding(padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '${item['enrollment']}'
+                        '${(item['course'] as String).isEmpty ? '' : '  ${item['course']}'}'
+                        '  ·  ${(item['disciplines'] as List).join(', ')}'
+                        '  ·  turma ${(item['group_sequences'] as List).join(', ')}'
+                        '  ·  ${item['rows']} linha(s), ${item['minutes']} min'
+                        '${item['reason'] == 'ambigua'
+                            ? '  ·  matrícula repetida no cadastro, não é caso de cadastrar'
+                            : ''}',
+                        style: const TextStyle(fontSize: 11, color: AssistantTheme.c4))),
+                  if ((preview['without_registered_student'] as num).toInt()
+                      > (preview['unmatched'] as List).length)
+                    const Padding(padding: EdgeInsets.only(top: 4),
+                      child: Text('Mostrando as primeiras; o total está acima.',
+                        style: TextStyle(fontSize: 11,
+                          color: AssistantTheme.textMuted))),
+                ],
+                // Outra pendencia, outra correcao: aqui o aluno existe e tem
+                // nome; o que falta e a turma.
+                if ((preview['students_without_class'] as List? ?? []).isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text('Alunos cadastrados, mas sem turma',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                  for (final item in (preview['students_without_class'] as List))
+                    Padding(padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '${item['name']}  ·  ${item['enrollment']}'
+                        '  ·  ${(item['disciplines'] as List).join(', ')}'
+                        '  ·  ${item['rows']} linha(s)',
+                        style: const TextStyle(fontSize: 11,
+                          color: AssistantTheme.textSecondary))),
+                ],
                 const SizedBox(height: 10),
                 const Text('Por padrão, linhas sem aluno no cadastro não serão gravadas.'),
                 CheckboxListTile(contentPadding: EdgeInsets.zero,

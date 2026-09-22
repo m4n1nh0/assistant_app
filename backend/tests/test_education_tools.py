@@ -32,6 +32,7 @@ from app.core.database import (
     QuizModel,
     StudentAnswerModel,
     StudentModel,
+    StudyTimeModel,
 )
 from app.services import education_tools
 from shared.ports.tools import ToolError, ToolPrincipal
@@ -61,6 +62,7 @@ def banco(monkeypatch):
                 QuestionModel,
                 StudentModel,
                 StudentAnswerModel,
+                StudyTimeModel,
             ):
                 await conn.run_sync(model.__table__.create)
         async with sessions() as db:
@@ -97,6 +99,15 @@ def banco(monkeypatch):
                 StudentAnswerModel(id="r2", question_id="p1", student_id="s2",
                                    student_name="Bruno", resposta="B", correta=False,
                                    pontuacao=0, respondido_em=BASE),
+
+                # A mesma turma importada em dois periodos: somados, o total
+                # diria que ela estudou o dobro de qualquer um dos dois.
+                StudyTimeModel(id="t1", tutor_id=DONO, enrollment="111",
+                               discipline_code="ARA0040", group_sequence="15052214",
+                               course="ADS", semester="2026.2", minutes=600),
+                StudyTimeModel(id="t2", tutor_id=DONO, enrollment="111",
+                               discipline_code="ARA0040", group_sequence="15052214",
+                               course="ADS", semester="2026.3", minutes=120),
 
                 # O outro tutor tem a propria disciplina e o proprio quiz.
                 DisciplineModel(id="d9", tutor_id=OUTRO, code="ARA9999",
@@ -209,3 +220,26 @@ def test_filtro_vazio_nao_mente_sobre_estar_vazio(banco):
 
     assert saida["total"] == 0
     assert "nao ha aula" in saida["text"].lower()
+
+
+def test_tempo_de_estudo_nao_soma_periodos_diferentes(banco):
+    """Dois semestres da mesma turma sao duas linhas, nunca um total so.
+
+    Somados, o assistente responderia que a turma estudou 12h quando ela
+    estudou 10h num periodo e 2h no outro.
+    """
+    saida = ler(education_tools.education_study_time_summary)
+
+    periodos = {item["periodo"]: item for item in saida["items"]}
+    assert set(periodos) == {"2026.2", "2026.3"}
+    assert periodos["2026.2"]["horas"] == 10.0
+    assert periodos["2026.3"]["horas"] == 2.0
+    assert "2026.2: 10.0h" in saida["text"] and "2026.3: 2.0h" in saida["text"]
+    assert "12.0h" not in saida["text"], "o total somado nao pode aparecer"
+
+
+def test_tempo_de_estudo_aceita_recorte_de_periodo(banco):
+    saida = ler(education_tools.education_study_time_summary, semester="2026.3")
+
+    assert [item["periodo"] for item in saida["items"]] == ["2026.3"]
+    assert saida["total"] == 1

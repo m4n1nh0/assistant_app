@@ -147,6 +147,15 @@ class QuizRef(BaseModel):
     quiz_id: str = Field(min_length=1, description="Id do quiz.")
 
 
+class StudyTimeFilter(DisciplineFilter):
+    """Filtro do tempo de estudo importado."""
+
+    semester: str = Field(
+        default="",
+        description="Periodo letivo, como 2026.2; vazio traz todos, separados.",
+    )
+
+
 class BankFilter(DisciplineFilter):
     """Filtro do banco de questoes."""
 
@@ -678,12 +687,21 @@ async def education_get_quiz_results(quiz_id: str) -> dict[str, Any]:
 # --- tempo de estudo ---------------------------------------------------------
 
 
-@tool("education_study_time_summary", args_schema=DisciplineFilter)
-async def education_study_time_summary(discipline: str = "") -> dict[str, Any]:
-    """Resume o tempo de estudo importado, agrupado por turma."""
+@tool("education_study_time_summary", args_schema=StudyTimeFilter)
+async def education_study_time_summary(
+    discipline: str = "",
+    semester: str = "",
+) -> dict[str, Any]:
+    """Resume o tempo de estudo importado, por periodo letivo e turma.
+
+    O periodo entra no agrupamento, e nao so no filtro: a mesma turma importada
+    em dois semestres sao duas linhas. Somadas, o total diria que a turma
+    estudou o dobro do que estudou em qualquer um dos dois.
+    """
     owner = require_principal()
     async with AsyncSessionLocal() as db:
         stmt = select(
+            StudyTimeModel.semester,
             StudyTimeModel.group_sequence,
             StudyTimeModel.discipline_code,
             func.count(StudyTimeModel.id),
@@ -691,11 +709,18 @@ async def education_study_time_summary(discipline: str = "") -> dict[str, Any]:
         ).where(StudyTimeModel.tutor_id == owner.tutor_id)
         if discipline:
             stmt = stmt.where(StudyTimeModel.discipline_code.ilike(f"%{discipline}%"))
+        if semester:
+            stmt = stmt.where(StudyTimeModel.semester == semester)
         rows = (
             await db.execute(
                 stmt.group_by(
-                    StudyTimeModel.group_sequence, StudyTimeModel.discipline_code
-                ).order_by(func.sum(StudyTimeModel.minutes).desc())
+                    StudyTimeModel.semester,
+                    StudyTimeModel.group_sequence,
+                    StudyTimeModel.discipline_code,
+                ).order_by(
+                    StudyTimeModel.semester.desc(),
+                    func.sum(StudyTimeModel.minutes).desc(),
+                )
             )
         ).all()
 
@@ -708,22 +733,30 @@ async def education_study_time_summary(discipline: str = "") -> dict[str, Any]:
 
     items = [
         {
+            "periodo": periodo or "(sem periodo)",
             "turma": turma or "(sem turma)",
             "disciplina": codigo,
             "alunos": int(alunos or 0),
             "minutos": int(minutos or 0),
             "horas": round(int(minutos or 0) / 60, 1),
         }
-        for turma, codigo, alunos, minutos in rows
+        for periodo, turma, codigo, alunos, minutos in rows
     ]
-    total_minutos = sum(item["minutos"] for item in items)
+    # Um total por periodo, e nenhum total geral: somar semestres seria dizer
+    # que a turma estudou a soma de dois semestres que nunca correram juntos.
+    por_periodo: dict[str, int] = {}
+    for item in items:
+        por_periodo[item["periodo"]] = por_periodo.get(item["periodo"], 0) + item["minutos"]
+    cabecalho = "; ".join(
+        f"{periodo}: {round(minutos / 60, 1)}h" for periodo, minutos in por_periodo.items()
+    )
     text = (
-        f"Tempo de estudo importado: {round(total_minutos / 60, 1)}h em "
-        f"{len(items)} turma(s).\n"
+        f"Tempo de estudo importado por periodo — {cabecalho}. "
+        f"{len(items)} turma(s) no total.\n"
         + _lines(
             [
-                f"{item['turma']} ({item['disciplina']}): {item['horas']}h "
-                f"em {item['alunos']} registro(s)"
+                f"{item['periodo']} · {item['turma']} ({item['disciplina']}): "
+                f"{item['horas']}h em {item['alunos']} registro(s)"
                 for item in items[:_MAX_ROWS]
             ],
             total=len(items),

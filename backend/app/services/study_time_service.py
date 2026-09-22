@@ -101,6 +101,19 @@ def match_study_student(row: dict, by_enrollment: dict[str, list[StudentModel]])
     return matches[0] if len(matches) == 1 else None
 
 
+def unmatched_reason(row: dict, by_enrollment: dict[str, list[StudentModel]]) -> str:
+    """Por que esta linha nao achou aluno - a conta tem dois motivos.
+
+    "Nao cadastrada" se resolve cadastrando o aluno; "ambigua" nao, e cadastrar
+    de novo so pioraria. Contar as duas juntas mandava o professor pelo caminho
+    errado na metade dos casos.
+    """
+    matches = by_enrollment.get(row["enrollment"], [])
+    if not matches:
+        return "nao_cadastrada"
+    return "ambigua"
+
+
 async def student_enrollment_index(db, tutor_id: str) -> dict[str, list[StudentModel]]:
     students = (await db.execute(select(StudentModel).where(
         StudentModel.tutor_id == tutor_id
@@ -143,7 +156,103 @@ async def preview_study_times(db, tutor_id: str, rows: list[dict]) -> dict:
         by_period=dict(sorted(Counter(row["semester"] for row in rows).items())),
         by_discipline=dict(sorted(Counter(row["discipline_code"] for row in rows).items())),
         group_mapping=await _group_mapping(db, tutor_id, rows, by_enrollment),
+        unmatched=_unmatched_rows(rows, by_enrollment),
+        students_without_class=await _students_without_class(
+            db, tutor_id, rows, by_enrollment
+        ),
     )
+
+
+#: Teto da lista nominal. Uma planilha pode vir com o semestre inteiro fora do
+#: cadastro, e despejar centenas de matriculas num dialogo de conferencia nao
+#: ajuda ninguem a decidir. O total exato continua no contador.
+_MAX_LISTED = 25
+
+
+def _unmatched_rows(
+    rows: list[dict],
+    by_enrollment: dict[str, list[StudentModel]],
+) -> list[dict]:
+    """As matriculas que nao acharam aluno, com o que a planilha sabe delas.
+
+    Ate aqui a conferencia dizia quantas linhas ficariam sem aluno, e nao
+    *quais*. Para agir - cadastrar o aluno, corrigir a matricula - o professor
+    precisava abrir a planilha e cruzar na mao. A planilha nao tem coluna de
+    nome, entao o que da para mostrar e matricula, curso, disciplina, turma e
+    minutos: o bastante para achar a pessoa no sistema da instituicao.
+    """
+    listadas: dict[str, dict] = {}
+    for row in rows:
+        if match_study_student(row, by_enrollment) is not None:
+            continue
+        item = listadas.get(row["enrollment"])
+        if item is None:
+            if len(listadas) >= _MAX_LISTED:
+                continue
+            listadas[row["enrollment"]] = dict(
+                enrollment=row["enrollment"],
+                course=row.get("course", ""),
+                reason=unmatched_reason(row, by_enrollment),
+                disciplines=[row["discipline_code"]],
+                group_sequences=[row["group_sequence"]],
+                rows=1,
+                minutes=int(row.get("minutes") or 0),
+            )
+            continue
+        # Mesma matricula em mais de uma disciplina e uma pessoa so, e nao duas
+        # pendencias: cadastrar o aluno resolve as duas linhas de uma vez.
+        item["rows"] += 1
+        item["minutes"] += int(row.get("minutes") or 0)
+        if row["discipline_code"] not in item["disciplines"]:
+            item["disciplines"].append(row["discipline_code"])
+        if row["group_sequence"] not in item["group_sequences"]:
+            item["group_sequences"].append(row["group_sequence"])
+    return sorted(listadas.values(), key=lambda item: item["enrollment"])
+
+
+async def _students_without_class(
+    db, tutor_id: str, rows: list[dict],
+    by_enrollment: dict[str, list[StudentModel]],
+) -> list[dict]:
+    """Alunos que a matricula achou, mas que estao sem turma no cadastro.
+
+    E outra pendencia, com outra correcao: aqui o aluno existe e tem nome - o
+    que falta e a turma. Sem separar, "sem turma" e "sem aluno" caiam na mesma
+    linha do dialogo e sugeriam cadastrar quem ja estava cadastrado.
+    """
+    from ..core.database import ClassGroupModel
+
+    turmas = {
+        item.id
+        for item in (await db.execute(select(ClassGroupModel).where(
+            ClassGroupModel.tutor_id == tutor_id
+        ))).scalars().all()
+    }
+
+    pendentes: dict[str, dict] = {}
+    for row in rows:
+        aluno = match_study_student(row, by_enrollment)
+        if aluno is None or (aluno.class_id and aluno.class_id in turmas):
+            continue
+        item = pendentes.get(row["enrollment"])
+        if item is None:
+            if len(pendentes) >= _MAX_LISTED:
+                continue
+            pendentes[row["enrollment"]] = dict(
+                enrollment=row["enrollment"],
+                student_id=aluno.id,
+                name=aluno.name or "",
+                disciplines=[row["discipline_code"]],
+                group_sequences=[row["group_sequence"]],
+                rows=1,
+            )
+            continue
+        item["rows"] += 1
+        if row["discipline_code"] not in item["disciplines"]:
+            item["disciplines"].append(row["discipline_code"])
+        if row["group_sequence"] not in item["group_sequences"]:
+            item["group_sequences"].append(row["group_sequence"])
+    return sorted(pendentes.values(), key=lambda item: item["name"] or item["enrollment"])
 
 
 async def _group_mapping(
@@ -174,7 +283,12 @@ async def _group_mapping(
         aluno = match_study_student(row, by_enrollment)
         destino = porta_de_entrada.setdefault(chave, Counter())
         turma = classes.get(aluno.class_id) if aluno and aluno.class_id else None
-        if turma is None:
+        if aluno is None:
+            # "Sem aluno" nao e "sem turma": aqui nao ha ninguem a quem dar
+            # turma. Contados juntos, o dialogo mandava o professor conferir o
+            # vinculo de turma quando o que faltava era o cadastro da pessoa.
+            destino["__sem_aluno__"] += 1
+        elif turma is None:
             destino["__sem_turma__"] += 1
         else:
             rotulo = " ".join(part for part in (turma.code, turma.name) if part)
@@ -183,6 +297,7 @@ async def _group_mapping(
     mapeamento = []
     for (disciplina, sequencia), destino in sorted(porta_de_entrada.items()):
         sem_turma = destino.pop("__sem_turma__", 0)
+        sem_aluno = destino.pop("__sem_aluno__", 0)
         mapeamento.append(dict(
             discipline_code=disciplina,
             group_sequence=sequencia,
@@ -190,6 +305,7 @@ async def _group_mapping(
             classes=[dict(label=rotulo, rows=quantidade)
                      for rotulo, quantidade in destino.most_common()],
             without_class=sem_turma,
+            without_student=sem_aluno,
         ))
     return mapeamento
 

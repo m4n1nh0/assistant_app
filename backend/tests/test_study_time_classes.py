@@ -121,4 +121,50 @@ def test_previa_mostra_para_onde_cada_sequencia_vai(sessions):
     assert mapeamento["15034853"]["rows"] == 2
 
     assert mapeamento["15034854"]["classes"] == []
-    assert mapeamento["15034854"]["without_class"] == 1
+    # Nao ha ninguem a quem dar turma: a matricula nao existe no cadastro.
+    assert mapeamento["15034854"]["without_class"] == 0
+    assert mapeamento["15034854"]["without_student"] == 1
+
+
+def test_previa_identifica_a_matricula_que_nao_achou_aluno(sessions):
+    """Saber *quantas* linhas ficam de fora nao basta para agir; falta *quais*.
+
+    A planilha nao tem coluna de nome, entao o que identifica e a matricula,
+    com curso, disciplina, turma da planilha e minutos - o bastante para achar
+    a pessoa no sistema da instituicao e cadastrar.
+    """
+    from app.services.study_time_service import preview_study_times
+
+    async def executar():
+        async with sessions() as db:
+            return await preview_study_times(db, "t1", [
+                {"enrollment": "sem-cadastro", "discipline_code": "ARA0058",
+                 "group_sequence": "15034854", "course": "ADS",
+                 "semester": "2026.2", "minutes": 30},
+                # Mesma pessoa em outra disciplina: uma pendencia, nao duas.
+                {"enrollment": "sem-cadastro", "discipline_code": "ARA0040",
+                 "group_sequence": "15052214", "course": "ADS",
+                 "semester": "2026.2", "minutes": 12},
+                {"enrollment": "999", "discipline_code": "ARA0058",
+                 "group_sequence": "15034853", "course": "ADS",
+                 "semester": "2026.2", "minutes": 60},
+            ])
+
+    previa = asyncio.run(executar())
+
+    assert len(previa["unmatched"]) == 1, "a mesma matricula nao vira duas pendencias"
+    pendencia = previa["unmatched"][0]
+    assert pendencia["enrollment"] == "sem-cadastro"
+    assert pendencia["reason"] == "nao_cadastrada"
+    assert pendencia["course"] == "ADS"
+    assert pendencia["rows"] == 2
+    assert pendencia["minutes"] == 42
+    assert pendencia["disciplines"] == ["ARA0058", "ARA0040"]
+    assert pendencia["group_sequences"] == ["15034854", "15052214"]
+
+    # O aluno cadastrado porem sem turma e outra pendencia, com outra correcao:
+    # ele existe e tem nome, o que falta e a turma.
+    assert previa["students_without_class"] == [{
+        "enrollment": "999", "student_id": "s2", "name": "Avulso",
+        "disciplines": ["ARA0058"], "group_sequences": ["15034853"], "rows": 1,
+    }]
