@@ -53,6 +53,15 @@ flutter pub get
 flutter run -d windows
 ```
 
+### Erro MSB3501 em caminhos longos
+
+Se o MSBuild falhar ao acessar um arquivo `.lastbuildstate` de um plugin,
+verifique o comprimento do caminho informado. O `windows/CMakeLists.txt`
+configura `CMAKE_INTERMEDIATE_DIR_STRATEGY=SHORT` no CMake 4.2 ou superior
+para encurtar os caminhos intermediários, inclusive os do WebView. Execute
+`flutter run -d windows` novamente para regenerar os projetos do Visual Studio.
+Com CMake anterior a 4.2, use uma pasta de checkout mais curta.
+
 ### Outras Plataformas
 
 O código Dart foi organizado para desktop, mas os runners `macos/` e `linux/`

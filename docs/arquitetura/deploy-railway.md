@@ -501,6 +501,12 @@ MCP remoto em http://...:8002
 
 ---
 
+## Monitoramento
+
+Para verificar as dependências pela API e habilitar os alertas administrativos,
+consulte [Saúde dos serviços e alertas](configuracao-por-servico.md#saude-dos-servicos-e-alertas).
+As variáveis do monitor devem ser configuradas na `assistant-api`.
+
 ## Interface
 
 A interface não lê variável de ambiente. O endereço vem de

@@ -497,6 +497,8 @@ class HealthResponse(BaseModel):
     notifications: Dict[str, bool] = Field(default_factory=dict)
     uptime_seconds: float = 0
     storage: Dict[str, Any] = Field(default_factory=dict)
+    orchestration: Dict[str, Any] = Field(default_factory=dict)
+    services: Dict[str, Any] = Field(default_factory=dict)
 
 
 class DesktopWindowInfo(BaseModel):

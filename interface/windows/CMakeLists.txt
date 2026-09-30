@@ -1,5 +1,13 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
+
+# Keep plugin intermediate paths below the Windows/MSBuild path length limit.
+# CMake 4.2 introduced hashed intermediate directory and object file names.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.2")
+  set(CMAKE_INTERMEDIATE_DIR_STRATEGY SHORT CACHE STRING
+    "Use short intermediate paths for Windows plugin builds")
+endif()
+
 project(assistant_app LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
@@ -56,6 +64,17 @@ add_subdirectory("runner")
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+# These plugins' legacy WIL dependencies use experimental coroutines.
+# MSVC 2026 requires this opt-in until that dependency migrates to C++20.
+if(MSVC)
+  foreach(legacy_plugin audioplayers_windows_plugin flutter_inappwebview_windows_plugin)
+    if(TARGET ${legacy_plugin})
+      target_compile_definitions(${legacy_plugin} PRIVATE
+        _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+    endif()
+  endforeach()
+endif()
 
 
 # === Installation ===

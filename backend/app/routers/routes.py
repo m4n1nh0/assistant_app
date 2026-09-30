@@ -1971,6 +1971,7 @@ async def tts(
 
 import time
 from fastapi import APIRouter
+from ..services.system_health_service import collect_health
 from ..models.schemas import HealthResponse
 from ..services.qdrant_service import status as qdrant_status
 from ..services.llm_status_service import get_llm_statuses
@@ -1988,13 +1989,17 @@ async def health():
     """
     s = _gs3()
     llm_status = await get_llm_statuses()
+    services = await collect_health()
+    orchestration = services["orchestration"]
     available_llms = [
         llm for llm in s.active_llms
         if llm_status.get(llm) is not None and llm_status[llm].available
     ]
     sources = []
     return HealthResponse(
-        status="ok",
+        status="degraded" if any(item["ok"] is False for item in services.values()) else "ok",
+        orchestration=orchestration,
+        services=services,
         revision=build_revision(),
         active_llms=s.active_llms,
         available_llms=available_llms,

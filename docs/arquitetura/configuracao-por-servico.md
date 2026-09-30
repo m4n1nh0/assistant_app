@@ -21,6 +21,52 @@ que é onde o deploy costuma quebrar.
 > **que valores cada uma aceita e o que cada valor faz**, veja
 > [Valores aceitos por variável](../referencia/variaveis.md).
 
+## Saúde dos serviços e alertas
+
+A `assistant-api` concentra este diagnóstico, tanto no monólito quanto com serviços separados. As variáveis `HEALTH_ALERT_*` pertencem somente à API que executa o monitor.
+
+O `GET /health` inclui `orchestration: {"transport": "local" | "remote", "ok": true | false}`.
+No modo padrão (`ORCHESTRATOR_TRANSPORT=local`), o chat roda no próprio backend
+e não exige um serviço separado. No modo `remote`, a API consulta o
+`/health/ready` do orquestrador, com limite total de cinco segundos. Uma falha
+retorna HTTP 200 com `status: "degraded"` e `orchestration.ok: false`.
+O `/health/live` permanece independente dos serviços externos. Essa checagem
+de prontidão não executa um turno de chat nem valida credenciais dos provedores.
+
+O campo `services` detalha banco (`SELECT 1`), Redis (`PING`), Qdrant,
+orquestração, ferramentas, MCP e a API de e-mail Brevo. As verificações rodam
+em paralelo, com até cinco segundos por serviço e cache de 30 segundos.
+Serviços sem configuração aparecem como `disabled`, com `ok: null`; falhas
+nos serviços configurados tornam o status geral `degraded`. O diagnóstico
+de provedores de IA continua nos campos `llm_status` e `available_llms`:
+credenciais individuais não são avaliadas pelo monitor de infraestrutura.
+
+### Alertas administrativos
+
+Para habilitar o monitor periódico no backend, configure:
+
+```dotenv
+HEALTH_ALERTS_ENABLED=true
+HEALTH_ALERT_INTERVAL_SECONDS=60
+HEALTH_ALERT_FAILURE_THRESHOLD=3
+HEALTH_ALERT_COOLDOWN_SECONDS=3600
+```
+
+O destinatário é `REGISTRATION_ADMIN_EMAIL`; o envio reutiliza `BREVO_API_KEY`
+e `SMTP_FROM` (ou `SMTP_USERNAME` como remetente). Por padrão, o monitor está
+desativado e não envia e-mail. Habilitado, avisa após três verificações com
+falha, repete no máximo a cada hora e informa a recuperação de incidentes
+notificados, respeitando o mesmo intervalo. Falhas de envio também respeitam
+esse intervalo. Consultar `/health` nunca envia e-mail.
+
+O controle de avisos fica em memória, por processo: reinícios zeram o histórico.
+Em instalações com réplicas/workers, habilite o monitor em apenas um processo
+dedicado para evitar duplicidade. A checagem da API Brevo não garante entrega
+na caixa postal. Para detectar a queda completa do backend ou do próprio canal
+de e-mail, use também um monitor externo; este monitor depende do backend ativo.
+
+---
+
 ## Como ler as tabelas
 
 | Marca | Significado |

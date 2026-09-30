@@ -12,6 +12,9 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   errors:
     deprecated_member_use: ignore
+  exclude:
+    - build/**
+    - windows/**
 
 linter:
   # The lint rules applied to this project can be customized in the

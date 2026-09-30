@@ -204,6 +204,19 @@ def start_scheduler():
         replace_existing=True,
         next_run_time=datetime.now(timezone.utc),
     )
+    from ..core.config import get_settings
+    from ..services.health_alert_service import health_alerts
+
+    settings = get_settings()
+    if settings.health_alerts_enabled:
+        scheduler.add_job(
+            health_alerts.poll,
+            trigger=IntervalTrigger(seconds=settings.health_alert_interval_seconds),
+            id="health_alerts",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
     scheduler.start()
     logger.info("Scheduler started - calendar sync every 5 min")
 

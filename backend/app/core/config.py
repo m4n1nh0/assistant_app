@@ -88,6 +88,10 @@ class Settings(MCPSettings):
     smtp_starttls: bool = True
     smtp_use_ssl: bool = False
     brevo_api_key: str = ""
+    health_alerts_enabled: bool = False
+    health_alert_interval_seconds: int = Field(default=60, ge=30)
+    health_alert_failure_threshold: int = Field(default=3, ge=1)
+    health_alert_cooldown_seconds: int = Field(default=3600, ge=60)
     redis_url: str = "redis://localhost:6379/0"
 
     telegram_bot_token: str = ""

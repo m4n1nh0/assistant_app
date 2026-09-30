@@ -2,6 +2,9 @@
 
 API REST, SSE e WebSocket do Assistente Desktop.
 
+Para o diagnóstico de saúde e os alertas por e-mail, consulte
+[Saúde dos serviços e alertas](../docs/arquitetura/configuracao-por-servico.md#saude-dos-servicos-e-alertas).
+
 ---
 
 ## Instalação rápida
