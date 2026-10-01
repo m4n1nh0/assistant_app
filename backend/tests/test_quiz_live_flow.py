@@ -110,7 +110,10 @@ def test_entrar_redireciona_para_get_e_aparece_no_lobby(sala):
 
     espera = sala.get(PLAY)
     assert "Aguardando o professor" in espera.text
-    assert 'http-equiv="refresh"' in espera.text
+    # Sem JavaScript o recarregamento antigo continua (noscript); com JavaScript
+    # a pagina consulta /state e so se troca quando o estado muda.
+    assert '<noscript><meta http-equiv="refresh"' in espera.text
+    assert 'id="live-script"' in espera.text
 
     numeros = sala.stats()
     assert numeros["participants"] == 1

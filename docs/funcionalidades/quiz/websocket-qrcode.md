@@ -20,6 +20,7 @@
 - [x] Ranking por **pontos acumulados** em todas as telas (professor, WebSocket e aluno); entre perguntas cada linha mostra também o `+N nesta pergunta`.
 - [x] **Tempo por pergunta** escolhido pelo professor: ao acabar, a pergunta fecha sozinha e o ranking aparece; o professor chama a próxima.
 - [x] Painel do professor legível (tema escuro de ponta a ponta), com enunciado **e alternativas**, e **maximizável** (tela cheia, letras maiores, QR Code ao lado).
+- [x] **Idioma escolhido junto do nome**: a tela de entrada tem o seletor Português / Español / English, e o idioma vale para a interface **e para a pergunta e as alternativas** (traduzidas pelo modelo do professor e gravadas).
 - [ ] WebSocket autenticado por JWT e autorização estrita do professor ainda seguem como roadmap.
 - [ ] Gráficos avançados e exportação de resultados ainda seguem como roadmap.
 
@@ -237,6 +238,105 @@ Iniciar Quiz ──► pergunta aberta ──┬─ acabou o tempo ────�
   encerrar (ou clicar duas vezes) devolve o resultado, não um erro.
 - A tela do aluno só mostra o relógio quando há prazo; no modo manual a barra que
   encolhia sozinha foi removida, porque era um prazo que não existia.
+
+---
+
+## 🌐 Idioma do aluno
+
+- **Escolha na entrada.** A tela do nome mostra `Português | Español | English`.
+  Trocar o idioma ali recarrega a tela (os textos mudam na hora) sem perder o nome
+  já digitado. O idioma escolhido vence o do navegador e o da URL, e fica num
+  cookie: links sem `?lang=` seguem no idioma do aluno. O seletor da tela da
+  pergunta continua funcionando.
+- **Pergunta e alternativas traduzidas.** A tradução é feita pelo modelo do
+  professor (as chaves dele são carregadas do banco, porque o aluno é anônimo) e
+  gravada em `question_translations`, uma vez por pergunta e idioma: a turma
+  inteira lê a mesma tradução.
+- **Pronta antes de a pergunta abrir.** Quando o primeiro aluno entra num idioma,
+  o quiz inteiro começa a ser traduzido em segundo plano, na ordem em que as
+  perguntas avançam, em lotes de 5. Se a pergunta abrir antes de a tradução ficar
+  pronta, a tela espera até 12s por ela. A turma toda pedindo o mesmo idioma gera
+  uma chamada ao modelo, não uma por aluno.
+- **O gabarito não muda.** O aluno envia a **letra** da alternativa, e é a letra
+  que corrige a resposta; só o texto exibido é traduzido.
+- **Tradução que não fecha é descartada** (outra quantidade de alternativas, letra
+  trocada, texto vazio): o aluno lê o original em português, nunca uma pergunta
+  traduzida errada.
+- **Falha não derruba a tela.** Sem provedor de IA ou com o modelo fora do ar, o
+  aluno lê a pergunta original com a interface no idioma escolhido, e o servidor
+  espera 60s antes de tentar de novo (a tela recarrega a cada 2s, e cada recarga
+  repetiria a chamada que falha).
+- **Reserva pelo app do professor (Codex / Claude).** O aluno é anônimo e não tem
+  provedor, mas o painel do professor tem os agentes conectados. Quando falta
+  tradução e o servidor não consegue fazê-la, o painel traduz:
+
+  ```
+  WebSocket: translations_pending = [{language, students, missing, backend_failed}]
+  painel ──GET /quiz/{id}/translation/prompt?language=en──► só as perguntas sem tradução
+  painel ──executa Codex ou Claude no CLI local──►
+  painel ──POST /quiz/{id}/translation/external──► servidor valida e grava
+  ```
+
+  - O servidor tem a primeira chance: o painel só age quando `backend_failed` ou
+    depois de 20s sem o servidor resolver. Falhou, o painel avisa o professor
+    ("N aluno(s) leem em English com a pergunta em português") e só tenta de novo
+    depois de 90s.
+  - Usa o primeiro agente que o servidor aceitar, sem gastar os dois.
+  - A tradução do agente passa pela **mesma validação** da do servidor: o que não
+    fecha com a pergunta original é descartado.
+  - Sem agente conectado, o painel diz isso ao professor em vez de falhar calado.
+  - O aluno que já está na pergunta aberta continua lendo o original dela; as
+    perguntas seguintes já saem traduzidas.
+- O ranking mostra o enunciado traduzido quando já há tradução, sem esperar o
+  modelo. A tela do professor continua em português.
+
+---
+
+## ♿ Acessibilidade da tela do aluno
+
+Primeira rodada (teclado e leitor de tela):
+
+- **`lang` no texto que de fato está naquele idioma.** O `<html lang>` segue a
+  interface, mas a pergunta e as alternativas declaram o idioma **real** do texto.
+  Quando a tradução falha e o aluno lê o original, o bloco sai como `lang="pt-BR"`
+  mesmo com a interface em inglês: o leitor de tela usa a voz certa e o botão
+  "traduzir" do navegador atua sobre o trecho certo. Vale também para o
+  enunciado do ranking.
+- **Pergunta e alternativas agrupadas** em `fieldset` + `legend`: o leitor de tela
+  diz a qual pergunta cada opção pertence.
+- **Foco visível** nas alternativas, nos botões e no seletor de idioma da entrada.
+  Os botões de idioma ficam escondidos só da vista, não do teclado.
+- **Idioma como grupo com legenda**, cada opção lida no próprio idioma
+  ("Español" em espanhol), e o idioma atual marcado com `aria-current` no seletor
+  da pergunta.
+- **Campo do nome com nome acessível** (`aria-label` e `autocomplete="name"`).
+- **`prefers-reduced-motion`** desliga a animação da barra de tempo.
+
+Segunda rodada (sem recarregar a página):
+
+- **A tela não se recarrega mais a cada 2s.** A página consulta `/state` e só
+  troca o conteúdo quando o estado do quiz muda (nova pergunta, resultado, fim):
+  busca a página nova, troca o corpo, move o foco para o novo título e segue o
+  idioma que a página nova declara. O leitor de tela não volta mais ao início da
+  página a cada 2s. Sem JavaScript, o `<noscript>` mantém o recarregamento antigo.
+- **O relógio é anunciado só em 10s e 5s**, numa região `aria-live` à parte. O
+  número que muda por segundo e a barra (`aria-hidden`) ficam fora dela.
+- **O resultado do aluno vem antes da lista** do ranking.
+- **A consulta de estado marca a presença do aluno.** Era o recarregamento que
+  mantinha o aluno "online" no lobby do professor; agora é `/state` (só para quem
+  já entrou, com cookie de tentativa e nome, e só com o quiz aberto). Consulta
+  anônima não cria participante.
+- O ranking final não consulta nem recarrega.
+
+O script foi executado num DOM simulado (jsdom) com as páginas reais do servidor:
+sem mudança de estado nada é refeito; cada mudança gera uma busca de página; o
+foco vai para o título novo; o relógio anuncia só nos marcos; o ranking final
+para a consulta. Isso achou um defeito (o script mantinha a unidade do relógio da
+página antiga) já corrigido e coberto por teste. Esse cenário não está no
+repositório: não há infraestrutura de teste de JavaScript.
+
+Ainda falta uma verificação com leitor de tela real (NVDA, VoiceOver) e a revisão
+de contraste.
 
 ---
 

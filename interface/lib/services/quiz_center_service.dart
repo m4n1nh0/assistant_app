@@ -156,6 +156,30 @@ class QuizReviewPrompt {
       );
 }
 
+/// O que o servidor pede a um agente para traduzir as perguntas que ainda nao
+/// tem traducao no idioma.
+class QuizTranslationPrompt {
+  final String language;
+  final String systemPrompt;
+  final String prompt;
+  final List<String> questionIds;
+
+  const QuizTranslationPrompt({
+    required this.language,
+    required this.systemPrompt,
+    required this.prompt,
+    this.questionIds = const [],
+  });
+
+  factory QuizTranslationPrompt.fromJson(Map<String, dynamic> json) =>
+      QuizTranslationPrompt(
+        language: json['language']?.toString() ?? '',
+        systemPrompt: json['system_prompt']?.toString() ?? '',
+        prompt: json['prompt']?.toString() ?? '',
+        questionIds: _strings(json['question_ids']),
+      );
+}
+
 /// Um quiz gravado, sem as questoes.
 class QuizSummary {
   final String id;
@@ -386,6 +410,26 @@ class QuizCenterService {
   Future<QuizReviewPrompt> reviewPrompt(String quizId) async =>
       QuizReviewPrompt.fromJson(
           await _ok(api.get('/education/quiz/$quizId/review/prompt')));
+
+  /// Prompt para traduzir, com um agente do computador do professor, as
+  /// perguntas que o servidor nao conseguiu traduzir (sem provedor de IA).
+  Future<QuizTranslationPrompt> translationPrompt(
+    String quizId,
+    String language,
+  ) async =>
+      QuizTranslationPrompt.fromJson(await _ok(api.get(withQuery(
+          '/education/quiz/$quizId/translation/prompt',
+          {'language': language}))));
+
+  /// Entrega ao servidor o texto bruto da traducao. Ele valida contra a
+  /// pergunta original e grava so o que fecha.
+  Future<Map<String, dynamic>> submitTranslation(
+    String quizId, {
+    required String language,
+    required String content,
+  }) =>
+      _ok(api.post('/education/quiz/$quizId/translation/external',
+          body: {'language': language, 'content': content}));
 
   /// Entrega ao servidor o texto bruto de um agente. O servidor le o JSON,
   /// compara com o gabarito e devolve o quiz com o veredito de cada pergunta.

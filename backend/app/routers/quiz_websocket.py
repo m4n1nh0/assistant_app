@@ -16,7 +16,7 @@ from ..core.database import (
     StudentAnswerModel,
     get_db,
 )
-from ..services import quiz_live_service
+from ..services import quiz_live_service, quiz_translation_service
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
@@ -243,9 +243,32 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
         if _utc(item.last_seen_at) and _utc(item.last_seen_at) >= online_since
     ]
 
+    # Alunos lendo em outro idioma sem a traducao pronta: o painel do professor
+    # pode traduzir com Codex ou Claude quando o servidor nao tem como.
+    students_by_language: dict[str, int] = {}
+    for item in online:
+        code = getattr(item, "language", None)
+        if quiz_translation_service.is_translatable(code):
+            students_by_language[code] = students_by_language.get(code, 0) + 1
+    translations_pending = []
+    for code, students in sorted(students_by_language.items()):
+        missing = await quiz_translation_service.missing_question_ids(
+            db, question_ids, code
+        )
+        if missing and not quiz_translation_service.backend_translating(quiz_id, code):
+            translations_pending.append({
+                "language": code,
+                "students": students,
+                "missing": len(missing),
+                "backend_failed": quiz_translation_service.backend_gave_up(
+                    question_ids, code
+                ),
+            })
+
     return {
         "timestamp": datetime.now().isoformat(),
         "quiz_id": quiz_id,
+        "translations_pending": translations_pending,
         "status": (quiz.status if quiz else "not_found") or "open",
         "live_phase": (quiz.live_phase if quiz else "not_found") or "lobby",
         "current_question_id": quiz.current_question_id if quiz else None,

@@ -94,6 +94,7 @@ from ..models.schemas import (
     QuizGenerateResponse,
     QuizReviewSubmission,
     QuizSettingsRequest,
+    QuizTranslationSubmission,
     QuestionUpdate,
     StudentAnswerRequest,
     StudentAnswerResponse,
@@ -118,6 +119,7 @@ from ..services import (
     quiz_job_service,
     quiz_live_service,
     quiz_review_service,
+    quiz_translation_service,
 )
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
@@ -4455,6 +4457,102 @@ async def close_quiz(
         await db.refresh(quiz)
 
     return await _build_quiz_response(db, quiz)
+
+
+# --- Traducao feita pelo app do professor ------------------------------------
+
+
+async def _owned_quiz(db: AsyncSession, quiz_id: str, tutor_id: str) -> QuizModel:
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    return quiz
+
+
+def _translation_language(language: str) -> str:
+    code = (language or "").strip().lower()
+    if not quiz_translation_service.is_translatable(code):
+        raise HTTPException(
+            status_code=400,
+            detail="Idioma sem tradução: use \"es\" ou \"en\".",
+        )
+    return code
+
+
+@router.get("/quiz/{quiz_id}/translation/prompt")
+async def quiz_translation_prompt(
+    quiz_id: str,
+    language: str = Query(...),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Prompt para o app do professor traduzir as perguntas com Codex ou Claude.
+
+    E o caminho de reserva: o servidor traduz com o provedor do professor, mas
+    quando nao ha provedor configurado (ou ele esta fora do ar) a turma ficava
+    lendo em portugues. O app do professor tem os agentes conectados; ele busca
+    o prompt aqui, executa o agente e devolve o texto em `/translation/external`.
+    So as perguntas que ainda nao tem traducao entram no prompt.
+    """
+
+    code = _translation_language(language)
+    quiz = await _owned_quiz(db, quiz_id, user["tutor_id"])
+    questions = await _quiz_questions(db, quiz.id)
+
+    missing = set(await quiz_translation_service.missing_question_ids(
+        db, [question.id for question in questions], code
+    ))
+    pending = [question for question in questions if question.id in missing]
+    if not pending:
+        raise HTTPException(
+            status_code=409,
+            detail="Todas as perguntas já estão traduzidas para este idioma.",
+        )
+    return {
+        "quiz_id": quiz.id,
+        "language": code,
+        **quiz_translation_service.build_translation_prompt(pending, code),
+    }
+
+
+@router.post("/quiz/{quiz_id}/translation/external")
+async def store_quiz_translation(
+    quiz_id: str,
+    body: QuizTranslationSubmission,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Guarda a traducao que um agente do app do professor devolveu.
+
+    Passa pela mesma validacao da traducao do servidor: pergunta cujas
+    alternativas nao fecham com o original e descartada, e a turma segue lendo o
+    original dela.
+    """
+
+    code = _translation_language(body.language)
+    quiz = await _owned_quiz(db, quiz_id, user["tutor_id"])
+    questions = await _quiz_questions(db, quiz.id)
+
+    stored = await quiz_translation_service.store_external(
+        db, content=body.content, language=code, questions=questions
+    )
+    if not stored:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "O agente não devolveu nenhuma tradução aproveitável "
+                "(JSON com a chave \"traducoes\" e as mesmas alternativas)."
+            ),
+        )
+    missing = await quiz_translation_service.missing_question_ids(
+        db, [question.id for question in questions], code
+    )
+    return {
+        "quiz_id": quiz.id,
+        "language": code,
+        "stored": stored,
+        "missing": len(missing),
+    }
 
 
 # --- Revisao das perguntas por agentes especialistas -------------------------

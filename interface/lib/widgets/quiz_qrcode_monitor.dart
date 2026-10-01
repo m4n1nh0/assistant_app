@@ -18,6 +18,7 @@ import 'package:window_manager/window_manager.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
 import '../services/quiz_center_service.dart';
+import '../services/quiz_translation_agent.dart';
 import '../utils/theme.dart';
 
 /// Mescla nas estatisticas da tela o quiz devolvido por um comando ao vivo.
@@ -102,6 +103,36 @@ String formatarRelogio(int seconds) {
   return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
 }
 
+/// Traduz as perguntas de um idioma com um agente do computador do professor.
+typedef TranslationRunner = Future<TranslationOutcome> Function({
+  required String quizId,
+  required String language,
+  required void Function(String message) onProgress,
+});
+
+Future<TranslationOutcome> _translateWithConnectedAgent({
+  required String quizId,
+  required String language,
+  required void Function(String message) onProgress,
+}) =>
+    translateWithAgent(
+      quizId: quizId,
+      language: language,
+      onProgress: onProgress,
+    );
+
+/// Quanto o painel espera o proprio servidor traduzir antes de assumir a
+/// traducao. O servidor tem a primeira chance (provedor de IA do professor); o
+/// agente local e a reserva, e chamar os dois ao mesmo tempo so gastaria o dobro.
+const Duration esperaDoServidorParaTraduzir = Duration(seconds: 20);
+
+/// Depois de uma tentativa que falhou, o painel espera antes de insistir.
+const Duration pausaAposFalhaDeTraducao = Duration(seconds: 90);
+
+/// Depois de uma traducao gravada, o painel ignora por um tempo o aviso
+/// de pendencia, que ainda pode chegar velho do WebSocket.
+const Duration posTraducaoPronta = Duration(seconds: 15);
+
 /// Widget que exibe QR Code do quiz + monitoramento em tempo real via WebSocket
 class QuizQRCodeMonitor extends StatefulWidget {
   final String quizId;
@@ -117,6 +148,15 @@ class QuizQRCodeMonitor extends StatefulWidget {
   @visibleForTesting
   final bool autoConnect;
 
+  /// So para teste: quem traduz no lugar do agente local.
+  @visibleForTesting
+  final TranslationRunner? translator;
+
+  /// So para teste: relogio das janelas de espera da traducao. O relogio de
+  /// mentira do teste de widget nao move `DateTime.now()`.
+  @visibleForTesting
+  final DateTime Function()? now;
+
   const QuizQRCodeMonitor({
     super.key,
     required this.quizId,
@@ -125,6 +165,8 @@ class QuizQRCodeMonitor extends StatefulWidget {
     this.onClose,
     this.initialStats,
     this.autoConnect = true,
+    this.translator,
+    this.now,
   });
 
   @override
@@ -162,6 +204,17 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
   bool _windowFullscreen = false;
   String? _error;
   int _connectRetries = 0;
+
+  // Traducao de reserva pelo agente local (quando o servidor nao traduz).
+  /// Idioma -> desde quando o servidor avisa que falta traducao.
+  final Map<String, DateTime> _translationSince = {};
+
+  /// Idioma -> quando o painel pode tentar de novo depois de uma falha.
+  final Map<String, DateTime> _translationRetryAt = {};
+
+  /// Idioma -> o que o painel diz ao professor sobre ele (progresso ou falha).
+  final Map<String, String> _translationNotice = {};
+  final Set<String> _translating = {};
 
   /// Ha quanto tempo o backend nao manda estatisticas novas.
   Duration get _sinceLastUpdate => _lastUpdate == null
@@ -202,6 +255,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
     _freshnessTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() {});
+      _maybeTranslate();
       if (!widget.autoConnect) return;
       // Uma tentativa por janela de silencio: reconectar a cada segundo so
       // empilharia conexoes sem dar tempo do servidor responder.
@@ -212,6 +266,128 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         _reconnectNow();
       }
     });
+  }
+
+  /// Traduz com o agente local o idioma em que ha aluno sem traducao pronta.
+  ///
+  /// So age depois de o servidor ter desistido (`backend_failed`) ou de ele
+  /// ter tido [esperaDoServidorParaTraduzir] sem resolver: o provedor de IA do
+  /// professor tem a primeira chance, e o agente local e a reserva. Falhou, o
+  /// painel avisa o professor e so tenta de novo depois de uma pausa - nao a
+  /// cada segundo, que gastaria a conta do agente em loop.
+  DateTime _clock() => widget.now?.call() ?? DateTime.now();
+
+  void _maybeTranslate() {
+    final pending = PendingTranslation.listFrom(_stats?['translations_pending']);
+    final now = _clock();
+    final stillPending = {for (final item in pending) item.language};
+
+    // Idioma que o servidor ja resolveu sai da lista e do aviso.
+    _translationSince.removeWhere((code, _) => !stillPending.contains(code));
+    _translationNotice.removeWhere((code, _) => !stillPending.contains(code));
+    if (_quizClosed) return;
+
+    for (final item in pending) {
+      final code = item.language;
+      final since = _translationSince.putIfAbsent(code, () => now);
+      if (_translating.contains(code)) continue;
+      final retryAt = _translationRetryAt[code];
+      if (retryAt != null && now.isBefore(retryAt)) continue;
+      final waited = now.difference(since) >= esperaDoServidorParaTraduzir;
+      if (!item.backendFailed && !waited) continue;
+      _runTranslation(code);
+    }
+  }
+
+  Future<void> _runTranslation(String code) async {
+    _translating.add(code);
+    setState(() => _translationNotice[code] =
+        'Traduzindo para ${nomeDoIdioma(code)}...');
+    final translator = widget.translator ?? _translateWithConnectedAgent;
+    try {
+      final outcome = await translator(
+        quizId: widget.quizId,
+        language: code,
+        onProgress: (message) {
+          if (mounted) setState(() => _translationNotice[code] = message);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        if (outcome.ok) {
+          _translationNotice.remove(code);
+          // O servidor ainda manda o idioma como pendente ate o proximo pacote
+          // do WebSocket (2s): sem esta folga, o painel traduziria de novo
+          // com a traducao que acabou de gravar.
+          _translationRetryAt[code] = _clock().add(posTraducaoPronta);
+        } else {
+          _translationNotice[code] = outcome.message;
+          _translationRetryAt[code] = _clock().add(pausaAposFalhaDeTraducao);
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _translationNotice[code] = 'Falha ao traduzir: $error';
+        _translationRetryAt[code] = _clock().add(pausaAposFalhaDeTraducao);
+      });
+    } finally {
+      _translating.remove(code);
+    }
+  }
+
+  /// Aviso ao professor sobre alunos lendo em outro idioma sem traducao.
+  Widget _buildTranslationNotice() {
+    final pending = PendingTranslation.listFrom(_stats?['translations_pending']);
+    final lines = <Widget>[];
+    for (final item in pending) {
+      final notice = _translationNotice[item.language];
+      if (notice == null) continue;
+      final working = _translating.contains(item.language);
+      lines.add(Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (working)
+              const Padding(
+                padding: EdgeInsets.only(top: 2, right: 8),
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(top: 1, right: 8),
+                child: Icon(Icons.translate,
+                    size: 16, color: Colors.orange.shade300),
+              ),
+            Expanded(
+              child: Text(
+                working
+                    ? notice
+                    : '${item.students} aluno(s) leem em '
+                        '${nomeDoIdioma(item.language)} com a pergunta em '
+                        'português. $notice',
+                style: TextStyle(
+                  fontSize: 12 * math.min(_scale, 1.3),
+                  color: working
+                      ? AssistantTheme.textSecondary
+                      : Colors.orange.shade200,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    if (lines.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: lines),
+    );
   }
 
   Future<void> _loadQRCode() async {
@@ -694,6 +870,7 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
           correct: correct,
           incorrect: incorrect,
         ),
+        _buildTranslationNotice(),
         // No lobby o professor precisa ver quem ja entrou antes de iniciar: e a
         // unica confirmacao de que o QR Code funcionou na sala.
         if (livePhase == 'lobby') ...[

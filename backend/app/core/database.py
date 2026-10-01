@@ -910,6 +910,34 @@ class QuizParticipantModel(Base):
     student_name = Column(String(80), nullable=False, default="")
     joined_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    #: Idioma em que o aluno esta lendo o quiz. E o que diz ao painel do
+    #: professor que ha gente esperando traducao, quando o servidor nao tem
+    #: provedor de IA para traduzir.
+    language     = Column(String(8), nullable=True)
+
+
+class QuestionTranslationModel(Base):
+    """Pergunta e alternativas de uma questao, traduzidas para um idioma.
+
+    A tela do aluno troca de idioma, mas o texto da pergunta e das alternativas
+    nasce em portugues. A traducao e gravada aqui na primeira vez que alguem pede
+    aquele idioma: a turma inteira le a mesma traducao (nao uma por aluno), e o
+    gabarito nao muda, porque as alternativas continuam sendo identificadas pela
+    mesma letra. Tabela propria, e nao coluna em `questions`, porque `create_all`
+    cria tabela nova sem migracao.
+    """
+
+    __tablename__ = "question_translations"
+    __table_args__ = (
+        UniqueConstraint("question_id", "language", name="uq_question_translation"),
+    )
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    question_id = Column(String(64), nullable=False, index=True)
+    language    = Column(String(8), nullable=False)
+    enunciado   = Column(Text, nullable=False)
+    #: JSON com `[{"label": "A", "texto": "..."}]`, na ordem original.
+    opcoes      = Column(Text, nullable=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class QuizJobModel(Base):
@@ -1075,8 +1103,11 @@ def _add_compatibility_columns(sync_conn) -> None:
             "external_system": "VARCHAR(32) NULL",
             "external_detail": "VARCHAR(255) NULL",
         },
+        "quiz_participants": {
+            "language": "VARCHAR(8) NULL",
+        },
         "quizzes": {
-            "status": "VARCHAR(32) NOT NULL DEFAULT 'open'",
+            "status":"VARCHAR(32) NOT NULL DEFAULT 'open'",
             "live_phase": "VARCHAR(32) NOT NULL DEFAULT 'lobby'",
             "current_question_id": "VARCHAR(64) NULL",
             "question_started_at": "DATETIME NULL",

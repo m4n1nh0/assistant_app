@@ -21,7 +21,7 @@ from ..core.database import (
     StudentAnswerModel,
     get_db,
 )
-from ..services import quiz_live_service
+from ..services import quiz_live_service, quiz_translation_service
 
 router = APIRouter(prefix="/education/quiz", tags=["education-quiz"])
 
@@ -72,6 +72,10 @@ _PUBLIC_TEXT = {
         "no_answer": "Você não respondeu",
         "ranking_next": "A próxima pergunta aparecerá quando o professor liberar.",
         "waiting_for_answer": "aguardando resposta",
+        "seconds_word": "segundos restantes",
+        "true_label": "Verdadeiro",
+        "false_label": "Falso",
+        "join_language": "Idioma do quiz",
     },
     "es": {
         "html_lang": "es",
@@ -117,6 +121,10 @@ _PUBLIC_TEXT = {
         "no_answer": "No respondiste",
         "ranking_next": "La próxima pregunta aparecerá cuando el profesor la libere.",
         "waiting_for_answer": "esperando respuesta",
+        "seconds_word": "segundos restantes",
+        "true_label": "Verdadero",
+        "false_label": "Falso",
+        "join_language": "Idioma del cuestionario",
     },
     "en": {
         "html_lang": "en",
@@ -162,6 +170,10 @@ _PUBLIC_TEXT = {
         "no_answer": "You did not answer",
         "ranking_next": "The next question will appear when the teacher releases it.",
         "waiting_for_answer": "waiting for an answer",
+        "seconds_word": "seconds left",
+        "true_label": "True",
+        "false_label": "False",
+        "join_language": "Quiz language",
     },
 }
 
@@ -170,9 +182,167 @@ def _normalize_public_language(language: Optional[str]) -> Optional[str]:
     return language if language in _PUBLIC_LANGUAGES else None
 
 
-def _public_language(request: Request, override: Optional[str]) -> str:
+def _language_cookie_name(quiz_id: str) -> str:
+    return f"intarq_quiz_lang_{quiz_id.replace('-', '_')}"
+
+
+# --- Atualizacao ao vivo da tela do aluno ----------------------------------
+#
+# A tela se recarregava inteira a cada 2s (meta refresh). Para quem usa leitor de
+# tela isso devolve a leitura ao inicio da pagina a cada recarga, e perde o foco
+# do teclado. Agora a pagina consulta `/state` e so troca o conteudo quando o
+# estado do quiz muda (nova pergunta, resultado, fim) - movendo o foco para o novo
+# titulo - e anuncia o relogio apenas em marcos. Sem JavaScript, o `noscript`
+# mantem o recarregamento antigo.
+
+_LIVE_CSS = (
+    ".sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;"
+    "overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}"
+    "#live-heading:focus{outline:none}"
+)
+
+#: Instantes, em segundos restantes, em que o leitor de tela anuncia o relogio.
+#: Anunciar a cada segundo tornaria a pergunta impossivel de ler.
+_LIVE_JS = """
+(() => {
+  const me = document.getElementById('live-script');
+  const quiz = me.dataset.quiz;
+  let lang = me.dataset.lang;
+  let unit = me.dataset.unit;
+  let signature = me.dataset.signature;
+  let left = null;
+  let busy = false;
+  let pollTimer = null;
+  let clockTimer = null;
+
+  const announce = (message) => {
+    const region = document.getElementById('live-announce');
+    if (region) region.textContent = message;
+  };
+
+  const bindClock = () => {
+    const el = document.getElementById('left');
+    left = el ? parseInt(el.dataset.seconds, 10) : null;
+    if (Number.isNaN(left)) left = null;
+  };
+
+  const stop = () => { clearInterval(pollTimer); clearInterval(clockTimer); };
+
+  const swap = async () => {
+    busy = true;
+    try {
+      const res = await fetch(location.href, {cache: 'no-store', credentials: 'same-origin'});
+      if (!res.ok) { location.reload(); return; }
+      const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+      const incoming = doc.getElementById('live-script');
+      const style = document.querySelector('style');
+      const nextStyle = doc.querySelector('style');
+      if (style && nextStyle) style.textContent = nextStyle.textContent;
+      document.title = doc.title;
+      document.documentElement.lang = doc.documentElement.lang;
+      Array.from(document.body.children).forEach((child) => {
+        if (child !== me) child.remove();
+      });
+      Array.from(doc.body.children).forEach((child) => {
+        if (child.id !== 'live-script') document.body.insertBefore(child, me);
+      });
+      bindClock();
+      const heading = document.getElementById('live-heading');
+      if (heading) heading.focus();
+      if (incoming) {
+        // A pagina nova manda: idioma e unidade do relogio seguem o que ela declara.
+        signature = incoming.dataset.signature;
+        lang = incoming.dataset.lang;
+        unit = incoming.dataset.unit;
+      } else {
+        stop();
+      }
+    } catch (_) {
+      location.reload();
+    } finally {
+      busy = false;
+    }
+  };
+
+  const poll = async () => {
+    if (busy) return;
+    try {
+      const res = await fetch(
+        '/education/quiz/' + encodeURIComponent(quiz) + '/state?lang=' + encodeURIComponent(lang),
+        {cache: 'no-store', credentials: 'same-origin'},
+      );
+      if (!res.ok) return;
+      const s = await res.json();
+      const next = [s.status || 'open', s.live_phase || 'lobby', s.current_question_id || ''].join('|');
+      if (next !== signature) await swap();
+    } catch (_) {}
+  };
+
+  const tick = () => {
+    if (left === null) return;
+    left = Math.max(0, left - 1);
+    const el = document.getElementById('left');
+    if (el) el.textContent = left;
+    if (left === 10 || left === 5) announce(left + ' ' + unit);
+  };
+
+  bindClock();
+  pollTimer = setInterval(poll, 2000);
+  clockTimer = setInterval(tick, 1000);
+})();
+"""
+
+
+def _state_signature(quiz: QuizModel) -> str:
+    """Assinatura do que a tela do aluno mostra; a pagina so se troca quando muda."""
+    return "|".join([
+        quiz.status or "open",
+        quiz.live_phase or "lobby",
+        quiz.current_question_id or "",
+    ])
+
+
+def _live_head() -> str:
+    """Recarregamento antigo, so para quem esta sem JavaScript."""
+    return '<noscript><meta http-equiv="refresh" content="2"></noscript>'
+
+
+def _live_block(*, quiz_id: str, language: str, signature: str) -> str:
+    text = _PUBLIC_TEXT[language]
+    return (
+        '<div id="live-announce" class="sr-only" role="status" aria-live="polite"></div>\n'
+        f'<script id="live-script" data-quiz="{escape(quiz_id)}" '
+        f'data-signature="{escape(signature)}" data-lang="{language}" '
+        f'data-unit="{escape(text["seconds_word"])}">{_LIVE_JS}</script>'
+    )
+
+
+_BCP47 = {"pt": "pt-BR", "es": "es", "en": "en"}
+
+
+def _bcp47(language: Optional[str]) -> str:
+    """Codigo de idioma para o atributo `lang` do HTML."""
+    return _BCP47.get(language or "", "pt-BR")
+
+
+def _public_language(
+    request: Request,
+    override: Optional[str],
+    quiz_id: Optional[str] = None,
+) -> str:
+    """Idioma da tela do aluno: o que ele escolheu vence o do navegador.
+
+    Ordem: `?lang=` (clique no seletor), o idioma escolhido ao entrar (cookie) e,
+    so na primeira visita, o do navegador. Sem o cookie, o aluno que escolhia
+    espanhol ao entrar voltava para o idioma do celular em qualquer link sem
+    `?lang=`.
+    """
     if override and override in _PUBLIC_LANGUAGES:
         return override
+    if quiz_id:
+        remembered = request.cookies.get(_language_cookie_name(quiz_id), "")
+        if remembered in _PUBLIC_LANGUAGES:
+            return remembered
     accept_lang = request.headers.get("accept-language", "").lower()
     for lang in _PUBLIC_LANGUAGES:
         if lang in accept_lang:
@@ -195,16 +365,25 @@ def _generate_quiz_page(
     student_name: str = "",
     time_limit_seconds: int = 0,
     seconds_remaining: Optional[int] = None,
+    content_language: Optional[str] = None,
+    signature: str = "",
 ) -> HTMLResponse:
     """Gera página HTML para responder questão do quiz.
 
     O relogio so aparece quando o professor definiu um prazo
     (`seconds_remaining` informado). No modo manual a pergunta nao tem fim
     marcado, e uma barra encolhendo sozinha era um prazo que nao existia.
+
+    `content_language` e o idioma em que a pergunta e as alternativas
+    **realmente** estao - diferente do idioma da interface quando a traducao
+    falhou e o aluno le o original em portugues. Declarar isso (`lang`) e o que
+    faz o leitor de tela usar a voz certa e o navegador oferecer a traducao
+    dele sobre o trecho certo.
     """
 
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
+    content_lang = _bcp47(content_language or language)
     accent = "#059669"
 
     # Define cor baseada no status
@@ -222,36 +401,35 @@ def _generate_quiz_page(
             option_html = f"""
             <div class="option">
                 <input type="radio" id="opt{idx}" name="answer" value="{escape(option.get('label', ''))}" required>
-                <label for="opt{idx}">{escape(option.get('texto', ''))}</label>
+                <label for="opt{idx}" lang="{content_lang}">{escape(option.get('texto', ''))}</label>
             </div>
             """
             options_html += option_html
 
-    elif question_type == "verdadeiro_falso":
-        options_html = """
+    else:
+        # Verdadeiro/falso (e qualquer tipo sem alternativas). O valor enviado
+        # continua "verdadeiro"/"falso" em qualquer idioma: so o rotulo muda.
+        options_html = f"""
         <div class="option">
             <input type="radio" id="opt_v" name="answer" value="verdadeiro" required>
-            <label for="opt_v">Verdadeiro</label>
+            <label for="opt_v">{text["true_label"]}</label>
         </div>
         <div class="option">
             <input type="radio" id="opt_f" name="answer" value="falso" required>
-            <label for="opt_f">Falso</label>
-        </div>
-        """
-
-    else:
-        options_html = """
-        <div class="option">
-            <input type="radio" id="opt_true" name="answer" value="verdadeiro" required>
-            <label for="opt_true">Verdadeiro</label>
-        </div>
-        <div class="option">
-            <input type="radio" id="opt_false" name="answer" value="falso" required>
-            <label for="opt_false">Falso</label>
+            <label for="opt_f">{text["false_label"]}</label>
         </div>
         """
 
     button_text = text["submit"]
+
+    # Cada idioma no proprio idioma ("lang" proprio) e o atual marcado: o leitor
+    # de tela le "Español" em espanhol e diz qual esta selecionado.
+    current = ' aria-current="true"'
+    nav_html = "\n".join(
+        f'<a href="?lang={code}" lang="{_bcp47(code)}"'
+        f'{current if code == language else ""}>{label}</a>'
+        for code, label in (("pt", "Português"), ("es", "Español"), ("en", "English"))
+    )
 
     feedback_html = ""
     if feedback:
@@ -259,15 +437,17 @@ def _generate_quiz_page(
 
     timer_html = ""
     timer_css = ""
-    timer_script = ""
     if seconds_remaining is not None:
         remaining = max(0, int(seconds_remaining))
         window = max(int(time_limit_seconds or 0), remaining, 1)
         start_pct = round(remaining / window * 100, 1)
+        # O numero muda a cada segundo, mas fora de qualquer regiao `aria-live`:
+        # o leitor de tela anuncia o relogio so em marcos (10s e 5s), pelo
+        # script compartilhado. A barra e decorativa.
         timer_html = (
-            '<div class="timer"><div></div></div>'
-            f'<div class="timer-label"><span id="left">{remaining}</span>'
-            f'{text["seconds_left"]}</div>'
+            '<div class="timer" aria-hidden="true"><div></div></div>'
+            f'<div class="timer-label"><span id="left" data-seconds="{remaining}">'
+            f'{remaining}</span>{text["seconds_left"]}</div>'
         )
         timer_css = (
             ".timer{height:8px;background:#e5e7eb;border-radius:999px;"
@@ -278,16 +458,13 @@ def _generate_quiz_page(
             f"animation:shrink {remaining}s linear forwards}}"
             f"@keyframes shrink{{from{{width:{start_pct}%}}to{{width:0}}}}"
         )
-        timer_script = (
-            f"let left={remaining};const label=document.getElementById('left');"
-            "setInterval(()=>{left=Math.max(0,left-1);label.textContent=left;},1000);"
-        )
 
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{text["page_prefix"]} - {escape(f'Questão {question_index + 1}')}</title>
+{_live_head()}
+<title>{text["page_prefix"]} - {escape(f'{text["question"]} {question_index + 1}')}</title>
 <style>
 *{{box-sizing:border-box}}
 body{{margin:0;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -307,10 +484,16 @@ width:{((question_index + 1) / total_questions) * 100}%;}}
 h1{{font-size:20px;margin:20px 0 8px;color:#1f2937}}
 .player{{font-size:13px;color:#e0e7ff;margin-top:6px}}
 .question-info{{color:#6b7280;font-size:14px;margin-bottom:20px}}
-.question-text{{font-size:18px;font-weight:600;margin:20px 0;line-height:1.5;color:#1f2937}}
+fieldset.choices{{border:0;margin:0;padding:0;min-width:0}}
+.question-text{{font-size:18px;font-weight:600;margin:20px 0;line-height:1.5;color:#1f2937;
+padding:0;float:left;width:100%}}
+.question-text + *{{clear:both}}
 .option{{display:flex;align-items:center;padding:12px;margin:8px 0;border:2px solid #e5e7eb;
 border-radius:8px;cursor:pointer;transition:all 0.3s}}
 .option:hover{{border-color:#667eea;background:#f9fafb}}
+.option:focus-within{{border-color:#4f46e5;outline:3px solid #4f46e5;outline-offset:2px}}
+.btn-primary:focus-visible,.languages a:focus-visible{{outline:3px solid #facc15;outline-offset:2px}}
+@media (prefers-reduced-motion:reduce){{*{{animation:none!important;transition:none!important}}}}
 .option input[type="radio"]{{margin-right:12px;cursor:pointer;width:20px;height:20px}}
 .option label{{flex:1;cursor:pointer;margin:0}}
 textarea{{width:100%;min-height:120px;padding:12px;border:2px solid #e5e7eb;
@@ -331,6 +514,7 @@ text-align:center;transition:all 0.3s}}
 .btn-secondary:hover{{border-color:#667eea;color:#667eea}}
 small{{display:block;color:#7b8999;margin-top:18px;line-height:1.4;text-align:center}}
 {timer_css}
+{_LIVE_CSS}
 .languages{{display:flex;justify-content:center;gap:8px;margin-bottom:16px}}
 .languages a{{color:white;text-decoration:none;border:1px solid rgba(255,255,255,0.5);
 border-radius:5px;padding:6px 10px;font-size:12px;transition:all 0.3s}}
@@ -338,42 +522,32 @@ border-radius:5px;padding:6px 10px;font-size:12px;transition:all 0.3s}}
 </style></head><body><main>
 <div class="header">
 <div class="mark">{text["brand"]}</div>
-<nav class="languages">
-<a href="?lang=pt">Português</a>
-<a href="?lang=es">Español</a>
-<a href="?lang=en">English</a>
+<nav class="languages" aria-label="{text["language_label"]}">
+{nav_html}
 </nav>
 <div class="player">{escape(student_name)}</div>
-<h1>{escape(f'{text["question"]} {question_index + 1}')}</h1>
+<h1 id="live-heading" tabindex="-1">{escape(f'{text["question"]} {question_index + 1}')}</h1>
 <div class="progress">
 <span>{question_index + 1} {text["of"]} {total_questions}</span>
 <div class="progress-bar"><div class="progress-fill"></div></div>
 </div>
 </div>
 {timer_html}
-<div class="question-text">{escape(question_text)}</div>
 {feedback_html}
 <form method="post" action="?lang={language}">
 <input type="hidden" name="question_id" value="{escape(question_id)}">
+<fieldset class="choices">
+<legend class="question-text" lang="{content_lang}">{escape(question_text)}</legend>
 {options_html}
+</fieldset>
 <div class="actions">
 <button type="submit" class="btn-primary">{button_text}</button>
 </div>
 </form>
 <small>{text["privacy"]}</small>
-<script>
-setInterval(async () => {{
-  try {{
-    const res = await fetch('/education/quiz/{escape(quiz_id)}/state', {{cache: 'no-store'}});
-    const data = await res.json();
-    if (data.live_phase !== 'question' || data.current_question_id !== '{escape(question_id)}') {{
-      window.location.reload();
-    }}
-  }} catch (_) {{}}
-}}, 2000);
-{timer_script}
-</script>
-</main></body></html>""",
+</main>
+{_live_block(quiz_id=quiz_id, language=language, signature=signature)}
+</body></html>""",
         headers={
             "Cache-Control": "no-store",
             "Content-Language": language,
@@ -411,6 +585,23 @@ def _attach_attempt_cookie(
         httponly=True,
         samesite="lax",
     )
+    return response
+
+
+def _attach_language_cookie(
+    response: HTMLResponse,
+    *,
+    quiz_id: str,
+    language: str,
+) -> HTMLResponse:
+    if language in _PUBLIC_LANGUAGES:
+        response.set_cookie(
+            _language_cookie_name(quiz_id),
+            language,
+            max_age=60 * 60 * 8,
+            httponly=True,
+            samesite="lax",
+        )
     return response
 
 
@@ -452,11 +643,13 @@ async def _touch_participant(
     attempt_id: str,
     student_name: str,
     force: bool = False,
+    language: str = "",
 ) -> None:
     """Registra que o aluno entrou ou continua com a tela aberta."""
     name = (student_name or "").strip()[:80]
     if not name:
         return
+    language = language if language in _PUBLIC_LANGUAGES else ""
     now = datetime.now(timezone.utc)
     participant = (await db.execute(
         select(QuizParticipantModel).where(
@@ -471,13 +664,23 @@ async def _touch_participant(
             student_name=name,
             joined_at=now,
             last_seen_at=now,
+            language=language or None,
         ))
     else:
         last_seen = _as_utc(participant.last_seen_at)
-        if not force and last_seen and now - last_seen < PARTICIPANT_TOUCH_INTERVAL and participant.student_name == name:
+        mudou_idioma = bool(language) and participant.language != language
+        if (
+            not force
+            and not mudou_idioma
+            and last_seen
+            and now - last_seen < PARTICIPANT_TOUCH_INTERVAL
+            and participant.student_name == name
+        ):
             return
         participant.student_name = name
         participant.last_seen_at = now
+        if language:
+            participant.language = language
     try:
         await db.commit()
     except IntegrityError:
@@ -511,6 +714,7 @@ def _play_redirect(
     response = RedirectResponse(url=f"play?lang={language}", status_code=303)
     _attach_attempt_cookie(response, quiz_id=quiz_id, attempt_id=attempt_id)
     _attach_student_cookie(response, quiz_id=quiz_id, student_name=student_name)
+    _attach_language_cookie(response, quiz_id=quiz_id, language=language)
     return response
 
 
@@ -754,9 +958,29 @@ p{{color:#6b7280;font-size:15px;margin:0}}
     )
 
 
-def _generate_join_page(*, quiz_id: str, language: str = "pt") -> HTMLResponse:
+_LANGUAGE_CHOICES = (("pt", "🇧🇷 Português"), ("es", "🇪🇸 Español"), ("en", "🇺🇸 English"))
+
+
+def _generate_join_page(
+    *,
+    quiz_id: str,
+    language: str = "pt",
+    prefill_name: str = "",
+) -> HTMLResponse:
+    """Tela de entrada: o aluno informa o nome e escolhe o idioma do quiz.
+
+    O idioma escolhido aqui vale para a interface e para a pergunta e as
+    alternativas. Trocar o idioma recarrega a tela (para os textos mudarem na
+    hora) sem perder o nome ja digitado.
+    """
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
+    choices_html = "".join(
+        f"""<label class="lang{' on' if code == language else ''}" lang="{_bcp47(code)}">
+<input type="radio" name="language" value="{code}"{' checked' if code == language else ''}>
+<span>{label}</span></label>"""
+        for code, label in _LANGUAGE_CHOICES
+    )
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
@@ -775,14 +999,34 @@ input{{width:100%;padding:14px 16px;border:2px solid #d1d5db;border-radius:10px;
 font-size:18px;margin:18px 0 14px}}
 button{{width:100%;padding:14px;border:0;border-radius:10px;background:#4f46e5;
 color:white;font-weight:900;letter-spacing:.8px;cursor:pointer}}
+fieldset.langs{{margin:4px 0 18px;padding:0;border:0;min-width:0;text-align:left}}
+.langs legend{{padding:0;margin:0 0 8px;font-size:13px;font-weight:700;color:#4b5563}}
+.langs div{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}}
+.lang{{display:block;position:relative;border:2px solid #d1d5db;border-radius:10px;
+padding:10px 4px;text-align:center;font-size:14px;font-weight:700;color:#374151;cursor:pointer}}
+/* Escondido so da vista: continua focavel por teclado e lido pelo leitor de tela. */
+.lang input{{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}}
+.lang.on{{border-color:#4f46e5;background:#eef2ff;color:#3730a3}}
+.lang:focus-within{{outline:3px solid #4f46e5;outline-offset:2px}}
+input[name=student_name]:focus-visible,button:focus-visible{{outline:3px solid #4f46e5;outline-offset:2px}}
 </style></head><body><main>
 <div class="brand">{text["brand"]}</div>
 <h1>{text["page_prefix"]}</h1>
-<form method="post" action="?lang={language}">
-<input name="student_name" maxlength="80" required autofocus
-placeholder="{text["name"]}">
+<form method="post" action="?lang={language}" id="join">
+<input name="student_name" id="student_name" maxlength="80" required autofocus
+autocomplete="name" aria-label="{text["name"]}"
+placeholder="{text["name"]}" value="{escape(prefill_name)}">
+<fieldset class="langs"><legend>{text["join_language"]}</legend><div>{choices_html}</div></fieldset>
 <button type="submit">{text["join"]}</button>
 </form>
+<script>
+document.querySelectorAll('input[name=language]').forEach((radio) => {{
+  radio.addEventListener('change', () => {{
+    const name = document.getElementById('student_name').value;
+    window.location.href = '?lang=' + radio.value + '&name=' + encodeURIComponent(name);
+  }});
+}});
+</script>
 </main></body></html>""",
         headers={"Cache-Control": "no-store", "Content-Language": language},
     )
@@ -794,6 +1038,7 @@ def _generate_waiting_page(
     student_name: str,
     language: str = "pt",
     answered: bool = False,
+    signature: str = "",
 ) -> HTMLResponse:
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
@@ -802,7 +1047,7 @@ def _generate_waiting_page(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="2">
+{_live_head()}
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
@@ -815,12 +1060,16 @@ border-radius:50%;margin:0 auto 22px;animation:spin 1s linear infinite}}
 h1{{font-size:28px;margin:0 0 10px}}
 p{{color:#cbd5e1;margin:6px 0}}
 .player{{font-weight:800;color:#93c5fd}}
+@media (prefers-reduced-motion:reduce){{.pulse{{animation:none}}}}
+{_LIVE_CSS}
 </style></head><body><main>
-<div class="pulse"></div>
+<div class="pulse" aria-hidden="true"></div>
 <p class="player">{escape(student_name)}</p>
-<h1>{escape(title)}</h1>
+<h1 id="live-heading" tabindex="-1">{escape(title)}</h1>
 <p>{text["waiting_message"]}</p>
-</main></body></html>""",
+</main>
+{_live_block(quiz_id=quiz_id, language=language, signature=signature)}
+</body></html>""",
         headers={"Cache-Control": "no-store", "Content-Language": language},
     )
 
@@ -865,6 +1114,8 @@ def _generate_ranking_page(
     language: str = "pt",
     final: bool = False,
     round_active: bool = False,
+    current_question_language: Optional[str] = None,
+    signature: str = "",
 ) -> HTMLResponse:
     """Ranking da turma com pontos acumulados e o que cada um fez na pergunta.
 
@@ -913,12 +1164,18 @@ def _generate_ranking_page(
     waiting_html = (
         f'<p class="next">{text["ranking_next"]}</p>' if round_active else ""
     )
-    refresh = "" if final else '<meta http-equiv="refresh" content="2">'
+    # Ranking final nao muda mais: sem consulta nem recarregamento.
+    live_head = "" if final else _live_head()
+    live_block = (
+        ""
+        if final
+        else _live_block(quiz_id=quiz_id, language=language, signature=signature)
+    )
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-{refresh}
+{live_head}
 <title>{text["ranking"]}</title>
 <style>
 *{{box-sizing:border-box}}
@@ -945,14 +1202,18 @@ padding:16px;text-align:center;font-size:20px;font-weight:800}}
 .verdict.ok{{color:#14532d}}
 .verdict.bad{{color:#7f1d1d}}
 .next{{text-align:center;color:#cbd5e1;margin:14px 0 0;font-size:14px}}
+.own{{margin:0 0 16px}}
+{_LIVE_CSS}
 </style></head><body><main>
 <p class="player">{escape(student_name)}</p>
-<h1>{text["ranking"]}</h1>
-{f'<div class="question">{escape(current_question_text)}</div>' if current_question_text else ''}
-<ol>{rows_html}</ol>
+<h1 id="live-heading" tabindex="-1">{text["ranking"]}</h1>
+{f'<div class="question" lang="{_bcp47(current_question_language or language)}">{escape(current_question_text)}</div>' if current_question_text else ''}
 {own_html}
+<ol>{rows_html}</ol>
 {waiting_html}
-</main></body></html>""",
+</main>
+{live_block}
+</body></html>""",
         headers={"Cache-Control": "no-store", "Content-Language": language},
     )
 
@@ -973,6 +1234,8 @@ async def _render_live_quiz_page(
     # Prazo vencido vira ranking aqui mesmo: o aluno nao depende de o painel do
     # professor estar aberto para a pergunta encerrar.
     await quiz_live_service.expire_question_if_due(db, quiz)
+    # O que a tela mostra agora: a pagina so se troca quando isto muda.
+    signature = _state_signature(quiz)
 
     if quiz.live_phase in {"results", "finished"} or quiz.status == "closed":
         current_question = _question_by_id(questions, quiz.current_question_id)
@@ -982,15 +1245,27 @@ async def _render_live_quiz_page(
             quiz_id=quiz.id,
             question_id=quiz.current_question_id if round_active else None,
         )
+        question_text = current_question.enunciado if current_question else ""
+        question_language = "pt"
+        if current_question is not None:
+            # So o que ja esta traduzido: o ranking nao espera o modelo.
+            translated = (await quiz_translation_service.cached_translations(
+                db, [current_question.id], language
+            )).get(current_question.id)
+            if translated:
+                question_text = translated["enunciado"]
+                question_language = language
         response = _generate_ranking_page(
             quiz_id=quiz.id,
             student_id=attempt_id,
             student_name=student_name,
             rows=rows,
-            current_question_text=current_question.enunciado if current_question else "",
+            current_question_text=question_text,
+            current_question_language=question_language,
             language=language,
             final=quiz.live_phase == "finished" or quiz.status == "closed",
             round_active=round_active,
+            signature=signature,
         )
     elif quiz.live_phase != "question" or not quiz.current_question_id:
         response = _generate_waiting_page(
@@ -998,6 +1273,7 @@ async def _render_live_quiz_page(
             student_name=student_name,
             language=language,
             answered=answered,
+            signature=signature,
         )
     else:
         question_index, question = _current_question_index(
@@ -1009,6 +1285,7 @@ async def _render_live_quiz_page(
                 quiz_id=quiz.id,
                 student_name=student_name,
                 language=language,
+                signature=signature,
             )
         else:
             answered_ids = await _answered_question_ids(
@@ -1022,38 +1299,105 @@ async def _render_live_quiz_page(
                     student_name=student_name,
                     language=language,
                     answered=True,
+                    signature=signature,
                 )
             else:
+                question_text = question.enunciado
+                options = _parse_options(question)
+                # Idioma em que o texto esta de verdade: o original e sempre
+                # portugues, mesmo com a interface em outro idioma.
+                content_language = "pt"
+                # Pergunta e alternativas no idioma escolhido. Sem traducao
+                # (modelo fora do ar, sem provedor), o aluno le o original.
+                translated = await quiz_translation_service.ensure_for_question(
+                    db,
+                    quiz_id=quiz.id,
+                    tutor_id=quiz.tutor_id,
+                    question_ids=[item.id for item in questions],
+                    current_question_id=question.id,
+                    language=language,
+                )
+                if translated:
+                    question_text = translated["enunciado"]
+                    options = _translated_options(options, translated["opcoes"])
+                    content_language = language
                 response = _generate_quiz_page(
                     quiz_id=quiz.id,
                     question_id=question.id,
                     question_index=question_index,
                     total_questions=len(questions),
-                    question_text=question.enunciado,
+                    question_text=question_text,
                     question_type=question.tipo,
-                    options=_parse_options(question),
+                    options=options,
                     language=language,
                     student_name=student_name,
                     time_limit_seconds=quiz.time_limit_seconds or 0,
                     seconds_remaining=quiz_live_service.seconds_remaining(quiz),
+                    content_language=content_language,
+                    signature=signature,
                 )
 
     _attach_attempt_cookie(response, quiz_id=quiz.id, attempt_id=attempt_id)
     _attach_student_cookie(response, quiz_id=quiz.id, student_name=student_name)
+    _attach_language_cookie(response, quiz_id=quiz.id, language=language)
     return response
+
+
+def _translated_options(original: list, translated: list) -> list:
+    """Alternativas com o texto traduzido, na ordem e com as letras originais.
+
+    A letra e o que o aluno envia e o que corrige a resposta; so o texto muda.
+    Alternativa sem traducao correspondente mantem o texto original.
+    """
+    by_label = {
+        str(item.get("label", "")).strip().upper(): item.get("texto", "")
+        for item in translated
+        if isinstance(item, dict)
+    }
+    return [
+        {
+            **option,
+            "texto": by_label.get(str(option.get("label", "")).strip().upper())
+            or option.get("texto", ""),
+        }
+        for option in original
+    ]
 
 
 @router.get("/{quiz_token}/state")
 async def quiz_public_state(
     quiz_token: str,
+    request: Request,
+    lang: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Estado publico minimo para sincronizar a tela do aluno."""
+    """Estado publico minimo para sincronizar a tela do aluno.
+
+    Tambem e o sinal de vida do aluno. A tela se recarregava a cada 2s e era o
+    recarregamento que marcava presenca; agora ela so consulta o estado, e e esta
+    consulta que mantem o aluno "online" no lobby do professor. So conta quem ja
+    entrou (tem o cookie de tentativa e o nome): consulta anonima nao cria
+    participante.
+    """
 
     stmt = select(QuizModel).where(QuizModel.id == quiz_token)
     quiz = (await db.execute(stmt)).scalar_one_or_none()
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+
+    student_name = _student_name(request, quiz_token)
+    if (
+        quiz.status == "open"
+        and student_name
+        and request.cookies.get(_attempt_cookie_name(quiz_token))
+    ):
+        await _touch_participant(
+            db,
+            quiz_id=quiz.id,
+            attempt_id=_attempt_id(request, quiz_token),
+            student_name=student_name,
+            language=_public_language(request, lang, quiz_token),
+        )
     # A tela do aluno consulta isto a cada 2s para saber se deve recarregar:
     # e o lugar certo para o prazo da pergunta virar "encerrada".
     await quiz_live_service.expire_question_if_due(db, quiz)
@@ -1071,11 +1415,12 @@ async def quiz_play_page(
     quiz_token: str,
     request: Request,
     lang: Optional[str] = Query(default=None),
+    name: Optional[str] = Query(default=None, max_length=80),
     db: AsyncSession = Depends(get_db),
 ):
     """Exibe questão do quiz para responder."""
 
-    language = _public_language(request, lang)
+    language = _public_language(request, lang, quiz_token)
 
     # Busca quiz
     stmt = select(QuizModel).where(QuizModel.id == quiz_token)
@@ -1121,14 +1466,31 @@ p{{color:#6b7280;font-size:14px;margin:0}}
         if quiz.status == "closed":
             return _generate_closed_page(language=language)
         return _attach_attempt_cookie(
-            _generate_join_page(quiz_id=quiz_token, language=language),
+            _generate_join_page(
+                quiz_id=quiz_token,
+                language=language,
+                prefill_name=(name or "").strip(),
+            ),
             quiz_id=quiz_token,
             attempt_id=attempt_id,
         )
 
     if quiz.status == "open":
         await _touch_participant(
-            db, quiz_id=quiz.id, attempt_id=attempt_id, student_name=student_name
+            db,
+            quiz_id=quiz.id,
+            attempt_id=attempt_id,
+            student_name=student_name,
+            language=language,
+        )
+        # Aluno em ingles ou espanhol: comeca a traduzir o quiz agora, para a
+        # pergunta ja estar pronta quando o professor abrir.
+        await quiz_translation_service.warm_if_missing(
+            db,
+            quiz_id=quiz.id,
+            tutor_id=quiz.tutor_id,
+            question_ids=[question.id for question in questions],
+            language=language,
         )
 
     return await _render_live_quiz_page(
@@ -1150,11 +1512,17 @@ async def quiz_submit_answer(
     question_id: Optional[str] = Form(default=None),
     student_name: Optional[str] = Form(default=None),
     skip: Optional[str] = Form(default=None),
+    language_choice: Optional[str] = Form(default=None, alias="language"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Processa resposta e exibe próxima questão."""
+    """Processa resposta e exibe próxima questão.
 
-    language = _public_language(request, lang)
+    Na entrada, o idioma escolhido junto do nome vence o da URL e o do navegador.
+    """
+
+    language = _normalize_public_language(language_choice) or _public_language(
+        request, lang, quiz_token
+    )
 
     # Busca quiz
     stmt = select(QuizModel).where(QuizModel.id == quiz_token)
@@ -1193,6 +1561,14 @@ async def quiz_submit_answer(
             attempt_id=attempt_id,
             student_name=display_name,
             force=True,
+            language=language,
+        )
+        await quiz_translation_service.warm_if_missing(
+            db,
+            quiz_id=quiz.id,
+            tutor_id=quiz.tutor_id,
+            question_ids=[question.id for question in all_questions],
+            language=language,
         )
 
     # Resposta que chega depois do prazo (e da folga de rede) nao conta: o

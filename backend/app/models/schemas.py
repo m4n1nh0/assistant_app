@@ -1660,6 +1660,16 @@ class QuizReviewSubmission(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
 
 
+class QuizTranslationSubmission(BaseModel):
+    """Texto bruto da traducao de um agente do app do professor.
+
+    Vai como o agente escreveu (costuma cercar o JSON com markdown): extrair e
+    validar e trabalho do servidor.
+    """
+    language: str = Field(min_length=2, max_length=8)
+    content: str = Field(min_length=1, max_length=400_000)
+
+
 class QuizGenerateResponse(BaseModel):
     """Resultado da geracao automatica de quiz a partir da transcricao."""
     quiz_id: str

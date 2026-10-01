@@ -298,6 +298,16 @@ def _json_from_content(content: str) -> Dict[str, Any]:
 json_from_content = _json_from_content
 
 
+async def candidate_llms(preferred: Optional[str] = None) -> List[str]:
+    """Modelos a tentar, em ordem; vazio quando nao ha provedor configurado."""
+    return await _candidate_llms_for_quiz(preferred)
+
+
+def token_budget(quantidade_questoes: int) -> int:
+    """Teto de saida proporcional ao tamanho do lote pedido."""
+    return _token_budget(quantidade_questoes)
+
+
 def _normalize_question_type(value: Any, fallback: str = "multipla_escolha") -> str:
     raw = str(value or fallback).strip().lower()
     raw = raw.replace("-", "_").replace(" ", "_")
