@@ -799,6 +799,13 @@ class QuizModel(Base):
     live_phase        = Column(String(32), nullable=False, default="lobby", index=True)
     current_question_id = Column(String(64), nullable=True, index=True)
     question_started_at = Column(DateTime, nullable=True)
+    #: Prazo por pergunta que o professor escolheu, em segundos. 0 e o modo
+    #: manual: a pergunta fica aberta ate ele encerrar.
+    time_limit_seconds = Column(Integer, nullable=False, default=0)
+    #: Quando a pergunta aberta se encerra sozinha. Gravado ao abrir a pergunta,
+    #: e nao recalculado da config: mudar o prazo no meio de uma rodada nao deve
+    #: encurtar nem esticar a pergunta que a turma ja esta respondendo.
+    question_ends_at = Column(DateTime, nullable=True)
     closed_at        = Column(DateTime, nullable=True)
     created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
@@ -879,6 +886,9 @@ class QuestionModel(Base):
     #: banco de questoes lista so as originais: senao cada quiz montado
     #: duplicaria o banco inteiro.
     origem_id            = Column(String(64), nullable=True, index=True)
+    #: O que cada agente especialista (Codex, Claude) concluiu ao revisar a
+    #: questao: JSON com o veredito consolidado e a leitura de cada agente.
+    revisao_agentes      = Column(Text, nullable=True)
     created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -1070,11 +1080,14 @@ def _add_compatibility_columns(sync_conn) -> None:
             "live_phase": "VARCHAR(32) NOT NULL DEFAULT 'lobby'",
             "current_question_id": "VARCHAR(64) NULL",
             "question_started_at": "DATETIME NULL",
+            "time_limit_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "question_ends_at": "DATETIME NULL",
             "closed_at": "DATETIME NULL",
         },
         "questions": {
             "arquivada": "BOOLEAN NOT NULL DEFAULT FALSE",
             "origem_id": "VARCHAR(64) NULL",
+            "revisao_agentes": "TEXT NULL",
         },
         "student_answers": {
             "student_name": "VARCHAR(180) NULL",

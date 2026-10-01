@@ -92,6 +92,8 @@ from ..models.schemas import (
     QuizJobSeenRequest,
     QuizResponse,
     QuizGenerateResponse,
+    QuizReviewSubmission,
+    QuizSettingsRequest,
     QuestionUpdate,
     StudentAnswerRequest,
     StudentAnswerResponse,
@@ -114,6 +116,8 @@ from ..services import (
     meeting_transcript_service,
     quiz_generator_service,
     quiz_job_service,
+    quiz_live_service,
+    quiz_review_service,
 )
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
@@ -3808,8 +3812,11 @@ async def update_bank_question(
         question.justificativa = body.justificativa.strip()
     if body.dificuldade is not None:
         question.dificuldade = body.dificuldade
-    # Revisada pelo professor: deixa de ser "baixa confianca".
+    # Revisada pelo professor: deixa de ser "baixa confianca". A leitura dos
+    # agentes era sobre o texto de antes da edicao, entao nao vale mais; o
+    # professor pode pedir a revisao de novo.
     question.verificado = True
+    question.revisao_agentes = None
     await db.commit()
     await db.refresh(question)
 
@@ -4178,6 +4185,7 @@ async def _build_quiz_response(db: AsyncSession, quiz: QuizModel) -> QuizRespons
             topico_origem=q.topico_origem,
             grounding_score=q.grounding_score or 0.0,
             verificado=bool(q.verificado),
+            revisao=quiz_review_service.load_review(q.revisao_agentes),
             created_at=q.created_at,
         ))
 
@@ -4193,6 +4201,8 @@ async def _build_quiz_response(db: AsyncSession, quiz: QuizModel) -> QuizRespons
         live_phase=quiz.live_phase or "lobby",
         current_question_id=quiz.current_question_id,
         question_started_at=quiz.question_started_at,
+        time_limit_seconds=quiz.time_limit_seconds or 0,
+        seconds_remaining=quiz_live_service.seconds_remaining(quiz),
         closed_at=quiz.closed_at,
         created_at=quiz.created_at,
     )
@@ -4247,12 +4257,16 @@ def _quiz_response_time_ms(started_at: Optional[datetime]) -> Optional[int]:
     return max(0, int(elapsed.total_seconds() * 1000))
 
 
-def _quiz_answer_score(correta: Optional[bool], elapsed_ms: Optional[int]) -> int:
-    if correta is not True:
-        return 0
-    elapsed_seconds = (elapsed_ms or 0) / 1000
-    speed_factor = max(0.0, 1.0 - min(elapsed_seconds, 30) / 30)
-    return max(100, int(round(1000 * speed_factor)))
+def _quiz_answer_score(
+    correta: Optional[bool],
+    elapsed_ms: Optional[int],
+    time_limit_seconds: Optional[int] = None,
+) -> int:
+    return quiz_live_service.score_answer(
+        correta=correta,
+        elapsed_ms=elapsed_ms,
+        time_limit_seconds=time_limit_seconds,
+    )
 
 
 @router.get("/quiz/{quiz_id}")
@@ -4270,6 +4284,9 @@ async def get_quiz(
     if not quiz or quiz.tutor_id != tutor_id:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
 
+    # Quem le o quiz fecha a pergunta cujo prazo passou, para o professor nunca
+    # ver "pergunta aberta" numa rodada que a turma ja nao pode responder.
+    await quiz_live_service.expire_question_if_due(db, quiz)
     return await _build_quiz_response(db, quiz)
 
 
@@ -4295,9 +4312,38 @@ async def publish_quiz(
         quiz.live_phase = "lobby"
         quiz.current_question_id = None
         quiz.question_started_at = None
+        quiz.question_ends_at = None
         await db.commit()
         await db.refresh(quiz)
 
+    return await _build_quiz_response(db, quiz)
+
+
+@router.post("/quiz/{quiz_id}/settings")
+async def update_quiz_settings(
+    quiz_id: str,
+    body: QuizSettingsRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Define o prazo por pergunta do quiz ao vivo.
+
+    Vale a partir da proxima pergunta aberta: a que ja esta no ar guarda o prazo
+    com que abriu, e mudar o relogio no meio da rodada pegaria a turma de
+    surpresa. `0` volta ao modo manual, em que o professor encerra a pergunta.
+    """
+
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != user["tutor_id"]:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if quiz.status == "closed":
+        raise HTTPException(status_code=409, detail="Quiz já encerrado")
+
+    quiz.time_limit_seconds = quiz_live_service.normalize_time_limit(
+        body.time_limit_seconds
+    )
+    await db.commit()
+    await db.refresh(quiz)
     return await _build_quiz_response(db, quiz)
 
 
@@ -4338,10 +4384,17 @@ async def next_quiz_question(
         quiz.live_phase = "finished"
         quiz.current_question_id = None
         quiz.question_started_at = None
+        quiz.question_ends_at = None
     else:
+        started_at = datetime.now(timezone.utc)
         quiz.live_phase = "question"
         quiz.current_question_id = questions[next_index].id
-        quiz.question_started_at = datetime.now(timezone.utc)
+        quiz.question_started_at = started_at
+        # O prazo e gravado agora: a pergunta aberta guarda o relogio com que
+        # abriu, mesmo que o professor mude o tempo da proxima.
+        quiz.question_ends_at = quiz_live_service.question_deadline(
+            started_at, quiz.time_limit_seconds
+        )
 
     await db.commit()
     await db.refresh(quiz)
@@ -4362,6 +4415,13 @@ async def close_quiz_question(
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
     if quiz.status == "closed":
         raise HTTPException(status_code=409, detail="Quiz já encerrado")
+
+    await quiz_live_service.expire_question_if_due(db, quiz)
+    if quiz.live_phase == "results" and quiz.current_question_id:
+        # O relogio acabou de encerrar esta pergunta, ou foi um clique duplo.
+        # Responder erro aqui mostraria falha ao professor por algo que ja deu
+        # o resultado que ele queria.
+        return await _build_quiz_response(db, quiz)
     if quiz.live_phase != "question" or not quiz.current_question_id:
         raise HTTPException(status_code=409, detail="Nenhuma pergunta aberta")
 
@@ -4389,11 +4449,190 @@ async def close_quiz(
         quiz.live_phase = "finished"
         quiz.current_question_id = None
         quiz.question_started_at = None
+        quiz.question_ends_at = None
         quiz.closed_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(quiz)
 
     return await _build_quiz_response(db, quiz)
+
+
+# --- Revisao das perguntas por agentes especialistas -------------------------
+
+#: Codex e Claude leem muito mais que os provedores comuns: a revisao manda a
+#: aula com folga, para o agente poder conferir cada pergunta contra o texto.
+QUIZ_REVIEW_CHAR_BUDGET = 120_000
+
+
+async def _quiz_review_source(
+    db: AsyncSession,
+    quiz: QuizModel,
+    tutor_id: str,
+) -> str:
+    """Texto das fontes do quiz, o mesmo que o gerador leu, para conferir."""
+    sources = (await db.execute(
+        select(QuizSourceModel)
+        .where(QuizSourceModel.quiz_id == quiz.id)
+        .order_by(QuizSourceModel.created_at, QuizSourceModel.id)
+    )).scalars().all()
+
+    entries = [(s.source_type, s.source_id, s.label) for s in sources]
+    if not entries and quiz.lesson_id:
+        entries = [("lesson", quiz.lesson_id, quiz.titulo)]
+    if not entries:
+        return ""
+
+    cota = max(QUIZ_REVIEW_CHAR_BUDGET // len(entries), QUIZ_SOURCE_MIN_CHARS)
+    blocos: List[str] = []
+    for source_type, source_id, label in entries:
+        if source_type == "material":
+            material = await db.get(MaterialModel, source_id)
+            if not material or material.tutor_id != tutor_id:
+                continue
+            texto = material_service.summary_for_quiz(
+                material.content or "", limit=cota
+            ).strip()
+            titulo = f"=== MATERIAL DA DISCIPLINA: {label or material.title} ==="
+        else:
+            lesson = await db.get(LessonModel, source_id)
+            if not lesson or lesson.tutor_id != tutor_id:
+                continue
+            texto = await _lesson_source_text(lesson, tutor_id, db, cota)
+            titulo = f"=== AULA: {label or lesson.title or 'Aula'} ==="
+        if texto:
+            blocos.append(f"{titulo}\n{texto}")
+    return "\n\n".join(blocos)
+
+
+def _reviewable_questions(questions: Sequence[QuestionModel]) -> List[QuestionModel]:
+    """Perguntas que um agente consegue resolver por letra de alternativa."""
+    return [
+        question for question in questions
+        if question.tipo == "multipla_escolha"
+        and len(_quiz_question_options(question)) >= 2
+    ]
+
+
+async def _owned_draft_quiz(
+    db: AsyncSession,
+    quiz_id: str,
+    tutor_id: str,
+) -> QuizModel:
+    quiz = await db.get(QuizModel, quiz_id)
+    if not quiz or quiz.tutor_id != tutor_id:
+        raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    if (quiz.status or "open") != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A revisão pelos especialistas vale para rascunho: depois de "
+                "liberado, o gabarito não muda mais."
+            ),
+        )
+    return quiz
+
+
+@router.get("/quiz/{quiz_id}/review/prompt")
+async def quiz_review_prompt(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Prompt para Codex e Claude revisarem as perguntas, sem o gabarito.
+
+    Os dois rodam no computador do professor; o app busca o prompt aqui, executa
+    cada agente e devolve o texto em `/review/external`.
+    """
+
+    tutor_id = user["tutor_id"]
+    quiz = await _owned_draft_quiz(db, quiz_id, tutor_id)
+
+    questions = _reviewable_questions(await _quiz_questions(db, quiz.id))
+    if not questions:
+        raise HTTPException(
+            status_code=409,
+            detail="Este quiz não tem pergunta de múltipla escolha para revisar.",
+        )
+
+    built = quiz_review_service.build_review_prompt(
+        source_text=await _quiz_review_source(db, quiz, tutor_id),
+        questions=[
+            {
+                "id": question.id,
+                "enunciado": question.enunciado,
+                "opcoes": _quiz_question_options(question),
+            }
+            for question in questions
+        ],
+    )
+    return {"quiz_id": quiz.id, **built}
+
+
+@router.post("/quiz/{quiz_id}/review/external")
+async def store_quiz_review(
+    quiz_id: str,
+    body: QuizReviewSubmission,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Guarda a revisao de um agente especialista e consolida o veredito.
+
+    O veredito sai de todos os agentes que ja revisaram: rodar o Claude depois
+    do Codex soma as leituras. `verificado` so fica ligado quando cada agente
+    resolveu a pergunta com a letra do gabarito; qualquer divergencia desliga e
+    fica registrada para o professor decidir. O servidor nunca troca o gabarito
+    sozinho.
+    """
+
+    tutor_id = user["tutor_id"]
+    quiz = await _owned_draft_quiz(db, quiz_id, tutor_id)
+
+    agent = body.agent.strip()
+    if agent not in quiz_review_service.REVIEW_AGENTS:
+        raise HTTPException(status_code=400, detail="Agente de revisão desconhecido.")
+
+    questions = _reviewable_questions(await _quiz_questions(db, quiz.id))
+    leituras = quiz_review_service.parse_agent_review(
+        body.content, [question.id for question in questions]
+    )
+    if not leituras:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{quiz_review_service.agent_label(agent)} não devolveu uma "
+                "revisão legível (JSON com a chave \"revisoes\")."
+            ),
+        )
+
+    for question in questions:
+        leitura = leituras.get(question.id)
+        if leitura is None:
+            continue
+        review = quiz_review_service.merge_review(
+            quiz_review_service.load_review(question.revisao_agentes),
+            agent_id=agent,
+            reading=leitura,
+            key=quiz_review_service.stored_key(
+                {"opcoes": _quiz_question_options(question)}
+            ),
+        )
+        question.revisao_agentes = quiz_review_service.dump_review(review)
+        verified = quiz_review_service.verified_flag(review["status"])
+        if verified is not None:
+            question.verificado = verified
+    await db.commit()
+
+    response = await _build_quiz_response(db, quiz)
+    return {
+        **response.model_dump(mode="json"),
+        "quiz_id": quiz.id,
+        "agent": agent,
+        "reviewed": len(leituras),
+        "total": len(questions),
+        "review_summary": quiz_review_service.summarize(
+            [item.revisao for item in response.questoes]
+        ),
+    }
 
 
 @router.post("/quiz/{quiz_id}/answer")
@@ -4413,6 +4652,7 @@ async def submit_quiz_answer(
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
     if quiz.status == "closed":
         raise HTTPException(status_code=409, detail="Quiz encerrado")
+    await quiz_live_service.expire_question_if_due(db, quiz)
     if quiz.live_phase != "question" or quiz.current_question_id != answer.question_id:
         raise HTTPException(status_code=409, detail="Pergunta não está aberta")
 
@@ -4425,7 +4665,9 @@ async def submit_quiz_answer(
     elapsed_ms = answer.tempo_resposta
     if elapsed_ms is None:
         elapsed_ms = _quiz_response_time_ms(quiz.question_started_at)
-    pontuacao = _quiz_answer_score(resposta_correta, elapsed_ms)
+    pontuacao = _quiz_answer_score(
+        resposta_correta, elapsed_ms, quiz.time_limit_seconds
+    )
 
     # Registra resposta
     student_answer = StudentAnswerModel(

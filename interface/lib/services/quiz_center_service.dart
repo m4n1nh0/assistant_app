@@ -136,6 +136,26 @@ class QuizJobsSnapshot {
       );
 }
 
+/// O que o servidor pede aos agentes para revisar as perguntas de um rascunho.
+class QuizReviewPrompt {
+  final String systemPrompt;
+  final String prompt;
+  final List<String> questionIds;
+
+  const QuizReviewPrompt({
+    required this.systemPrompt,
+    required this.prompt,
+    this.questionIds = const [],
+  });
+
+  factory QuizReviewPrompt.fromJson(Map<String, dynamic> json) =>
+      QuizReviewPrompt(
+        systemPrompt: json['system_prompt']?.toString() ?? '',
+        prompt: json['prompt']?.toString() ?? '',
+        questionIds: _strings(json['question_ids']),
+      );
+}
+
 /// Um quiz gravado, sem as questoes.
 class QuizSummary {
   final String id;
@@ -355,6 +375,27 @@ class QuizCenterService {
 
   Future<Map<String, dynamic>> publishQuiz(String quizId) =>
       _ok(api.post('/education/quiz/$quizId/publish', body: const {}));
+
+  /// Define o prazo por pergunta do quiz ao vivo; `0` deixa o professor
+  /// encerrar cada pergunta. Vale a partir da proxima pergunta aberta.
+  Future<Map<String, dynamic>> setTimeLimit(String quizId, int seconds) =>
+      _ok(api.post('/education/quiz/$quizId/settings',
+          body: {'time_limit_seconds': seconds}));
+
+  /// Prompt de revisao das perguntas, sem o gabarito, para Codex e Claude.
+  Future<QuizReviewPrompt> reviewPrompt(String quizId) async =>
+      QuizReviewPrompt.fromJson(
+          await _ok(api.get('/education/quiz/$quizId/review/prompt')));
+
+  /// Entrega ao servidor o texto bruto de um agente. O servidor le o JSON,
+  /// compara com o gabarito e devolve o quiz com o veredito de cada pergunta.
+  Future<Map<String, dynamic>> submitReview(
+    String quizId, {
+    required String agent,
+    required String content,
+  }) =>
+      _ok(api.post('/education/quiz/$quizId/review/external',
+          body: {'agent': agent, 'content': content}));
 
   Future<void> discardDraft(String quizId) async {
     await _ok(api.delete('/education/quiz/$quizId'));

@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 
 import '../services/quiz_center_service.dart';
 import '../services/quiz_queue_watcher.dart';
+import '../services/quiz_specialist_review.dart';
 import '../utils/theme.dart';
 import 'quiz_preview_dialog.dart';
 import 'quiz_qrcode_monitor.dart';
@@ -159,12 +160,43 @@ Future<void> openQuizReview(
         ),
       );
 
+  // Releitura do quiz depois de uma correcao: o servidor e quem sabe o veredito
+  // atual de cada pergunta, e a edicao descarta a revisao que ficou velha.
+  Future<List<Map<String, dynamic>>> reloadQuestions() async {
+    final fresh = await center.quizDetail(quizId);
+    return (fresh['questoes'] is List ? fresh['questoes'] as List : const [])
+        .whereType<Map>()
+        .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
+        .toList();
+  }
+
   await showQuizPreviewDialog(
     context,
     questions: questions,
     requested: requested ?? questions.length,
     attempts: attempts,
     title: '$titulo · ${quizStatusLabel(status).toLowerCase()}',
+    // Codex e Claude revisam so rascunho: depois de liberado o gabarito nao
+    // muda mais, e o servidor recusa.
+    onSpecialistReview: status == QuizStatus.draft
+        ? (onProgress) => reviewWithSpecialists(
+              quizId: quizId,
+              service: center,
+              onProgress: onProgress,
+            )
+        : null,
+    onApplySuggestion: status == QuizStatus.draft
+        ? (questionId, suggestion) async {
+            await center.updateQuestion(questionId, {
+              'enunciado': suggestion['enunciado'],
+              'opcoes': suggestion['opcoes'],
+              if ((suggestion['justificativa']?.toString() ?? '').isNotEmpty)
+                'justificativa': suggestion['justificativa'],
+            });
+            onChanged?.call();
+            return reloadQuestions();
+          }
+        : null,
     actionsBuilder: (dialogContext) => [
       if (status == QuizStatus.draft) ...[
         TextButton.icon(

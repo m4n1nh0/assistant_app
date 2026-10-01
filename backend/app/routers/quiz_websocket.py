@@ -16,6 +16,7 @@ from ..core.database import (
     StudentAnswerModel,
     get_db,
 )
+from ..services import quiz_live_service
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
@@ -75,29 +76,26 @@ class QuizConnectionManager:
 manager = QuizConnectionManager()
 
 
-def _ranking_rows(answers: list[StudentAnswerModel]) -> list[dict]:
-    grouped: dict[str, dict] = {}
-    for answer in answers:
-        student_id = answer.student_id or "anon"
-        row = grouped.setdefault(
-            student_id,
-            {
-                "student_id": student_id,
-                "student_name": answer.student_name or "Aluno",
-                "score": 0,
-                "correct": 0,
-                "answers": 0,
-            },
-        )
-        row["student_name"] = answer.student_name or row["student_name"]
-        row["score"] += int(answer.pontuacao or 0)
-        row["correct"] += 1 if answer.correta is True else 0
-        row["answers"] += 1
-    rows = list(grouped.values())
-    rows.sort(key=lambda item: (-item["score"], -item["correct"], item["student_name"]))
-    for index, row in enumerate(rows, start=1):
-        row["position"] = index
-    return rows
+def _options_for_teacher(question: QuestionModel, *, reveal_key: bool) -> list[dict]:
+    """Alternativas da pergunta atual para a tela do professor.
+
+    O monitor mostrava so o enunciado, e o professor nao tinha como ler as
+    alternativas que a turma estava vendo. O gabarito so aparece quando a
+    pergunta ja fechou: o painel costuma ficar projetado na sala.
+    """
+    if question.tipo != "multipla_escolha" or not question.opcoes:
+        return []
+    try:
+        decoded = json.loads(question.opcoes)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(decoded, list):
+        return []
+    options = quiz_live_service.public_options(decoded)
+    if reveal_key:
+        for public, original in zip(options, decoded):
+            public["correta"] = bool(isinstance(original, dict) and original.get("correta"))
+    return options
 
 
 async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
@@ -113,6 +111,11 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
 
     stmt = select(QuizModel).where(QuizModel.id == quiz_id)
     quiz = (await db.execute(stmt)).scalar_one_or_none()
+
+    # O monitor e quem mais consulta o quiz (a cada 2s): e aqui que o prazo da
+    # pergunta vira "encerrada" para o ranking aparecer sem ninguem clicar.
+    if quiz is not None:
+        await quiz_live_service.expire_question_if_due(db, quiz)
 
     # Total de questões
     stmt = select(func.count(QuestionModel.id)).where(
@@ -219,8 +222,14 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
             answer for answer in all_answers
             if answer.question_id == quiz.current_question_id
         ]
-    overall_ranking = _ranking_rows(all_answers)
-    current_ranking = _ranking_rows(current_answers)
+    # Um ranking so, pelo acumulado, com os pontos da pergunta atual ao lado. O
+    # ranking "da rodada" separado escondia o total que decide quem esta na frente.
+    overall_ranking = quiz_live_service.ranking_rows(
+        all_answers, quiz.current_question_id if quiz else None
+    )
+    current_ranking = quiz_live_service.ranking_rows(
+        current_answers, quiz.current_question_id if quiz else None
+    )
 
     # Quem entrou, mesmo sem ter respondido: e o que o lobby precisa mostrar.
     joined = list((await db.execute(
@@ -244,6 +253,13 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
             quiz.question_started_at.isoformat()
             if quiz and quiz.question_started_at else None
         ),
+        # Prazo por pergunta: o painel conta o tempo a partir de
+        # `seconds_remaining`, sem depender de os relogios das duas maquinas
+        # concordarem.
+        "time_limit_seconds": (quiz.time_limit_seconds or 0) if quiz else 0,
+        "seconds_remaining": (
+            quiz_live_service.seconds_remaining(quiz) if quiz else None
+        ),
         "closed_at": quiz.closed_at.isoformat() if quiz and quiz.closed_at else None,
         "total_questions": total_questions,
         "current_question": (
@@ -257,6 +273,10 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
                     0,
                 ),
                 "question_text": current_question.enunciado,
+                "options": _options_for_teacher(
+                    current_question,
+                    reveal_key=(quiz.live_phase if quiz else "") != "question",
+                ),
                 "total_answers": len(current_answers),
             }
             if current_question else None

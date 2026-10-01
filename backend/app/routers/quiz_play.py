@@ -21,6 +21,7 @@ from ..core.database import (
     StudentAnswerModel,
     get_db,
 )
+from ..services import quiz_live_service
 
 router = APIRouter(prefix="/education/quiz", tags=["education-quiz"])
 
@@ -62,6 +63,15 @@ _PUBLIC_TEXT = {
         "incorrect": "❌ Incorreto",
         "skipped": "⏭️ Pulada",
         "language_label": "Idioma",
+        "seconds_left": "s restantes",
+        "round_points": "nesta pergunta",
+        "total_points": "acumulado",
+        "waiting_ranking": "Aguardando respostas...",
+        "you_got_it": "Você acertou",
+        "you_missed": "Você errou",
+        "no_answer": "Você não respondeu",
+        "ranking_next": "A próxima pergunta aparecerá quando o professor liberar.",
+        "waiting_for_answer": "aguardando resposta",
     },
     "es": {
         "html_lang": "es",
@@ -98,6 +108,15 @@ _PUBLIC_TEXT = {
         "incorrect": "❌ Incorrecto",
         "skipped": "⏭️ Omitida",
         "language_label": "Idioma",
+        "seconds_left": "s restantes",
+        "round_points": "en esta pregunta",
+        "total_points": "acumulado",
+        "waiting_ranking": "Esperando respuestas...",
+        "you_got_it": "Acertaste",
+        "you_missed": "Fallaste",
+        "no_answer": "No respondiste",
+        "ranking_next": "La próxima pregunta aparecerá cuando el profesor la libere.",
+        "waiting_for_answer": "esperando respuesta",
     },
     "en": {
         "html_lang": "en",
@@ -134,6 +153,15 @@ _PUBLIC_TEXT = {
         "incorrect": "❌ Incorrect",
         "skipped": "⏭️ Skipped",
         "language_label": "Language",
+        "seconds_left": "s left",
+        "round_points": "this question",
+        "total_points": "total",
+        "waiting_ranking": "Waiting for answers...",
+        "you_got_it": "You got it right",
+        "you_missed": "You got it wrong",
+        "no_answer": "You did not answer",
+        "ranking_next": "The next question will appear when the teacher releases it.",
+        "waiting_for_answer": "waiting for an answer",
     },
 }
 
@@ -165,9 +193,15 @@ def _generate_quiz_page(
     status: Optional[str] = None,
     feedback: Optional[str] = None,
     student_name: str = "",
-    time_limit_seconds: int = 30,
+    time_limit_seconds: int = 0,
+    seconds_remaining: Optional[int] = None,
 ) -> HTMLResponse:
-    """Gera página HTML para responder questão do quiz."""
+    """Gera página HTML para responder questão do quiz.
+
+    O relogio so aparece quando o professor definiu um prazo
+    (`seconds_remaining` informado). No modo manual a pergunta nao tem fim
+    marcado, e uma barra encolhendo sozinha era um prazo que nao existia.
+    """
 
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
@@ -223,6 +257,32 @@ def _generate_quiz_page(
     if feedback:
         feedback_html = f'<div class="feedback {status}">{escape(feedback)}</div>'
 
+    timer_html = ""
+    timer_css = ""
+    timer_script = ""
+    if seconds_remaining is not None:
+        remaining = max(0, int(seconds_remaining))
+        window = max(int(time_limit_seconds or 0), remaining, 1)
+        start_pct = round(remaining / window * 100, 1)
+        timer_html = (
+            '<div class="timer"><div></div></div>'
+            f'<div class="timer-label"><span id="left">{remaining}</span>'
+            f'{text["seconds_left"]}</div>'
+        )
+        timer_css = (
+            ".timer{height:8px;background:#e5e7eb;border-radius:999px;"
+            "overflow:hidden;margin:0 0 6px}"
+            ".timer-label{text-align:right;font-size:13px;font-weight:700;"
+            "color:#6b7280;margin:0 0 14px}"
+            f".timer div{{width:{start_pct}%;height:100%;background:#22c55e;"
+            f"animation:shrink {remaining}s linear forwards}}"
+            f"@keyframes shrink{{from{{width:{start_pct}%}}to{{width:0}}}}"
+        )
+        timer_script = (
+            f"let left={remaining};const label=document.getElementById('left');"
+            "setInterval(()=>{left=Math.max(0,left-1);label.textContent=left;},1000);"
+        )
+
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
@@ -270,9 +330,7 @@ background:white;color:#6b7280;font-weight:800;cursor:pointer;text-decoration:no
 text-align:center;transition:all 0.3s}}
 .btn-secondary:hover{{border-color:#667eea;color:#667eea}}
 small{{display:block;color:#7b8999;margin-top:18px;line-height:1.4;text-align:center}}
-.timer{{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:0 0 18px}}
-.timer div{{height:100%;background:#22c55e;animation:shrink {time_limit_seconds}s linear forwards}}
-@keyframes shrink{{from{{width:100%}}to{{width:0}}}}
+{timer_css}
 .languages{{display:flex;justify-content:center;gap:8px;margin-bottom:16px}}
 .languages a{{color:white;text-decoration:none;border:1px solid rgba(255,255,255,0.5);
 border-radius:5px;padding:6px 10px;font-size:12px;transition:all 0.3s}}
@@ -292,7 +350,7 @@ border-radius:5px;padding:6px 10px;font-size:12px;transition:all 0.3s}}
 <div class="progress-bar"><div class="progress-fill"></div></div>
 </div>
 </div>
-<div class="timer"><div></div></div>
+{timer_html}
 <div class="question-text">{escape(question_text)}</div>
 {feedback_html}
 <form method="post" action="?lang={language}">
@@ -313,6 +371,7 @@ setInterval(async () => {{
     }}
   }} catch (_) {{}}
 }}, 2000);
+{timer_script}
 </script>
 </main></body></html>""",
         headers={
@@ -503,13 +562,17 @@ def _response_time_ms(started_at: Optional[datetime]) -> Optional[int]:
     return max(0, int(elapsed.total_seconds() * 1000))
 
 
-def _score_answer(*, correta: Optional[bool], elapsed_ms: Optional[int]) -> int:
-    if correta is not True:
-        return 0
-    elapsed_seconds = (elapsed_ms or 0) / 1000
-    time_limit = 30
-    speed_factor = max(0.0, 1.0 - min(elapsed_seconds, time_limit) / time_limit)
-    return max(100, int(round(1000 * speed_factor)))
+def _score_answer(
+    *,
+    correta: Optional[bool],
+    elapsed_ms: Optional[int],
+    time_limit_seconds: Optional[int] = None,
+) -> int:
+    return quiz_live_service.score_answer(
+        correta=correta,
+        elapsed_ms=elapsed_ms,
+        time_limit_seconds=time_limit_seconds,
+    )
 
 
 async def _answered_question_ids(
@@ -764,29 +827,9 @@ p{{color:#cbd5e1;margin:6px 0}}
 
 def _ranking_rows(
     answers: list[StudentAnswerModel],
+    current_question_id: Optional[str] = None,
 ) -> list[dict]:
-    grouped: dict[str, dict] = {}
-    for answer in answers:
-        student_id = answer.student_id or "anon"
-        row = grouped.setdefault(
-            student_id,
-            {
-                "student_id": student_id,
-                "student_name": answer.student_name or "Aluno",
-                "score": 0,
-                "correct": 0,
-                "answers": 0,
-            },
-        )
-        row["student_name"] = answer.student_name or row["student_name"]
-        row["score"] += int(answer.pontuacao or 0)
-        row["correct"] += 1 if answer.correta is True else 0
-        row["answers"] += 1
-    rows = list(grouped.values())
-    rows.sort(key=lambda item: (-item["score"], -item["correct"], item["student_name"]))
-    for index, row in enumerate(rows, start=1):
-        row["position"] = index
-    return rows
+    return quiz_live_service.ranking_rows(answers, current_question_id)
 
 
 async def _ranking_for_quiz(
@@ -795,6 +838,12 @@ async def _ranking_for_quiz(
     quiz_id: str,
     question_id: Optional[str] = None,
 ) -> list[dict]:
+    """Ranking do quiz inteiro, por pontos acumulados.
+
+    `question_id` nao filtra: so diz qual pergunta alimenta o `round_score`. O
+    ranking da rodada mostrava apenas os pontos da ultima pergunta e escondia o
+    acumulado que decide a classificacao.
+    """
     question_stmt = select(QuestionModel.id).where(QuestionModel.quiz_id == quiz_id)
     question_ids = [row[0] for row in (await db.execute(question_stmt)).all()]
     if not question_ids:
@@ -802,10 +851,8 @@ async def _ranking_for_quiz(
     stmt = select(StudentAnswerModel).where(
         StudentAnswerModel.question_id.in_(question_ids)
     )
-    if question_id:
-        stmt = stmt.where(StudentAnswerModel.question_id == question_id)
     answers = list((await db.execute(stmt)).scalars().all())
-    return _ranking_rows(answers)
+    return _ranking_rows(answers, question_id)
 
 
 def _generate_ranking_page(
@@ -817,21 +864,54 @@ def _generate_ranking_page(
     current_question_text: str = "",
     language: str = "pt",
     final: bool = False,
+    round_active: bool = False,
 ) -> HTMLResponse:
+    """Ranking da turma com pontos acumulados e o que cada um fez na pergunta.
+
+    `round_active` e verdadeiro entre perguntas, quando a rodada que acabou ainda
+    esta na tela: so ai faz sentido o "+N nesta pergunta" ao lado do total.
+    """
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
     top_rows = rows[:10]
     own = next((row for row in rows if row["student_id"] == student_id), None)
+
+    def round_badge(row: dict) -> str:
+        if not round_active:
+            return ""
+        points = int(row.get("round_score") or 0)
+        return (
+            f'<small class="{"gain" if points else "none"}">'
+            f'+{points} {text["round_points"]}</small>'
+        )
+
     rows_html = "".join(
-        f"""<li><strong>#{row["position"]}</strong>
-<span>{escape(row["student_name"])}</span>
+        f"""<li{' class="me"' if row["student_id"] == student_id else ""}>
+<strong>#{row["position"]}</strong>
+<span>{escape(row["student_name"])}{round_badge(row)}</span>
 <em>{row["score"]} {text["score"]}</em></li>"""
         for row in top_rows
-    ) or "<li>Aguardando respostas...</li>"
-    own_html = (
-        f"""<div class="own">{text["your_position"]}: <strong>#{own["position"]}</strong>
- - {own["score"]} {text["score"]}</div>"""
-        if own else f"""<div class="own">{text["your_position"]}: aguardando resposta</div>"""
+    ) or f"<li><span>{text['waiting_ranking']}</span></li>"
+
+    if own is None:
+        own_html = (
+            f"""<div class="own">{text["your_position"]}: {text["waiting_for_answer"]}</div>"""
+        )
+    else:
+        verdict = ""
+        if round_active:
+            if own.get("round_correct") is True:
+                verdict = f'<div class="verdict ok">{text["you_got_it"]} · +{own["round_score"]} {text["round_points"]}</div>'
+            elif own.get("round_correct") is False:
+                verdict = f'<div class="verdict bad">{text["you_missed"]}</div>'
+            else:
+                verdict = f'<div class="verdict bad">{text["no_answer"]}</div>'
+        own_html = (
+            f"""<div class="own">{verdict}{text["your_position"]}: <strong>#{own["position"]}</strong>
+ - {own["score"]} {text["score"]} {text["total_points"]}</div>"""
+        )
+    waiting_html = (
+        f'<p class="next">{text["ranking_next"]}</p>' if round_active else ""
     )
     refresh = "" if final else '<meta http-equiv="refresh" content="2">'
     return HTMLResponse(
@@ -853,16 +933,25 @@ padding:14px;margin-bottom:16px;color:#e0e7ff}}
 ol{{list-style:none;padding:0;margin:0;display:grid;gap:8px}}
 li{{display:grid;grid-template-columns:64px 1fr auto;gap:10px;align-items:center;
 background:white;color:#111827;border-radius:10px;padding:12px 14px}}
+li.me{{outline:3px solid #facc15}}
 li strong{{font-size:20px;color:#7c3aed}}
+li span small{{display:block;font-size:12px;font-weight:700;margin-top:2px}}
+li span small.gain{{color:#15803d}}
+li span small.none{{color:#6b7280}}
 li em{{font-style:normal;font-weight:900;color:#0f766e}}
 .own{{margin-top:18px;background:#facc15;color:#422006;border-radius:12px;
 padding:16px;text-align:center;font-size:20px;font-weight:800}}
+.verdict{{font-size:16px;margin-bottom:6px}}
+.verdict.ok{{color:#14532d}}
+.verdict.bad{{color:#7f1d1d}}
+.next{{text-align:center;color:#cbd5e1;margin:14px 0 0;font-size:14px}}
 </style></head><body><main>
 <p class="player">{escape(student_name)}</p>
 <h1>{text["ranking"]}</h1>
 {f'<div class="question">{escape(current_question_text)}</div>' if current_question_text else ''}
 <ol>{rows_html}</ol>
 {own_html}
+{waiting_html}
 </main></body></html>""",
         headers={"Cache-Control": "no-store", "Content-Language": language},
     )
@@ -881,14 +970,17 @@ async def _render_live_quiz_page(
     attempt_id = _attempt_id(request, quiz.id)
     response: HTMLResponse
 
+    # Prazo vencido vira ranking aqui mesmo: o aluno nao depende de o painel do
+    # professor estar aberto para a pergunta encerrar.
+    await quiz_live_service.expire_question_if_due(db, quiz)
+
     if quiz.live_phase in {"results", "finished"} or quiz.status == "closed":
         current_question = _question_by_id(questions, quiz.current_question_id)
+        round_active = quiz.live_phase == "results" and quiz.status != "closed"
         rows = await _ranking_for_quiz(
             db=db,
             quiz_id=quiz.id,
-            question_id=(
-                quiz.current_question_id if quiz.live_phase == "results" else None
-            ),
+            question_id=quiz.current_question_id if round_active else None,
         )
         response = _generate_ranking_page(
             quiz_id=quiz.id,
@@ -898,6 +990,7 @@ async def _render_live_quiz_page(
             current_question_text=current_question.enunciado if current_question else "",
             language=language,
             final=quiz.live_phase == "finished" or quiz.status == "closed",
+            round_active=round_active,
         )
     elif quiz.live_phase != "question" or not quiz.current_question_id:
         response = _generate_waiting_page(
@@ -941,6 +1034,8 @@ async def _render_live_quiz_page(
                     options=_parse_options(question),
                     language=language,
                     student_name=student_name,
+                    time_limit_seconds=quiz.time_limit_seconds or 0,
+                    seconds_remaining=quiz_live_service.seconds_remaining(quiz),
                 )
 
     _attach_attempt_cookie(response, quiz_id=quiz.id, attempt_id=attempt_id)
@@ -959,11 +1054,15 @@ async def quiz_public_state(
     quiz = (await db.execute(stmt)).scalar_one_or_none()
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
+    # A tela do aluno consulta isto a cada 2s para saber se deve recarregar:
+    # e o lugar certo para o prazo da pergunta virar "encerrada".
+    await quiz_live_service.expire_question_if_due(db, quiz)
     return {
         "quiz_id": quiz.id,
         "status": quiz.status or "open",
         "live_phase": quiz.live_phase or "lobby",
         "current_question_id": quiz.current_question_id,
+        "seconds_remaining": quiz_live_service.seconds_remaining(quiz),
     }
 
 
@@ -1096,6 +1195,10 @@ async def quiz_submit_answer(
             force=True,
         )
 
+    # Resposta que chega depois do prazo (e da folga de rede) nao conta: o
+    # prazo fecha a pergunta aqui, antes de decidir se a resposta ainda vale.
+    await quiz_live_service.expire_question_if_due(db, quiz)
+
     submitted_question = _question_by_id(all_questions, question_id)
     if (
         quiz.live_phase == "question"
@@ -1122,7 +1225,11 @@ async def quiz_submit_answer(
                 resposta=response_text,
                 correta=correta,
                 tempo_resposta=elapsed_ms,
-                pontuacao=_score_answer(correta=correta, elapsed_ms=elapsed_ms),
+                pontuacao=_score_answer(
+                    correta=correta,
+                    elapsed_ms=elapsed_ms,
+                    time_limit_seconds=quiz.time_limit_seconds,
+                ),
             ))
             await db.commit()
 

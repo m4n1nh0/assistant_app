@@ -26,6 +26,7 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 - [x] Fluxo ao vivo com pergunta atual controlada pelo professor.
 - [x] Pontuação por velocidade e ranking top 10 por rodada.
 - [x] Encerramento manual do quiz pelo professor, bloqueando novas respostas.
+- [x] Revisão do rascunho por **agentes especialistas** (Codex e Claude), com veredito por pergunta.
 
 **Ainda roadmap:**
 
@@ -35,6 +36,48 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 - [ ] Relatório completo de desempenho por aluno.
 - [x] Banco de questões reutilizável (buscar, editar, arquivar, montar quiz).
 - [ ] Regeneração com feedback do que a turma errou.
+
+---
+
+## Revisão por agentes especialistas (Codex e Claude)
+
+Depois da geração, o professor pode pedir que **Codex e Claude** revisem o
+rascunho (`REVISAR COM CODEX + CLAUDE`, na revisão de um quiz em rascunho). Eles
+rodam no computador do professor, com a conta que ele já conectou em
+Configurações > Agentes — não são provedores do backend, e é por isso que o app
+faz a ponte (mesmo desenho do resumo de aula pelos agentes conectados).
+
+```
+app ──GET /quiz/{id}/review/prompt──► servidor monta o prompt (aula + perguntas, SEM gabarito)
+app ──executa Codex e Claude em paralelo no CLI local──►
+app ──POST /quiz/{id}/review/external (um agente por vez)──► servidor lê, compara e decide
+```
+
+**O agente não recebe o gabarito.** Ele resolve cada pergunta só com o texto da
+aula e responde qual alternativa é a correta; quem compara com a chave gravada é
+o servidor. Revisão em que o modelo "aprova" depois de ver a resposta tende a
+concordar com o que já está escrito — aqui, dois modelos independentes precisam
+chegar à mesma letra que o gerador.
+
+| Veredito | Quando | Efeito em `verificado` |
+|---|---|---|
+| `aprovada` | todo agente que revisou resolveu com a letra do gabarito, achou a resposta ancorada na aula e não apontou defeito | liga |
+| `divergente` | algum agente chegou a **outra** alternativa (ou a nenhuma única) | desliga |
+| `revisar` | o gabarito bate, mas o agente apontou defeito ou disse que a aula não sustenta a resposta | desliga |
+| `sem_gabarito` | o gerador não deixou uma alternativa correta única | desliga |
+
+- Rodar o Claude depois do Codex **soma** as leituras: o veredito sai de todos os
+  agentes que já leram a pergunta. Rodar o mesmo agente de novo substitui a leitura
+  dele.
+- **O servidor nunca troca o gabarito sozinho.** A divergência fica registrada
+  (`questions.revisao_agentes`) e aparece marcada na pergunta, com o que cada
+  agente respondeu. Quando o agente propõe uma correção mínima, a sugestão vem com
+  o botão `APLICAR SUGESTÃO`, que usa a edição de rascunho que já existia.
+- Editar a pergunta descarta a revisão dela (ficou velha) e a marca como revisada
+  pelo professor.
+- Só vale para **rascunho**: depois de liberado o gabarito não muda (`409`).
+- Se nenhum agente estiver instalado e conectado, o app avisa e não chama o
+  servidor. Um agente que falha (tempo esgotado, sem login) não derruba o outro.
 
 ---
 

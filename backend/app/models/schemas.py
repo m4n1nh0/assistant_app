@@ -1535,6 +1535,9 @@ class QuestionResponse(QuestionCreate):
     quiz_id: str
     grounding_score: float = 0.0
     verificado: bool = False
+    #: O que os agentes especialistas (Codex, Claude) concluiram ao revisar a
+    #: questao; `None` enquanto nenhum revisou.
+    revisao: Optional[Dict[str, Any]] = None
     created_at: datetime
 
 
@@ -1632,8 +1635,29 @@ class QuizResponse(BaseModel):
     live_phase: str = "lobby"
     current_question_id: Optional[str] = None
     question_started_at: Optional[datetime] = None
+    #: Prazo por pergunta em segundos; 0 quando o professor encerra na mao.
+    time_limit_seconds: int = 0
+    #: Segundos que faltam para a pergunta aberta se encerrar sozinha.
+    seconds_remaining: Optional[int] = None
     closed_at: Optional[datetime] = None
     created_at: datetime
+
+
+class QuizSettingsRequest(BaseModel):
+    """Ajustes do quiz ao vivo que o professor muda sem recriar o quiz."""
+    #: 0 = sem prazo (o professor encerra cada pergunta). Entre 1 e 4 sobe para o
+    #: minimo aceito; acima de 600 e recusado.
+    time_limit_seconds: int = Field(ge=0, le=600)
+
+
+class QuizReviewSubmission(BaseModel):
+    """Resposta bruta de um agente especialista que revisou as perguntas.
+
+    O texto vai como o agente escreveu: ele costuma cercar o JSON com markdown,
+    e extrair o JSON e trabalho do servidor, que tambem decide o veredito.
+    """
+    agent: str = Field(min_length=1, max_length=64)
+    content: str = Field(min_length=1, max_length=200_000)
 
 
 class QuizGenerateResponse(BaseModel):

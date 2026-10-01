@@ -15,6 +15,8 @@
 - [x] QR autenticado carrega com header `Authorization`.
 - [x] Monitor inclui botão `Encerrar Quiz`, com confirmação e bloqueio de novas respostas.
 - [x] Revisão das perguntas antes de liberar o QR Code, na central de quizzes.
+- [x] Revisão por **agentes especialistas** (Codex e Claude) no rascunho: botão `REVISAR COM CODEX + CLAUDE`, veredito por pergunta e sugestão de correção aplicável.
+- [x] Painel do monitor no tema escuro, com pergunta e alternativas legíveis, tempo por pergunta, ranking acumulado e **tela maximizável**.
 - [ ] Relatórios de desempenho e exportação seguem como roadmap.
 
 > Nota: exemplos antigos neste documento mostram o widget dentro de uma tela de detalhes da aula. No app atual, a decisão de produto é manter quiz em aba própria e somente após encerrar a gravação.

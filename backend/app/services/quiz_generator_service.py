@@ -293,6 +293,11 @@ def _json_from_content(content: str) -> Dict[str, Any]:
     return {}
 
 
+#: Mesma extracao, para quem le resposta de modelo fora deste modulo (revisao
+#: das perguntas por agentes especialistas).
+json_from_content = _json_from_content
+
+
 def _normalize_question_type(value: Any, fallback: str = "multipla_escolha") -> str:
     raw = str(value or fallback).strip().lower()
     raw = raw.replace("-", "_").replace(" ", "_")

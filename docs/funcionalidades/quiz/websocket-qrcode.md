@@ -17,6 +17,9 @@
 - [x] Professor controla `Iniciar Quiz`, `Encerrar Pergunta` e `Próxima Pergunta`.
 - [x] Ranking top 10 por rodada e ranking geral/final enviados pelo WebSocket.
 - [x] Player público consulta `/education/quiz/{quiz_id}/state` para sair da pergunta quando a rodada encerra.
+- [x] Ranking por **pontos acumulados** em todas as telas (professor, WebSocket e aluno); entre perguntas cada linha mostra também o `+N nesta pergunta`.
+- [x] **Tempo por pergunta** escolhido pelo professor: ao acabar, a pergunta fecha sozinha e o ranking aparece; o professor chama a próxima.
+- [x] Painel do professor legível (tema escuro de ponta a ponta), com enunciado **e alternativas**, e **maximizável** (tela cheia, letras maiores, QR Code ao lado).
 - [ ] WebSocket autenticado por JWT e autorização estrita do professor ainda seguem como roadmap.
 - [ ] Gráficos avançados e exportação de resultados ainda seguem como roadmap.
 
@@ -161,6 +164,38 @@ Flutter recebe e atualiza UI
 }
 ```
 
+#### Campos do quiz ao vivo (acrescentados ao `stats_update`)
+
+```json
+{
+  "time_limit_seconds": 30,
+  "seconds_remaining": 18,
+  "current_question": {
+    "question_id": "q1",
+    "index": 0,
+    "question_text": "Qual forma normal elimina dependência transitiva?",
+    "options": [
+      {"label": "A", "texto": "1FN"},
+      {"label": "B", "texto": "3FN"}
+    ],
+    "total_answers": 7
+  },
+  "ranking_top10": [
+    {"position": 1, "student_name": "Bia", "score": 1200, "round_score": 800, "round_correct": true}
+  ]
+}
+```
+
+- `time_limit_seconds` é o prazo por pergunta (`0` = o professor encerra na mão).
+  `seconds_remaining` só existe com a pergunta aberta e prazo definido; o painel
+  desconta o relógio localmente a partir dele, sem depender de os relógios das
+  duas máquinas concordarem.
+- `options` traz as alternativas para o painel do professor. O campo `correta`
+  **só aparece depois que a pergunta fecha**: o painel costuma estar projetado.
+- `ranking_top10` ordena pelo acumulado (`score`); `round_score` é o que o aluno
+  somou na pergunta atual. O antigo `current_ranking_top10` continua no pacote
+  por compatibilidade, mas o painel não o usa mais.
+
 #### 3. Keepalive (ping/pong)
 
 ```json
@@ -170,6 +205,38 @@ Flutter recebe e atualiza UI
 // Respondido pelo servidor
 { "type": "pong" }
 ```
+
+---
+
+## ⏱️ Tempo por pergunta e fluxo da rodada
+
+```
+Iniciar Quiz ──► pergunta aberta ──┬─ acabou o tempo ────┐
+                                   └─ "Encerrar Agora" ──┤
+                                                         ▼
+                    Próxima Pergunta ◄── ranking (acumulado + "+N nesta pergunta")
+```
+
+- O professor escolhe o prazo no painel (`Manual`, 15s … 2 min, ou `Outro...` de
+  5 a 600s) em qualquer fase. `POST /education/quiz/{quiz_id}/settings` com
+  `{"time_limit_seconds": 30}`; `0` volta ao modo manual.
+- O prazo vale **a partir da próxima pergunta**: ao abrir a pergunta o servidor
+  grava `question_ends_at`, então mudar o tempo no meio da rodada não encurta nem
+  estica a que a turma já está respondendo.
+- **Não há tarefa em segundo plano.** Quem lê o quiz (a tela do aluno a cada 2s, o
+  monitor do professor a cada 2s, `GET /quiz/{id}`) confere o prazo e fecha a
+  pergunta com um `UPDATE` condicional na pergunta e na fase lidas — sobrevive a
+  reinício do servidor e a vários workers, e um leitor com o quiz velho nunca fecha
+  a pergunta nova que o professor acabou de abrir.
+- **Folga de 2s** depois do zero: a resposta enviada no último segundo ainda cruza
+  a rede. Depois da folga a resposta é descartada.
+- A pontuação por velocidade usa o prazo da pergunta como janela (responder no
+  último segundo vale o mínimo, 100 pontos, com 15s ou com 60s). Sem prazo, a
+  janela segue sendo de 30s.
+- `close-question` é idempotente: encerrar uma pergunta que o relógio acabou de
+  encerrar (ou clicar duas vezes) devolve o resultado, não um erro.
+- A tela do aluno só mostra o relógio quando há prazo; no modo manual a barra que
+  encolhia sozinha foi removida, porque era um prazo que não existia.
 
 ---
 
