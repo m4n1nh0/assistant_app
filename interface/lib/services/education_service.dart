@@ -602,6 +602,41 @@ class EducationService {
         jsonDecode(body) as Map<String, dynamic>);
   }
 
+  /// Importa a transcricao pronta de uma reuniao (Teams, Meet) para a
+  /// gravacao: o texto colado em [text] ou o arquivo baixado da plataforma.
+  ///
+  /// Limpar o formato e dividir em trechos e trabalho do servidor, que tambem
+  /// decide que extensoes valem.
+  Future<TranscriptImportResult> importTranscript(
+    String lessonId, {
+    String text = '',
+    List<int>? fileBytes,
+    String filename = '',
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_baseUrl/education/lessons/$lessonId/transcript'),
+    );
+    if (_api.token != null) {
+      request.headers['Authorization'] = 'Bearer ${_api.token}';
+    }
+    if (fileBytes != null) {
+      request.files.add(
+        http.MultipartFile.fromBytes('file', fileBytes, filename: filename),
+      );
+    } else {
+      request.fields['text'] = text;
+    }
+
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode >= 400) {
+      throw EducationException(_uploadError(streamed.statusCode, body));
+    }
+    return TranscriptImportResult.fromJson(
+        jsonDecode(body) as Map<String, dynamic>);
+  }
+
   Future<LessonSummary> generateSummary(
     String lessonId, {
     String? llm,
@@ -1401,6 +1436,40 @@ class LessonPoint {
 ///
 /// Diz se o trecho foi indexado e, quando nao, por que; traz tambem os pontos
 /// extras detectados naquele bloco.
+/// Resultado da importacao de uma transcricao pronta.
+class TranscriptImportResult {
+  final Lesson lesson;
+
+  /// Blocos que viraram trecho da gravacao.
+  final int imported;
+  final int skipped;
+
+  /// Quem o texto identifica como falante, na ordem em que falou.
+  final List<String> speakers;
+  final List<LessonPoint> points;
+
+  TranscriptImportResult({
+    required this.lesson,
+    this.imported = 0,
+    this.skipped = 0,
+    this.speakers = const [],
+    this.points = const [],
+  });
+
+  factory TranscriptImportResult.fromJson(Map<String, dynamic> json) =>
+      TranscriptImportResult(
+        lesson: Lesson.fromJson(json['lesson'] as Map<String, dynamic>),
+        imported: (json['imported'] as num?)?.toInt() ?? 0,
+        skipped: (json['skipped'] as num?)?.toInt() ?? 0,
+        speakers: ((json['speakers'] as List<dynamic>?) ?? [])
+            .map((item) => item.toString())
+            .toList(),
+        points: ((json['points'] as List<dynamic>?) ?? [])
+            .map((item) => LessonPoint.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 class SegmentIngestResult {
   final LessonSegment? segment;
   final bool indexed;

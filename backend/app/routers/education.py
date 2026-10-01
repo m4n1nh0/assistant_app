@@ -58,6 +58,7 @@ from ..models.schemas import (
     LessonSegmentIngestResponse,
     LessonSegmentResponse,
     LessonSegmentUpdate,
+    LessonTranscriptImportResponse,
     SemesterResponse,
     SemesterUpdate,
     ExternalLessonSummaryRequest,
@@ -108,7 +109,12 @@ from ..services.user_llm_config_service import (
     reset_user_llms,
     user_llm_context,
 )
-from ..services import material_service, quiz_generator_service, quiz_job_service
+from ..services import (
+    material_service,
+    meeting_transcript_service,
+    quiz_generator_service,
+    quiz_job_service,
+)
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
 
@@ -2280,6 +2286,93 @@ async def ingest_lesson_text(
         duration_ms=body.duration_ms,
         extract_points=body.extract_points,
         db=db,
+    )
+
+
+_MAX_TRANSCRIPT_CHARS = 1_000_000
+
+
+@router.post(
+    "/lessons/{lesson_id}/transcript",
+    response_model=LessonTranscriptImportResponse,
+)
+async def import_lesson_transcript(
+    lesson_id: str,
+    text: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    extract_points: bool = Form(True),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
+):
+    """Importa a transcricao pronta de uma reuniao (Teams, Meet) como trechos.
+
+    Aceita o texto colado ou o arquivo baixado da plataforma: .vtt, .srt, .txt,
+    .md ou .docx. O texto e limpo do que e do formato e dividido em blocos, e
+    cada bloco entra pelo mesmo caminho de um trecho gravado - indexado para a
+    busca e disponivel para resumo e quiz.
+    """
+    lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
+    if lesson.status == "closed":
+        raise HTTPException(409, "Aula ja encerrada")
+
+    raw = text
+    if file is not None:
+        nome = (file.filename or "").strip()
+        extensao = material_service.extension_of(nome)
+        data = await file.read()
+        if extensao == ".docx":
+            try:
+                extraido = await asyncio.to_thread(
+                    material_service.extract_docx_sync, data
+                )
+            except material_service.MaterialError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            raw = extraido.text
+        elif extensao in meeting_transcript_service.TEXT_EXTENSIONS:
+            raw = meeting_transcript_service.decode_text(data)
+        else:
+            aceitos = ", ".join((*meeting_transcript_service.TEXT_EXTENSIONS, ".docx"))
+            raise HTTPException(
+                422, f"Formato de transcricao nao suportado. Use: {aceitos}"
+            )
+
+    if len(raw) > _MAX_TRANSCRIPT_CHARS:
+        raise HTTPException(
+            413,
+            f"Transcricao acima do limite de {_MAX_TRANSCRIPT_CHARS} caracteres",
+        )
+
+    turns = meeting_transcript_service.parse_transcript(raw)
+    blocks = meeting_transcript_service.split_blocks(turns)
+    if not blocks:
+        raise HTTPException(422, "Nenhum texto encontrado na transcricao")
+
+    imported = skipped = indexed = 0
+    points: List[LessonPointResponse] = []
+    for block in blocks:
+        result = await _ingest_segment(
+            lesson=lesson,
+            text=block,
+            confidence=1.0,
+            duration_ms=0,
+            extract_points=extract_points,
+            db=db,
+        )
+        if result.segment is None:
+            skipped += 1
+            continue
+        imported += 1
+        indexed += 1 if result.indexed else 0
+        points.extend(result.points)
+
+    return LessonTranscriptImportResponse(
+        lesson=_lesson_response(lesson),
+        imported=imported,
+        skipped=skipped,
+        indexed=indexed,
+        speakers=meeting_transcript_service.speakers_of(turns),
+        points=points,
     )
 
 

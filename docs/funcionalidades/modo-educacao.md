@@ -209,6 +209,71 @@ Consequências práticas:
 Título genérico em palestra ("Aula 1") ancora mal: quanto mais específico o
 título, melhor o chat encontra.
 
+## Reunião online (Meet, Teams)
+
+O microfone sozinho não registra uma reunião online: a voz dos outros
+participantes sai pelo fone ou alto-falante e não passa por ele. Há dois
+caminhos em `2. Gravar`, e os dois valem para qualquer tipo de gravação — uma
+reunião de colegiado entra como **Palestra**, uma aula remota como **Aula**.
+
+### Gravar o som do computador
+
+Antes de iniciar, troque **Microfone** por **Reunião online**, logo abaixo da
+escolha do tipo de gravação. O aplicativo passa a gravar o que o computador está tocando somado ao microfone
+escolhido em **Configurações > Sistema > Microfone de entrada**. Daí em diante
+é a gravação de sempre: um bloco transcrito a cada 60 segundos, resumo, PDF,
+busca no chat e quiz.
+
+- Não é preciso instalar cabo virtual nem ativar "Mixagem estéreo".
+- São gravadas a saída de som padrão do Windows e a saída padrão de
+  comunicação, quando forem aparelhos diferentes. Conectar um fone no meio da
+  reunião é acompanhado em até um segundo.
+- Se um bloco fechar sem som nenhum vindo do computador, a tela avisa. Quando
+  a reunião está em andamento, a causa é ela tocar em uma saída escolhida
+  dentro do Meet ou do Teams que não é nenhuma das duas padrão do Windows.
+- Com alto-falante em vez de fone, o microfone também capta a reunião e a
+  mesma fala entra duas vezes, com um pequeno atraso. Prefira fone.
+- A transcrição não identifica quem falou.
+- Só existe no aplicativo para Windows.
+
+Avise os participantes de que a reunião está sendo gravada.
+
+### Importar a transcrição pronta
+
+Quando a própria plataforma transcreveu a reunião, **Importar transcrição**
+traz o texto sem áudio nenhum — e com o nome de quem falou, que a gravação
+acima não tem. Cole o texto ou escolha o arquivo:
+
+| Origem | Arquivo |
+|---|---|
+| Teams | `.vtt` ou `.docx` baixado da transcrição da reunião |
+| Meet | documento da transcrição, baixado como `.docx` ou `.txt` |
+| Qualquer outra | `.srt`, `.txt`, `.md` ou o texto colado |
+
+Os dois arquivos do Teams trazem a mesma transcrição em formatos diferentes, e
+os dois são reconhecidos: o `.vtt` marca quem fala em cada legenda
+(`<v NOME>fala</v>`), e o `.docx` abre cada fala com `NOME   13:25` numa linha e
+o texto nas seguintes. No `.docx`, o título, a data e a duração da reunião
+entram como primeiro trecho, sem falante; os avisos de início e fim da
+transcrição são descartados.
+
+O backend tira o que é do formato (cabeçalho, horários, marcação de legenda),
+junta as falas seguidas da mesma pessoa e divide o texto em blocos de até 1.500
+caracteres, cada um começando por `Nome: fala`. Cada bloco vira um trecho da
+gravação, editável no histórico como os demais.
+
+O botão aparece no formulário inicial, onde cria a gravação, e na gravação em
+andamento enquanto ela está pausada — o que permite completar com a
+transcrição uma gravação que já tem áudio. O limite é de um milhão de
+caracteres por importação.
+
+```text
+POST /education/lessons/{lesson_id}/transcript
+```
+
+Recebe `text` ou `file` (multipart) e devolve quantos blocos entraram e a lista
+de participantes encontrada no texto.
+
 ## Status da aula
 
 Uma aula está **em andamento** ou **encerrada**. O botão **ENCERRAR** de

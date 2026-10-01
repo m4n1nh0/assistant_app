@@ -24,6 +24,7 @@ import '../services/education_service.dart';
 import '../services/in_app_notification_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
+import '../services/system_audio_service.dart';
 import '../utils/student_roster_diff.dart';
 import 'summary_pickers.dart';
 import '../providers/app_provider.dart';
@@ -359,7 +360,11 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   /// retorno rapido na tela; blocos longos gastam menos chamadas de STT.
   static const _chunkDuration = Duration(seconds: 60);
 
+  static const _sourceMic = 'mic';
+  static const _sourceMeeting = 'meeting';
+
   final _recorder = AudioRecorder();
+  final _systemRecorder = SystemAudioRecorder();
   final _titleCtrl = TextEditingController();
   final _focusCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
@@ -371,6 +376,18 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   String _kind = 'aula';
   String? _groupId;
   List<Map<String, dynamic>> _groups = const [];
+
+  /// De onde vem o audio: so o microfone, ou o som do computador somado a
+  /// ele. Reuniao online precisa do segundo: a voz dos outros participantes
+  /// sai pelo fone e nunca passa pelo microfone.
+  String _audioSource = _sourceMic;
+
+  /// Captura do som do computador ligada no executavel.
+  var _systemCapturing = false;
+
+  /// O ultimo bloco fechou sem som nenhum vindo do computador.
+  var _systemSilent = false;
+  var _importing = false;
 
   Timer? _chunkTimer;
   Timer? _clockTimer;
@@ -423,6 +440,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _sessionTimer?.cancel();
     // Sem await no dispose: o recorder e liberado em background.
     _recorder.dispose();
+    if (_systemCapturing) _systemRecorder.stop().ignore();
     _titleCtrl.dispose();
     _focusCtrl.dispose();
     _scrollCtrl.dispose();
@@ -478,7 +496,11 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     }
   }
 
-  Future<void> _startLesson() async {
+  bool get _fromMeeting => _audioSource == _sourceMeeting;
+
+  /// O que o formulario diz sobre a gravacao, ja conferido. Nulo quando falta
+  /// algo; o motivo vai para a linha de status.
+  _LessonForm? _lessonForm() {
     final chosen = _chosen;
     final title = _titleCtrl.text.trim();
     var discipline = '';
@@ -488,30 +510,71 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     if (_kind == 'aula') {
       if (chosen.isEmpty) {
         _setStatus('Selecione a turma antes de iniciar.');
-        return;
+        return null;
       }
       final disciplines = chosen.map((item) => item.discipline).toSet();
       discipline = disciplines.length == 1 ? disciplines.first : '';
       if (discipline.isEmpty) {
         _setStatus('As turmas escolhidas sao de disciplinas diferentes.');
-        return;
+        return null;
       }
       final semesters = chosen.map((item) => item.semester).toSet();
       if (semesters.length > 1) {
         _setStatus('As turmas escolhidas sao de semestres diferentes.');
-        return;
+        return null;
       }
       semester = semesters.length == 1 ? semesters.first : semester;
       classIds = chosen.map((item) => item.id).toList();
     } else if (_kind == 'apresentacao') {
       if ((_groupId ?? '').isEmpty) {
         _setStatus('Escolha o grupo que vai apresentar.');
-        return;
+        return null;
       }
     } else if (title.isEmpty) {
       _setStatus('Dê um título à palestra antes de iniciar.');
-      return;
+      return null;
     }
+
+    return _LessonForm(
+      kind: _kind,
+      groupId: _kind == 'apresentacao' ? _groupId : null,
+      discipline: discipline,
+      semester: semester,
+      title: title,
+      classIds: classIds,
+    );
+  }
+
+  /// Cria a gravacao no backend e zera o que a tela mostrava da anterior.
+  Future<Lesson> _openLesson(_LessonForm form) async {
+    // Gravacao de duas horas nao pode esbarrar no fim do token no meio.
+    await api.refreshSession();
+    final lesson = await education.createLesson(
+      kind: form.kind,
+      groupId: form.groupId,
+      discipline: form.discipline,
+      semester: form.semester,
+      title: form.title,
+      classIds: form.classIds,
+    );
+    if (mounted) {
+      setState(() {
+        _lesson = lesson;
+        _segments.clear();
+        _points.clear();
+        _summary = null;
+        _summaryShownStyle = null;
+        _startedAt = DateTime.now();
+        _elapsed = Duration.zero;
+        _systemSilent = false;
+      });
+    }
+    return lesson;
+  }
+
+  Future<void> _startLesson() async {
+    final form = _lessonForm();
+    if (form == null) return;
 
     if (!await _recorder.hasPermission()) {
       _setStatus('Microfone nao autorizado pelo sistema.');
@@ -521,34 +584,70 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     setState(() => _starting = true);
     try {
       await _resolveInputDevice();
-      // Gravacao de duas horas nao pode esbarrar no fim do token no meio.
-      await api.refreshSession();
-      final lesson = await education.createLesson(
-        kind: _kind,
-        groupId: _kind == 'apresentacao' ? _groupId : null,
-        discipline: discipline,
-        semester: semester,
-        title: title,
-        classIds: classIds,
-      );
-      setState(() {
-        _lesson = lesson;
-        _segments.clear();
-        _points.clear();
-        _summary = null;
-        _summaryShownStyle = null;
-        _startedAt = DateTime.now();
-        _elapsed = Duration.zero;
-      });
+      await _openLesson(form);
       await _startRecordingLoop();
-      _setStatus('Gravando com $_activeInputLabel. Cada bloco de 60s e '
-          'transcrito e indexado.');
+      _setStatus(_fromMeeting
+          ? 'Gravando o som do computador e o microfone ($_activeInputLabel). '
+              'Cada bloco de 60s e transcrito e indexado.'
+          : 'Gravando com $_activeInputLabel. Cada bloco de 60s e '
+              'transcrito e indexado.');
     } catch (e) {
-      _setStatus('Nao foi possivel iniciar a aula: $e');
+      _setStatus('Nao foi possivel iniciar a aula: ${_errorText(e)}');
     } finally {
       if (mounted) setState(() => _starting = false);
     }
   }
+
+  /// Reuniao que a propria plataforma ja transcreveu: o texto entra como
+  /// trechos da gravacao, com o nome de quem falou e sem audio nenhum.
+  Future<void> _importTranscript() async {
+    final form = _lesson == null ? _lessonForm() : null;
+    if (_lesson == null && form == null) return;
+
+    final input = await _askTranscript(context);
+    if (input == null || !mounted) return;
+
+    setState(() => _importing = true);
+    _setStatus('Importando a transcricao...');
+    try {
+      final lesson = _lesson ?? await _openLesson(form!);
+      final result = await education.importTranscript(
+        lesson.id,
+        text: input.text,
+        fileBytes: input.bytes,
+        filename: input.filename,
+      );
+      final detail = await education.getLesson(lesson.id);
+      if (!mounted) return;
+      setState(() {
+        _lesson = detail;
+        _segments
+          ..clear()
+          ..addAll(detail.segments);
+        _points
+          ..clear()
+          ..addAll(detail.points);
+        _summary = null;
+        _summaryShownStyle = null;
+      });
+      final speakers = result.speakers;
+      _setStatus('${result.imported} trecho(s) importado(s)'
+          '${speakers.isEmpty ? "" : " de ${speakers.length} participante(s): "
+              "${speakers.take(6).join(", ")}"
+              "${speakers.length > 6 ? "..." : ""}"}. '
+          'Gere o resumo quando quiser.');
+      _scrollToEnd();
+    } catch (e) {
+      _setStatus('Falha ao importar a transcricao: ${_errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  /// Erro do executavel chega como PlatformException, cujo texto util e so a
+  /// mensagem.
+  String _errorText(Object error) =>
+      error is PlatformException ? (error.message ?? error.code) : '$error';
 
   Future<void> _startRecordingLoop() async {
     await _startChunk();
@@ -588,13 +687,26 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _activeInputLabel = selected?.label ?? 'padrao do sistema';
   }
 
+  Future<String> _newChunkPath(String extension) async {
+    final dir = await getTemporaryDirectory();
+    return '${dir.path}${Platform.pathSeparator}'
+        'lesson_${DateTime.now().millisecondsSinceEpoch}.$extension';
+  }
+
   Future<void> _startChunk() async {
+    if (_fromMeeting) {
+      _currentPath = await _newChunkPath('wav');
+      await _systemRecorder.start(
+        path: _currentPath!,
+        micDeviceId: _activeInputDevice?.id ?? '',
+      );
+      _systemCapturing = true;
+      return;
+    }
+
     final supportsWav = await _recorder.isEncoderSupported(AudioEncoder.wav);
     final encoder = supportsWav ? AudioEncoder.wav : AudioEncoder.aacLc;
-    final extension = supportsWav ? 'wav' : 'm4a';
-    final dir = await getTemporaryDirectory();
-    _currentPath = '${dir.path}${Platform.pathSeparator}'
-        'lesson_${DateTime.now().millisecondsSinceEpoch}.$extension';
+    _currentPath = await _newChunkPath(supportsWav ? 'wav' : 'm4a');
 
     await _recorder.start(
       speechRecordConfig(encoder: encoder, device: _activeInputDevice),
@@ -605,16 +717,35 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   /// Fecha o bloco atual e ja abre o proximo, para nao perder a fala que
   /// acontece enquanto o trecho anterior sobe para o backend.
   Future<void> _rotateChunk({bool restart = true}) async {
-    final path = await _recorder.stop();
-    if (restart) {
-      await _startChunk();
+    final String? path;
+    if (_systemCapturing) {
+      path = await _rotateSystemChunk(restart: restart);
     } else {
-      _currentPath = null;
+      path = await _recorder.stop();
+      if (restart) await _startChunk();
     }
+    if (!restart) _currentPath = null;
     if (path != null) {
       _pendingUploads.add(_PendingChunk(path, _chunkDuration.inMilliseconds));
       unawaited(_drainUploads());
     }
+  }
+
+  /// Na captura do som do computador o arquivo e trocado sem parar de gravar.
+  Future<String?> _rotateSystemChunk({required bool restart}) async {
+    final SystemAudioChunk? chunk;
+    if (restart) {
+      final next = await _newChunkPath('wav');
+      chunk = await _systemRecorder.rotate(next);
+      _currentPath = next;
+    } else {
+      chunk = await _systemRecorder.stop();
+      _systemCapturing = false;
+    }
+    if (chunk != null && mounted) {
+      setState(() => _systemSilent = chunk!.systemSilent);
+    }
+    return chunk?.path;
   }
 
   /// Envia a fila em ordem. Bloco que falha continua na fila: perder audio de
@@ -655,7 +786,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     try {
       if (!await file.exists()) return true;
       final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) {
+      // 44 bytes e so o cabecalho do WAV: bloco em que nada foi captado.
+      if (bytes.length <= 44) {
         await _discard(file);
         return true;
       }
@@ -735,9 +867,11 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     try {
       await _resolveInputDevice();
       await _startRecordingLoop();
-      _setStatus('Gravacao retomada com $_activeInputLabel.');
+      _setStatus(_fromMeeting
+          ? 'Gravacao retomada com o som do computador e $_activeInputLabel.'
+          : 'Gravacao retomada com $_activeInputLabel.');
     } catch (e) {
-      _setStatus('Nao foi possivel retomar a gravacao: $e');
+      _setStatus('Nao foi possivel retomar a gravacao: ${_errorText(e)}');
     }
   }
 
@@ -898,6 +1032,14 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                 child: const Text('REENVIAR', style: TextStyle(fontSize: 10)),
               ),
             ),
+          if (_recording && _systemCapturing && _systemSilent)
+            const _Banner(
+              icon: Icons.volume_off_outlined,
+              color: AssistantTheme.c4,
+              text: 'Nenhum som do computador no ultimo bloco: so o microfone '
+                  'foi gravado. Se a reuniao esta em andamento, confira se '
+                  'ela toca na saida de som padrao do Windows.',
+            ),
           if (classes != null && students == 0)
             _Banner(
               icon: Icons.groups_outlined,
@@ -1022,6 +1164,42 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     );
   }
 
+  /// De onde vem o audio. So aparece onde a captura do som do computador
+  /// existe.
+  Widget _buildSourcePicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(
+                value: _sourceMic,
+                label: Text('Microfone'),
+                icon: Icon(Icons.mic_none, size: 15)),
+            ButtonSegment(
+                value: _sourceMeeting,
+                label: Text('Reunião online'),
+                icon: Icon(Icons.video_call_outlined, size: 15)),
+          ],
+          selected: {_audioSource},
+          showSelectedIcon: false,
+          onSelectionChanged: (value) =>
+              setState(() => _audioSource = value.first),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _fromMeeting
+              ? 'Grava o som do computador (Meet, Teams) junto com o seu '
+                  'microfone. Avise os participantes de que a reunião está '
+                  'sendo gravada.'
+              : 'Grava só o microfone, como em sala.',
+          style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+
   Widget _buildStartForm() {
     return ValueListenableBuilder<List<ClassGroup>?>(
       valueListenable: widget.classes,
@@ -1047,6 +1225,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildKindPicker(),
+            if (SystemAudioRecorder.isSupported) _buildSourcePicker(),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -1062,8 +1241,28 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                   ),
                 ),
                 const SizedBox(width: 10),
+                Tooltip(
+                  message: 'Reunião já transcrita pelo Teams ou pelo Meet: '
+                      'traz o texto pronto, com o nome de quem falou.',
+                  child: OutlinedButton.icon(
+                    onPressed: _starting || _importing || !podeIniciar
+                        ? null
+                        : _importTranscript,
+                    icon: const Icon(Icons.upload_file_outlined, size: 15),
+                    label: Text(
+                      _importing ? 'IMPORTANDO...' : 'IMPORTAR TRANSCRIÇÃO',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AssistantTheme.c2,
+                      side: const BorderSide(color: AssistantTheme.border2),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
                 FilledButton.icon(
-                  onPressed: _starting || !podeIniciar ? null : _startLesson,
+                  onPressed: _starting || _importing || !podeIniciar
+                      ? null
+                      : _startLesson,
                   icon: const Icon(Icons.fiber_manual_record, size: 15),
                   label: Text(
                     _starting
@@ -1225,6 +1424,13 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
             icon: Icon(_recording ? Icons.pause : Icons.play_arrow, size: 18),
             color: AssistantTheme.c1,
             onPressed: _recording ? _stopRecording : _resumeRecording,
+          ),
+        if (!lesson.isClosed && !_recording)
+          IconButton(
+            tooltip: 'Importar transcricao pronta (Teams, Meet)',
+            icon: const Icon(Icons.upload_file_outlined, size: 18),
+            color: AssistantTheme.c1,
+            onPressed: _importing || _summarising ? null : _importTranscript,
           ),
         const SizedBox(width: 4),
         OutlinedButton.icon(
@@ -1493,6 +1699,125 @@ class _PendingChunk {
   final int durationMs;
 
   _PendingChunk(this.path, this.durationMs);
+}
+
+/// O que o formulario de `2. Gravar` informa para abrir uma gravacao.
+class _LessonForm {
+  final String kind;
+  final String? groupId;
+  final String discipline;
+  final String semester;
+  final String title;
+  final List<String> classIds;
+
+  const _LessonForm({
+    required this.kind,
+    required this.groupId,
+    required this.discipline,
+    required this.semester,
+    required this.title,
+    required this.classIds,
+  });
+}
+
+/// Transcricao pronta escolhida pelo professor: texto colado ou arquivo.
+class _TranscriptInput {
+  final String text;
+  final List<int>? bytes;
+  final String filename;
+
+  const _TranscriptInput({this.text = '', this.bytes, this.filename = ''});
+}
+
+Future<_TranscriptInput?> _askTranscript(BuildContext context) async {
+  final controller = TextEditingController();
+  final input = await showDialog<_TranscriptInput>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, update) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Importar transcrição da reunião'),
+        content: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Cole o texto ou escolha o arquivo gerado pelo Teams (.vtt, '
+                '.docx) ou pelo Meet (.docx, .txt). O nome de quem falou é '
+                'mantido em cada trecho.',
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.45,
+                  color: AssistantTheme.textMuted,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 8,
+                maxLines: 14,
+                onChanged: (_) => update(() {}),
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.45,
+                  color: AssistantTheme.textPrimary,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Ana Souza: bom dia a todos, vamos começar...',
+                  filled: true,
+                  fillColor: AssistantTheme.bg2,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('CANCELAR'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final selected = await FilePicker.pickFiles(
+                type: FileType.custom,
+                allowedExtensions: const ['vtt', 'docx', 'txt', 'srt', 'md'],
+                withData: true,
+              );
+              if (selected == null || selected.files.isEmpty) return;
+              final file = selected.files.single;
+              final bytes = file.bytes ??
+                  (file.path == null
+                      ? null
+                      : await File(file.path!).readAsBytes());
+              if (bytes != null && dialogContext.mounted) {
+                Navigator.pop(
+                  dialogContext,
+                  _TranscriptInput(bytes: bytes, filename: file.name),
+                );
+              }
+            },
+            icon: const Icon(Icons.upload_file_outlined, size: 16),
+            label: const Text('ESCOLHER ARQUIVO'),
+          ),
+          FilledButton(
+            onPressed: controller.text.trim().isEmpty
+                ? null
+                : () => Navigator.pop(
+                      dialogContext,
+                      _TranscriptInput(text: controller.text),
+                    ),
+            child: const Text('IMPORTAR TEXTO'),
+          ),
+        ],
+      ),
+    ),
+  );
+  controller.dispose();
+  return input;
 }
 
 // --- Pontuacoes ------------------------------------------------------------
@@ -5364,6 +5689,13 @@ class _HowItWorks extends StatelessWidget {
       Icons.mic_none,
       'De aula normalmente.',
       'A cada 60 segundos o audio vira um trecho transcrito aqui na tela.',
+    ),
+    (
+      Icons.video_call_outlined,
+      'Reuniao online? Troque a origem do audio ou importe a transcricao.',
+      '"Reuniao online" grava o som do computador junto com o microfone, '
+          'entao a voz de todos entra. Se o Teams ou o Meet ja transcreveu, '
+          'IMPORTAR TRANSCRICAO traz o texto com o nome de quem falou.',
     ),
     (
       Icons.emoji_events_outlined,

@@ -1371,6 +1371,20 @@ class LessonSegmentIngestResponse(BaseModel):
     lesson: LessonResponse
 
 
+class LessonTranscriptImportResponse(BaseModel):
+    """Resultado da importacao de uma transcricao pronta (Teams, Meet).
+
+    `imported` conta os blocos que viraram trecho e `skipped` os descartados por
+    serem curtos demais; `speakers` lista quem o texto identifica como falante.
+    """
+    lesson: LessonResponse
+    imported: int = 0
+    skipped: int = 0
+    indexed: int = 0
+    speakers: List[str] = Field(default_factory=list)
+    points: List[LessonPointResponse] = Field(default_factory=list)
+
+
 class LessonSummaryRequest(BaseModel):
     """Pedido de resumo de uma aula ja transcrita."""
     llm: Optional[str] = None

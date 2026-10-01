@@ -974,6 +974,7 @@ Endpoints principais:
 | `GET /education/lessons?kind=&group_id=` | Lista as gravacoes, filtrando por tipo ou grupo |
 | `POST /education/lessons/{id}/audio` | Envia um bloco de audio |
 | `POST /education/lessons/{id}/segments` | Ingestao de texto ja transcrito |
+| `POST /education/lessons/{id}/transcript` | Importa a transcricao pronta de uma reuniao (Teams, Meet): texto colado ou arquivo `.vtt`, `.srt`, `.txt`, `.md`, `.docx` |
 | `PATCH /education/lessons/{id}/segments/{segment_id}` | Corrige o texto e substitui seu vetor |
 | `POST /education/lessons/{id}/summary` | Gera o resumo sob demanda (`style`: `standard` ou `detailed`; `llm` fixa o provedor) |
 | `GET /education/lessons/{id}/summary/prompt` | Prompt do resumo para um agente conectado gerar localmente |
