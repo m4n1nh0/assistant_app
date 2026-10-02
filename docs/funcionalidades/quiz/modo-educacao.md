@@ -521,7 +521,7 @@ GROUNDING_THRESHOLD=0.70     # Score mínimo para aceitar questão
 ## 🎯 Próximas Features
 
 - [ ] Análise de respostas por aluno
-- [ ] Exportar resultados em PDF
+- [x] Exportar resultados em PDF e planilha
 - [ ] Comparação com gabarito
 - [ ] Relatório de desempenho
 - [ ] Remixagem de questões (embaralhar opções)

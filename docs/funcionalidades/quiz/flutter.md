@@ -582,7 +582,7 @@ Share.share('Responda meu quiz: $quizUrl')
 
 - [x] WebSocket para atualizar monitoramento em tempo real (sem polling)
 - [ ] Gráfico de desempenho por questão
-- [ ] Exportar resultados em PDF
+- [x] Exportar resultados em PDF e planilha
 - [ ] Notificação de alunos quando quiz fica pronto (o professor já é avisado no app, no Telegram e no WhatsApp)
 - [ ] Análise de quais alunos erraram mais
 - [ ] Regenerar quiz com feedback

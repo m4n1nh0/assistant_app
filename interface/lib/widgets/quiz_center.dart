@@ -19,8 +19,10 @@ import '../services/quiz_center_service.dart';
 import '../services/quiz_queue_watcher.dart';
 import '../services/quiz_specialist_review.dart';
 import '../utils/theme.dart';
+import 'quiz_export.dart';
 import 'quiz_preview_dialog.dart';
 import 'quiz_qrcode_monitor.dart';
+import 'quiz_report_dialog.dart';
 
 // --- rotulos ---------------------------------------------------------------
 
@@ -198,6 +200,28 @@ Future<void> openQuizReview(
           }
         : null,
     actionsBuilder: (dialogContext) => [
+      if (questions.isNotEmpty)
+        IconButton(
+          tooltip: 'Exportar exercícios em PDF',
+          icon: const Icon(Icons.picture_as_pdf_outlined),
+          onPressed: () => exportQuizExercises(
+            dialogContext,
+            quizId: quizId,
+            title: titulo,
+            service: center,
+          ),
+        ),
+      if (status != QuizStatus.draft)
+        IconButton(
+          tooltip: 'Relatório de desempenho',
+          icon: const Icon(Icons.bar_chart_rounded),
+          onPressed: () => showQuizReportDialog(
+            dialogContext,
+            quizId: quizId,
+            title: titulo,
+            service: center,
+          ),
+        ),
       if (status == QuizStatus.draft) ...[
         TextButton.icon(
           onPressed: () async {
@@ -723,8 +747,34 @@ class _QuizListPanelState extends State<QuizListPanel> {
       title: Text(quiz.titulo, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(detalhes, style: const TextStyle(fontSize: 11)),
       trailing: Wrap(
-        spacing: 6,
+        spacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
+          if (quiz.totalQuestoes > 0)
+            IconButton(
+              tooltip: 'Exportar exercícios em PDF',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.picture_as_pdf_outlined, size: 20),
+              onPressed: () => exportQuizExercises(
+                context,
+                quizId: quiz.id,
+                title: quiz.titulo,
+                discipline: quiz.disciplinas.join(', '),
+              ),
+            ),
+          // Rascunho nao teve turma: nao ha desempenho para mostrar.
+          if (quiz.status != QuizStatus.draft)
+            IconButton(
+              tooltip: 'Relatório de desempenho',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.bar_chart_rounded, size: 22),
+              onPressed: () => showQuizReportDialog(
+                context,
+                quizId: quiz.id,
+                title: quiz.titulo,
+              ),
+            ),
+          const SizedBox(width: 4),
           OutlinedButton(
             onPressed: () => openQuizReview(
               context,

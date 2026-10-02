@@ -31,6 +31,7 @@ from ..core.database import (
     ProjectGroupMemberModel,
     DisciplineModel,
     QuizModel,
+    QuizParticipantModel,
     QuestionModel,
     StudentAnswerModel,
     AsyncSessionLocal,
@@ -118,6 +119,7 @@ from ..services import (
     quiz_generator_service,
     quiz_job_service,
     quiz_live_service,
+    quiz_report_service,
     quiz_review_service,
     quiz_translation_service,
 )
@@ -4505,6 +4507,48 @@ async def close_quiz(
         await db.refresh(quiz)
 
     return await _build_quiz_response(db, quiz)
+
+
+@router.get("/quiz/{quiz_id}/report")
+async def quiz_report(
+    quiz_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Desempenho do quiz por aluno e por pergunta.
+
+    E o que o professor consulta depois da aula: quem foi bem, quem entrou e nao
+    respondeu, e quais perguntas a turma errou. Vale para quiz liberado ou
+    encerrado; de rascunho, devolve o relatorio vazio.
+    """
+
+    tutor_id = user["tutor_id"]
+    quiz = await _owned_quiz(db, quiz_id, tutor_id)
+    await quiz_live_service.expire_question_if_due(db, quiz)
+
+    questions = await _quiz_questions(db, quiz.id)
+    participants = (await db.execute(
+        select(QuizParticipantModel)
+        .where(QuizParticipantModel.quiz_id == quiz.id)
+        .order_by(QuizParticipantModel.joined_at)
+    )).scalars().all()
+    answers = []
+    if questions:
+        answers = (await db.execute(
+            select(StudentAnswerModel).where(
+                StudentAnswerModel.question_id.in_([q.id for q in questions])
+            )
+        )).scalars().all()
+
+    item = (await _quiz_catalog(db, tutor_id)).get(quiz.id) or {}
+    return quiz_report_service.build_report(
+        quiz=quiz,
+        questions=questions,
+        participants=participants,
+        answers=answers,
+        disciplines=item.get("disciplinas", []),
+        sources=[f["label"] for f in item.get("fontes", []) if f.get("label")],
+    )
 
 
 # --- Traducao feita pelo app do professor ------------------------------------

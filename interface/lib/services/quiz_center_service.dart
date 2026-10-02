@@ -7,6 +7,7 @@
 library;
 
 import 'api_service.dart';
+import 'quiz_report.dart';
 
 /// Estados de um pedido na fila, na ordem do fluxo.
 abstract final class QuizJobStatus {
@@ -396,6 +397,10 @@ class QuizCenterService {
   /// O quiz com as questoes, no formato da revisao.
   Future<Map<String, dynamic>> quizDetail(String quizId) =>
       _ok(api.get('/education/quiz/$quizId'));
+
+  /// Desempenho do quiz por aluno e por pergunta.
+  Future<QuizReport> quizReport(String quizId) async =>
+      QuizReport.fromJson(await _ok(api.get('/education/quiz/$quizId/report')));
 
   Future<Map<String, dynamic>> publishQuiz(String quizId) =>
       _ok(api.post('/education/quiz/$quizId/publish', body: const {}));

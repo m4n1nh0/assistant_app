@@ -708,8 +708,8 @@ wscat -c ws://localhost:8000/ws/quiz/quiz-123/monitor
 
 - [ ] WebSocket autenticado (JWT)
 - [x] Aviso ao professor quando o quiz fica pronto (no app, Telegram e WhatsApp)
-- [ ] Análise de desempenho por aluno
-- [ ] Exportar resultados em PDF
+- [x] Análise de desempenho por aluno (relatório do quiz)
+- [x] Exportar resultados em PDF e planilha
 - [ ] Gráficos de desempenho em tempo real
 - [ ] Chat entre professor e alunos durante quiz
 - [x] Banco de questões (reusar em vários quizzes)

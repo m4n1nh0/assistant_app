@@ -31,11 +31,76 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 **Ainda roadmap:**
 
 - [x] Quiz consolidado de múltiplas aulas e materiais (as fontes se somam).
-- [ ] Exportação de exercícios para PDF/material impresso.
+- [x] Exportação de exercícios para PDF/material impresso (prova, com gabarito opcional em página separada).
 - [x] Revisão antes de liberar o QR Code e edição das questões do rascunho.
-- [ ] Relatório completo de desempenho por aluno.
+- [x] Relatório de desempenho por aluno e por pergunta, com PDF (folha individual por aluno) e planilha.
 - [x] Banco de questões reutilizável (buscar, editar, arquivar, montar quiz).
 - [ ] Regeneração com feedback do que a turma errou.
+
+---
+
+## Exportar exercícios e relatório de desempenho
+
+**Exercícios em PDF** (ícone de PDF na lista de quizzes e na revisão). O professor
+escolhe o que sai no papel:
+
+- **Prova do aluno**: perguntas numeradas, alternativas com círculo para marcar,
+  espaço para escrever nas abertas, e campos de nome, turma, data e nota (opcional).
+  Cada pergunta cabe inteira numa página, sem partir o enunciado de um lado e as
+  alternativas do outro.
+- **Gabarito em página separada**, no fim do arquivo (opcional), com aviso de que é
+  para o professor. Imprima só as primeiras páginas para a turma. Com
+  "justificativas", vira gabarito comentado, com a alternativa correta por extenso.
+- Salvar o PDF ou **imprimir** direto pelo diálogo do sistema.
+
+**Relatório de desempenho** (ícone de gráfico na lista e na revisão de quiz liberado
+ou encerrado, e "Ver Relatório" no painel ao vivo). `GET /education/quiz/{id}/report`.
+Mostra, e exporta em **PDF** e **planilha CSV**, os mesmos números:
+
+- **Por aluno**: posição, pontos, acertos, erros, em branco, % de acerto, tempo médio
+  e o que respondeu em cada pergunta. O PDF pode ter **uma folha por aluno**, com o
+  que ele marcou, o que era certo e os pontos.
+- **Por pergunta**: % de acerto, quantos erraram, quantos ficaram em branco e a
+  distribuição das alternativas, com a **mais marcada errada** — que costuma apontar
+  o que a aula não passou.
+- **Pontos de atenção**: perguntas em que a turma acertou menos da metade (só com 3
+  ou mais respostas, para não tirar conclusão de dois alunos), alunos que acertaram
+  menos da metade e quem entrou e não respondeu nada.
+
+**Resumo executivo** (aba "Resumo executivo" do relatório e opção no PDF). É a versão
+para quem decide sem ter estado na sala — coordenação, direção: **uma página**, só
+números agregados, **sem nome de aluno**. Traz o veredito (Bom desempenho a partir de
+70% de acerto, Atenção de 50% a 69%, Abaixo do esperado abaixo de 50%), os indicadores
+(participação, taxa de acerto, pontos médios, tempo), dois gráficos (alunos por faixa
+de acerto e acerto por pergunta), o que os números mostram e o que fazer.
+
+- **O texto sai de regras, não de um modelo de IA.** Texto gerado poderia inventar uma
+  conclusão que os números não sustentam, e quem lê o resumo não tem como conferir.
+  Exemplos das regras: pergunta com menos da metade de acerto vira "retomar em aula";
+  alunos abaixo de 50% viram "oferecer reforço a N alunos"; participação abaixo de
+  80% vira "verificar o acesso" (QR Code, rede, tempo curto), porque quem não responde
+  é problema de acesso antes de ser de aprendizado.
+- **Diz o que não sabe.** Todo resumo termina avisando que é um único quiz, uma
+  amostra da aula, e que cada participante é um navegador identificado pelo nome
+  digitado, não uma matrícula. Quiz encerrado antes do fim avisa que o resultado cobre
+  só as perguntas aplicadas.
+- Quem entrou e não respondeu tem faixa própria: não conta como "0% de acerto".
+
+Como as contas são feitas:
+
+- **Só conta pergunta que a turma viu.** Quiz encerrado antes do fim tem perguntas
+  que ninguém chegou a ver; contá-las como "sem resposta" derrubaria o percentual de
+  todos. Aplicada é a que recebeu ao menos uma resposta ou está no ar.
+- **Quem entrou e não respondeu aparece**, com zero. O ranking ao vivo só conhece
+  quem respondeu.
+- **O aluno é o navegador dele.** Ele digita o nome ao entrar, então dois navegadores
+  com o mesmo nome são duas linhas; juntar nomes iguais misturaria pessoas
+  diferentes. Por isso o relatório é **por quiz**: cruzar quizzes ou ligar o aluno à
+  lista da turma depende de um vínculo que ainda não existe.
+- A planilha usa `;`, vírgula decimal e BOM (abre no Excel em português sem
+  assistente), traz a linha do gabarito no fim e **protege nomes que começam com
+  `=`, `+`, `-` ou `@`**, que a planilha executaria como fórmula — o nome vem de um
+  campo livre, digitado por quem escaneou o QR Code.
 
 ---
 

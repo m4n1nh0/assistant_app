@@ -20,6 +20,7 @@ import '../services/api_service.dart';
 import '../services/quiz_center_service.dart';
 import '../services/quiz_translation_agent.dart';
 import '../utils/theme.dart';
+import 'quiz_report_dialog.dart';
 
 /// Mescla nas estatisticas da tela o quiz devolvido por um comando ao vivo.
 ///
@@ -777,6 +778,20 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
               icon: const Icon(Icons.content_copy),
               label: const Text('Copiar Link do Quiz'),
             ),
+            // O relatorio so tem o que mostrar depois da primeira pergunta
+            // encerrada: antes disso e uma tabela de zeros.
+            if (_quizClosed ||
+                const {'results', 'finished'}
+                    .contains(_stats?['live_phase']?.toString()))
+              ElevatedButton.icon(
+                onPressed: () => showQuizReportDialog(
+                  context,
+                  quizId: widget.quizId,
+                  title: widget.quizTitle,
+                ),
+                icon: const Icon(Icons.bar_chart_rounded),
+                label: const Text('Ver Relatório'),
+              ),
             ElevatedButton.icon(
               onPressed:
                   _quizClosed || _isClosingQuiz ? null : _confirmCloseQuiz,

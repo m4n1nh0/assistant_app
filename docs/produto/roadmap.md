@@ -41,8 +41,9 @@ quizzes, gravação de apresentação de grupo e de palestra, separação dos se
 
 ### Quiz
 
-- relatório de desempenho por aluno e por questão, além do ranking;
-- exportação dos resultados (PDF/planilha) — hoje só existe PDF de aula e relatório acadêmico;
+- ~~relatório de desempenho por aluno e por questão, além do ranking~~ — feito: tela, PDF (com folha por aluno) e planilha CSV;
+- ~~exportação dos resultados (PDF/planilha)~~ — feito, junto com o PDF dos exercícios (prova e gabarito);
+- relatório que cruze quizzes e ligue o aluno à lista da turma (hoje o aluno do quiz é o navegador dele, identificado só pelo nome digitado);
 - embaralhar alternativas entre alunos;
 - regenerar quiz com base no que a turma errou;
 - avisar a turma quando o quiz abre (depende de identidade do aluno);
@@ -115,8 +116,8 @@ Objetivo: o que hoje está exposto passa a ser defensável.
 
 Objetivo: o professor usa o resultado, não só aplica o quiz.
 
-1. **Relatório de desempenho**: por aluno, por questão e por turma, reaproveitando o gerador de PDF que já existe.
-2. **Exportação** dos resultados junto com o relatório de pontuação.
+1. ~~**Relatório de desempenho**: por aluno, por questão e por turma, reaproveitando o gerador de PDF que já existe.~~ Feito por quiz; falta o recorte por turma e por período, que depende de ligar o aluno do quiz à lista da turma.
+2. ~~**Exportação** dos resultados~~ Feito (PDF e planilha); falta juntar ao relatório de pontuação.
 3. **Regenerar com foco no erro**: novo quiz a partir das questões que a turma mais errou — o banco de questões já dá a base.
 4. **Embaralhar alternativas** por aluno.
 
