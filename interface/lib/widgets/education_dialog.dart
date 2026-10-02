@@ -387,6 +387,9 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
 
   /// O ultimo bloco fechou sem som nenhum vindo do computador.
   var _systemSilent = false;
+
+  /// Por que a gravacao parou sozinha no meio da aula (microfone que sumiu).
+  String? _captureFailure;
   var _importing = false;
 
   Timer? _chunkTimer;
@@ -663,7 +666,12 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       const Duration(minutes: 20),
       (_) => unawaited(api.refreshSession()),
     );
-    if (mounted) setState(() => _recording = true);
+    if (mounted) {
+      setState(() {
+        _recording = true;
+        _captureFailure = null;
+      });
+    }
   }
 
   Future<void> _resolveInputDevice() async {
@@ -674,15 +682,12 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       deviceId: config.audioInputDeviceId,
       deviceLabel: config.audioInputDeviceLabel,
     );
-    if (config.audioInputDeviceId.isNotEmpty && selected == null) {
-      final name = config.audioInputDeviceLabel.trim().isEmpty
-          ? 'selecionado'
-          : config.audioInputDeviceLabel.trim();
-      throw Exception(
-        'o microfone $name nao esta disponivel. Conecte-o ou escolha outro '
-        'em Configuracoes > Sistema',
-      );
-    }
+    final problem = audioInputProblem(
+      devices,
+      deviceId: config.audioInputDeviceId,
+      deviceLabel: config.audioInputDeviceLabel,
+    );
+    if (problem != null) throw Exception(problem);
     _activeInputDevice = selected;
     _activeInputLabel = selected?.label ?? 'padrao do sistema';
   }
@@ -716,19 +721,57 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
 
   /// Fecha o bloco atual e ja abre o proximo, para nao perder a fala que
   /// acontece enquanto o trecho anterior sobe para o backend.
+  ///
+  /// Roda dentro de um Timer: excecao aqui nao chega a ninguem. O bloco que
+  /// acabou de fechar entra na fila mesmo quando o proximo nao abre, e a queda
+  /// do microfone para a gravacao com aviso em vez de deixar a tela dizendo
+  /// "gravando" sobre um arquivo que nao existe.
   Future<void> _rotateChunk({bool restart = true}) async {
-    final String? path;
-    if (_systemCapturing) {
-      path = await _rotateSystemChunk(restart: restart);
-    } else {
-      path = await _recorder.stop();
-      if (restart) await _startChunk();
+    String? path;
+    Object? failure;
+    try {
+      if (_systemCapturing) {
+        path = await _rotateSystemChunk(restart: restart);
+      } else {
+        path = await _recorder.stop();
+        if (restart) {
+          try {
+            await _startChunk();
+          } catch (_) {
+            // Fone Bluetooth que reconecta ou USB que oscila costuma voltar
+            // em segundos: uma segunda tentativa, ja relendo a lista.
+            await Future<void>.delayed(const Duration(seconds: 2));
+            await _resolveInputDevice();
+            await _startChunk();
+          }
+        }
+      }
+    } catch (e) {
+      failure = e;
     }
     if (!restart) _currentPath = null;
     if (path != null) {
       _pendingUploads.add(_PendingChunk(path, _chunkDuration.inMilliseconds));
       unawaited(_drainUploads());
     }
+    if (failure != null) _captureLost(failure);
+  }
+
+  void _captureLost(Object error) {
+    _chunkTimer?.cancel();
+    _clockTimer?.cancel();
+    _sessionTimer?.cancel();
+    _currentPath = null;
+    _systemCapturing = false;
+    final reason = _errorText(error).replaceFirst('Exception: ', '');
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _captureFailure = reason;
+      });
+    }
+    _setStatus('A gravacao parou: $reason. O que ja foi gravado esta '
+        'guardado; reconecte o microfone e toque em retomar (▶).');
   }
 
   /// Na captura do som do computador o arquivo e trocado sem parar de gravar.
@@ -1031,6 +1074,14 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                       },
                 child: const Text('REENVIAR', style: TextStyle(fontSize: 10)),
               ),
+            ),
+          if (_captureFailure != null && !_recording)
+            _Banner(
+              icon: Icons.mic_off_outlined,
+              color: AssistantTheme.c4,
+              text: 'A gravacao parou: $_captureFailure. O que ja foi '
+                  'gravado esta guardado. Reconecte o microfone e toque em '
+                  'retomar.',
             ),
           if (_recording && _systemCapturing && _systemSilent)
             const _Banner(

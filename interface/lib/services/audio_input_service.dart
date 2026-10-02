@@ -25,6 +25,31 @@ InputDevice? resolveAudioInputDevice(
   return null;
 }
 
+/// Motivo pelo qual nao ha entrada para gravar, ou `null` quando ha.
+///
+/// Sem nenhum microfone ativo no Windows o `record` falha com um erro de
+/// driver que nao diz o que fazer; aqui o professor recebe a causa antes de a
+/// aula ser criada. Uma entrada salva que sumiu nao e trocada em silencio.
+String? audioInputProblem(
+  Iterable<InputDevice> devices, {
+  required String deviceId,
+  String deviceLabel = '',
+}) {
+  if (devices.isEmpty) {
+    return 'o Windows nao listou nenhum microfone ativo. Conecte um '
+        'microfone (ou religue o Bluetooth do fone) e tente de novo';
+  }
+  if (deviceId.trim().isNotEmpty &&
+      resolveAudioInputDevice(devices,
+              deviceId: deviceId, deviceLabel: deviceLabel) ==
+          null) {
+    final name = deviceLabel.trim().isEmpty ? 'selecionado' : deviceLabel.trim();
+    return 'o microfone $name nao esta disponivel. Conecte-o ou escolha '
+        'outro em Configuracoes > Sistema';
+  }
+  return null;
+}
+
 RecordConfig speechRecordConfig({
   required AudioEncoder encoder,
   InputDevice? device,
