@@ -8,6 +8,7 @@ cortado) e roda fora do ciclo da requisição, sem pressa de responder rápido.
 """
 
 import json
+import random
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -35,6 +36,21 @@ MAX_EMPTY_BATCHES = 2
 #: Questoes por chamada de validacao, pelo mesmo motivo do lote de geracao.
 VALIDATION_BATCH = 6
 
+#: Gera-se um pouco alem do pedido e corta-se no fim. Repeticao e reprovacao na
+#: validacao sao perdas esperadas; sem folga, pedir 20 entregava 15 e o professor
+#: ficava sem as 5 que faltavam.
+OVERSAMPLE_RATIO = 0.25
+MIN_OVERSAMPLE = 2
+MAX_OVERSAMPLE = 8
+
+#: Alternativas diferentes entre si que uma pergunta precisa ter para valer: com
+#: menos de tres o aluno acerta no chute, ou nao ha o que escolher.
+MIN_DISTINCT_OPTIONS = 3
+
+#: Quantas vezes um objetivo do plano e oferecido ao modelo antes de desistir
+#: dele (o conteudo pode nao sustentar aquela pergunta).
+MAX_SLOT_OFFERS = 2
+
 # Templates de prompts para diferentes tipos de quiz
 QUIZ_GENERATION_PROMPT = """Você é um especialista em geração de questões educacionais.
 
@@ -56,8 +72,11 @@ Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de for
 5. Distribua dificuldade equitativamente
 6. Cubra os tópicos principais do conteúdo, priorizando os que ainda não
    aparecem nas perguntas já geradas
-7. Para "multipla_escolha", gere exatamente 4 opções com labels A, B, C e D
-8. Marque exatamente uma opção como correta
+7. Para "multipla_escolha", gere exatamente 4 opções com labels A, B, C e D,
+   todas diferentes entre si, plausíveis e do mesmo tipo da correta — nunca
+   "todas as anteriores" nem "nenhuma das anteriores"
+8. Marque exatamente uma opção como correta, e varie a posição dela de uma
+   questão para outra (A, B, C ou D): não deixe a correta sempre na A
 9. Alternativa curta: no máximo {max_palavras} palavras e {max_caracteres}
    caracteres cada, sem frase completa e sem ponto final. O quiz é respondido
    no celular com o enunciado projetado: alternativa longa não cabe na tela nem
@@ -66,25 +85,64 @@ Baseado no conteúdo da aula abaixo, gere {quantidade_questoes} questões de for
 10. Enunciado direto, em uma linha
 11. Use "resposta_correta" com o label da alternativa correta
 12. Responda somente com JSON válido, sem markdown e sem comentários fora do JSON
-{evitar}
+{plano}{evitar}
 **Formato de resposta (JSON):**
 {{
   "questoes": [
     {{
+      "objetivo": 1,
       "tipo": "multipla_escolha",
       "dificuldade": "facil|medio|dificil",
       "enunciado": "Texto da questão",
       "opcoes": [
-        {{"label": "A", "texto": "Terceira forma normal", "correta": true}},
-        {{"label": "B", "texto": "Chave estrangeira", "correta": false}}
+        {{"label": "A", "texto": "Chave estrangeira", "correta": false}},
+        {{"label": "B", "texto": "Índice composto", "correta": false}},
+        {{"label": "C", "texto": "Terceira forma normal", "correta": true}},
+        {{"label": "D", "texto": "Gatilho", "correta": false}}
       ],
-      "resposta_correta": "A",
+      "resposta_correta": "C",
       "justificativa": "Explicação com referência ao resumo",
       "conceitos": ["conceito1", "conceito2"],
       "topico_origem": "Título do tópico do resumo"
     }}
   ],
   "tempo_estimado": 15
+}}
+"""
+
+#: Planejar antes de escrever e o que da variedade ao quiz. Sem plano, cada lote
+#: so sabia a lista do que ja saiu e voltava as mesmas perguntas com outras
+#: palavras; com plano, cada pergunta nasce de um conceito e de um angulo
+#: escolhidos antes. Nao contem "gere N questoes" de proposito: esse trecho e o
+#: que identifica o pedido de geracao.
+PLAN_PROMPT = """Você é um professor planejando um quiz de múltipla escolha.
+
+Leia o conteúdo e planeje {quantidade} perguntas **diferentes entre si**. Ainda
+não escreva as perguntas: liste os objetivos.
+
+**Conteúdo selecionado (uma ou mais aulas e materiais da disciplina):**
+{resumo}
+
+**Disciplina:** {disciplina}
+**Tipo de Quiz:** {tipo_quiz}
+**Dificuldade:** {dificuldade}
+
+Regras:
+1. Cada objetivo testa um conceito ou fato **distinto** do conteúdo. Dois objetivos
+   nunca podem ter a mesma resposta.
+2. Varie o ângulo entre os objetivos: definição, aplicação a um caso, comparação
+   entre dois conceitos, causa e consequência, identificação de erro, ordem de
+   etapas, exemplo concreto.
+3. Cubra o conteúdo todo, distribuindo entre as fontes e os tópicos.
+4. Use somente o que está no conteúdo. Se ele não sustenta {quantidade} objetivos
+   realmente distintos, devolva menos — nunca repita nem invente.
+5. Responda somente com JSON válido, sem markdown.
+{evitar}
+**Formato de resposta (JSON):**
+{{
+  "objetivos": [
+    {{"topico": "Título do tópico", "conceito": "Conceito ou fato testado", "angulo": "aplicacao"}}
+  ]
 }}
 """
 
@@ -160,6 +218,11 @@ class QuizGraphState(dict):
     #: Chamado a cada lote com (questoes prontas, total pedido). Existe para a
     #: geracao em segundo plano poder dizer na tela em que ponto esta.
     on_progress: Optional[Callable[[int, int], None]]
+
+    #: O que foi descartado e por que (repetidas, invalidas, reprovadas na
+    #: validacao, excedentes) e quantos objetivos o plano conseguiu. E o que
+    #: explica ao professor por que vieram menos perguntas do que o pedido.
+    descartes: Optional[Dict[str, int]] = None
 
     # Intermediários
     questoes_brutas: Optional[List[Dict[str, Any]]] = None
@@ -468,7 +531,13 @@ def _normalize_question(item: Any, tipos_questao: Sequence[str]) -> Optional[Dic
         opcao["correta"] for opcao in opcoes
     )
 
+    try:
+        objetivo = int(item.get("objetivo"))
+    except (TypeError, ValueError):
+        objetivo = None
+
     return {
+        "objetivo": objetivo,
         "tipo": tipo,
         "dificuldade": _normalize_difficulty(item.get("dificuldade") or item.get("difficulty")),
         "enunciado": re.sub(r"\s+", " ", enunciado).strip(),
@@ -695,11 +764,22 @@ def _dedupe_key(enunciado: str) -> str:
     return re.sub(r"[^0-9a-zà-ÿ ]", "", (enunciado or "").lower()).strip()
 
 
+def _stem(word: str) -> str:
+    """Tira o plural simples: "dependencias" e "dependencia" sao a mesma palavra.
+
+    Sem isso, a mesma pergunta reescrita no plural passava pela checagem de
+    repeticao com palavras "diferentes".
+    """
+    if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
 def _key_words(enunciado: str) -> frozenset:
     # Numero fica mesmo curto: "1FN" e "2FN", ou "1 byte" e "2 bytes", sao
     # perguntas diferentes que so se distinguem por ele.
     return frozenset(
-        word
+        _stem(word)
         for word in _dedupe_key(enunciado).split()
         if len(word) > 2 or any(char.isdigit() for char in word)
     )
@@ -731,6 +811,141 @@ def _correct_option_text(questao: Dict[str, Any]) -> str:
         if isinstance(opcao, dict) and opcao.get("correta"):
             return str(opcao.get("texto") or "").strip()
     return ""
+
+
+#: Parecenca de palavras a partir da qual duas perguntas com a **mesma resposta**
+#: contam como a mesma pergunta. Mais baixa que `REPHRASE_SIMILARITY` de
+#: proposito: resposta igual ja e um sinal forte, e e o que pega a reformulacao
+#: ("elimina dependencia transitiva" x "remove dependencias transitivas").
+SAME_ANSWER_SIMILARITY = 0.3
+
+
+def _answer_key(questao: Dict[str, Any]) -> str:
+    return _dedupe_key(_correct_option_text(questao))
+
+
+def _is_same_fact(
+    questao: Dict[str, Any],
+    vistas: Sequence[tuple],
+) -> bool:
+    """Mesma resposta e enunciado minimamente parecido: e o mesmo fato.
+
+    Comparar so o enunciado deixava passar a pergunta reescrita. Duas perguntas
+    podem ter a mesma resposta e serem diferentes ("qual forma normal exige 2FN?"
+    x "qual elimina dependencia transitiva?"), por isso a resposta sozinha nao
+    basta - tem de vir junto com enunciado parecido.
+
+    Args:
+        vistas: pares `(palavras do enunciado, chave da resposta)` ja aceitos.
+    """
+    resposta = _answer_key(questao)
+    if not resposta:
+        return False
+    palavras = _key_words(questao.get("enunciado", ""))
+    if not palavras:
+        return False
+    for outras, resposta_outra in vistas:
+        if resposta_outra != resposta or not outras:
+            continue
+        if len(palavras & outras) / len(palavras | outras) >= SAME_ANSWER_SIMILARITY:
+            return True
+    return False
+
+
+# --- Alternativas: distintas, em ordem equilibrada --------------------------
+
+_ORDER_DEPENDENT = re.compile(
+    r"\b(todas|todos|nenhuma|nenhum|ambas|ambos)\b[^.]*\b(anteriores?|acima|alternativas?|itens?)\b"
+    r"|\b(alternativas?|itens?|op[cç][aã]o|op[cç][oõ]es)\s+[A-E]\b",
+    re.IGNORECASE,
+)
+
+
+def _dedupe_options(opcoes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Tira alternativas com o mesmo texto, mantendo a marca de correta."""
+    vistas: Dict[str, Dict[str, Any]] = {}
+    resultado: List[Dict[str, Any]] = []
+    for opcao in opcoes:
+        chave = _dedupe_key(str(opcao.get("texto", "")))
+        if not chave:
+            continue
+        if chave in vistas:
+            # Duas iguais e a segunda era a correta: a correta e a que fica.
+            if opcao.get("correta"):
+                vistas[chave]["correta"] = True
+            continue
+        vistas[chave] = opcao
+        resultado.append(opcao)
+    return resultado
+
+
+def _is_answerable(questao: Dict[str, Any]) -> bool:
+    """Multipla escolha com alternativas suficientes para haver o que escolher."""
+    if questao.get("tipo") != "multipla_escolha":
+        return True
+    return len(questao.get("opcoes") or []) >= MIN_DISTINCT_OPTIONS
+
+
+def _correct_index(opcoes: Sequence[Dict[str, Any]]) -> Optional[int]:
+    indices = [i for i, opcao in enumerate(opcoes) if opcao.get("correta")]
+    return indices[0] if len(indices) == 1 else None
+
+
+def _relabel(questao: Dict[str, Any]) -> None:
+    """Letras sequenciais (A, B, C...) na ordem atual, e `resposta_correta` coerente.
+
+    O modelo as vezes devolve letras repetidas ou fora de ordem; a letra e o que
+    o aluno envia e o que corrige a resposta, entao ela tem de ser unica e bater
+    com a posicao.
+    """
+    for indice, opcao in enumerate(questao.get("opcoes") or []):
+        opcao["label"] = chr(ord("A") + indice)
+    posicao = _correct_index(questao.get("opcoes") or [])
+    if posicao is not None:
+        questao["resposta_correta"] = questao["opcoes"][posicao]["label"]
+
+
+def _balance_correct_positions(
+    questoes: List[Dict[str, Any]],
+    rng: random.Random,
+) -> None:
+    """Espalha a posicao da alternativa correta pelo quiz inteiro.
+
+    Os modelos colocam a correta quase sempre na A (o exemplo do prompt fazia
+    isso), e o aluno que percebe o padrao acerta sem ler. Reordenar no codigo e a
+    unica garantia: pedir "varie a posicao" no prompt so ajuda um pouco.
+
+    A posicao de cada questao e escolhida entre as menos usadas ate ali, com
+    desempate aleatorio, entao o quiz sai equilibrado, nao so sorteado. Pergunta
+    cujas alternativas dependem da ordem ("todas as anteriores", "A e B") nao e
+    reordenada.
+    """
+    usos: Dict[int, int] = {}
+    for questao in questoes:
+        if questao.get("tipo") != "multipla_escolha":
+            continue
+        opcoes = questao.get("opcoes") or []
+        posicao_atual = _correct_index(opcoes)
+        if posicao_atual is None or len(opcoes) < 2:
+            _relabel(questao)
+            continue
+        if any(_ORDER_DEPENDENT.search(str(o.get("texto", ""))) for o in opcoes):
+            _relabel(questao)
+            usos[posicao_atual] = usos.get(posicao_atual, 0) + 1
+            continue
+
+        menos = min(usos.get(i, 0) for i in range(len(opcoes)))
+        alvo = rng.choice([i for i in range(len(opcoes)) if usos.get(i, 0) == menos])
+        correta = opcoes[posicao_atual]
+        outras = [o for i, o in enumerate(opcoes) if i != posicao_atual]
+        rng.shuffle(outras)
+        questao["opcoes"] = outras[:alvo] + [correta] + outras[alvo:]
+        _relabel(questao)
+        usos[alvo] = usos.get(alvo, 0) + 1
+
+
+def _new_rng() -> random.Random:
+    return random.Random()
 
 
 def _avoid_block(
@@ -897,14 +1112,118 @@ def _report_progress(state: QuizGraphState, prontas: int, total: int) -> None:
         logger.debug(f"Callback de progresso do quiz falhou: {error}")
 
 
+def _plan_block(slots: Sequence[tuple]) -> str:
+    """Os objetivos do plano que esta rodada precisa transformar em pergunta."""
+    if not slots:
+        return ""
+    linhas = [
+        f"{numero}. [{slot.get('topico') or '-'}] {slot['conceito']}"
+        f" — ângulo: {slot.get('angulo') or 'livre'}"
+        for numero, slot in slots
+    ]
+    return (
+        "\n**Objetivos desta rodada — escreva exatamente uma pergunta para cada "
+        "objetivo, na ordem, e copie o número do objetivo no campo `objetivo`. "
+        "Cada pergunta testa só o conceito do seu objetivo:**\n"
+        + "\n".join(linhas)
+        + "\n"
+    )
+
+
+def _parse_plan(content: str, limite: int) -> List[Dict[str, Any]]:
+    """Objetivos do plano, sem os que repetem outro objetivo."""
+    data = _json_from_content(content)
+    itens = data.get("objetivos") or data.get("plano") or data.get("objectives")
+    if not isinstance(itens, list):
+        return []
+
+    slots: List[Dict[str, Any]] = []
+    vistos: List[frozenset] = []
+    for item in itens:
+        if not isinstance(item, dict):
+            continue
+        conceito = " ".join(
+            str(item.get("conceito") or item.get("objetivo") or "").split()
+        )
+        if not conceito:
+            continue
+        palavras = _key_words(conceito)
+        if palavras and any(
+            outras and len(palavras & outras) / len(palavras | outras) >= REPHRASE_SIMILARITY
+            for outras in vistos
+        ):
+            continue
+        vistos.append(palavras)
+        slots.append({
+            "topico": " ".join(str(item.get("topico") or "").split()),
+            "conceito": conceito,
+            "angulo": " ".join(str(item.get("angulo") or "").split()),
+        })
+        if len(slots) >= limite:
+            break
+    return slots
+
+
+async def _plan_questions(
+    state: QuizGraphState,
+    quantidade: int,
+    candidatos: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """Planeja conceitos e angulos distintos antes de escrever as perguntas.
+
+    Falha aqui nao derruba o quiz: sem plano, a geracao segue como antes, so com a
+    lista do que ja saiu para nao repetir. O plano pode vir menor que o pedido, e
+    isso e informacao - o conteudo nao sustenta mais perguntas distintas.
+    """
+    prompt = PLAN_PROMPT.format(
+        quantidade=quantidade,
+        resumo=state["resumo"],
+        disciplina=state["disciplina"],
+        tipo_quiz=state["tipo_quiz"],
+        dificuldade=state["dificuldade"],
+        evitar=_avoid_block(list(state.get("previas") or [])),
+    )
+    for llm_name in list(candidatos)[:2]:
+        try:
+            response = await dispatch_single(
+                llm_name,
+                prompt,
+                [],
+                "Planeje as perguntas e responda somente com JSON válido.",
+                max_tokens=_token_budget(max(quantidade // 3, 1)),
+            )
+        except Exception as error:
+            logger.warning(f"Plano do quiz falhou em {llm_name}: {error}")
+            continue
+        if response.is_error:
+            logger.warning(f"Plano do quiz recusado por {llm_name}: {response.content}")
+            continue
+        slots = _parse_plan(response.content, quantidade)
+        if slots:
+            return slots
+        logger.warning(f"Plano do quiz sem objetivos aproveitaveis em {llm_name}")
+    return []
+
+
+def _oversample(pedido: int) -> int:
+    """Quantas perguntas gerar para entregar `pedido` depois das perdas."""
+    margem = min(max(round(pedido * OVERSAMPLE_RATIO), MIN_OVERSAMPLE), MAX_OVERSAMPLE)
+    return pedido + margem
+
+
 async def _generate_batch(
     state: QuizGraphState,
     quantidade: int,
     ja_gerados: List[Dict[str, Any]],
     candidatos: List[str],
     attempts: List[Dict[str, Any]],
+    slots: Sequence[tuple] = (),
 ) -> Dict[str, Any]:
-    """Pede um lote de questoes, tentando cada modelo candidato em ordem."""
+    """Pede um lote de questoes, tentando cada modelo candidato em ordem.
+
+    `slots` sao os objetivos do plano a cobrir neste lote, como pares
+    `(numero, objetivo)`. Sem plano, o lote so recebe a lista do que ja saiu.
+    """
 
     # O que ja existe de quizzes anteriores vem antes: o corte do bloco guarda as
     # mais recentes, e as deste quiz sao as que mais importa nao repetir.
@@ -918,6 +1237,7 @@ async def _generate_batch(
             tipo_quiz=state["tipo_quiz"],
             tipos_questao=", ".join(state["tipos_questao"]),
             dificuldade=state["dificuldade"],
+            plano=_plan_block(slots),
             evitar=_avoid_block(referencia, tentativa_repetiu=tentativa_repetiu),
             max_palavras=MAX_OPTION_WORDS,
             max_caracteres=MAX_OPTION_CHARS,
@@ -925,6 +1245,11 @@ async def _generate_batch(
 
     chaves = {_dedupe_key(questao.get("enunciado", "")) for questao in referencia}
     vistos = [_key_words(questao.get("enunciado", "")) for questao in referencia]
+    fatos = [
+        (_key_words(questao.get("enunciado", "")), _answer_key(questao))
+        for questao in referencia
+    ]
+    descartes = {"repetidas": 0, "invalidas": 0}
     tentativa_repetiu = False
     erro = "A IA não gerou perguntas aproveitáveis."
 
@@ -966,13 +1291,31 @@ async def _generate_batch(
         quiz_data = _json_from_content(response.content)
         questoes = _normalize_questions(quiz_data, state["tipos_questao"])
 
+        # Contagem por tentativa: vale a da resposta que foi aceita, ou a ultima
+        # quando nenhuma serve. Somar as de varios provedores contaria a mesma
+        # repeticao mais de uma vez.
+        descartes = {
+            "repetidas": 0,
+            "invalidas": max(_raw_count(quiz_data) - len(questoes), 0),
+        }
+
         novas = []
         for questao in questoes:
             enunciado = questao.get("enunciado", "")
-            if _is_repeat(enunciado, vistos, chaves):
+            if questao.get("tipo") == "multipla_escolha":
+                # Alternativas iguais e letras desencontradas entram aqui, antes
+                # de qualquer outra etapa usar a letra como chave.
+                questao["opcoes"] = _dedupe_options(questao.get("opcoes") or [])
+                _relabel(questao)
+            if not _is_answerable(questao):
+                descartes["invalidas"] += 1
+                continue
+            if _is_repeat(enunciado, vistos, chaves) or _is_same_fact(questao, fatos):
+                descartes["repetidas"] += 1
                 continue
             chaves.add(_dedupe_key(enunciado))
             vistos.append(_key_words(enunciado))
+            fatos.append((_key_words(enunciado), _answer_key(questao)))
             novas.append(questao)
             if len(novas) >= quantidade:
                 break
@@ -1004,9 +1347,63 @@ async def _generate_batch(
             "questoes": novas,
             "tempo_estimado": int(quiz_data.get("tempo_estimado") or 0),
             "llm": llm_name,
+            "descartes": descartes,
         }
 
-    return {"questoes": [], "tempo_estimado": 0, "llm": "", "error": erro}
+    return {
+        "questoes": [],
+        "tempo_estimado": 0,
+        "llm": "",
+        "error": erro,
+        "descartes": descartes,
+    }
+
+
+def _raw_count(data: Dict[str, Any]) -> int:
+    """Quantas questoes o modelo devolveu, antes de qualquer descarte."""
+    brutas = (
+        data.get("questoes")
+        or data.get("perguntas")
+        or data.get("questions")
+        or data.get("items")
+        or []
+    )
+    return len(brutas) if isinstance(brutas, list) else 0
+
+
+def _baixar_objetivos(
+    pendentes: List[tuple],
+    oferecidos: Sequence[tuple],
+    novas: Sequence[Dict[str, Any]],
+) -> None:
+    """Tira da fila os objetivos que o lote cobriu.
+
+    O modelo devolve o numero do objetivo em cada pergunta. Quando ele nao
+    devolve, vale a ordem: as primeiras perguntas cobrem os primeiros objetivos.
+    """
+    if not oferecidos:
+        return
+    ecoados = {
+        questao.get("objetivo")
+        for questao in novas
+        if questao.get("objetivo") is not None
+    }
+    oferecidos_numeros = {numero for numero, _ in oferecidos}
+    cobertos = (ecoados & oferecidos_numeros) or {
+        numero for numero, _ in list(oferecidos)[: len(novas)]
+    }
+    pendentes[:] = [item for item in pendentes if item[0] not in cobertos]
+
+
+def _desistir_de_objetivos(pendentes: List[tuple], ofertas: Dict[int, int]) -> None:
+    """Abandona o objetivo que ja foi oferecido vezes demais sem render pergunta.
+
+    O conteudo pode nao sustentar aquela pergunta; insistir nela travaria o
+    lote seguinte numa pergunta impossivel.
+    """
+    pendentes[:] = [
+        item for item in pendentes if ofertas.get(item[0], 0) < MAX_SLOT_OFFERS
+    ]
 
 
 async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
@@ -1038,16 +1435,35 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
     tempo_estimado = 0
     lotes_vazios = 0
     erro = "A IA não gerou perguntas aproveitáveis."
+    descartes = {"repetidas": 0, "invalidas": 0}
+
+    # Gera alem do pedido: repeticao e reprovacao na validacao sao perdas
+    # esperadas, e o corte para `total` vem no fim.
+    alvo = _oversample(total)
 
     _report_progress(state, 0, total)
 
-    while len(questoes) < total:
-        pedido = min(QUESTIONS_PER_BATCH, total - len(questoes))
-        lote = await _generate_batch(state, pedido, questoes, candidatos, attempts)
+    # Plano antes das perguntas: cada uma nasce de um conceito e de um angulo
+    # distintos. O plano pode vir menor que o pedido; sem plano, segue sem ele.
+    plano = await _plan_questions(state, alvo, candidatos)
+    pendentes: List[tuple] = list(enumerate(plano, start=1))
+    ofertas: Dict[int, int] = {}
+
+    while len(questoes) < alvo:
+        pedido = min(QUESTIONS_PER_BATCH, alvo - len(questoes))
+        lote_slots = pendentes[:pedido]
+        for numero, _ in lote_slots:
+            ofertas[numero] = ofertas.get(numero, 0) + 1
+        lote = await _generate_batch(
+            state, pedido, questoes, candidatos, attempts, slots=lote_slots
+        )
+        for chave, valor in (lote.get("descartes") or {}).items():
+            descartes[chave] = descartes.get(chave, 0) + valor
 
         if not lote["questoes"]:
             erro = lote.get("error") or erro
             lotes_vazios += 1
+            _desistir_de_objetivos(pendentes, ofertas)
             if lotes_vazios >= MAX_EMPTY_BATCHES:
                 break
             continue
@@ -1061,9 +1477,17 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
                 nome for nome in candidatos if nome != vencedor
             ]
 
+        _baixar_objetivos(pendentes, lote_slots, lote["questoes"])
+        _desistir_de_objetivos(pendentes, ofertas)
         questoes.extend(lote["questoes"])
         tempo_estimado = max(tempo_estimado, lote["tempo_estimado"])
-        _report_progress(state, len(questoes), total)
+        _report_progress(state, min(len(questoes), total), total)
+
+    # Quantos objetivos distintos o plano achou: se for menos que o pedido, o
+    # conteudo nao sustenta mais perguntas diferentes - e e isso que o professor
+    # precisa ouvir, em vez de so ver um numero menor.
+    descartes["objetivos_planejados"] = len(plano)
+    descartes["objetivos_pedidos"] = alvo
 
     if not questoes:
         # `attempts` tambem no topo do estado: e de la que `generate_quiz` le a
@@ -1078,11 +1502,16 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         }
 
     questoes = await _shorten_long_options(questoes, candidatos)
+    # Por ultimo, depois de encurtar (que casa as alternativas pela letra): a
+    # posicao da correta vira equilibrada no quiz inteiro, e as letras
+    # sequenciais com o gabarito acompanhando.
+    _balance_correct_positions(questoes, _new_rng())
 
     return {
         "questoes_brutas": questoes,
         "tempo_estimado": tempo_estimado or 15,
         "attempts": attempts,
+        "descartes": descartes,
     }
 
 
@@ -1223,10 +1652,34 @@ async def _quiz_filter_node(state: QuizGraphState) -> Dict[str, Any]:
 
         media_score = sum(scores) / len(scores) if scores else 0.0
 
+    # Reprovadas na validacao contam antes do corte: sao perda, nao sobra.
+    descartes = dict(state.get("descartes") or {})
+    descartes["reprovadas"] = len(questoes_brutas) - len(questoes_filtradas)
+
+    # A geracao passou do pedido de proposito (folga para as perdas). Aqui
+    # sobram as melhores: verificadas primeiro, depois maior grounding, mantida
+    # a ordem do plano entre as que ficam.
+    pedido = max(int(state.get("quantidade_questoes") or 1), 1)
+    descartes["excedentes"] = max(len(questoes_filtradas) - pedido, 0)
+    if len(questoes_filtradas) > pedido:
+        ranking = sorted(
+            range(len(questoes_filtradas)),
+            key=lambda i: (
+                not questoes_filtradas[i].get("verificado", True),
+                -float(questoes_filtradas[i].get("grounding_score") or 0.0),
+                i,
+            ),
+        )
+        ficam = set(ranking[:pedido])
+        questoes_filtradas = [
+            questao for i, questao in enumerate(questoes_filtradas) if i in ficam
+        ]
+
     return {
         "questoes_brutas": questoes_filtradas,
         "outcome": {
             "questoes": questoes_filtradas,
+            "descartes": descartes,
             "total_gerado": len(state.get("questoes_brutas", [])),
             "total_validado": len(questoes_filtradas),
             "media_grounding_score": media_score,

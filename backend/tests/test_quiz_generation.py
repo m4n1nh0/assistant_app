@@ -706,7 +706,11 @@ def test_quiz_service_normalizes_alternate_llm_question_shape(monkeypatch):
     assert question["tipo"] == "multipla_escolha"
     assert question["dificuldade"] == "medio"
     assert question["enunciado"] == "Qual atributo identifica a entidade?"
-    assert question["opcoes"][1]["correta"] is True
+    # A posicao da correta e sorteada: o que vale e que a correta seja a que o
+    # modelo indicou (CPF), com a letra acompanhando.
+    correta = [o for o in question["opcoes"] if o["correta"]]
+    assert [o["texto"] for o in correta] == ["CPF"]
+    assert question["resposta_correta"] == correta[0]["label"]
 
 
 def test_quiz_service_keeps_reviewable_question_with_low_grounding(monkeypatch):
@@ -833,7 +837,7 @@ def _fake_quiz_llm(
                 "opcoes": [
                     {
                         "label": "A",
-                        "texto": opcao_longa or "Primeira forma normal",
+                        "texto": opcao_longa or f"Primeira forma normal {numero}",
                         "correta": True,
                     },
                     {"label": "B", "texto": "Chave estrangeira"},
@@ -925,11 +929,16 @@ def test_geracao_vai_em_lotes_ate_completar_o_pedido(monkeypatch):
         )
     )
 
+    # O pedido sai inteiro (a geracao passa do pedido de proposito e corta no fim).
     assert len(result["questoes"]) == 6
-    assert len(chamadas) == 2
-    # Segundo lote pede so o que falta, e leva a lista do que ja saiu.
-    assert "gere 2 quest" in chamadas[1]
-    assert "Perguntas já geradas" in chamadas[1]
+    # Pedir 6 gera 8 (folga de 2 para repeticao e reprovacao), em dois lotes de 4.
+    # O plano e uma chamada a parte e nao conta como lote.
+    lotes = [c for c in chamadas if "gere " in c]
+    assert len(lotes) == 2
+    assert "gere 4 quest" in lotes[0]
+    # Segundo lote leva a lista do que ja saiu.
+    assert "gere 4 quest" in lotes[1]
+    assert "Perguntas já geradas" in lotes[1]
 
 
 def test_progresso_e_reportado_lote_a_lote(monkeypatch):
@@ -1000,9 +1009,10 @@ def test_alternativa_longa_volta_para_o_modelo_encurtar(monkeypatch):
     )
 
     opcoes = result["questoes"][0]["opcoes"]
-    assert opcoes[0]["texto"] == "Normalizacao de tabelas"
-    # O gabarito e casado por label: encurtar texto nao muda a resposta.
-    assert opcoes[0]["correta"] is True
+    # O gabarito e casado por label: encurtar texto nao muda a resposta. A
+    # posicao da correta e sorteada, entao ela e achada pela marca.
+    corretas = [o for o in opcoes if o["correta"]]
+    assert [o["texto"] for o in corretas] == ["Normalizacao de tabelas"]
 
 
 def test_alternativa_que_o_modelo_nao_encurtou_sai_aparada(monkeypatch):
@@ -1717,6 +1727,8 @@ def test_provedor_seguinte_sabe_que_o_anterior_so_repetiu(monkeypatch):
             "opcoes": [
                 {"label": "A", "texto": "3FN", "correta": True},
                 {"label": "B", "texto": "1FN"},
+                {"label": "C", "texto": "2FN"},
+                {"label": "D", "texto": "BCNF"},
             ],
             "resposta_correta": "A",
         }
@@ -1753,8 +1765,12 @@ def test_provedor_seguinte_sabe_que_o_anterior_so_repetiu(monkeypatch):
         "Qual forma normal elimina dependencia transitiva?",
         "Qual a funcao de uma chave estrangeira?",
     ]
-    # Lote 1: repetidor entrega. Lote 2: repetidor repete, variado entrega.
-    assert [llm for llm, _ in prompts] == ["repetidor", "repetidor", "variado"]
+    # Lote 1: repetidor entrega. Lote 2: repetidor repete, variado entrega. Os
+    # lotes seguintes (a geracao passa do pedido de proposito) so repetem o que ja
+    # existe e o plano e uma chamada a parte, entao olha-se so os tres primeiros
+    # lotes.
+    lotes = [(llm, prompt) for llm, prompt in prompts if "gere " in prompt]
+    assert [llm for llm, _ in lotes[:3]] == ["repetidor", "repetidor", "variado"]
     aviso = "tentativa anterior devolveu apenas perguntas"
-    assert aviso not in prompts[1][1]
-    assert aviso in prompts[2][1]
+    assert aviso not in lotes[1][1]
+    assert aviso in lotes[2][1]

@@ -39,6 +39,47 @@ Feature que gera automaticamente exercícios e questões baseado nos resumos de 
 
 ---
 
+## Variedade e completude das perguntas
+
+Defeito de aula real: pedidas 20 perguntas, vieram 15, parecidas entre si e com a
+alternativa correta sempre na A. O que mudou, na ordem do pipeline:
+
+1. **Plano antes das perguntas.** Uma chamada à parte planeja os objetivos —
+   conceito, tópico e ângulo (definição, aplicação, comparação, causa e
+   consequência, erro, ordem, exemplo) — sem repetir um objetivo no outro. Cada
+   lote recebe os objetivos que precisa cobrir e devolve o número do objetivo em
+   cada pergunta; o que não rendeu pergunta volta no lote seguinte, e um objetivo
+   oferecido duas vezes sem render é abandonado (o conteúdo pode não sustentá-lo).
+   Se o plano falha, a geração segue como antes, só com a lista do que já saiu.
+2. **Folga para as perdas.** Gera-se `pedido + 25%` (mínimo 2, máximo 8 a mais) e
+   corta-se no fim, ficando com as melhores: verificadas primeiro, depois maior
+   `grounding_score`. Repetição e reprovação na validação são perdas esperadas;
+   sem folga, 20 viravam 15.
+3. **Repetição pega a pergunta reescrita.** Além da similaridade de palavras do
+   enunciado (agora com plural tratado: "dependências" = "dependência"), duas
+   perguntas com **a mesma resposta** e enunciado minimamente parecido contam como
+   o mesmo fato. A resposta igual sozinha não basta — "qual forma normal exige a
+   2FN?" e "qual elimina dependência transitiva?" têm a mesma resposta e são
+   perguntas diferentes.
+4. **A correta não fica mais na A.** O exemplo do prompt marcava a A e os modelos o
+   copiavam. Agora o exemplo varia e, no código, a posição da correta é
+   **equilibrada no quiz inteiro** (20 perguntas, 4 posições, 5 em cada), e as
+   letras e o gabarito acompanham. Pergunta que depende da ordem ("todas as
+   anteriores", "A e B") não é reordenada.
+5. **Alternativas que servem.** Alternativas com o mesmo texto são unificadas, as
+   letras ficam sequenciais, e pergunta com menos de 3 alternativas distintas é
+   descartada.
+6. **O professor sabe por que vieram menos.** Quando vem menos que o pedido, a
+   mensagem diz quantas foram repetidas, inválidas ou reprovadas na validação. Se o
+   plano achou menos assuntos do que o pedido, diz que o **conteúdo só sustentou N
+   assuntos distintos** e sugere marcar mais aulas ou materiais; senão, sugere
+   gerar de novo.
+
+Custo: uma chamada a mais (o plano) e cerca de 25% mais geração e validação por
+quiz, em troca de entregar o que foi pedido.
+
+---
+
 ## Revisão por agentes especialistas (Codex e Claude)
 
 Depois da geração, o professor pode pedir que **Codex e Claude** revisem o

@@ -4010,16 +4010,56 @@ async def create_quiz_from_questions(
     return await _build_quiz_response(db, quiz)
 
 
+def _explicar_falta(
+    total_questoes: int,
+    pedidas: int,
+    descartes: Optional[Dict[str, int]],
+) -> str:
+    """Por que vieram menos perguntas do que o pedido.
+
+    Dizer so "vieram 15" deixa o professor sem saber se foi falha do modelo ou se
+    a aula nao tem mais o que perguntar - e a acao e diferente: tentar de novo
+    ou marcar mais fontes.
+    """
+    descartes = descartes or {}
+    motivos = []
+    if descartes.get("repetidas"):
+        motivos.append(f"{descartes['repetidas']} repetida(s) de outra pergunta")
+    if descartes.get("invalidas"):
+        motivos.append(
+            f"{descartes['invalidas']} com alternativas insuficientes ou repetidas"
+        )
+    if descartes.get("reprovadas"):
+        motivos.append(f"{descartes['reprovadas']} reprovada(s) na validação")
+
+    texto = f" Você pediu {pedidas} e vieram {total_questoes}"
+    texto += f" ({', '.join(motivos)})." if motivos else "."
+
+    planejados = descartes.get("objetivos_planejados")
+    pedidos_ao_plano = descartes.get("objetivos_pedidos")
+    if planejados is not None and pedidos_ao_plano and planejados < pedidas:
+        texto += (
+            f" O conteúdo só sustentou {planejados} assunto(s) distinto(s): para "
+            "mais perguntas diferentes, marque mais aulas ou materiais."
+        )
+    else:
+        texto += " Gere de novo para completar o que faltou."
+    return texto
+
+
 def _mensagem_do_quiz(
     total_questoes: int,
     fontes: Sequence[Dict[str, str]],
     ignoradas: Sequence[str],
+    pedidas: Optional[int] = None,
+    descartes: Optional[Dict[str, int]] = None,
 ) -> str:
     """Diz de onde o quiz saiu e o que ficou de fora.
 
     Fonte marcada que nao entrou tem de aparecer: sem isso o professor acha que
     a aula de hoje virou pergunta quando ela estava vazia, e so descobre o
-    contrario lendo as perguntas uma por uma.
+    contrario lendo as perguntas uma por uma. O mesmo vale para pergunta que
+    faltou: o pedido de 20 que entrega 15 precisa dizer isso, e por que.
     """
     partes = [
         f"{total_questoes} questões preparadas para revisão",
@@ -4027,6 +4067,8 @@ def _mensagem_do_quiz(
         ". Libere o QR Code quando estiver pronto para aplicar.",
     ]
     mensagem = " ".join(parte for parte in partes[:2] if parte) + partes[2]
+    if pedidas is not None and total_questoes < pedidas:
+        mensagem += _explicar_falta(total_questoes, pedidas, descartes)
     if ignoradas:
         mensagem += f" Ficou de fora por não ter texto: {', '.join(ignoradas)}."
     return mensagem
@@ -4143,7 +4185,13 @@ async def _persist_generated_quiz(
         questoes=questoes_responses,
         tempo_estimado_resposta=quiz_data.get("tempo_estimado", 15),
         status="draft",
-        message=_mensagem_do_quiz(len(questoes_responses), fontes, ignoradas),
+        message=_mensagem_do_quiz(
+            len(questoes_responses),
+            fontes,
+            ignoradas,
+            pedidas=request.quantidade_questoes,
+            descartes=quiz_data.get("descartes"),
+        ),
         attempts=quiz_data.get("attempts", []),
     )
 
