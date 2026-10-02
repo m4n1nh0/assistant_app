@@ -4,22 +4,31 @@
 que captou so silencio (mudo, dispositivo errado, fone Bluetooth que caiu) e o audio
 com som que o reconhecimento nao entendeu (fala distante, baixa, sala com eco). Sem
 medir o sinal, o professor recebe a mesma frase nos dois e nao sabe o que mexer.
+
+O nivel so explica: quem decide se ha fala e o reconhecimento. Microfone de notebook
+numa sala quieta mede pico de 0.0025 so de ruido de fundo, entao uma palestra falada
+longe dele fica a poucas vezes disso - descartar o bloco por nivel jogaria fora fala
+que o Whisper entende.
 """
 
 from __future__ import annotations
 
 import io
+import sys
 import wave
 from array import array
 from typing import Optional
 
-#: Pico abaixo disso (fracao do maximo de 16 bits, ~ -46 dBFS) e silencio de
-#: dispositivo: nem fala sussurrada ao lado do microfone fica tao baixa.
-SILENCE_PEAK = 0.005
+#: Pico abaixo disso (fracao do maximo de 16 bits, ~ -60 dBFS) e dispositivo sem
+#: sinal: mudo, desconectado ou capturando zeros. Ruido de fundo de uma sala quieta
+#: ja passa de duas vezes esse valor.
+SILENCE_PEAK = 0.001
 
 #: Pico abaixo disso e voz que o reconhecimento tende a perder: longe do microfone
-#: ou com o ganho baixo.
+#: ou com o ganho de entrada baixo.
 LOW_PEAK = 0.03
+
+NO_SPEECH = "nenhuma fala reconhecida no bloco."
 
 
 def wav_peak(data: bytes) -> Optional[float]:
@@ -40,33 +49,22 @@ def wav_peak(data: bytes) -> Optional[float]:
     amostras.frombytes(frames[: len(frames) - len(frames) % 2])
     if not amostras:
         return 0.0
-    # O sinal cru do arquivo esta em little-endian; array usa a ordem da maquina.
-    if _big_endian():
+    # O arquivo esta em little-endian; array usa a ordem da maquina.
+    if sys.byteorder == "big":
         amostras.byteswap()
     return max(max(amostras), -min(amostras)) / 32768.0
 
 
-def _big_endian() -> bool:
-    import sys
-
-    return sys.byteorder == "big"
-
-
-def silence_reason(peak: Optional[float]) -> Optional[str]:
-    """Explicacao quando o bloco veio mudo; `None` se ha som ou nao se mediu."""
-    if peak is not None and peak < SILENCE_PEAK:
+def no_speech_reason(peak: Optional[float]) -> str:
+    """Texto para o bloco que o reconhecimento devolveu sem fala nenhuma."""
+    if peak is None or peak >= LOW_PEAK:
+        return NO_SPEECH
+    if peak < SILENCE_PEAK:
         return (
             "o microfone captou so silencio neste bloco. Confira se ele nao "
             "esta no mudo e se e o microfone certo em Configuracoes > Sistema"
         )
-    return None
-
-
-def low_level_hint(peak: Optional[float]) -> str:
-    """Complemento para fala nao reconhecida quando o som estava fraco."""
-    if peak is not None and SILENCE_PEAK <= peak < LOW_PEAK:
-        return (
-            " O som chegou muito baixo: aproxime o microfone de quem fala ou "
-            "aumente o volume de entrada no Windows."
-        )
-    return ""
+    return (
+        f"{NO_SPEECH} O som chegou muito baixo: aproxime o microfone de quem "
+        "fala ou aumente o volume de entrada no Windows."
+    )

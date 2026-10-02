@@ -124,7 +124,7 @@ from ..services import (
     quiz_review_service,
     quiz_translation_service,
 )
-from ..services.audio_level import low_level_hint, silence_reason, wav_peak
+from ..services.audio_level import no_speech_reason, wav_peak
 from ..services.discipline_match import same_discipline
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
@@ -2255,19 +2255,6 @@ async def ingest_lesson_audio(
         raise HTTPException(409, "Aula ja encerrada")
 
     audio_bytes = await file.read()
-    # Bloco mudo nao vai ao reconhecimento: e custo e espera por nada, e o
-    # professor precisa saber que o problema esta no microfone, nao na fala.
-    peak = wav_peak(audio_bytes)
-    mudo = silence_reason(peak)
-    if mudo:
-        logger.warning(
-            f"Bloco de aula {lesson_id} sem sinal (pico {peak:.4f}, "
-            f"{len(audio_bytes)} bytes)"
-        )
-        return LessonSegmentIngestResponse(
-            lesson=_lesson_response(lesson), skipped_reason=mudo
-        )
-
     context_parts = [lesson.semester or "", lesson.discipline, lesson.title or ""]
     stt = await transcribe_audio(
         audio_bytes,
@@ -2275,6 +2262,9 @@ async def ingest_lesson_audio(
         context="; ".join(part.strip() for part in context_parts if part.strip()),
     )
     if not stt.transcript.strip():
+        # O nivel do sinal so explica o vazio; nunca decide antes do
+        # reconhecimento, que entende fala bem mais baixa do que parece.
+        peak = wav_peak(audio_bytes)
         logger.warning(
             f"Bloco de aula {lesson_id} sem fala reconhecida "
             f"(pico {peak if peak is None else round(peak, 4)}, "
@@ -2282,8 +2272,7 @@ async def ingest_lesson_audio(
         )
         return LessonSegmentIngestResponse(
             lesson=_lesson_response(lesson),
-            skipped_reason="nenhuma fala reconhecida no bloco."
-            + low_level_hint(peak),
+            skipped_reason=no_speech_reason(peak),
         )
 
     return await _ingest_segment(

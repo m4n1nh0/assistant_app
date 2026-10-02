@@ -86,13 +86,14 @@ def enviar(api, dados: bytes):
 
 
 @pytest.mark.integration
-def test_bloco_mudo_diz_que_o_microfone_so_captou_silencio_e_nao_chama_o_stt(api):
+def test_bloco_mudo_passa_pelo_stt_e_so_depois_culpa_o_microfone(api):
     resposta = enviar(api, wav(0.0))
 
     assert resposta.status_code == 200
     motivo = resposta.json()["skipped_reason"]
     assert "so silencio" in motivo and "microfone" in motivo
-    assert api.stt_chamadas == []
+    # O nivel nunca decide no lugar do reconhecimento.
+    assert len(api.stt_chamadas) == 1
 
 
 @pytest.mark.integration
