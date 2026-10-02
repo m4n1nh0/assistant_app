@@ -35,6 +35,7 @@ Future<void> showQuizPreviewDialog(
   required List<Map<String, dynamic>> questions,
   required int requested,
   List<Map<String, dynamic>> attempts = const [],
+  String? notice,
   String title = 'Revisar perguntas',
   List<Widget> Function(BuildContext dialogContext)? actionsBuilder,
   SpecialistReviewHandler? onSpecialistReview,
@@ -49,6 +50,7 @@ Future<void> showQuizPreviewDialog(
           questions: questions,
           requested: requested,
           attempts: attempts,
+          notice: notice,
           title: title,
           actions: actionsBuilder?.call(dialogContext) ?? const [],
           onSpecialistReview: onSpecialistReview,
@@ -65,6 +67,10 @@ class QuizPreview extends StatefulWidget {
   final List<Map<String, dynamic>> attempts;
   final String title;
 
+  /// Explicacao do servidor sobre por que vieram menos perguntas que o pedido
+  /// (mensagem do pedido de geracao). Quando ha, substitui o texto generico.
+  final String? notice;
+
   /// Botoes do fluxo do quiz (liberar, abrir QR, descartar), quando a revisao
   /// foi aberta a partir da central.
   final List<Widget> actions;
@@ -80,6 +86,7 @@ class QuizPreview extends StatefulWidget {
     required this.questions,
     required this.requested,
     required this.attempts,
+    this.notice,
     this.title = 'Revisar perguntas',
     this.actions = const [],
     this.onSpecialistReview,
@@ -242,6 +249,7 @@ class _QuizPreviewState extends State<QuizPreview> {
             child: _AvisoGeracao(
               faltando: faltando,
               failures: _failures,
+              explanation: shortfallFrom(widget.notice),
             ),
           ),
         const Divider(height: 20),
@@ -321,21 +329,39 @@ class _ResultadoDaRevisao extends StatelessWidget {
 }
 
 /// Diz por que o resultado veio diferente do pedido.
+/// O trecho da mensagem do servidor que explica a falta, a partir de "Voce pediu".
+///
+/// A mensagem do pedido comeca com "N questoes preparadas para revisao..." e termina
+/// com orientacao de fluxo; so a parte da falta cabe no aviso da revisao. Devolve
+/// `null` quando nao ha falta explicada, e o aviso volta ao texto generico.
+String? shortfallFrom(String? message) {
+  final text = message ?? '';
+  final start = text.indexOf('Você pediu');
+  if (start < 0) return null;
+  final explanation = text.substring(start).trim();
+  return explanation.isEmpty ? null : explanation;
+}
+
 class _AvisoGeracao extends StatelessWidget {
   final int faltando;
   final List<String> failures;
 
+  /// Explicacao calculada pelo servidor; substitui o texto generico.
+  final String? explanation;
+
   const _AvisoGeracao({
     required this.faltando,
     required this.failures,
+    this.explanation,
   });
 
   @override
   Widget build(BuildContext context) {
     final linhas = [
       if (faltando > 0)
-        'Vieram $faltando a menos que o pedido: a aula pode não ter '
-            'conteúdo suficiente, ou perguntas frágeis foram descartadas.',
+        explanation ??
+            'Vieram $faltando a menos que o pedido: a aula pode não ter '
+                'conteúdo suficiente, ou perguntas frágeis foram descartadas.',
       ...failures.map((f) => 'Falhou — $f'),
     ];
 

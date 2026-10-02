@@ -39,6 +39,7 @@ from typing import Any
 from loguru import logger
 
 from . import ocr_service
+from .text_sampling import sample_evenly
 
 #: Teto por material. Acima disso o texto e cortado: o gerador de quiz manda
 #: tudo para o modelo, e material inteiro estoura a janela de contexto.
@@ -280,17 +281,15 @@ def clean_text(raw: str, *, rewrap: bool = True) -> str:
 def summary_for_quiz(text: str, *, limit: int = 24_000) -> str:
     """Recorte do material que vai como contexto para gerar o quiz.
 
-    O gerador manda o texto inteiro no prompt. Material grande estoura a janela
-    do modelo e volta cortado - o mesmo defeito que fazia o quiz cair no gerador
-    por template -, entao aqui ele para no fim de um paragrafo.
+    O gerador manda o texto no prompt. Material grande estoura a janela do modelo
+    e volta cortado - o mesmo defeito que fazia o quiz cair no gerador por
+    template -, entao ele e recortado. O recorte cobre o documento inteiro, em
+    trechos espacados do comeco ao fim: pegar so o comeco deixava a segunda
+    metade do PDF sem nenhuma pergunta, e piorava quando a fonte dividia o espaco
+    com outras ou encolhia para caber num provedor menor. Cada trecho termina em
+    fim de paragrafo ou de frase.
     """
-    if len(text) <= limit:
-        return text
-    corte = text[:limit]
-    ultimo = corte.rfind("\n\n")
-    if ultimo > limit // 2:
-        corte = corte[:ultimo]
-    return corte.strip()
+    return sample_evenly(text, limit)
 
 
 # --- PDF ---------------------------------------------------------------------

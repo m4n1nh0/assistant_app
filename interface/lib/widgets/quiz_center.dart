@@ -133,6 +133,7 @@ Future<void> openQuizReview(
   required String quizId,
   List<Map<String, dynamic>> attempts = const [],
   int? requested,
+  String? notice,
   VoidCallback? onChanged,
   QuizCenterService? service,
 }) async {
@@ -177,6 +178,7 @@ Future<void> openQuizReview(
     questions: questions,
     requested: requested ?? questions.length,
     attempts: attempts,
+    notice: notice,
     title: '$titulo · ${quizStatusLabel(status).toLowerCase()}',
     // Codex e Claude revisam so rascunho: depois de liberado o gabarito nao
     // muda mais, e o servidor recusa.
@@ -547,6 +549,7 @@ class _QuizQueuePanelState extends State<QuizQueuePanel> {
                             quizId: job.quizId,
                             attempts: job.attempts,
                             requested: job.total,
+                            notice: job.message,
                             onChanged: widget.onReviewed,
                           ),
                   icon: const Icon(Icons.fact_check_outlined, size: 16),

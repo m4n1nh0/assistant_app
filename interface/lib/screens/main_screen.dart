@@ -114,6 +114,7 @@ class _MainScreenState extends ConsumerState<MainScreen> with WindowListener {
               quizId: job.quizId,
               attempts: job.attempts,
               requested: job.total,
+              notice: job.message,
             );
           } else {
             showQuizCenterDialog(navigatorContext);

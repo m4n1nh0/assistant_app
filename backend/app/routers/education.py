@@ -123,6 +123,7 @@ from ..services import (
     quiz_review_service,
     quiz_translation_service,
 )
+from ..services.discipline_match import same_discipline
 from ..services.notification_service import send_notification
 from ..services.runtime_config_service import load_notif_config
 
@@ -2955,17 +2956,24 @@ async def list_materials(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Materiais do professor, opcionalmente de uma disciplina."""
+    """Materiais do professor, opcionalmente de uma disciplina.
+
+    Por `discipline_id` a comparacao e exata. Por texto (`discipline`) ela perdoa a
+    grafia: a aula guarda o que foi digitado ao gravar ("ARA0040-BANCO DE DADOS") e
+    o material importado, o rotulo cadastrado ("ARA0040 - BANCO DE DADOS"). Com
+    igualdade exata o PDF importado nunca aparecia na lista de fontes do quiz da
+    aula, sem erro nenhum.
+    """
     query = select(MaterialModel).where(
         MaterialModel.tutor_id == user["tutor_id"]
     )
     if discipline_id:
         query = query.where(MaterialModel.discipline_id == discipline_id)
-    elif discipline:
-        query = query.where(MaterialModel.discipline == discipline)
     rows = (
         await db.execute(query.order_by(MaterialModel.created_at.desc()))
     ).scalars().all()
+    if discipline and not discipline_id:
+        rows = [item for item in rows if same_discipline(item.discipline, discipline)]
     return [_material_response(item) for item in rows]
 
 
@@ -3277,13 +3285,18 @@ async def _existing_questions_for_sources(
     tutor_id: str,
     fontes: Sequence[Dict[str, str]],
     *,
-    limit: int = 60,
+    limit: int = 120,
 ) -> List[Dict[str, Any]]:
     """Questoes ja geradas a partir das mesmas fontes, para a IA nao repetir.
 
     Sem isso, o segundo quiz da mesma aula saia com as mesmas perguntas do
     primeiro: cada geracao so conhecia as proprias perguntas. Arquivadas ficam de
     fora - o professor tirou do banco o que nao queria ver de novo.
+
+    Pergunta repetida conta uma vez so. Um simulado copia as perguntas de outros
+    quizzes, e cada copia entrava na lista como pergunta nova, gastando o limite
+    com o que ja estava nele: numa aula com 63 perguntas em 8 quizzes, o corte de
+    60 pegava metade em duplicata e deixava de fora as mais antigas.
     """
     source_ids = [fonte.get("id") for fonte in fontes if fonte.get("id")]
     if not source_ids:
@@ -3308,11 +3321,25 @@ async def _existing_questions_for_sources(
             QuestionModel.arquivada.is_(False),
         )
         .order_by(QuestionModel.created_at.desc())
-        .limit(limit)
+        # Folga para as duplicatas: o limite vale para perguntas distintas.
+        .limit(limit * 3)
     )).scalars().all()
 
+    # Da mais recente para a mais antiga: a copia mais nova e a original contam
+    # como a mesma pergunta, e fica a primeira que aparece.
+    vistas: set[str] = set()
+    distintas = []
+    for row in rows:
+        chave = " ".join((row.enunciado or "").lower().split())
+        if not chave or chave in vistas:
+            continue
+        vistas.add(chave)
+        distintas.append(row)
+        if len(distintas) >= limit:
+            break
+
     existentes = []
-    for row in reversed(rows):
+    for row in reversed(distintas):
         try:
             conceitos = json.loads(row.conceitos_relacionados or "[]")
         except (TypeError, ValueError):
@@ -3550,8 +3577,9 @@ def _catalog_matches(
     status: str = "",
 ) -> bool:
     if discipline:
-        alvo = discipline.strip().lower()
-        if not any(alvo == nome.strip().lower() for nome in item["disciplinas"]):
+        # Tolerante a grafia: o quiz de uma aula traz o texto digitado ao gravar,
+        # e o de um material, o rotulo da disciplina cadastrada.
+        if not any(same_discipline(discipline, nome) for nome in item["disciplinas"]):
             return False
     if lesson_id and not any(
         fonte["type"] == "lesson" and fonte["id"] == lesson_id for fonte in item["fontes"]
@@ -4012,6 +4040,11 @@ async def create_quiz_from_questions(
     return await _build_quiz_response(db, quiz)
 
 
+#: Caracteres de fonte que uma pergunta distinta costuma pedir. Abaixo disso o
+#: conteudo e curto demais para o numero de perguntas pedido, e o aviso diz isso.
+QUIZ_CHARS_PER_QUESTION = 300
+
+
 def _explicar_falta(
     total_questoes: int,
     pedidas: int,
@@ -4037,6 +4070,26 @@ def _explicar_falta(
     texto = f" Você pediu {pedidas} e vieram {total_questoes}"
     texto += f" ({', '.join(motivos)})." if motivos else "."
 
+    # O que faz a fonte nao render mais perguntas: as de quizzes anteriores contam
+    # como ja feitas (a novas nao as repetem) e texto curto nao sustenta muitas
+    # perguntas diferentes. Sem dizer isso, o professor gerava de novo e recebia o
+    # mesmo resultado.
+    existentes = descartes.get("ja_existentes") or 0
+    if existentes:
+        texto += (
+            f" Esta fonte já tem {existentes} pergunta(s) em outros quizzes, e as "
+            "novas não as repetem."
+        )
+    caracteres = descartes.get("conteudo_caracteres")
+    pouco_conteudo = (
+        caracteres is not None and caracteres < pedidas * QUIZ_CHARS_PER_QUESTION
+    )
+    if pouco_conteudo:
+        texto += (
+            f" O conteúdo selecionado tem só {caracteres} caracteres, pouco para "
+            f"{pedidas} perguntas distintas."
+        )
+
     planejados = descartes.get("objetivos_planejados")
     pedidos_ao_plano = descartes.get("objetivos_pedidos")
     if planejados is not None and pedidos_ao_plano and planejados < pedidas:
@@ -4044,6 +4097,8 @@ def _explicar_falta(
             f" O conteúdo só sustentou {planejados} assunto(s) distinto(s): para "
             "mais perguntas diferentes, marque mais aulas ou materiais."
         )
+    elif existentes or pouco_conteudo:
+        texto += " Para mais perguntas diferentes, marque mais aulas ou materiais."
     else:
         texto += " Gere de novo para completar o que faltou."
     return texto

@@ -16,6 +16,7 @@ from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
 from .llm_routing_service import pick_auto_llm, rank_auto_llms
+from .text_sampling import sample_evenly
 from .llm_service import dispatch_single
 from .user_llm_config_service import runtime_settings
 
@@ -35,6 +36,9 @@ MAX_EMPTY_BATCHES = 2
 
 #: Questoes por chamada de validacao, pelo mesmo motivo do lote de geracao.
 VALIDATION_BATCH = 6
+
+#: Provedores que a validacao tenta por lote antes de desistir dele.
+MAX_VALIDATION_PROVIDERS = 2
 
 #: Gera-se um pouco alem do pedido e corta-se no fim. Repeticao e reprovacao na
 #: validacao sao perdas esperadas; sem folga, pedir 20 entregava 15 e o professor
@@ -223,6 +227,10 @@ class QuizGraphState(dict):
     #: validacao, excedentes) e quantos objetivos o plano conseguiu. E o que
     #: explica ao professor por que vieram menos perguntas do que o pedido.
     descartes: Optional[Dict[str, int]] = None
+
+    #: Provedores que funcionaram, o melhor primeiro, e o teto de fonte de cada um.
+    provedores: Optional[List[str]] = None
+    limites: Optional[Dict[str, int]] = None
 
     # Intermediários
     questoes_brutas: Optional[List[Dict[str, Any]]] = None
@@ -751,10 +759,16 @@ async def _shorten_long_options(
 # --- Geracao em lotes ------------------------------------------------------
 
 
-#: Quantas perguntas prontas entram no prompt do lote seguinte. Cobre um quiz
-#: inteiro de tamanho usual; acima disso a lista come contexto da aula.
-MAX_AVOID_QUESTIONS = 30
-MAX_AVOID_CONCEPTS = 25
+#: Quantas perguntas prontas entram no prompt do lote seguinte. Tem de ser o que a
+#: checagem de repeticao tambem enxerga: com 30 aqui e 60 la, as 30 mais antigas
+#: rejeitavam a resposta do modelo sem que ele soubesse que devia evitá-las, e o
+#: lote voltava "todas repetiam as ja geradas". As mais antigas entram em forma
+#: compacta (sem a resposta) para a lista nao comer o contexto da aula.
+MAX_AVOID_QUESTIONS = 80
+MAX_AVOID_CONCEPTS = 40
+
+#: Das perguntas a evitar, quantas mais recentes levam a resposta junto.
+AVOID_WITH_ANSWER = 20
 #: Parecenca de palavras a partir da qual uma pergunta conta como reformulacao
 #: de outra ja pronta ("O que e 3FN?" x "O que e a 3FN na normalizacao?").
 REPHRASE_SIMILARITY = 0.8
@@ -971,10 +985,15 @@ def _avoid_block(
 
     recentes = list(ja_gerados)[-MAX_AVOID_QUESTIONS:]
     linhas = []
-    for questao in recentes:
-        resposta = _correct_option_text(questao)
+    limite_com_resposta = len(recentes) - AVOID_WITH_ANSWER
+    for posicao, questao in enumerate(recentes):
+        recente = posicao >= limite_com_resposta
+        resposta = _correct_option_text(questao) if recente else ""
         sufixo = f" (resposta: {_compact_text(resposta, limit=60)})" if resposta else ""
-        linhas.append(f"- {_compact_text(questao.get('enunciado', ''), limit=160)}{sufixo}")
+        limite = 160 if recente else 100
+        linhas.append(
+            f"- {_compact_text(questao.get('enunciado', ''), limit=limite)}{sufixo}"
+        )
 
     conceitos: List[str] = []
     for questao in recentes:
@@ -1079,22 +1098,182 @@ def _drop_provider(candidatos: List[str], llm_name: str, error: str) -> None:
     )
 
 
+# --- Fonte grande demais para o provedor ----------------------------------------
+#
+# O contexto da geracao leva ate 60 mil caracteres (~15 mil tokens). Provedor de
+# plano gratuito ou de modelo pequeno recusa isso ("Request too large ... Limit
+# 7000, Requested 14940"), e o erro nao e passageiro nem de credencial: o mesmo
+# pedido falha sempre. Tirar o provedor da fila desperdicava justamente os modelos
+# que cabem com a fonte menor; agora a fonte encolhe para ele e a chamada se repete.
+
+#: Menos que isso de fonte nao sustenta pergunta ancorada; encolher alem disso
+#: seria entregar pergunta inventada.
+MIN_SOURCE_CHARS = 2_500
+
+#: Folga sobre a razao devolvida pelo provedor: o limite conta tambem as
+#: instrucoes do prompt e a resposta pedida, nao so a fonte.
+SHRINK_SAFETY = 0.7
+
+_TOO_LARGE_MARKS = (
+    "request too large",
+    "too large",
+    "context length",
+    "context_length",
+    "maximum context",
+    "prompt is too long",
+    "reduce your message",
+    "reduce the length",
+)
+
+_LIMIT_REQUESTED = re.compile(r"limit\s+(\d+)\s*,\s*requested\s+(\d+)", re.IGNORECASE)
+
+
+def _size_ratio(error: str) -> Optional[float]:
+    """Quanto da fonte cabe, a partir da recusa do provedor; `None` se nao e de tamanho.
+
+    "Limit 7000, Requested 14940" diz a razao exata. Sem os numeros, a recusa por
+    tamanho (`context length`, `too large`) pede metade. `Limit` maior que
+    `Requested` e limite de taxa passageiro, nao de tamanho: encolher nao ajuda.
+    """
+    texto = error or ""
+    achado = _LIMIT_REQUESTED.search(texto)
+    if achado:
+        limite, pedido = int(achado.group(1)), int(achado.group(2))
+        return limite / pedido if pedido > limite else None
+    lower = texto.lower()
+    return 0.5 if any(marca in lower for marca in _TOO_LARGE_MARKS) else None
+
+
+def _next_limit(current_chars: int, error: str) -> Optional[int]:
+    """Novo teto de caracteres da fonte, ou `None` se nao da para encolher mais."""
+    ratio = _size_ratio(error)
+    if ratio is None:
+        return None
+    novo = int(current_chars * ratio * SHRINK_SAFETY)
+    if novo < MIN_SOURCE_CHARS or novo >= current_chars:
+        return None
+    return novo
+
+
+_SOURCE_BLOCK = re.compile(r"(?m)^(?==== )")
+
+
+def _cut_at_boundary(text: str, limit: int) -> str:
+    """Corta em fim de paragrafo ou de frase, nao no meio de uma palavra."""
+    if len(text) <= limit:
+        return text
+    corte = text[:limit]
+    for marca in ("\n\n", ". ", "\n", "; "):
+        posicao = corte.rfind(marca)
+        if posicao >= limit * 0.6:
+            return corte[: posicao + len(marca.rstrip())].rstrip() + " …"
+    return corte.rstrip() + " …"
+
+
+def _shrink_source(resumo: str, max_chars: Optional[int]) -> str:
+    """Encolhe a fonte repartindo o espaco entre as aulas e materiais.
+
+    Cortar so o fim tiraria a ultima aula inteira. Cada bloco (`=== AULA: ...`)
+    recebe sua parte; dentro de um bloco o resumo vem primeiro e a transcricao
+    depois, entao e a transcricao que perde.
+    """
+    if not max_chars or len(resumo) <= max_chars:
+        return resumo
+    blocos = [bloco for bloco in _SOURCE_BLOCK.split(resumo) if bloco.strip()]
+    if len(blocos) <= 1:
+        return _cut_block(resumo, max_chars)
+    parte = max(max_chars // len(blocos), 800)
+    return "\n\n".join(_cut_block(bloco.rstrip(), parte) for bloco in blocos)
+
+
+def _cut_block(bloco: str, limite: int) -> str:
+    """Corta um bloco da fonte conforme o que ele e.
+
+    Material (PDF, apostila) e amostrado do comeco ao fim: o inicio sozinho deixava
+    o resto do documento sem pergunta. Aula corta pelo fim - o resumo validado vem
+    primeiro e ja cobre a aula inteira, e a transcricao, que e a parte que cresce,
+    e a que perde.
+    """
+    if bloco.lstrip().startswith("=== MATERIAL"):
+        return sample_evenly(bloco, limite)
+    return _cut_at_boundary(bloco, limite)
+
+
+async def _dispatch_fitting(
+    llm_name: str,
+    resumo: str,
+    make_prompt: Callable[[str], str],
+    system: str,
+    max_tokens: int,
+    limits: Dict[str, int],
+):
+    """Chama o provedor com a fonte no tamanho que ele aguenta.
+
+    Usa o teto ja aprendido para este provedor e, se ele recusar por tamanho,
+    encolhe e repete uma vez. O teto fica em `limits` para os proximos lotes.
+    Erro que nao e de tamanho segue para quem chamou.
+    """
+    resposta = None
+    for _ in range(2):
+        fonte = _shrink_source(resumo, limits.get(llm_name))
+        try:
+            resposta = await dispatch_single(
+                llm_name, make_prompt(fonte), [], system, max_tokens=max_tokens
+            )
+        except Exception as erro:
+            novo = _next_limit(len(fonte), str(erro))
+            if novo is None:
+                raise
+            limits[llm_name] = novo
+            logger.info(f"{llm_name} recusou por tamanho; fonte limitada a {novo} caracteres")
+            continue
+        if resposta.is_error:
+            novo = _next_limit(len(fonte), resposta.content)
+            if novo is not None:
+                limits[llm_name] = novo
+                logger.info(f"{llm_name} recusou por tamanho; fonte limitada a {novo} caracteres")
+                continue
+        return resposta
+    return resposta
+
+
 def _empty_batch_reason(
     content: str,
     questoes_lidas: Sequence[Dict[str, Any]],
+    descartes: Optional[Dict[str, int]] = None,
 ) -> str:
     """Diz por que o lote nao rendeu pergunta nenhuma.
 
-    Sao tres casos distintos com consequencias distintas: o modelo escreveu
-    fora do JSON (prompt ou modelo inadequado), devolveu JSON valido mas so
-    repetiu o que ja havia (pedir mais perguntas nao vai adiantar) ou nao
-    devolveu nada (resposta vazia ou cortada). "Resposta sem perguntas
-    estruturadas" cobria os tres e nao ajudava em nenhum.
+    Sao casos distintos com consequencias distintas: o modelo escreveu fora do
+    JSON (prompt ou modelo inadequado), devolveu JSON valido mas so repetiu o que
+    ja havia (pedir mais perguntas nao vai adiantar), devolveu perguntas sem
+    alternativas suficientes (modelo fraco, e gerar de novo pode resolver) ou nao
+    devolveu nada (resposta vazia ou cortada). Dizer "todas repetiam" para os
+    dois casos do meio mandava o professor atras da causa errada.
+
+    Args:
+        descartes: `repetidas` e `invalidas` deste lote. Sem eles, vale o texto
+            antigo, que so conhece o caso da repeticao.
     """
     texto = (content or "").strip()
     if not texto:
         return "Resposta vazia do modelo."
     if questoes_lidas:
+        descartes = descartes or {}
+        repetidas = descartes.get("repetidas", 0)
+        invalidas = descartes.get("invalidas", 0)
+        if invalidas and not repetidas:
+            return (
+                f"O modelo devolveu {len(questoes_lidas)} pergunta(s), mas nenhuma "
+                "serve: faltaram alternativas diferentes entre si (precisa de ao "
+                f"menos {MIN_DISTINCT_OPTIONS})."
+            )
+        if invalidas and repetidas:
+            return (
+                f"O modelo devolveu {len(questoes_lidas)} pergunta(s): {repetidas} "
+                f"repetiam as já geradas e {invalidas} tinham alternativas "
+                "insuficientes."
+            )
         return (
             f"O modelo devolveu {len(questoes_lidas)} pergunta(s), mas todas "
             "repetiam as já geradas."
@@ -1164,42 +1343,97 @@ def _parse_plan(content: str, limite: int) -> List[Dict[str, Any]]:
     return slots
 
 
+def _record_failure(
+    attempts: Optional[List[Dict[str, Any]]],
+    llm_name: str,
+    error: str,
+) -> None:
+    """Registra a falha de um provedor uma vez so, para a tela mostrar o motivo.
+
+    O plano tira da fila quem falha por credencial; sem este registro, a lista de
+    tentativas que o professor le deixava de citar justamente os provedores que
+    ja tinham falhado ali.
+    """
+    if attempts is None or any(
+        item.get("llm") == llm_name and not item.get("success") and item.get("error") == error
+        for item in attempts
+    ):
+        return
+    attempts.append({
+        "llm": llm_name,
+        "success": False,
+        "error": error,
+        "question_count": 0,
+    })
+
+
+#: Quantos provedores o plano tenta antes de seguir sem plano. Cada tentativa e
+#: uma chamada longa: quatro cobrem uma fila com um ou dois provedores mortos
+#: sem fazer o professor esperar o plano por minutos.
+MAX_PLAN_ATTEMPTS = 4
+
+
 async def _plan_questions(
     state: QuizGraphState,
     quantidade: int,
-    candidatos: Sequence[str],
+    candidatos: List[str],
+    limits: Optional[Dict[str, int]] = None,
+    attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """Planeja conceitos e angulos distintos antes de escrever as perguntas.
 
     Falha aqui nao derruba o quiz: sem plano, a geracao segue como antes, so com a
     lista do que ja saiu para nao repetir. O plano pode vir menor que o pedido, e
     isso e informacao - o conteudo nao sustenta mais perguntas distintas.
+
+    Percorre a fila inteira, e nao so os dois primeiros: os dois primeiros sao
+    justamente os melhores ranqueados, e quando estao sem credito o plano nunca
+    saia - e sem plano os modelos menores repetem a mesma pergunta. Quem falha por
+    credencial sai da fila (a mesma lista que a geracao usa), e quem entrega o
+    plano passa para a frente dela.
     """
-    prompt = PLAN_PROMPT.format(
-        quantidade=quantidade,
-        resumo=state["resumo"],
-        disciplina=state["disciplina"],
-        tipo_quiz=state["tipo_quiz"],
-        dificuldade=state["dificuldade"],
-        evitar=_avoid_block(list(state.get("previas") or [])),
-    )
-    for llm_name in list(candidatos)[:2]:
+    limits = limits if limits is not None else {}
+    avoid = _avoid_block(list(state.get("previas") or []))
+
+    def make_prompt(fonte: str) -> str:
+        return PLAN_PROMPT.format(
+            quantidade=quantidade,
+            resumo=fonte,
+            disciplina=state["disciplina"],
+            tipo_quiz=state["tipo_quiz"],
+            dificuldade=state["dificuldade"],
+            evitar=avoid,
+        )
+
+    tentativas = 0
+    # Copia: `_drop_provider` altera a fila original.
+    for llm_name in list(candidatos):
+        if tentativas >= MAX_PLAN_ATTEMPTS:
+            break
+        tentativas += 1
         try:
-            response = await dispatch_single(
+            response = await _dispatch_fitting(
                 llm_name,
-                prompt,
-                [],
+                state["resumo"],
+                make_prompt,
                 "Planeje as perguntas e responda somente com JSON válido.",
-                max_tokens=_token_budget(max(quantidade // 3, 1)),
+                _token_budget(max(quantidade // 3, 1)),
+                limits,
             )
         except Exception as error:
             logger.warning(f"Plano do quiz falhou em {llm_name}: {error}")
+            _record_failure(attempts, llm_name, str(error))
+            _drop_provider(candidatos, llm_name, str(error))
             continue
         if response.is_error:
             logger.warning(f"Plano do quiz recusado por {llm_name}: {response.content}")
+            _record_failure(attempts, llm_name, response.content)
+            _drop_provider(candidatos, llm_name, response.content)
             continue
         slots = _parse_plan(response.content, quantidade)
         if slots:
+            if candidatos and candidatos[0] != llm_name and llm_name in candidatos:
+                candidatos[:] = [llm_name] + [n for n in candidatos if n != llm_name]
             return slots
         logger.warning(f"Plano do quiz sem objetivos aproveitaveis em {llm_name}")
     return []
@@ -1218,6 +1452,7 @@ async def _generate_batch(
     candidatos: List[str],
     attempts: List[Dict[str, Any]],
     slots: Sequence[tuple] = (),
+    limits: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     """Pede um lote de questoes, tentando cada modelo candidato em ordem.
 
@@ -1229,10 +1464,12 @@ async def _generate_batch(
     # mais recentes, e as deste quiz sao as que mais importa nao repetir.
     referencia = list(state.get("previas") or []) + list(ja_gerados)
 
-    def prompt_for(tentativa_repetiu: bool) -> str:
+    limits = limits if limits is not None else {}
+
+    def prompt_for(fonte: str, tentativa_repetiu: bool) -> str:
         return QUIZ_GENERATION_PROMPT.format(
             quantidade_questoes=quantidade,
-            resumo=state["resumo"],
+            resumo=fonte,
             disciplina=state["disciplina"],
             tipo_quiz=state["tipo_quiz"],
             tipos_questao=", ".join(state["tipos_questao"]),
@@ -1257,12 +1494,13 @@ async def _generate_batch(
     # sendo percorrida pularia o candidato seguinte.
     for llm_name in list(candidatos):
         try:
-            response = await dispatch_single(
+            response = await _dispatch_fitting(
                 llm_name,
-                prompt_for(tentativa_repetiu),
-                [],
+                state["resumo"],
+                lambda fonte: prompt_for(fonte, tentativa_repetiu),
                 "Responda somente com JSON válido para geração de quiz.",
-                max_tokens=_token_budget(quantidade),
+                _token_budget(quantidade),
+                limits,
             )
         except Exception as e:
             erro = f"Erro ao chamar LLM {llm_name}: {e}"
@@ -1324,10 +1562,13 @@ async def _generate_batch(
             # Sem motivo aqui, a revisao mostrava "sem detalhe" e o professor
             # nao tinha como saber se o modelo falou fora do JSON, repetiu as
             # perguntas do lote anterior ou devolveu resposta vazia.
-            erro = _empty_batch_reason(response.content, questoes)
+            erro = _empty_batch_reason(response.content, questoes, descartes)
             # O proximo provedor deste lote precisa saber que "nao repita" nao
             # bastou - senao recebe o mesmo prompt e tende ao mesmo resultado.
-            tentativa_repetiu = tentativa_repetiu or bool(questoes)
+            # So quando houve repeticao: pergunta descartada por alternativas
+            # insuficientes nao e repeticao, e o aviso mandaria o modelo variar o
+            # que ja estava variado.
+            tentativa_repetiu = tentativa_repetiu or descartes["repetidas"] > 0
             attempts.append({
                 "llm": llm_name,
                 "success": False,
@@ -1435,7 +1676,17 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
     tempo_estimado = 0
     lotes_vazios = 0
     erro = "A IA não gerou perguntas aproveitáveis."
-    descartes = {"repetidas": 0, "invalidas": 0}
+    previas = list(state.get("previas") or [])
+    descartes = {
+        "repetidas": 0,
+        "invalidas": 0,
+        # O que explica um quiz curto: pouca fonte e perguntas de quizzes
+        # anteriores da mesma fonte, que as novas nao repetem.
+        "conteudo_caracteres": len(state["resumo"]),
+        "ja_existentes": len(previas),
+    }
+    # Teto de fonte aprendido por provedor (quem recusa por tamanho).
+    limits: Dict[str, int] = {}
 
     # Gera alem do pedido: repeticao e reprovacao na validacao sao perdas
     # esperadas, e o corte para `total` vem no fim.
@@ -1445,7 +1696,7 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
 
     # Plano antes das perguntas: cada uma nasce de um conceito e de um angulo
     # distintos. O plano pode vir menor que o pedido; sem plano, segue sem ele.
-    plano = await _plan_questions(state, alvo, candidatos)
+    plano = await _plan_questions(state, alvo, candidatos, limits, attempts)
     pendentes: List[tuple] = list(enumerate(plano, start=1))
     ofertas: Dict[int, int] = {}
 
@@ -1455,7 +1706,8 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         for numero, _ in lote_slots:
             ofertas[numero] = ofertas.get(numero, 0) + 1
         lote = await _generate_batch(
-            state, pedido, questoes, candidatos, attempts, slots=lote_slots
+            state, pedido, questoes, candidatos, attempts, slots=lote_slots,
+            limits=limits,
         )
         for chave, valor in (lote.get("descartes") or {}).items():
             descartes[chave] = descartes.get(chave, 0) + valor
@@ -1512,6 +1764,10 @@ async def _quiz_generate_node(state: QuizGraphState) -> Dict[str, Any]:
         "tempo_estimado": tempo_estimado or 15,
         "attempts": attempts,
         "descartes": descartes,
+        # A fila ja sem os provedores mortos e com o que funcionou na frente: e
+        # com ela que a validacao fala, e nao com o ranking de antes da geracao.
+        "provedores": list(candidatos),
+        "limites": limits,
     }
 
 
@@ -1528,7 +1784,12 @@ async def _quiz_validate_node(state: QuizGraphState) -> Dict[str, Any]:
             }
         }
 
-    llm_name = await _resolve_llm_for_quiz()
+    # Os provedores que funcionaram na geracao, o melhor primeiro. Perguntar ao
+    # ranking de antes da geracao mandava a validacao ao primeiro da fila - o
+    # mesmo que acabara de falhar por falta de credito -, e todo quiz saia com
+    # "validacao automatica indisponivel".
+    provedores = list(state.get("provedores") or []) or [await _resolve_llm_for_quiz()]
+    limits: Dict[str, int] = dict(state.get("limites") or {})
     validacoes: List[Dict[str, Any]] = []
     falhas = 0
 
@@ -1536,24 +1797,28 @@ async def _quiz_validate_node(state: QuizGraphState) -> Dict[str, Any]:
     # uma vez volta cortada, e ai nenhuma questao fica marcada como verificada.
     for inicio in range(0, len(questoes_brutas), VALIDATION_BATCH):
         lote = questoes_brutas[inicio:inicio + VALIDATION_BATCH]
-        prompt = VALIDATION_PROMPT.format(
-            resumo=state["resumo"],
-            questoes_json=json.dumps(lote, ensure_ascii=False, indent=2),
-        )
+        questoes_json = json.dumps(lote, ensure_ascii=False, indent=2)
 
-        try:
-            response = await dispatch_single(
-                llm_name,
-                prompt,
-                [],
-                "Valide as questões e responda somente com JSON válido.",
-                max_tokens=_token_budget(len(lote)),
-            )
-            if response.is_error:
-                raise RuntimeError(response.content)
-            dados = _json_from_content(response.content)
-        except Exception as e:
-            logger.warning(f"Validation error (non-blocking): {e}")
+        dados: Optional[Dict[str, Any]] = None
+        for llm_name in provedores[:MAX_VALIDATION_PROVIDERS]:
+            try:
+                response = await _dispatch_fitting(
+                    llm_name,
+                    state["resumo"],
+                    lambda fonte: VALIDATION_PROMPT.format(
+                        resumo=fonte, questoes_json=questoes_json
+                    ),
+                    "Valide as questões e responda somente com JSON válido.",
+                    _token_budget(len(lote)),
+                    limits,
+                )
+                if response.is_error:
+                    raise RuntimeError(response.content)
+                dados = _json_from_content(response.content)
+                break
+            except Exception as e:
+                logger.warning(f"Validation error (non-blocking) em {llm_name}: {e}")
+        if dados is None:
             falhas += 1
             continue
 

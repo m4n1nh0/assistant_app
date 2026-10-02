@@ -143,6 +143,80 @@ alternativa correta sempre na A. O que mudou, na ordem do pipeline:
 Custo: uma chamada a mais (o plano) e cerca de 25% mais geração e validação por
 quiz, em troca de entregar o que foi pedido.
 
+### Quando os provedores falham
+
+Caso real: 20 pedidas, 1 entregue, com `claude` e `gpt` sem crédito, `gemini` com 404,
+`grok` recusando por tamanho e `together`/`hf` repetindo a mesma pergunta.
+
+- **O plano percorre a fila inteira** (até 4 tentativas), em vez de só os dois
+  primeiros, que são justamente os mais bem ranqueados e, quando estão sem crédito,
+  deixavam o quiz sem plano. Quem falha por credencial sai da fila, e quem entrega o
+  plano passa para a frente. A falha fica registrada na lista de tentativas que a
+  revisão mostra.
+- **Recusa por tamanho encolhe a fonte** e repete a chamada, em vez de tirar o
+  provedor da fila. O contexto da geração leva até 60 mil caracteres; planos
+  gratuitos e modelos pequenos recusam isso (`Request too large ... Limit 7000,
+  Requested 14940`). A razão `Limit/Requested` vem na própria mensagem; o novo teto
+  tem folga de 30% (o limite conta também as instruções e a resposta) e piso de
+  2.500 caracteres, abaixo do qual pergunta ancorada não se sustenta. O espaço é
+  dividido entre as aulas e materiais, e dentro de cada um o resumo vem antes da
+  transcrição, então a transcrição é a que perde. O teto aprendido vale para os
+  lotes seguintes e para a validação. `Limit` maior que `Requested` é limite de
+  taxa passageiro, não de tamanho: encolher não ajuda e não é feito.
+- **A validação fala com quem funcionou**, e não com o ranking de antes da geração.
+  Antes ela ia ao primeiro da fila, o mesmo que acabara de falhar por crédito, e todo
+  quiz saía com "validação automática indisponível".
+- **A mensagem de lote vazio diz a causa certa**: "repetiam as já geradas" só quando
+  foi repetição; pergunta descartada por ter menos de 3 alternativas diferentes tem
+  texto próprio. O aviso "não repita" ao provedor seguinte também só vai quando
+  houve repetição.
+- **O modelo vê tudo que a checagem de repetição vai descartar.** O prompt mostrava
+  as 30 últimas perguntas já feitas, mas a checagem descartava contra as 60 mais
+  recentes: as ~30 mais antigas rejeitavam a resposta sem que o modelo soubesse que
+  devia evitá-las, e o lote voltava "todas repetiam as já geradas". Agora o prompt
+  traz até 80, com as 20 mais recentes completas (com a resposta) e as mais antigas
+  compactas, para a lista não consumir o contexto da aula.
+- **Cópia de simulado conta como a mesma pergunta.** Um simulado copia perguntas de
+  outros quizzes, e cada cópia entrava na lista de "já existentes" como pergunta
+  nova, gastando o limite com duplicata e deixando de fora as mais antigas. Agora a
+  lista tira as repetidas (mesmo enunciado, sem diferença de maiúscula ou espaço)
+  antes de aplicar o limite, que subiu de 60 para 120 perguntas distintas.
+- **A revisão mostra a explicação do servidor** no lugar do texto fixo "a aula pode
+  não ter conteúdo suficiente": quantas foram repetidas, inválidas ou reprovadas,
+  quantas perguntas a fonte **já tem em outros quizzes** (as novas não as repetem) e
+  quando o conteúdo é **curto demais** (menos de 300 caracteres por pergunta pedida).
+  Nesses casos o conselho é marcar mais aulas ou materiais, não gerar de novo, que
+  daria o mesmo resultado.
+
+---
+
+## Material importado (PDF) como fonte do quiz
+
+Caso real: um PDF de 43 páginas (78.699 caracteres) importado na disciplina, e o
+quiz da aula sem conseguir usá-lo. Dois buracos, ambos já corrigidos:
+
+- **O PDF não aparecia na lista de fontes.** A aula guarda a disciplina como o texto
+  digitado ao gravar ("ARA0040-BANCO DE DADOS"); o material importado pelo seletor
+  do app guarda o rótulo da disciplina cadastrada ("ARA0040 - BANCO DE DADOS"). A
+  listagem comparava os dois por igualdade exata de texto, então a aula nunca via o
+  material — sem erro nenhum, só a lista sem ele. Agora a comparação por texto
+  ignora acento, caixa, espaço e hífen, e reconhece o mesmo código de curso (o nome
+  pode vir abreviado, o código não). Disciplinas diferentes continuam separadas
+  (`ARA0040` ≠ `ARA0041`, "Cálculo I" ≠ "Cálculo II"), e texto vazio não casa com
+  nada. Por `discipline_id` a comparação continua exata. O mesmo vale para o filtro
+  por disciplina da lista de quizzes.
+- **Só o começo do PDF virava pergunta.** O recorte para caber no contexto do modelo
+  pegava os primeiros caracteres e parava; a segunda metade do documento nunca
+  entrava, e quanto menos espaço (fonte dividida com outras aulas, ou encolhida para
+  um provedor menor), menos páginas sobravam. Agora o recorte sai de trechos
+  espaçados do começo ao fim (de 3 a 10, de cerca de 5 mil caracteres cada), cada um
+  cortado em fim de parágrafo ou de frase e separado por uma marca de omissão, para
+  o modelo saber que o texto continua em outro ponto. A aula continua cortando pelo
+  fim: o resumo validado vem primeiro e já cobre a aula inteira.
+
+Ainda por texto, e não por vínculo: **aula não tem `discipline_id`**, só o texto.
+Outros filtros por disciplina (aulas, alunos, turmas) seguem por igualdade exata.
+
 ---
 
 ## Revisão por agentes especialistas (Codex e Claude)
