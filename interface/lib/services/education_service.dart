@@ -563,6 +563,16 @@ class EducationService {
         .toList();
   }
 
+  /// Troca so o nome do material; texto, disciplina e arquivo ficam iguais.
+  Future<CourseMaterial> renameMaterial(String materialId, String title) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/materials/$materialId'),
+      headers: _headers,
+      body: jsonEncode({'title': title}),
+    );
+    return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
   Future<void> deleteMaterial(String materialId) async {
     final response = await http.delete(
       Uri.parse('$_baseUrl/education/materials/$materialId'),

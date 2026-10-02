@@ -127,6 +127,18 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
         return;
       }
 
+      // Nome em branco deixa o servidor escolher: titulo de dentro do
+      // documento e, sem ele, o nome do arquivo.
+      if (!mounted) return;
+      final nome = await _askName(
+        title: 'Nome do material',
+        hint: 'Ex.: Apostila de Banco de Dados',
+        helper: 'Deixe em branco para usar o titulo do documento '
+            '(${file.name}).',
+        confirm: 'ENVIAR',
+      );
+      if (nome == null) return;
+
       // Material digitalizado passa por OCR no servidor, e isso leva dezenas de
       // segundos. Sem dizer nada, a espera parece travamento.
       _report(
@@ -140,6 +152,7 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
         filename: file.name,
         disciplineId: escolhida.id,
         discipline: escolhida.label,
+        title: nome,
       );
       _report(
         '${material.title} carregado: '
@@ -218,6 +231,45 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
         ],
       ),
     );
+  }
+
+  /// Pergunta o nome do material. `null` e cancelar; texto vazio e "deixa o
+  /// servidor escolher", que so faz sentido no envio.
+  Future<String?> _askName({
+    required String title,
+    required String confirm,
+    String initial = '',
+    String hint = '',
+    String helper = '',
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _NameDialog(
+        title: title,
+        confirm: confirm,
+        initial: initial,
+        hint: hint,
+        helper: helper,
+      ),
+    );
+  }
+
+  Future<void> _rename(CourseMaterial material) async {
+    final atual = material.title.isEmpty ? material.filename : material.title;
+    final nome = await _askName(
+      title: 'Renomear material',
+      confirm: 'SALVAR',
+      initial: atual,
+    );
+    if (nome == null || nome.isEmpty || nome == atual) return;
+    try {
+      await education.renameMaterial(material.id, nome);
+      _report('Material renomeado para $nome.');
+      await _load();
+      widget.onChanged?.call();
+    } catch (e) {
+      _report('Falha ao renomear: $e', error: true);
+    }
   }
 
   Future<void> _delete(CourseMaterial material) async {
@@ -356,12 +408,79 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
                         ),
                         itemBuilder: (_, index) => _MaterialRow(
                           material: _visible[index],
+                          onRename: () => _rename(_visible[index]),
                           onDelete: () => _delete(_visible[index]),
                         ),
                       ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Caixa de texto de uma linha. Estado proprio para o controller ser liberado
+/// so quando a caixa sai da arvore, e nao no meio da animacao de fechar.
+class _NameDialog extends StatefulWidget {
+  final String title;
+  final String confirm;
+  final String initial;
+  final String hint;
+  final String helper;
+
+  const _NameDialog({
+    required this.title,
+    required this.confirm,
+    required this.initial,
+    required this.hint,
+    required this.helper,
+  });
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AssistantTheme.surface,
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 420,
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          maxLength: 255,
+          onSubmitted: (_) => _submit(),
+          decoration: InputDecoration(
+            hintText: widget.hint.isEmpty ? null : widget.hint,
+            helperText: widget.helper.isEmpty ? null : widget.helper,
+            helperMaxLines: 2,
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('CANCELAR'),
+        ),
+        TextButton(
+          onPressed: _submit,
+          child: Text(widget.confirm),
+        ),
+      ],
     );
   }
 }
@@ -375,9 +494,14 @@ class _DisciplineChoice {
 
 class _MaterialRow extends StatelessWidget {
   final CourseMaterial material;
+  final VoidCallback onRename;
   final VoidCallback onDelete;
 
-  const _MaterialRow({required this.material, required this.onDelete});
+  const _MaterialRow({
+    required this.material,
+    required this.onRename,
+    required this.onDelete,
+  });
 
   /// Icone que deixa o formato reconhecivel de relance na lista.
   IconData get _icone {
@@ -443,6 +567,12 @@ class _MaterialRow extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        IconButton(
+          tooltip: 'Renomear material',
+          icon: const Icon(Icons.edit_outlined, size: 16),
+          color: AssistantTheme.textMuted,
+          onPressed: onRename,
         ),
         IconButton(
           tooltip: 'Remover material',

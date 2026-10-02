@@ -87,6 +87,7 @@ from ..models.schemas import (
     DisciplineUpdate,
     QuestionOption,
     QuestionResponse,
+    MaterialRenameRequest,
     MaterialResponse,
     QuizCreateRequest,
     QuizFromQuestionsRequest,
@@ -2935,7 +2936,7 @@ async def upload_material(
         tutor_id=user["tutor_id"],
         discipline_id=vinculo,
         discipline=rotulo,
-        title=(title.strip() or extraido.title or nome.rsplit(".", 1)[0]),
+        title=(title.strip() or extraido.title or nome.rsplit(".", 1)[0])[:255],
         filename=nome,
         source_type=extraido.source_type,
         page_count=extraido.page_count,
@@ -2975,6 +2976,31 @@ async def list_materials(
     if discipline and not discipline_id:
         rows = [item for item in rows if same_discipline(item.discipline, discipline)]
     return [_material_response(item) for item in rows]
+
+
+@router.patch("/materials/{material_id}", response_model=MaterialResponse)
+async def rename_material(
+    material_id: str,
+    body: MaterialRenameRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Troca o nome do material.
+
+    So o nome muda: o texto, a disciplina e o arquivo de origem ficam como
+    estavam, e o quiz ja gerado guarda o que leu na epoca. Serve para o
+    material que entrou como "00001" por falta de titulo no documento.
+    """
+    material = await db.get(MaterialModel, material_id)
+    if not material or material.tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Material nao encontrado")
+    titulo = " ".join(body.title.split())
+    if not titulo:
+        raise HTTPException(422, "Informe um nome para o material")
+    material.title = titulo
+    await db.commit()
+    await db.refresh(material)
+    return _material_response(material)
 
 
 @router.delete("/materials/{material_id}")

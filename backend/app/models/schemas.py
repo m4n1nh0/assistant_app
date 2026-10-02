@@ -1555,6 +1555,11 @@ class MaterialResponse(BaseModel):
     created_at: datetime
 
 
+class MaterialRenameRequest(BaseModel):
+    """Novo nome de um material ja enviado."""
+    title: str = Field(min_length=1, max_length=255)
+
+
 def _quiz_source_ids(values: List[Optional[str]]) -> List[str]:
     """Limpa e desduplica ids de fonte, preservando a ordem de escolha."""
     resultado: List[str] = []
