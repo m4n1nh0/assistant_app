@@ -44,6 +44,7 @@ from .routers.system import router as system_router
 from .routers.tutor import router as tutor_router
 from .routers.education import router as education_router
 from .routers.attendance import router as attendance_router
+from .routers.group_draw import router as group_draw_router
 from .routers.launcher import router as launcher_router
 from .routers.desktop import router as desktop_router
 from .routers.computer import router as computer_router
@@ -231,6 +232,7 @@ app.include_router(ws_router)
 app.include_router(tutor_router)
 app.include_router(education_router)
 app.include_router(attendance_router)
+app.include_router(group_draw_router)
 app.include_router(launcher_router)
 app.include_router(memory_router)
 app.include_router(automations_router)

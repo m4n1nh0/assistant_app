@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/group_draw.dart';
 import 'api_service.dart';
 import 'student_csv_parser.dart';
 
@@ -561,6 +562,97 @@ class EducationService {
     return data
         .map((item) => CourseMaterial.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  // --- Sorteio de apresentacao por grupo -------------------------------------
+
+  Future<GroupDraw> createGroupDraw({
+    required String disciplineId,
+    String semester = '',
+    String title = '',
+    String mode = GroupDraw.modeQueue,
+    int? perDay,
+    List<String> groupIds = const [],
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/group-draws'),
+      headers: _headers,
+      body: jsonEncode({
+        'discipline_id': disciplineId,
+        'semester': semester,
+        'title': title,
+        'mode': mode,
+        if (perDay != null) 'per_day': perDay,
+        if (groupIds.isNotEmpty) 'group_ids': groupIds,
+      }),
+    );
+    return GroupDraw.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  /// Sorteios da disciplina, sem as linhas de cada grupo.
+  Future<List<GroupDraw>> listGroupDraws({String? disciplineId}) async {
+    final uri = Uri.parse('$_baseUrl/education/group-draws').replace(
+      queryParameters: {
+        if (disciplineId != null && disciplineId.isNotEmpty)
+          'discipline_id': disciplineId,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    return (_decode(response) as List<dynamic>)
+        .map((item) => GroupDraw.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<GroupDraw> getGroupDraw(String drawId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/group-draws/$drawId'),
+      headers: _headers,
+    );
+    return GroupDraw.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  /// Sorteia o proximo grupo do modo avulso.
+  Future<GroupDraw> drawNextGroup(String drawId) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/group-draws/$drawId/next'),
+      headers: _headers,
+    );
+    return GroupDraw.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<GroupDraw> setGroupDrawStatus(
+    String drawId,
+    String entryId,
+    String status,
+  ) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/group-draws/$drawId/entries/$entryId'),
+      headers: _headers,
+      body: jsonEncode({'status': status}),
+    );
+    return GroupDraw.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  /// Sorteia (ou sorteia de novo) quem representa o grupo.
+  Future<GroupDraw> drawGroupRepresentative(
+    String drawId,
+    String entryId,
+  ) async {
+    final response = await http.post(
+      Uri.parse(
+        '$_baseUrl/education/group-draws/$drawId/entries/$entryId/representative',
+      ),
+      headers: _headers,
+    );
+    return GroupDraw.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteGroupDraw(String drawId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/group-draws/$drawId'),
+      headers: _headers,
+    );
+    _decode(response);
   }
 
   /// Troca so o nome do material; texto, disciplina e arquivo ficam iguais.

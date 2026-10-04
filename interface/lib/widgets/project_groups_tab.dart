@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/education_service.dart';
+import 'group_draw_dialog.dart';
 
 String projectGroupDisciplineCode(Discipline item) =>
   RegExp(r'ARA\d{4}', caseSensitive: false).firstMatch(item.code)?.group(0)?.toUpperCase()
@@ -613,6 +614,13 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     }
   }
 
+  /// Abre o sorteio da ordem de apresentação da disciplina escolhida.
+  Future<void> openDraw() async {
+    final discipline = disciplines.where((item) => item.id == selectedId);
+    if (discipline.isEmpty) return;
+    await showGroupDrawDialog(context, discipline: discipline.first);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
@@ -640,6 +648,10 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           ElevatedButton.icon(onPressed: busy || selectedId == null ? null : previewAndImport,
             icon: const Icon(Icons.fact_check_outlined),
             label: const Text('Conferir e cadastrar grupos')),
+          OutlinedButton.icon(
+            onPressed: busy || groups.isEmpty ? null : openDraw,
+            icon: const Icon(Icons.casino_outlined),
+            label: const Text('Sortear apresentação')),
           OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : reviewSuggestedLinks,
             icon: const Icon(Icons.person_search_outlined),
             label: const Text('Sugerir nomes e matrículas')),

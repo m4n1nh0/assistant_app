@@ -627,6 +627,56 @@ class ProjectGroupNameResolutionModel(Base):
                         onupdate=lambda: datetime.now(timezone.utc))
 
 
+class GroupDrawModel(Base):
+    """Sorteio da ordem de apresentacao dos grupos de projeto de uma disciplina.
+
+    Guarda o que permite refazer a conta: a `seed`, a `algorithm` e os grupos que
+    entraram (as linhas de `GroupDrawEntryModel`). `step` e quantos passos ja foram
+    revelados - na fila completa e o total desde o inicio, no sorteio avulso cresce
+    a cada clique.
+    """
+
+    __tablename__ = "group_draws"
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id      = Column(String(64), nullable=False, index=True)
+    discipline_id = Column(String(64), nullable=False, index=True)
+    semester      = Column(String(16), nullable=False, default="", index=True)
+    title         = Column(String(255), nullable=False, default="")
+    mode          = Column(String(16), nullable=False, default="fila")
+    seed          = Column(String(64), nullable=False)
+    algorithm     = Column(String(16), nullable=False, default="sha256-v1")
+    # Quantos grupos se apresentam por dia; vazio e tudo no mesmo dia.
+    per_day       = Column(Integer, nullable=True)
+    step          = Column(Integer, nullable=False, default=0)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class GroupDrawEntryModel(Base):
+    """Um grupo dentro de um sorteio, com a vez que tirou e como foi a apresentacao.
+
+    O nome do grupo e o do integrante sorteado ficam copiados: o sorteio e um
+    registro do que aconteceu, e nao deve mudar se o grupo for renomeado depois.
+    `position` e vazio enquanto o grupo ainda nao foi sorteado (modo avulso).
+    """
+
+    __tablename__ = "group_draw_entries"
+    __table_args__ = (
+        UniqueConstraint("draw_id", "group_id", name="uq_group_draw_entry_group"),
+    )
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    draw_id       = Column(String(64), nullable=False, index=True)
+    group_id      = Column(String(64), nullable=False, index=True)
+    group_name    = Column(String(120), nullable=False, default="")
+    position      = Column(Integer, nullable=True)
+    day           = Column(Integer, nullable=True)
+    status        = Column(String(16), nullable=False, default="pendente")
+    representative_member_id = Column(String(64), nullable=True)
+    representative_name      = Column(String(180), nullable=False, default="")
+    representative_round     = Column(Integer, nullable=False, default=0)
+    drawn_at      = Column(DateTime, nullable=True)
+    presented_at  = Column(DateTime, nullable=True)
+
+
 class AttendanceSessionModel(Base):
     """Janela temporaria de chamada com um QR para uma ou mais turmas."""
 

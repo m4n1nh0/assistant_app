@@ -99,6 +99,7 @@ nav:
       - Modo Educacao: funcionalidades/modo-educacao.md
       - Calendarios: funcionalidades/calendarios.md
       - Integracao com sistema academico: funcionalidades/sistema-academico.md
+      - Sorteio de apresentacao por grupo: funcionalidades/sorteio-de-apresentacao.md
       - Agentes por disciplina: funcionalidades/agentes-por-disciplina.md
       - Memoria multi-turno: funcionalidades/memoria-multi-turno.md
       - Deteccao de alucinacao: funcionalidades/deteccao-alucinacao.md
