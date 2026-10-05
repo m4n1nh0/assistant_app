@@ -16,6 +16,7 @@ from app.core.database import (
     ClassGroupModel,
     DisciplineModel,
     ProjectGroupMemberModel,
+    ProjectGroupClassModel,
     ProjectGroupModel,
     QuestionModel,
     QuestionTranslationModel,
@@ -35,7 +36,8 @@ from app.routers import education, quiz_group, quiz_play
 
 USER = {"uid": "u1", "tutor_id": "t1"}
 TABELAS = (
-    ClassGroupModel, DisciplineModel, ProjectGroupModel, ProjectGroupMemberModel, StudentModel,
+    ClassGroupModel, DisciplineModel, ProjectGroupModel, ProjectGroupClassModel,
+    ProjectGroupMemberModel, StudentModel,
     QuizModel, QuestionModel, QuizParticipantModel, StudentAnswerModel,
     QuestionTranslationModel, QuizGroupConfigModel, QuizGroupLinkModel,
     QuizGroupRepresentativeModel, QuizJobModel, QuizSourceModel,

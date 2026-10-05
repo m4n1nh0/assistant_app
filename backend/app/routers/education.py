@@ -34,6 +34,7 @@ from ..core.database import (
     ProjectGroupModel,
     ProjectGroupNameResolutionModel,
     ProjectGroupMemberModel,
+    ProjectGroupClassModel,
     DisciplineModel,
     QuizModel,
     QuizParticipantModel,
@@ -170,6 +171,17 @@ async def _class_of_discipline(class_id: Optional[str], discipline: DisciplineMo
     return item.id
 
 
+async def _classes_of_discipline(class_id: Optional[str], class_ids: list[str],
+                                 discipline: DisciplineModel, tutor_id: str,
+                                 db: AsyncSession) -> list[str]:
+    """Turmas pedidas (uma ou varias, juntas na aula reunida), validadas uma a uma."""
+    from ..services.project_group_service import as_class_list
+
+    wanted = as_class_list([*(class_ids or []), class_id or ""])
+    return [await _class_of_discipline(item, discipline, tutor_id, db)
+            for item in wanted]
+
+
 async def _owned_project_group(group_id: str, tutor_id: str,
                                db: AsyncSession) -> ProjectGroupModel:
     item = await db.get(ProjectGroupModel, group_id)
@@ -190,21 +202,23 @@ async def preview_project_group_text(
 
     discipline = await _owned_project_discipline(
         body.discipline_id, user["tutor_id"], db)
-    class_id = await _class_of_discipline(
-        body.class_id, discipline, user["tutor_id"], db)
+    class_ids = await _classes_of_discipline(
+        body.class_id, body.class_ids, discipline, user["tutor_id"], db)
     try:
         parsed, context = parse_project_group_text(body.text)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     summary = await preview_project_groups(
-        db, user["tutor_id"], discipline.id, parsed, class_id)
-    labels = await class_labels(db, user["tutor_id"], [class_id])
+        db, user["tutor_id"], discipline.id, parsed, class_ids)
+    labels = await class_labels(db, user["tutor_id"], class_ids)
     return {**summary, "preview_sha256": source_sha256(body.text),
             "discipline_code": discipline.code,
             "discipline_name": discipline.name,
             "semester": discipline.semester,
-            "class_id": class_id,
-            "class_label": labels.get(class_id, {}).get("display", ""),
+            "class_id": class_ids[0] if class_ids else None,
+            "class_ids": class_ids,
+            "class_label": " + ".join(
+                labels.get(item, {}).get("display", "") for item in class_ids),
             "list_context": context}
 
 
@@ -222,15 +236,15 @@ async def import_project_group_text(
         raise HTTPException(409, "A lista mudou depois da prévia; confira novamente")
     discipline = await _owned_project_discipline(
         body.discipline_id, user["tutor_id"], db)
-    class_id = await _class_of_discipline(
-        body.class_id, discipline, user["tutor_id"], db)
+    class_ids = await _classes_of_discipline(
+        body.class_id, body.class_ids, discipline, user["tutor_id"], db)
     try:
         parsed, context = parse_project_group_text(body.text)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     try:
         return await import_project_groups(db, user["tutor_id"],
-            discipline, parsed, context, body.member_links, class_id)
+            discipline, parsed, context, body.member_links, class_ids)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -243,7 +257,9 @@ async def list_project_groups(
     db: AsyncSession = Depends(get_db),
 ):
     """Grupos do professor. Com `class_id`, só os da turma; `none` traz os sem turma."""
-    from ..services.project_group_service import class_labels
+    from ..services.project_group_service import (
+        WEEKDAY_NAMES, class_ids_of_groups, class_labels, group_in_class_clause,
+    )
 
     query = select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == user["tutor_id"])
@@ -253,7 +269,7 @@ async def list_project_groups(
     if class_id == "none":
         query = query.where(ProjectGroupModel.class_id.is_(None))
     elif class_id:
-        query = query.where(ProjectGroupModel.class_id == class_id)
+        query = query.where(group_in_class_clause(class_id))
     groups = (await db.execute(query.order_by(
         ProjectGroupModel.semester.desc(), ProjectGroupModel.name
     ))).scalars().all()
@@ -285,13 +301,26 @@ async def list_project_groups(
             DisciplineModel.id.in_({group.discipline_id for group in groups}),
         ))).scalars().all()
     }
+    group_classes = await class_ids_of_groups(db, groups)
     turmas = await class_labels(
-        db, user["tutor_id"], [group.class_id for group in groups])
+        db, user["tutor_id"],
+        [item for ids in group_classes.values() for item in ids])
+
+    def label_of(group) -> str:
+        return " + ".join(turmas[item]["display"]
+                          for item in group_classes[group.id] if item in turmas)
+
+    def days_of(group) -> list[str]:
+        found = {day for item in group_classes[group.id]
+                 for day in turmas.get(item, {}).get("days", [])}
+        return [day for day in WEEKDAY_NAMES if day in found]
+
     return [dict(id=group.id, discipline_id=group.discipline_id,
                  discipline=disciplinas.get(group.discipline_id, ""),
                  class_id=group.class_id,
-                 class_label=turmas.get(group.class_id, {}).get("display", ""),
-                 class_days=turmas.get(group.class_id, {}).get("days", []),
+                 class_ids=group_classes[group.id],
+                 class_label=label_of(group),
+                 class_days=days_of(group),
                  semester=group.semester, name=group.name,
                  project_title=group.project_title,
                  project_description=group.project_description,
@@ -316,8 +345,13 @@ async def assign_project_groups_to_class(
     segunda. Nada muda nos integrantes nem nas notas.
 
     O nome do grupo é único dentro da turma; se o destino já tem um grupo com o mesmo
-    nome, a ligação é recusada em vez de fundir dois grupos.
+    nome, a ligação é recusada em vez de fundir dois grupos. Com várias turmas
+    (`class_ids`) o grupo passa a ser de aula reunida.
     """
+    from ..services.project_group_service import (
+        clashing_group_names, set_group_classes,
+    )
+
     tutor_id = user["tutor_id"]
     ids = list(dict.fromkeys(body.group_ids))
     groups = list((await db.execute(select(ProjectGroupModel).where(
@@ -329,19 +363,13 @@ async def assign_project_groups_to_class(
     if len(disciplines) != 1:
         raise HTTPException(422, "Escolha grupos de uma disciplina só")
     discipline = await _owned_project_discipline(disciplines.pop(), tutor_id, db)
-    class_id = await _class_of_discipline(body.class_id, discipline, tutor_id, db)
+    class_ids = await _classes_of_discipline(
+        body.class_id, body.class_ids, discipline, tutor_id, db)
 
-    destination = select(ProjectGroupModel.name).where(
-        ProjectGroupModel.tutor_id == tutor_id,
-        ProjectGroupModel.discipline_id == discipline.id,
-        ProjectGroupModel.id.not_in(ids),
-    )
-    destination = destination.where(
-        ProjectGroupModel.class_id == class_id if class_id
-        else ProjectGroupModel.class_id.is_(None))
-    taken = set((await db.execute(destination)).scalars())
     names = [group.name for group in groups]
-    clash = sorted({name for name in names if name in taken})
+    # Mesmo nome em grupo que ja tem alguma destas turmas (e nao esta sendo movido).
+    clash = sorted(await clashing_group_names(
+        db, tutor_id, discipline.id, class_ids, names, ignore_ids=ids))
     if clash or len(set(names)) != len(names):
         raise HTTPException(
             409,
@@ -349,9 +377,11 @@ async def assign_project_groups_to_class(
             f"{', '.join(clash) or 'nomes repetidos entre os escolhidos'}.")
 
     for group in groups:
-        group.class_id = class_id
+        await set_group_classes(db, group, class_ids)
     await db.commit()
-    return {"assigned": len(groups), "class_id": class_id}
+    return {"assigned": len(groups),
+            "class_id": class_ids[0] if class_ids else None,
+            "class_ids": class_ids}
 
 
 @router.patch("/project-groups/{group_id}")
@@ -375,8 +405,9 @@ async def project_group_link_suggestions(
     db: AsyncSession = Depends(get_db),
 ):
     from ..services.project_group_service import (
-        NameSimilarityIndex, class_labels, learned_name_resolutions,
-        roster_for_discipline, suggested_student_matches, unique_student_match,
+        NameSimilarityIndex, class_ids_of_groups, class_labels,
+        learned_name_resolutions, roster_for_discipline, suggested_student_matches,
+        unique_student_match,
     )
     await _owned_project_discipline(discipline_id, user["tutor_id"], db)
     full_roster = await roster_for_discipline(db, user["tutor_id"], discipline_id)
@@ -391,26 +422,31 @@ async def project_group_link_suggestions(
         ProjectGroupMemberModel.student_id.is_(None),
     ))).scalars().all()
     by_group = {group.id: group for group in groups}
+    group_classes = await class_ids_of_groups(db, groups)
     turmas = await class_labels(
-        db, user["tutor_id"], [group.class_id for group in groups])
-    # Grupo de uma turma so e comparado com os alunos dela: a lista da segunda nao
-    # deve casar com um homonimo da quinta. Grupo sem turma usa a disciplina toda.
+        db, user["tutor_id"],
+        [item for ids in group_classes.values() for item in ids])
+    # Grupo de uma turma so e comparado com os alunos dela (na aula reunida, os das
+    # turmas juntas): a lista da segunda nao deve casar com um homonimo da quinta.
+    # Grupo sem turma usa a disciplina toda.
     rosters: dict = {}
     for member in members:
-        group = by_group[member.group_id]
-        if group.class_id not in rosters:
+        key = tuple(group_classes[member.group_id])
+        if key not in rosters:
             roster = (await roster_for_discipline(
-                db, user["tutor_id"], discipline_id, group.class_id)
-                if group.class_id else full_roster)
-            rosters[group.class_id] = (roster, NameSimilarityIndex(roster))
+                db, user["tutor_id"], discipline_id, list(key))
+                if key else full_roster)
+            rosters[key] = (roster, NameSimilarityIndex(roster))
     result = []
     for member in members:
         group = by_group[member.group_id]
-        roster, index = rosters[group.class_id]
+        roster, index = rosters[tuple(group_classes[member.group_id])]
         automatic = unique_student_match(member.name, roster, learned)
         result.append(dict(member_id=member.id, member_name=member.name,
                            group_name=group.name,
-                           class_label=turmas.get(group.class_id, {}).get("display", ""),
+                           class_label=" + ".join(
+                               turmas[item]["display"]
+                               for item in group_classes[group.id] if item in turmas),
                            automatic_match=(dict(student_id=automatic.id,
                                student_name=automatic.name,
                                enrollment=automatic.external_id or "")
@@ -497,6 +533,8 @@ async def delete_all_project_groups(
     if groups:
         await db.execute(sql_delete(ProjectGroupMemberModel).where(
             ProjectGroupMemberModel.group_id.in_(groups)))
+        await db.execute(sql_delete(ProjectGroupClassModel).where(
+            ProjectGroupClassModel.group_id.in_(groups)))
         await db.execute(sql_delete(ProjectGroupModel).where(
             ProjectGroupModel.id.in_(groups),
             ProjectGroupModel.tutor_id == user["tutor_id"]))
@@ -518,6 +556,8 @@ async def delete_project_group(
     ))).scalars().all()
     for member in members:
         await db.delete(member)
+    await db.execute(sql_delete(ProjectGroupClassModel).where(
+        ProjectGroupClassModel.group_id == group.id))
     await db.delete(group)
     await db.commit()
     return {"success": True}

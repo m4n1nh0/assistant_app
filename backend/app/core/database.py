@@ -603,6 +603,22 @@ class ProjectGroupModel(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class ProjectGroupClassModel(Base):
+    """Turmas de um grupo de projeto (aula reunida: o grupo mistura alunos de mais de uma).
+
+    `ProjectGroupModel.class_id` guarda a turma principal; quando nao ha linhas aqui o
+    grupo pertence so a ela (ou a nenhuma, nos grupos antigos).
+    """
+
+    __tablename__ = "project_group_classes"
+    __table_args__ = (
+        UniqueConstraint("group_id", "class_id", name="uq_project_group_class"),
+    )
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    group_id = Column(String(64), nullable=False, index=True)
+    class_id = Column(String(64), nullable=False, index=True)
+
+
 class ProjectGroupMemberModel(Base):
     """Nome da lista; student_id só é preenchido quando a identidade é segura."""
 

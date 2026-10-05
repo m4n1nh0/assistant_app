@@ -25,7 +25,7 @@ from ..core.database import (
 )
 from ..core.security import get_current_user
 from ..services import group_draw_service as rule
-from ..services.project_group_service import class_labels
+from ..services.project_group_service import class_labels, group_in_class_clause
 
 router = APIRouter(prefix="/education/group-draws", tags=["education-group-draws"])
 
@@ -155,7 +155,8 @@ async def create_draw(
         ProjectGroupModel.discipline_id == body.discipline_id,
     )
     if class_id:
-        query = query.where(ProjectGroupModel.class_id == class_id)
+        # Inclui os grupos de aula reunida, que tem esta turma entre as suas.
+        query = query.where(group_in_class_clause(class_id))
     semester = body.semester.strip()
     if semester:
         query = query.where(ProjectGroupModel.semester == semester)

@@ -902,8 +902,10 @@ class ProjectGroupTextRequest(BaseModel):
     discipline_id: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=250000)
     # Turma dona dos grupos (a da segunda, a da quinta). Sem ela os grupos ficam sem
-    # turma, como antes da separacao.
+    # turma, como antes da separacao. `class_ids` e a aula reunida: o grupo mistura
+    # alunos de mais de uma turma (segunda + quinta); `class_id` mantem clientes antigos.
     class_id: Optional[str] = None
+    class_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProjectGroupImportMemberLink(BaseModel):
@@ -921,6 +923,7 @@ class ProjectGroupAssignClass(BaseModel):
     """Liga grupos que ja existem a uma turma (ou os solta, com `class_id` nulo)."""
     group_ids: list[str] = Field(min_length=1, max_length=200)
     class_id: Optional[str] = None
+    class_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProjectGroupUpdate(BaseModel):

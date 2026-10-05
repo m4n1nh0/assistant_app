@@ -377,7 +377,7 @@ async def _groups_of(db: AsyncSession, config: QuizGroupConfigModel) -> list[Pro
     if config.semester:
         query = query.where(ProjectGroupModel.semester == config.semester)
     if config.class_id:
-        query = query.where(ProjectGroupModel.class_id == config.class_id)
+        query = query.where(project_groups.group_in_class_clause(config.class_id))
     return list((await db.execute(query)).scalars().all())
 
 

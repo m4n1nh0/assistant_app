@@ -39,15 +39,18 @@ class EducationService {
         if (_api.token != null) 'Authorization': 'Bearer ${_api.token}',
       };
 
+  /// `classIds` são as turmas da lista: uma só, ou várias quando os grupos misturam
+  /// alunos de turmas que têm a mesma aula. Vazio: grupos sem turma.
   Future<Map<String, dynamic>> previewProjectGroups(
-      String disciplineId, String text, {String? classId}) async {
+      String disciplineId, String text,
+      {List<String> classIds = const []}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/project-groups/preview'),
       headers: _headers,
       body: jsonEncode({
         'discipline_id': disciplineId,
         'text': text,
-        if (classId != null) 'class_id': classId,
+        if (classIds.isNotEmpty) 'class_ids': classIds,
       }),
     );
     return Map<String, dynamic>.from(_decode(response) as Map);
@@ -56,13 +59,13 @@ class EducationService {
   Future<Map<String, dynamic>> importProjectGroups(
       String disciplineId, String text, String previewSha256,
       {List<Map<String, dynamic>> memberLinks = const [],
-      String? classId}) async {
+      List<String> classIds = const []}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/project-groups/import'),
       headers: _headers,
       body: jsonEncode({'discipline_id': disciplineId, 'text': text,
         'preview_sha256': previewSha256, 'member_links': memberLinks,
-        if (classId != null) 'class_id': classId}),
+        if (classIds.isNotEmpty) 'class_ids': classIds}),
     );
     return Map<String, dynamic>.from(_decode(response) as Map);
   }
@@ -80,14 +83,14 @@ class EducationService {
         .map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
-  /// Liga grupos que já existem a uma turma (ou os solta, com `classId` nulo).
-  /// O servidor recusa se a turma de destino já tem um grupo com o mesmo nome.
+  /// Liga grupos que já existem a uma ou mais turmas (ou os solta, com a lista vazia).
+  /// O servidor recusa se alguma turma de destino já tem um grupo com o mesmo nome.
   Future<int> assignProjectGroupsToClass(
-      List<String> groupIds, String? classId) async {
+      List<String> groupIds, List<String> classIds) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/project-groups/assign-class'),
       headers: _headers,
-      body: jsonEncode({'group_ids': groupIds, 'class_id': classId}),
+      body: jsonEncode({'group_ids': groupIds, 'class_ids': classIds}),
     );
     return (Map<String, dynamic>.from(_decode(response) as Map)['assigned'] as num)
         .toInt();

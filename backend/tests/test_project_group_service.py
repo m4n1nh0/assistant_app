@@ -201,8 +201,9 @@ def test_import_uses_confirmed_student_and_learns_name_variation():
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.core.database import (
-        ClassGroupModel, DisciplineModel, ProjectGroupMemberModel,
-        ProjectGroupModel, ProjectGroupNameResolutionModel, StudentModel,
+        ClassGroupModel, DisciplineModel, ProjectGroupClassModel,
+        ProjectGroupMemberModel, ProjectGroupModel, ProjectGroupNameResolutionModel,
+        StudentModel,
     )
     from app.services.project_group_service import (
         import_project_groups, learned_name_resolutions,
@@ -212,6 +213,7 @@ def test_import_uses_confirmed_student_and_learns_name_variation():
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         tables = [DisciplineModel.__table__, ClassGroupModel.__table__,
                   StudentModel.__table__, ProjectGroupModel.__table__,
+                  ProjectGroupClassModel.__table__,
                   ProjectGroupMemberModel.__table__,
                   ProjectGroupNameResolutionModel.__table__]
         async with engine.begin() as conn:

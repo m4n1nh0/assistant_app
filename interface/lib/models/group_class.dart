@@ -82,48 +82,67 @@ final _weekdayPatterns = <int, RegExp>{
   6: RegExp(r'\bdomingo\b'),
 };
 
-/// A turma que o texto colado já anuncia, ou `null` quando não dá para ter certeza.
+/// As turmas que o texto colado já anuncia; vazio quando não dá para ter certeza.
 ///
 /// Olha só o que vem antes do primeiro "GRUPO 1" ("Grupos turma segunda:"): é o
 /// título que o professor escreve, e os nomes dos alunos não têm nada a ver com dia
-/// de aula. Vale o código da turma (3002) e, depois, o dia da semana - mas só se
-/// apontar para uma turma única. Em dúvida, não escolhe: quem decide é o professor.
-ClassGroup? inferClassFromListText(String text, List<ClassGroup> classes) {
+/// de aula. Valem os códigos de turma citados (3002, 3030) e, sem eles, o dia da
+/// semana, desde que seja um só: todas as turmas que têm aula nesse dia, porque duas
+/// turmas na mesma aula costumam ter grupos que misturam os alunos das duas. É só uma
+/// sugestão: quem confirma é o professor.
+List<ClassGroup> inferClassesFromListText(String text, List<ClassGroup> classes) {
   final context = <String>[];
   for (final line in text.split('\n')) {
     if (_groupHeader.hasMatch(line)) break;
     context.add(line);
   }
   final head = _fold(context.join(' '));
-  if (head.trim().isEmpty || classes.isEmpty) return null;
+  if (head.trim().isEmpty || classes.isEmpty) return const [];
 
   final byCode = classes
       .where((item) =>
           item.code.trim().isNotEmpty &&
           RegExp('\\b${RegExp.escape(_fold(item.code.trim()))}\\b').hasMatch(head))
       .toList();
-  if (byCode.length == 1) return byCode.single;
+  if (byCode.isNotEmpty) return byCode;
 
   final days = [
     for (final entry in _weekdayPatterns.entries)
       if (entry.value.hasMatch(head)) entry.key,
   ];
-  if (days.length != 1) return null;
-  final byDay = classes
+  if (days.length != 1) return const [];
+  return classes
       .where((item) => item.schedules.any((row) => row.weekday == days.single))
       .toList();
-  return byDay.length == 1 ? byDay.single : null;
+}
+
+/// Turmas de um grupo. Aula reunida tem mais de uma; os grupos antigos, nenhuma.
+///
+/// Vale `class_ids`; sem ele (servidor antigo), a turma principal `class_id`.
+List<String> groupClassIds(Map<String, dynamic> group) {
+  final ids = group['class_ids'];
+  if (ids is List) {
+    final found = [
+      for (final item in ids)
+        if ('$item'.isNotEmpty) '$item',
+    ];
+    if (found.isNotEmpty) return found;
+  }
+  final single = (group['class_id'] ?? '').toString();
+  return single.isEmpty ? const [] : [single];
 }
 
 /// Grupos de uma turma; `null` é "todas" e [noClassFilter] são os sem turma.
+///
+/// O grupo de aula reunida aparece em cada uma das suas turmas.
 List<Map<String, dynamic>> filterGroupsByClass(
   List<Map<String, dynamic>> groups,
   String? filter,
 ) {
   if (filter == null) return groups;
   return groups.where((group) {
-    final classId = (group['class_id'] ?? '').toString();
-    return filter == noClassFilter ? classId.isEmpty : classId == filter;
+    final ids = groupClassIds(group);
+    return filter == noClassFilter ? ids.isEmpty : ids.contains(filter);
   }).toList();
 }
 

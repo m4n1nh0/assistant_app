@@ -11,11 +11,12 @@ from collections import Counter
 from difflib import SequenceMatcher
 from functools import lru_cache
 
-from sqlalchemy import select
+from sqlalchemy import delete as sql_delete, or_, select
 
 from ..core.database import (
     AsyncSessionLocal, ClassGroupModel, ClassScheduleModel, DisciplineModel,
-    ProjectGroupMemberModel, ProjectGroupModel, ProjectGroupNameResolutionModel,
+    ProjectGroupClassModel, ProjectGroupMemberModel, ProjectGroupModel,
+    ProjectGroupNameResolutionModel,
     StudentModel,
 )
 
@@ -194,9 +195,21 @@ async def class_labels(db, tutor_id: str, class_ids) -> dict[str, dict]:
     return labels
 
 
+def as_class_list(class_ids) -> list[str]:
+    """Aceita uma turma, varias ou nenhuma; devolve ids unicos e ordenados."""
+    if not class_ids:
+        return []
+    if isinstance(class_ids, str):
+        class_ids = [class_ids]
+    return sorted({str(item).strip() for item in class_ids if str(item or "").strip()})
+
+
 async def roster_for_discipline(db, tutor_id: str, discipline_id: str,
-                                class_id: str | None = None) -> list[StudentModel]:
-    """Alunos da disciplina; com `class_id`, so os daquela turma.
+                                class_id: str | list[str] | None = None
+                                ) -> list[StudentModel]:
+    """Alunos da disciplina; com turma(s), so os dela(s).
+
+    Aula reunida mistura alunos de mais de uma turma: com varias, o roster e a uniao.
 
     Por turma o casamento de nomes fica mais certo: a lista da segunda so se confunde
     com os alunos da segunda, e dois colegas de turmas diferentes com o mesmo nome
@@ -206,8 +219,9 @@ async def roster_for_discipline(db, tutor_id: str, discipline_id: str,
         ClassGroupModel.tutor_id == tutor_id,
         ClassGroupModel.discipline_id == discipline_id,
     )
-    if class_id:
-        query = query.where(ClassGroupModel.id == class_id)
+    wanted = as_class_list(class_id)
+    if wanted:
+        query = query.where(ClassGroupModel.id.in_(wanted))
     classes = (await db.execute(query)).scalars().all()
     class_ids = [item.id for item in classes]
     if not class_ids:
@@ -489,32 +503,92 @@ def preview_member_match(name: str, roster: list[StudentModel],
                 candidates=suggested_student_matches(name, roster, index))
 
 
-async def groups_in_class(db, tutor_id: str, discipline_id: str,
-                          class_id: str | None) -> list[ProjectGroupModel]:
-    """Grupos da disciplina que pertencem a esta turma.
+def group_in_class_clause(class_id: str):
+    """Condicao SQL: o grupo e desta turma (principal ou uma das turmas da aula reunida)."""
+    return or_(
+        ProjectGroupModel.class_id == class_id,
+        ProjectGroupModel.id.in_(select(ProjectGroupClassModel.group_id).where(
+            ProjectGroupClassModel.class_id == class_id)),
+    )
+
+
+async def class_ids_of_groups(db, groups) -> dict[str, list[str]]:
+    """Turmas de cada grupo (ordenadas). Sem linhas na tabela, vale a turma principal."""
+    ids = [group.id for group in groups]
+    rows = (await db.execute(select(ProjectGroupClassModel).where(
+        ProjectGroupClassModel.group_id.in_(ids or [""])))).scalars().all()
+    extra: dict[str, set[str]] = {}
+    for row in rows:
+        extra.setdefault(row.group_id, set()).add(row.class_id)
+    result = {}
+    for group in groups:
+        found = set(extra.get(group.id, ()))
+        if group.class_id:
+            found.add(group.class_id)
+        result[group.id] = sorted(found)
+    return result
+
+
+async def set_group_classes(db, group: ProjectGroupModel, class_ids) -> None:
+    """Define as turmas do grupo; a principal (primeira em ordem) fica em `class_id`."""
+    wanted = as_class_list(class_ids)
+    group.class_id = wanted[0] if wanted else None
+    await db.execute(sql_delete(ProjectGroupClassModel).where(
+        ProjectGroupClassModel.group_id == group.id))
+    if len(wanted) > 1:
+        for item in wanted:
+            db.add(ProjectGroupClassModel(group_id=group.id, class_id=item))
+
+
+async def groups_in_classes(db, tutor_id: str, discipline_id: str,
+                            class_ids) -> list[ProjectGroupModel]:
+    """Grupos da disciplina com exatamente este conjunto de turmas.
 
     Sem turma, so os grupos sem turma: importar a lista da quinta nao pode achar,
-    pelo nome, os grupos da segunda e troca-los (o "GRUPO 1" existe nas duas).
+    pelo nome, os grupos da segunda e troca-los (o "GRUPO 1" existe nas duas). Do mesmo
+    modo, a lista da aula reunida (segunda + quinta) so atualiza grupos da mesma reuniao.
     """
-    query = select(ProjectGroupModel).where(
+    wanted = as_class_list(class_ids)
+    groups = list((await db.execute(select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == tutor_id,
         ProjectGroupModel.discipline_id == discipline_id,
-    )
-    if class_id:
-        query = query.where(ProjectGroupModel.class_id == class_id)
-    else:
-        query = query.where(ProjectGroupModel.class_id.is_(None))
-    return list((await db.execute(query)).scalars().all())
+    ))).scalars().all())
+    sets = await class_ids_of_groups(db, groups)
+    return [group for group in groups if sets[group.id] == wanted]
+
+
+async def clashing_group_names(db, tutor_id: str, discipline_id: str, class_ids,
+                               names, ignore_ids=()) -> set[str]:
+    """Nomes que ja existem em grupo de turmas que se cruzam com estas, sem ser a mesma.
+
+    O nome e unico dentro de cada turma; dois grupos com turmas em comum e o mesmo nome
+    seriam ambiguos (qual e o "GRUPO 1" da segunda?).
+    """
+    wanted = set(as_class_list(class_ids))
+    if not wanted:
+        return set()
+    groups = list((await db.execute(select(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == tutor_id,
+        ProjectGroupModel.discipline_id == discipline_id,
+        ProjectGroupModel.name.in_(list(names) or [""]),
+    ))).scalars().all())
+    sets = await class_ids_of_groups(db, groups)
+    return {group.name for group in groups
+            if group.id not in set(ignore_ids)
+            and wanted & set(sets[group.id])}
 
 
 async def preview_project_groups(db, tutor_id: str, discipline_id: str,
                                  parsed: list[dict],
-                                 class_id: str | None = None) -> dict:
+                                 class_id: str | list[str] | None = None) -> dict:
     roster = await roster_for_discipline(db, tutor_id, discipline_id, class_id)
     learned = await learned_name_resolutions(db, tutor_id, discipline_id, roster)
     index = NameSimilarityIndex(roster)
-    existing = await groups_in_class(db, tutor_id, discipline_id, class_id)
+    existing = await groups_in_classes(db, tutor_id, discipline_id, class_id)
     existing_names = {group.name for group in existing}
+    conflicts = await clashing_group_names(
+        db, tutor_id, discipline_id, class_id,
+        [row["name"] for row in parsed], ignore_ids=[group.id for group in existing])
     existing_members = (await db.execute(select(ProjectGroupMemberModel).where(
         ProjectGroupMemberModel.group_id.in_([group.id for group in existing] or [""])
     ))).scalars().all()
@@ -537,6 +611,7 @@ async def preview_project_groups(db, tutor_id: str, discipline_id: str,
                 new_groups=sum(group["name"] not in existing_names for group in parsed),
                 updated_groups=sum(group["name"] in existing_names for group in parsed),
                 members_removed_on_update=removed_members,
+                conflicting_names=sorted(conflicts),
                 group_names=[dict(name=group["name"], members=len(group["members"]),
                                   source_note=group["note"],
                                   names=[preview_member_match(member["name"], roster, index, learned)
@@ -567,11 +642,20 @@ def validate_import_member_links(parsed: list[dict], links: list,
 
 async def import_project_groups(db, tutor_id: str, discipline, parsed: list[dict],
                                 context: str, member_links: list | None = None,
-                                class_id: str | None = None) -> dict:
-    roster = await roster_for_discipline(db, tutor_id, discipline.id, class_id)
+                                class_id: str | list[str] | None = None) -> dict:
+    wanted = as_class_list(class_id)
+    roster = await roster_for_discipline(db, tutor_id, discipline.id, wanted)
     learned = await learned_name_resolutions(db, tutor_id, discipline.id, roster)
     choices = validate_import_member_links(parsed, member_links or [], roster)
-    existing = await groups_in_class(db, tutor_id, discipline.id, class_id)
+    existing = await groups_in_classes(db, tutor_id, discipline.id, wanted)
+    conflicts = await clashing_group_names(
+        db, tutor_id, discipline.id, wanted, [row["name"] for row in parsed],
+        ignore_ids=[group.id for group in existing])
+    if conflicts:
+        raise ValueError(
+            "Já existe grupo com este nome em turma que faz parte desta lista: "
+            f"{', '.join(sorted(conflicts))}. Use as mesmas turmas do grupo existente "
+            "ou renomeie.")
     by_name = {group.name: group for group in existing}
     created = updated = linked = 0
     for row in parsed:
@@ -579,9 +663,10 @@ async def import_project_groups(db, tutor_id: str, discipline, parsed: list[dict
         if group is None:
             group = ProjectGroupModel(tutor_id=tutor_id,
                 discipline_id=discipline.id, semester=discipline.semester,
-                class_id=class_id or None, name=row["name"])
+                class_id=wanted[0] if wanted else None, name=row["name"])
             db.add(group)
             await db.flush()
+            await set_group_classes(db, group, wanted)
             created += 1
         else:
             updated += 1

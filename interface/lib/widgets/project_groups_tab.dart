@@ -60,8 +60,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   List<Map<String, dynamic>> groups = [];
   /// Turma escolhida na tela: `null` todas, [noClassFilter] os sem turma.
   String? classFilter;
-  /// Turma da lista que esta sendo conferida; restringe os alunos oferecidos.
-  String? importClassId;
+  /// Turmas da lista que esta sendo conferida; restringem os alunos oferecidos.
+  List<String> importClassIds = const [];
   /// Apresentacoes gravadas, por grupo. Ficam aqui para a avaliacao ter ao lado
   /// o que o grupo falou, e nao so a nota.
   Map<String, List<Lesson>> presentations = {};
@@ -256,14 +256,14 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       allGroups.where(test).length;
     final hoje = widget.clock().weekday;
     final split = splitClassesByDay(turmas, hoje);
-    final semTurma = groupsOf((group) => '${group['class_id'] ?? ''}'.isEmpty);
+    final semTurma = groupsOf((group) => groupClassIds(group).isEmpty);
 
     Widget chips(List<ClassGroup> list) => Wrap(spacing: 8, runSpacing: 8,
       children: [for (final turma in list)
         turmaChip(
           key: ValueKey('turma-${turma.id}'),
           label: '${classDisplay(turma)}  ·  ${turma.studentCount} alunos  ·  '
-            '${groupsOf((group) => group['class_id'] == turma.id)} grupos',
+            '${groupsOf((group) => groupClassIds(group).contains(turma.id))} grupos',
           selected: classFilter == turma.id,
           onTap: () => selectClassFilter(turma.id))]);
 
@@ -303,88 +303,109 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       ]));
   }
 
-  /// Pergunta de qual turma e a lista que vai ser cadastrada.
+  /// Caixas de turma: uma ou varias (aula reunida), ou "sem turma" quando [allowNone].
   ///
-  /// Disciplina com duas turmas repete os nomes ("GRUPO 1" na segunda e na quinta);
-  /// sem dizer a turma, a lista nova pareceria a mesma dos grupos que ja existem.
-  /// Devolve `null` se cancelou e '' para "sem turma".
-  Future<String?> chooseImportClass() async {
-    final options = turmas;
-    if (options.isEmpty) return '';
-    final suggested = inferClassFromListText(textController.text, options)?.id
-      ?? (classFilter != null && classFilter != noClassFilter ? classFilter : null);
-    final fromText = suggested != null &&
-      inferClassFromListText(textController.text, options)?.id == suggested;
-    String? picked = suggested;
-    return showDialog<String>(context: context,
+  /// Devolve `null` se cancelou; lista vazia so quando escolheu "sem turma".
+  Future<List<String>?> pickClasses({
+    required String title,
+    required String intro,
+    required String confirm,
+    required Set<String> initial,
+    bool allowNone = false,
+  }) {
+    final picked = {...initial};
+    var none = false;
+    return showDialog<List<String>>(context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, update) => AlertDialog(
-          title: const Text('Esta lista é de qual turma?'),
+          title: Text(title),
           content: SizedBox(width: 460, child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(fromText
-                ? 'O título da lista indica a turma marcada abaixo; confira.'
-                : 'Os grupos ficam ligados à turma, e o nome de cada grupo vale só '
-                  'dentro dela: o GRUPO 1 da segunda não se confunde com o da quinta.'),
+              Text(intro),
               const SizedBox(height: 8),
-              for (final turma in options)
-                RadioListTile<String>(
+              for (final turma in turmas)
+                CheckboxListTile(
+                  key: ValueKey('escolher-turma-${turma.id}'),
                   dense: true, contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
                   title: Text(classDisplay(turma)),
                   subtitle: Text('${turma.studentCount} alunos'),
-                  value: turma.id, groupValue: picked,
-                  onChanged: (value) => update(() => picked = value)),
-              RadioListTile<String>(
-                dense: true, contentPadding: EdgeInsets.zero,
-                title: const Text('Sem turma'),
-                subtitle: const Text('Como era antes: vale para a disciplina toda.'),
-                value: '', groupValue: picked,
-                onChanged: (value) => update(() => picked = value)),
+                  value: picked.contains(turma.id),
+                  onChanged: (value) => update(() {
+                    value == true ? picked.add(turma.id) : picked.remove(turma.id);
+                    if (picked.isNotEmpty) none = false;
+                  })),
+              if (allowNone)
+                CheckboxListTile(
+                  key: const ValueKey('escolher-sem-turma'),
+                  dense: true, contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Sem turma'),
+                  subtitle: const Text('Como era antes: vale para a disciplina toda.'),
+                  value: none,
+                  onChanged: (value) => update(() {
+                    none = value == true;
+                    if (none) picked.clear();
+                  })),
+              if (picked.length > 1) ...[
+                const SizedBox(height: 8),
+                Text('Aula reunida: os grupos desta lista podem misturar alunos de '
+                  '${picked.length} turmas, e os nomes são procurados entre todos eles.',
+                  key: const ValueKey('aviso-aula-reunida'),
+                  style: Theme.of(dialogContext).textTheme.bodySmall),
+              ],
             ])),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancelar')),
             ElevatedButton(
-              onPressed: picked == null ? null
-                : () => Navigator.pop(dialogContext, picked),
-              child: const Text('Continuar')),
+              onPressed: picked.isEmpty && !none ? null
+                : () => Navigator.pop(dialogContext, picked.toList()..sort()),
+              child: Text(confirm)),
           ],
         )));
   }
 
-  /// Liga os grupos que ainda estao sem turma a uma turma da disciplina.
+  /// Pergunta de quais turmas e a lista que vai ser cadastrada.
+  ///
+  /// Disciplina com duas turmas repete os nomes ("GRUPO 1" na segunda e na quinta);
+  /// sem dizer a turma, a lista nova pareceria a mesma dos grupos que ja existem. Duas
+  /// turmas com a mesma aula (3002 e 3030, na segunda) podem ter grupos que misturam os
+  /// alunos das duas: marque as duas e os nomes sao procurados entre todos.
+  /// Devolve `null` se cancelou e lista vazia para "sem turma".
+  Future<List<String>?> chooseImportClasses() async {
+    if (turmas.isEmpty) return const [];
+    final fromText = inferClassesFromListText(textController.text, turmas);
+    final suggested = fromText.isNotEmpty
+      ? fromText.map((item) => item.id).toSet()
+      : {if (classFilter != null && classFilter != noClassFilter) classFilter!};
+    return pickClasses(
+      title: 'Esta lista é de quais turmas?',
+      intro: fromText.isNotEmpty
+        ? 'O título da lista indica as turmas marcadas abaixo; confira. Se os grupos '
+          'misturam alunos de duas turmas, deixe as duas marcadas.'
+        : 'Os grupos ficam ligados às turmas, e o nome de cada grupo vale só dentro '
+          'delas: o GRUPO 1 da segunda não se confunde com o da quinta. Marque mais de '
+          'uma turma quando os grupos misturam alunos delas.',
+      confirm: 'Continuar',
+      initial: suggested,
+      allowNone: true,
+    );
+  }
+
+  /// Liga os grupos que ainda estao sem turma a uma ou mais turmas da disciplina.
   Future<void> assignClassToUnassigned() async {
-    final loose = allGroups
-      .where((group) => '${group['class_id'] ?? ''}'.isEmpty).toList();
+    final loose = allGroups.where((group) => groupClassIds(group).isEmpty).toList();
     if (loose.isEmpty || turmas.isEmpty) return;
-    String? picked = turmas.length == 1 ? turmas.single.id : null;
-    final chosen = await showDialog<String>(context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, update) => AlertDialog(
-          title: Text('Ligar ${loose.length} grupos sem turma'),
-          content: SizedBox(width: 460, child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Escolha a turma a que estes grupos pertencem. Integrantes, '
-                'vínculos e notas não mudam.'),
-              const SizedBox(height: 8),
-              for (final turma in turmas)
-                RadioListTile<String>(
-                  dense: true, contentPadding: EdgeInsets.zero,
-                  title: Text(classDisplay(turma)),
-                  value: turma.id, groupValue: picked,
-                  onChanged: (value) => update(() => picked = value)),
-            ])),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancelar')),
-            ElevatedButton(
-              onPressed: picked == null ? null
-                : () => Navigator.pop(dialogContext, picked),
-              child: const Text('Ligar à turma')),
-          ],
-        )));
+    final chosen = await pickClasses(
+      title: 'Ligar ${loose.length} grupos sem turma',
+      intro: 'Escolha a turma a que estes grupos pertencem; marque mais de uma se os '
+        'grupos misturam alunos de turmas da mesma aula. Integrantes, vínculos e '
+        'notas não mudam.',
+      confirm: 'Ligar à turma',
+      initial: turmas.length == 1 ? {turmas.single.id} : const {},
+    );
     if (chosen == null) return;
     setState(() => busy = true);
     try {
@@ -405,14 +426,13 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       return;
     }
     if (textController.text.trim().isEmpty) return;
-    final turmaDaLista = await chooseImportClass();
-    if (turmaDaLista == null || !mounted) return;
-    final classId = turmaDaLista.isEmpty ? null : turmaDaLista;
-    importClassId = classId;
+    final turmasDaLista = await chooseImportClasses();
+    if (turmasDaLista == null || !mounted) return;
+    importClassIds = turmasDaLista;
     setState(() => busy = true);
     try {
       final preview = await education.previewProjectGroups(
-        selectedId!, textController.text, classId: classId);
+        selectedId!, textController.text, classIds: turmasDaLista);
       if (!mounted) return;
       final choices = <String, String>{};
       var acknowledgedLowMatch = false;
@@ -429,6 +449,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
         }
         return count;
       }
+      final conflicts = [
+        for (final name in (preview['conflicting_names'] as List? ?? const [])) '$name',
+      ];
       bool lowMatch() => (preview['roster_count'] as num).toInt() > 0 &&
         linkedAfterReview() * 4 < (preview['members'] as num).toInt();
       final confirmed = await showDialog<bool>(context: context,
@@ -445,6 +468,14 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
               if ('${preview['class_label'] ?? ''}'.isNotEmpty)
                 Text('Turma: ${preview['class_label']}',
                   style: Theme.of(context).textTheme.titleSmall),
+              if (conflicts.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Já existe grupo com este nome em turma que faz parte desta lista: '
+                  '${conflicts.join(', ')}. Use as mesmas turmas do grupo existente ou '
+                  'renomeie; enquanto isso o cadastro fica bloqueado.',
+                  key: const ValueKey('aviso-nome-em-conflito'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ],
               const SizedBox(height: 10),
               Text('${preview['groups']} grupos e ${preview['members']} nomes.'),
               Text('${preview['new_groups']} grupos novos; ${preview['updated_groups']} atualizados.'),
@@ -522,7 +553,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Cancelar')),
-            ElevatedButton(onPressed: lowMatch() && !acknowledgedLowMatch ? null :
+            ElevatedButton(onPressed: conflicts.isNotEmpty ||
+                (lowMatch() && !acknowledgedLowMatch) ? null :
               () => Navigator.pop(dialogContext, true),
               child: const Text('Confirmar cadastro')),
           ],
@@ -533,7 +565,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       }
       final result = await education.importProjectGroups(
         selectedId!, textController.text, '${preview['preview_sha256']}',
-        classId: classId,
+        classIds: turmasDaLista,
         memberLinks: choices.entries.map((entry) {
           final parts = entry.key.split('\u0000');
           return <String, dynamic>{'group_name': parts[0], 'member_name': parts[1],
@@ -549,14 +581,14 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     } catch (error) {
       if (mounted) setState(() => message = 'Falha no cadastro: $error');
     } finally {
-      importClassId = null;
+      importClassIds = const [];
       if (mounted) setState(() => busy = false);
     }
   }
 
   List<Student> get roster {
     final ids = classes.where((item) => item.disciplineId == selectedId
-        && (importClassId == null || item.id == importClassId))
+        && (importClassIds.isEmpty || importClassIds.contains(item.id)))
         .map((item) => item.id).toSet();
     return students.where((student) => student.active && ids.contains(student.classId)).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
@@ -900,7 +932,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             icon: const Icon(Icons.fact_check_outlined),
             label: const Text('Conferir e cadastrar grupos')),
           if (turmas.isNotEmpty &&
-              allGroups.any((group) => '${group['class_id'] ?? ''}'.isEmpty))
+              allGroups.any((group) => groupClassIds(group).isEmpty))
             OutlinedButton.icon(
               onPressed: busy ? null : assignClassToUnassigned,
               icon: const Icon(Icons.event_available_outlined),

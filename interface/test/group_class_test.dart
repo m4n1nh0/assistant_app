@@ -65,73 +65,89 @@ void main() {
     });
   });
 
-  group('inferClassFromListText', () {
+  group('inferClassesFromListText', () {
     final classes = [_segunda, _quinta];
+    List<String> ids(String text, List<ClassGroup> list) =>
+        inferClassesFromListText(text, list).map((item) => item.id).toList();
 
     test('a lista da segunda aponta para a turma da segunda', () {
-      expect(
-        inferClassFromListText('Grupos turma segunda:\nGRUPO 1\n- Ana', classes)?.id,
-        'c-seg',
-      );
+      expect(ids('Grupos turma segunda:\nGRUPO 1\n- Ana', classes), ['c-seg']);
     });
 
     test('entende quinta-feira, maiúsculas e acento', () {
-      expect(
-        inferClassFromListText('GRUPOS DA TURMA DE QUINTA-FEIRA\nGRUPO 1\nAna', classes)?.id,
-        'c-qui',
-      );
-      expect(
-        inferClassFromListText('Terça\nGRUPO 1\nAna', [_class('t', '1', 'T', [1])])?.id,
-        't',
-      );
+      expect(ids('GRUPOS DA TURMA DE QUINTA-FEIRA\nGRUPO 1\nAna', classes), ['c-qui']);
+      expect(ids('Terça\nGRUPO 1\nAna', [_class('t', '1', 'T', [1])]), ['t']);
     });
 
     test('o código da turma vale mais que o dia', () {
-      expect(
-        inferClassFromListText('Turma 3002 (segunda?)\nGRUPO 1\nAna', classes)?.id,
-        'c-qui',
-      );
+      expect(ids('Turma 3002 (segunda?)\nGRUPO 1\nAna', classes), ['c-qui']);
     });
 
-    test('em dúvida não escolhe: dois dias citados', () {
-      expect(
-        inferClassFromListText('Segunda e quinta\nGRUPO 1\nAna', classes),
-        isNull,
-      );
+    test('dois códigos citados sugerem as duas turmas', () {
+      expect(ids('Turmas 3001 e 3002\nGRUPO 1\nAna', classes), ['c-seg', 'c-qui']);
     });
 
-    test('em dúvida não escolhe: dia que duas turmas têm', () {
-      final duas = [_segunda, _class('c2', '3003', 'Noite', [0])];
-      expect(inferClassFromListText('Segunda\nGRUPO 1\nAna', duas), isNull);
+    test('aula reunida: o dia que duas turmas têm sugere as duas', () {
+      final duas = [_segunda, _class('c2', '3003', 'Noite', [0]), _quinta];
+      expect(ids('Segunda\nGRUPO 1\nAna', duas), ['c-seg', 'c2']);
     });
 
-    test('sem título nem turma, devolve nulo', () {
-      expect(inferClassFromListText('GRUPO 1\n- Ana', classes), isNull);
-      expect(inferClassFromListText('Segunda\nGRUPO 1', const []), isNull);
+    test('em dúvida não sugere: dois dias citados', () {
+      expect(ids('Segunda e quinta\nGRUPO 1\nAna', classes), isEmpty);
+    });
+
+    test('sem título nem turma, devolve vazio', () {
+      expect(ids('GRUPO 1\n- Ana', classes), isEmpty);
+      expect(ids('Segunda\nGRUPO 1', const []), isEmpty);
+    });
+
+    test('dia sem nenhuma turma, devolve vazio', () {
+      expect(ids('Sexta\nGRUPO 1\nAna', classes), isEmpty);
     });
 
     test('só olha antes do primeiro grupo: nome de aluno não conta', () {
-      expect(
-        inferClassFromListText('GRUPO 1\n- Quinta Feira da Silva', classes),
-        isNull,
-      );
+      expect(ids('GRUPO 1\n- Quinta Feira da Silva', classes), isEmpty);
+    });
+  });
+
+  group('groupClassIds', () {
+    test('usa class_ids quando o servidor manda', () {
+      expect(groupClassIds({'class_ids': ['a', 'b'], 'class_id': 'a'}), ['a', 'b']);
+    });
+
+    test('servidor antigo: só a turma principal', () {
+      expect(groupClassIds({'class_id': 'a'}), ['a']);
+    });
+
+    test('lista vazia e class_id vazio ou ausente é sem turma', () {
+      expect(groupClassIds({'class_ids': [], 'class_id': null}), isEmpty);
+      expect(groupClassIds({'class_id': ''}), isEmpty);
+      expect(groupClassIds({}), isEmpty);
+    });
+
+    test('ignora id vazio dentro da lista', () {
+      expect(groupClassIds({'class_ids': ['', 'a']}), ['a']);
     });
   });
 
   group('filterGroupsByClass', () {
     final groups = [
-      {'name': 'GRUPO 1', 'class_id': 'c-seg'},
+      {'name': 'GRUPO 1', 'class_id': 'c-seg', 'class_ids': ['c-seg']},
       {'name': 'GRUPO 1', 'class_id': 'c-qui'},
+      {'name': 'GRUPO 3', 'class_id': 'c-seg', 'class_ids': ['c-seg', 'c-qui']},
       {'name': 'GRUPO 7', 'class_id': null},
       {'name': 'GRUPO 8'},
     ];
 
     test('sem filtro vêm todos', () {
-      expect(filterGroupsByClass(groups, null), hasLength(4));
+      expect(filterGroupsByClass(groups, null), hasLength(5));
     });
 
-    test('por turma', () {
-      expect(filterGroupsByClass(groups, 'c-qui').single['class_id'], 'c-qui');
+    test('por turma, com o grupo de aula reunida em cada uma das suas turmas', () {
+      expect(filterGroupsByClass(groups, 'c-qui').map((g) => g['name']),
+          ['GRUPO 1', 'GRUPO 3']);
+      expect(filterGroupsByClass(groups, 'c-seg').map((g) => g['name']),
+          ['GRUPO 1', 'GRUPO 3']);
     });
 
     test('"sem turma" pega nulo e ausente', () {
@@ -139,6 +155,7 @@ void main() {
           ['GRUPO 7', 'GRUPO 8']);
     });
   });
+
   group('turmas de hoje', () {
     // 05/10/2026 é segunda; 08/10 é quinta; 07/10 é quarta.
     const segunda = 1, quarta = 3, quinta = 4;

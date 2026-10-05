@@ -29,7 +29,7 @@ from ..core.database import (
 from ..core.security import get_current_user
 from ..services import group_draw_service as draw_rule
 from ..services import quiz_group_service as groups
-from ..services.project_group_service import class_labels
+from ..services.project_group_service import class_labels, group_in_class_clause
 
 router = APIRouter(prefix="/education/quiz/{quiz_id}/group", tags=["education-quiz-group"])
 
@@ -113,7 +113,7 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
                 ProjectGroupModel.tutor_id == config.tutor_id,
                 ProjectGroupModel.discipline_id == config.discipline_id,
                 *([ProjectGroupModel.semester == config.semester] if config.semester else []),
-                *([ProjectGroupModel.class_id == config.class_id] if config.class_id else []),
+                *([group_in_class_clause(config.class_id)] if config.class_id else []),
             )
             .order_by(ProjectGroupModel.name)
         )
@@ -269,7 +269,7 @@ async def set_group_quiz(
                 ProjectGroupModel.tutor_id == tutor_id,
                 ProjectGroupModel.discipline_id == body.discipline_id,
                 *([ProjectGroupModel.semester == semester] if semester else []),
-                *([ProjectGroupModel.class_id == class_id] if class_id else []),
+                *([group_in_class_clause(class_id)] if class_id else []),
             )
         )
     ).scalar_one()

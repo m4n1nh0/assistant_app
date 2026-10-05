@@ -33,12 +33,13 @@ Map<String, dynamic> _class(String id, String code, String name, int weekday) =>
     };
 
 Map<String, dynamic> _group(String id, String name,
-        {String? classId, String classLabel = ''}) =>
+        {String? classId, List<String>? classIds, String classLabel = ''}) =>
     {
       'id': id,
       'discipline_id': 'd1',
       'discipline': 'ARA0040 - BANCO DE DADOS',
-      'class_id': classId,
+      'class_id': classId ?? (classIds == null || classIds.isEmpty ? null : classIds.first),
+      'class_ids': classIds ?? [if (classId != null) classId],
       'class_label': classLabel,
       'class_days': <String>[],
       'semester': '2026.2',
@@ -61,15 +62,20 @@ Map<String, dynamic> _group(String id, String name,
       ],
     };
 
+bool _marcada(WidgetTester tester, String classId) => tester
+    .widget<CheckboxListTile>(find.byKey(ValueKey('escolher-turma-$classId')))
+    .value!;
+
 const _segunda = '3001 Presencial · segunda';
 const _quinta = '3002 Semipresencial · quinta';
 
 class _Backend {
   final List<Map<String, dynamic>> groups;
   final List<Map<String, dynamic>>? classes;
+  final List<String> conflicts;
   final requests = <http.Request>[];
 
-  _Backend(this.groups, {this.classes});
+  _Backend(this.groups, {this.classes, this.conflicts = const []});
 
   http.Response handle(http.Request request) {
     requests.add(request);
@@ -104,6 +110,7 @@ class _Backend {
         'new_groups': 1,
         'updated_groups': 0,
         'members_removed_on_update': 0,
+        'conflicting_names': conflicts,
         'group_names': [
           {
             'name': 'GRUPO 1',
@@ -118,8 +125,10 @@ class _Backend {
         'discipline_code': 'ARA0040',
         'discipline_name': 'BANCO DE DADOS',
         'semester': '2026.2',
-        'class_id': body['class_id'],
-        'class_label': body['class_id'] == 'c-seg' ? _segunda : '',
+        'class_ids': body['class_ids'] ?? [],
+        'class_label': ((body['class_ids'] ?? []) as List)
+            .map((id) => id == 'c-seg' ? _segunda : id == 'c-qui' ? _quinta : '$id')
+            .join(' + '),
         'list_context': 'Grupos turma segunda:',
       });
     }
@@ -322,7 +331,7 @@ void main() {
         await tester.pumpAndSettle();
 
         final body = backend.bodyOf('/project-groups/assign-class');
-        expect(body['class_id'], 'c-seg');
+        expect(body['class_ids'], ['c-seg']);
         expect(body['group_ids'], ['g1', 'g2']);
         expect(find.text('2 grupos ligados à turma.'), findsOneWidget);
       });
@@ -348,19 +357,18 @@ void main() {
         await tester.tap(find.text('Conferir e cadastrar grupos'));
         await tester.pumpAndSettle();
 
-        expect(find.text('Esta lista é de qual turma?'), findsOneWidget);
-        expect(find.textContaining('O título da lista indica a turma marcada'),
+        expect(find.text('Esta lista é de quais turmas?'), findsOneWidget);
+        expect(find.textContaining('O título da lista indica as turmas marcadas'),
             findsOneWidget);
-        final segunda = tester.widget<RadioListTile<String>>(
-            find.widgetWithText(RadioListTile<String>, _segunda));
-        expect(segunda.groupValue, 'c-seg');
+        expect(_marcada(tester, 'c-seg'), isTrue);
+        expect(_marcada(tester, 'c-qui'), isFalse);
         expect(backend.requests.any((r) => r.url.path.endsWith('/preview')),
             isFalse);
 
         await tester.tap(find.text('Continuar'));
         await _pumpFrames(tester);
 
-        expect(backend.bodyOf('/project-groups/preview')['class_id'], 'c-seg');
+        expect(backend.bodyOf('/project-groups/preview')['class_ids'], ['c-seg']);
         expect(find.text('Turma: $_segunda'), findsOneWidget);
       });
     });
@@ -376,7 +384,7 @@ void main() {
         await tester.pumpAndSettle();
 
         final body = backend.bodyOf('/project-groups/import');
-        expect(body['class_id'], 'c-seg');
+        expect(body['class_ids'], ['c-seg']);
         expect(body['discipline_id'], 'd1');
         expect(find.textContaining('1 grupos criados'), findsOneWidget);
       });
@@ -400,7 +408,7 @@ void main() {
         await tester.pump();
         await tester.tap(find.text('Continuar'));
         await _pumpFrames(tester);
-        expect(backend.bodyOf('/project-groups/preview')['class_id'], 'c-qui');
+        expect(backend.bodyOf('/project-groups/preview')['class_ids'], ['c-qui']);
       });
     });
 
@@ -413,15 +421,13 @@ void main() {
         await tester.tap(find.text('Conferir e cadastrar grupos'));
         await tester.pumpAndSettle();
 
-        final segunda = tester.widget<RadioListTile<String>>(
-            find.widgetWithText(RadioListTile<String>, _segunda));
-        expect(segunda.groupValue, 'c-seg');
+        expect(_marcada(tester, 'c-seg'), isTrue);
         // A sugestão veio da tela, não do título da lista: o texto não diz isso.
         expect(find.textContaining('O título da lista indica'), findsNothing);
       });
     });
 
-    testWidgets('"sem turma" cadastra como antes, sem class_id', (tester) async {
+    testWidgets('"sem turma" cadastra como antes, sem turma nenhuma', (tester) async {
       final backend = _Backend([]);
       await _open(tester, backend,
           initialText: 'GRUPO 1\n- Kaic Vinicius\n', body: () async {
@@ -432,7 +438,7 @@ void main() {
         await tester.tap(find.text('Continuar'));
         await _pumpFrames(tester);
 
-        expect(backend.bodyOf('/project-groups/preview').containsKey('class_id'),
+        expect(backend.bodyOf('/project-groups/preview').containsKey('class_ids'),
             isFalse);
       });
     });
@@ -447,6 +453,162 @@ void main() {
 
         expect(backend.requests.any((r) => r.url.path.endsWith('/preview')),
             isFalse);
+      });
+    });
+  });
+
+  group('aula reunida: grupos que misturam duas turmas', () {
+    // Segunda tem duas turmas (3002 e 3030); a quinta tem a 3001.
+    final turmas = [
+      _class('c-3002', '3002', 'A', 0),
+      _class('c-3030', '3030', 'B', 0),
+      _class('c-qui', '3001', 'Quinta', 3),
+    ];
+    const lista = 'Grupos turma segunda:\nGRUPO 1\n- Kaic Vinicius\n';
+
+    testWidgets('o título "segunda" marca as duas turmas da segunda',
+        (tester) async {
+      final backend = _Backend([], classes: turmas);
+      await _open(tester, backend, initialText: lista, body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+
+        expect(_marcada(tester, 'c-3002'), isTrue);
+        expect(_marcada(tester, 'c-3030'), isTrue);
+        expect(_marcada(tester, 'c-qui'), isFalse);
+        expect(find.byKey(const ValueKey('aviso-aula-reunida')), findsOneWidget);
+
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+
+        expect(backend.bodyOf('/project-groups/preview')['class_ids'],
+            ['c-3002', 'c-3030']);
+        expect(find.textContaining('Turma: '), findsOneWidget);
+        expect(find.textContaining(' + '), findsWidgets);
+      });
+    });
+
+    testWidgets('confirmar manda as duas turmas no cadastro', (tester) async {
+      final backend = _Backend([], classes: turmas);
+      await _open(tester, backend, initialText: lista, body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+        await tester.tap(find.text('Confirmar cadastro'));
+        await tester.pumpAndSettle();
+
+        expect(backend.bodyOf('/project-groups/import')['class_ids'],
+            ['c-3002', 'c-3030']);
+      });
+    });
+
+    testWidgets('o professor desmarca uma turma e o aviso some', (tester) async {
+      final backend = _Backend([], classes: turmas);
+      await _open(tester, backend, initialText: lista, body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const ValueKey('escolher-turma-c-3030')));
+        await tester.pump();
+
+        expect(_marcada(tester, 'c-3030'), isFalse);
+        expect(find.byKey(const ValueKey('aviso-aula-reunida')), findsNothing);
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+        expect(backend.bodyOf('/project-groups/preview')['class_ids'], ['c-3002']);
+      });
+    });
+
+    testWidgets('marcar uma turma desmarca "sem turma" e vice-versa',
+        (tester) async {
+      final backend = _Backend([], classes: turmas);
+      await _open(tester, backend,
+          initialText: 'GRUPO 1\n- Kaic Vinicius\n', body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const ValueKey('escolher-sem-turma')));
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('escolher-turma-c-3002')));
+        await tester.pump();
+
+        final semTurma = tester.widget<CheckboxListTile>(
+            find.byKey(const ValueKey('escolher-sem-turma')));
+        expect(semTurma.value, isFalse);
+        expect(_marcada(tester, 'c-3002'), isTrue);
+
+        await tester.tap(find.byKey(const ValueKey('escolher-sem-turma')));
+        await tester.pump();
+        expect(_marcada(tester, 'c-3002'), isFalse);
+      });
+    });
+
+    testWidgets('nome em conflito bloqueia o cadastro e explica', (tester) async {
+      final backend = _Backend([], classes: turmas, conflicts: ['GRUPO 1']);
+      await _open(tester, backend, initialText: lista, body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+
+        expect(find.byKey(const ValueKey('aviso-nome-em-conflito')), findsOneWidget);
+        final confirmar = tester.widget<ElevatedButton>(
+            find.widgetWithText(ElevatedButton, 'Confirmar cadastro'));
+        expect(confirmar.onPressed, isNull);
+      });
+    });
+
+    testWidgets('o grupo misturado aparece no filtro das duas turmas',
+        (tester) async {
+      final misto = _group('g1', 'GRUPO 1', classIds: ['c-3002', 'c-3030']);
+      final backend = _Backend([
+        misto,
+        _group('g2', 'GRUPO 2', classIds: ['c-3002']),
+        _group('g3', 'GRUPO 3', classIds: ['c-qui']),
+      ], classes: turmas);
+      await _open(tester, backend, body: () async {
+        expect(find.text('3 grupos cadastrados'), findsOneWidget);
+
+        // Cada chip conta os grupos em que a turma participa.
+        expect(find.textContaining('3002 A · segunda  ·  12 alunos  ·  2 grupos'),
+            findsOneWidget);
+        expect(find.textContaining('3030 B · segunda  ·  12 alunos  ·  1 grupos'),
+            findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('turma-c-3030')));
+        await tester.pumpAndSettle();
+        expect(find.text('1 grupos cadastrados (de 3 na disciplina)'), findsOneWidget);
+        expect(find.text('GRUPO 1 • 2026.2'), findsOneWidget);
+        expect(find.text('GRUPO 2 • 2026.2'), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('turma-c-3002')));
+        await tester.pumpAndSettle();
+        expect(find.text('2 grupos cadastrados (de 3 na disciplina)'), findsOneWidget);
+        expect(find.text('GRUPO 1 • 2026.2'), findsOneWidget);
+        expect(find.text('GRUPO 2 • 2026.2'), findsOneWidget);
+      });
+    });
+
+    testWidgets('ligar grupos soltos a duas turmas de uma vez', (tester) async {
+      final backend = _Backend([
+        _group('g1', 'GRUPO 1'),
+        _group('g2', 'GRUPO 2'),
+      ], classes: turmas);
+      await _open(tester, backend, body: () async {
+        await tester.tap(find.text('Ligar grupos sem turma'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const ValueKey('escolher-turma-c-3002')));
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('escolher-turma-c-3030')));
+        await tester.pump();
+        await tester.tap(find.text('Ligar à turma'));
+        await tester.pumpAndSettle();
+
+        final body = backend.bodyOf('/project-groups/assign-class');
+        expect(body['class_ids'], ['c-3002', 'c-3030']);
+        expect(body['group_ids'], ['g1', 'g2']);
       });
     });
   });
