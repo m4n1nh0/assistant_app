@@ -515,6 +515,7 @@ class QuizCenterService {
     required String mode,
     required String disciplineId,
     String semester = '',
+    String? classId,
     String absenceMode = AbsencePenalty.none,
     int absencePercent = 0,
   }) async =>
@@ -524,6 +525,7 @@ class QuizCenterService {
           'mode': mode,
           'discipline_id': disciplineId,
           'semester': semester,
+          'class_id': classId,
           'absence_mode': absenceMode,
           'absence_percent': absencePercent,
         },

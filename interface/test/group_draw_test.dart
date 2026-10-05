@@ -121,6 +121,100 @@ void main() {
     });
   });
 
+  group('GroupDrawPanel por turma', () {
+    ClassGroup turma(String id, String code, String name, int weekday) =>
+        ClassGroup(
+          id: id,
+          code: code,
+          name: name,
+          discipline: 'BANCO DE DADOS',
+          label: '$code $name',
+          disciplineId: 'd1',
+          schedules: [ClassSchedule(weekday: weekday)],
+        );
+
+    final turmas = [
+      turma('c-seg', '3001', 'Segunda', 0),
+      turma('c-qui', '3002', 'Quinta', 3),
+    ];
+
+    Future<Map<String, dynamic>> criar(
+      WidgetTester tester, {
+      String? initialClassId,
+      String? escolher,
+    }) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      Map<String, dynamic>? enviado;
+      final client = MockClient((request) async {
+        if (request.method == 'GET') return http.Response('[]', 200);
+        enviado = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode(_draw([_entry('a', 'Grupo 1', position: 1, day: 1)])
+            ..['class_id'] = enviado!['class_id']
+            ..['class_label'] = '3002 Quinta · quinta'),
+          200,
+        );
+      });
+
+      await http.runWithClient(() async {
+        await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: GroupDrawPanel(
+              discipline: _discipline,
+              classes: turmas,
+              initialClassId: initialClassId,
+            ),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        if (escolher != null) {
+          await tester.tap(find.text(
+              initialClassId == null ? 'Todas as turmas' : '3001 Segunda · segunda'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(escolher).last);
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.text('SORTEAR'));
+        await tester.pumpAndSettle();
+      }, () => client);
+      return enviado!;
+    }
+
+    testWidgets('por padrão sorteia todas as turmas juntas', (tester) async {
+      final body = await criar(tester);
+      expect(body.containsKey('class_id'), isFalse);
+    });
+
+    testWidgets('a turma escolhida vai no pedido e aparece no sorteio',
+        (tester) async {
+      final body = await criar(tester, escolher: '3002 Quinta · quinta');
+      expect(body['class_id'], 'c-qui');
+      expect(find.text('Turma 3002 Quinta · quinta'), findsOneWidget);
+    });
+
+    testWidgets('a turma do filtro da aba já vem marcada', (tester) async {
+      final body = await criar(tester, initialClassId: 'c-seg');
+      expect(body['class_id'], 'c-seg');
+    });
+
+    testWidgets('sem turmas cadastradas o seletor não aparece', (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final client = MockClient((_) async => http.Response('[]', 200));
+      await http.runWithClient(() async {
+        await tester.pumpWidget(const MaterialApp(
+          home: Scaffold(body: GroupDrawPanel(discipline: _discipline)),
+        ));
+        await tester.pumpAndSettle();
+        expect(find.text('Turma (dia de aula)'), findsNothing);
+      }, () => client);
+    });
+  });
+
   group('GroupDrawPanel', () {
     testWidgets('creates a draw and marks a group as presented', (tester) async {
       tester.view.physicalSize = const Size(1400, 1000);

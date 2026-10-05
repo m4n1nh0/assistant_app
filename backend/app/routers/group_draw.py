@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
+    ClassGroupModel,
     DisciplineModel,
     GroupDrawEntryModel,
     GroupDrawModel,
@@ -24,6 +25,7 @@ from ..core.database import (
 )
 from ..core.security import get_current_user
 from ..services import group_draw_service as rule
+from ..services.project_group_service import class_labels
 
 router = APIRouter(prefix="/education/group-draws", tags=["education-group-draws"])
 
@@ -34,6 +36,8 @@ class GroupDrawCreate(BaseModel):
     discipline_id: str
     semester: str = ""
     title: str = Field(default="", max_length=255)
+    #: Turma (dia de aula) que sorteia. Vazio: os grupos de todas as turmas.
+    class_id: Optional[str] = None
     mode: Literal["fila", "avulso"] = "fila"
     #: Quantos grupos apresentam por dia. Vazio: todos no mesmo dia.
     per_day: Optional[int] = Field(default=None, ge=1, le=50)
@@ -101,11 +105,14 @@ async def _entries_of(draw_id: str, db: AsyncSession) -> list[GroupDrawEntryMode
 async def _draw_out(draw: GroupDrawModel, db: AsyncSession) -> dict:
     entries = await _entries_of(draw.id, db)
     discipline = await db.get(DisciplineModel, draw.discipline_id)
+    turmas = await class_labels(db, draw.tutor_id, [draw.class_id])
     sorteados = [item.group_id for item in entries if item.position is not None]
     return dict(
         id=draw.id,
         discipline_id=draw.discipline_id,
         discipline=_discipline_label(discipline) if discipline else "",
+        class_id=draw.class_id,
+        class_label=turmas.get(draw.class_id, {}).get("display", ""),
         semester=draw.semester,
         title=draw.title,
         mode=draw.mode,
@@ -135,10 +142,20 @@ async def create_draw(
     if discipline is None or discipline.tutor_id != tutor_id:
         raise HTTPException(404, "Disciplina nao encontrada")
 
+    class_id = (body.class_id or "").strip() or None
+    if class_id:
+        turma = await db.get(ClassGroupModel, class_id)
+        if turma is None or turma.tutor_id != tutor_id:
+            raise HTTPException(404, "Turma nao encontrada")
+        if turma.discipline_id != body.discipline_id:
+            raise HTTPException(422, "Essa turma nao e desta disciplina")
+
     query = select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == tutor_id,
         ProjectGroupModel.discipline_id == body.discipline_id,
     )
+    if class_id:
+        query = query.where(ProjectGroupModel.class_id == class_id)
     semester = body.semester.strip()
     if semester:
         query = query.where(ProjectGroupModel.semester == semester)
@@ -154,14 +171,21 @@ async def create_draw(
             )
         groups = {gid: groups[gid] for gid in dict.fromkeys(body.group_ids)}
     if not groups:
-        raise HTTPException(422, "Essa disciplina nao tem grupos de projeto para sortear")
+        raise HTTPException(
+            422,
+            "Essa turma nao tem grupos de projeto para sortear"
+            if class_id else "Essa disciplina nao tem grupos de projeto para sortear",
+        )
 
+    turma_label = (await class_labels(db, tutor_id, [class_id])).get(class_id, {}).get("display", "")
     draw = GroupDrawModel(
         tutor_id=tutor_id,
         discipline_id=body.discipline_id,
+        class_id=class_id,
         semester=semester,
         title=body.title.strip()
-        or f"Ordem de apresentacao - {_discipline_label(discipline)}",
+        or " - ".join(part for part in (
+            "Ordem de apresentacao", _discipline_label(discipline), turma_label) if part),
         mode=body.mode,
         seed=rule.new_seed(),
         algorithm=rule.ALGORITHM,

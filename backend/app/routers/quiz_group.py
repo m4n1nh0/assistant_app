@@ -14,6 +14,7 @@ from sqlalchemy import delete as sql_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
+    ClassGroupModel,
     DisciplineModel,
     ProjectGroupMemberModel,
     ProjectGroupModel,
@@ -28,6 +29,7 @@ from ..core.database import (
 from ..core.security import get_current_user
 from ..services import group_draw_service as draw_rule
 from ..services import quiz_group_service as groups
+from ..services.project_group_service import class_labels
 
 router = APIRouter(prefix="/education/quiz/{quiz_id}/group", tags=["education-quiz-group"])
 
@@ -36,6 +38,8 @@ class GroupConfigBody(BaseModel):
     mode: Literal["media", "representante"] = "media"
     discipline_id: str
     semester: str = ""
+    #: Turma (dia de aula) cujos grupos jogam. Vazio: os grupos da disciplina toda.
+    class_id: Optional[str] = None
     #: `none`: sem penalidade; `zero`: ausente conta zero na média (só no modo média);
     #: `percent`: cada ausente tira `absence_percent` por cento da nota do grupo.
     absence_mode: Literal["none", "zero", "percent"] = "none"
@@ -100,6 +104,7 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
     elegiveis = await groups.eligible_members(db, config)
     answers = await _answers(db, quiz.id)
     discipline = await db.get(DisciplineModel, config.discipline_id)
+    turmas = await class_labels(db, config.tutor_id, [config.class_id])
 
     grupos = (
         await db.execute(
@@ -108,6 +113,7 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
                 ProjectGroupModel.tutor_id == config.tutor_id,
                 ProjectGroupModel.discipline_id == config.discipline_id,
                 *([ProjectGroupModel.semester == config.semester] if config.semester else []),
+                *([ProjectGroupModel.class_id == config.class_id] if config.class_id else []),
             )
             .order_by(ProjectGroupModel.name)
         )
@@ -178,6 +184,8 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
             if discipline else ""
         ),
         "semester": config.semester,
+        "class_id": config.class_id,
+        "class_label": turmas.get(config.class_id, {}).get("display", ""),
         "seed": config.seed,
         "absence_mode": config.absence_mode or groups.ABSENCE_NONE,
         "absence_percent": int(config.absence_percent or 0),
@@ -233,9 +241,10 @@ async def set_group_quiz(
 
     atual = await groups.get_config(db, quiz.id)
     semester = body.semester.strip()
-    if atual is not None and (atual.mode, atual.discipline_id, atual.semester) == (
-        body.mode, body.discipline_id, semester
-    ):
+    class_id = (body.class_id or "").strip() or None
+    if atual is not None and (
+        atual.mode, atual.discipline_id, atual.semester, atual.class_id
+    ) == (body.mode, body.discipline_id, semester, class_id):
         atual.absence_mode, atual.absence_percent = body.absence_mode, percent
         await db.commit()
         await db.refresh(atual)
@@ -246,6 +255,12 @@ async def set_group_quiz(
     discipline = await db.get(DisciplineModel, body.discipline_id)
     if discipline is None or discipline.tutor_id != tutor_id:
         raise HTTPException(404, "Disciplina não encontrada")
+    if class_id:
+        turma = await db.get(ClassGroupModel, class_id)
+        if turma is None or turma.tutor_id != tutor_id:
+            raise HTTPException(404, "Turma não encontrada")
+        if turma.discipline_id != body.discipline_id:
+            raise HTTPException(422, "Essa turma não é desta disciplina")
     total_grupos = (
         await db.execute(
             select(func.count())
@@ -254,11 +269,16 @@ async def set_group_quiz(
                 ProjectGroupModel.tutor_id == tutor_id,
                 ProjectGroupModel.discipline_id == body.discipline_id,
                 *([ProjectGroupModel.semester == semester] if semester else []),
+                *([ProjectGroupModel.class_id == class_id] if class_id else []),
             )
         )
     ).scalar_one()
     if not total_grupos:
-        raise HTTPException(422, "Essa disciplina não tem grupos de projeto cadastrados.")
+        raise HTTPException(
+            422,
+            "Essa turma não tem grupos de projeto cadastrados."
+            if class_id else "Essa disciplina não tem grupos de projeto cadastrados.",
+        )
 
     config = await groups.get_config(db, quiz.id)
     if config is None:
@@ -266,13 +286,13 @@ async def set_group_quiz(
             quiz_id=quiz.id, tutor_id=tutor_id, seed=draw_rule.new_seed()
         )
         db.add(config)
-    elif (config.mode, config.discipline_id, config.semester) != (
-        body.mode, body.discipline_id, semester
+    elif (config.mode, config.discipline_id, config.semester, config.class_id) != (
+        body.mode, body.discipline_id, semester, class_id
     ) and await _answer_count(db, quiz.id):
         raise HTTPException(
-            409, "A turma já respondeu: não dá para mudar o modo ou a disciplina do grupo."
+            409, "A turma já respondeu: não dá para mudar o modo, a disciplina nem a turma do grupo."
         )
-    elif config.discipline_id != body.discipline_id:
+    elif (config.discipline_id, config.class_id) != (body.discipline_id, class_id):
         await db.execute(sql_delete(QuizGroupRepresentativeModel).where(
             QuizGroupRepresentativeModel.quiz_id == quiz.id))
         await db.execute(sql_delete(QuizGroupLinkModel).where(
@@ -281,6 +301,7 @@ async def set_group_quiz(
     config.mode = body.mode
     config.discipline_id = body.discipline_id
     config.semester = semester
+    config.class_id = class_id
     config.absence_mode = body.absence_mode
     config.absence_percent = percent
     await db.commit()

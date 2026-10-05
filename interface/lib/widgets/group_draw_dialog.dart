@@ -10,20 +10,30 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../models/group_class.dart';
 import '../models/group_draw.dart';
 import '../services/education_service.dart';
+import '../services/group_pdf_service.dart';
+import '../services/quiz_report.dart' show quizFilename;
 import '../utils/theme.dart';
+import 'pdf_output.dart';
 
 Future<void> showGroupDrawDialog(
   BuildContext context, {
   required Discipline discipline,
+  List<ClassGroup> classes = const [],
+  String? initialClassId,
 }) {
   return showDialog<void>(
     context: context,
     builder: (_) => Dialog(
       backgroundColor: AssistantTheme.surface,
       insetPadding: const EdgeInsets.all(20),
-      child: GroupDrawPanel(discipline: discipline),
+      child: GroupDrawPanel(
+        discipline: discipline,
+        classes: classes,
+        initialClassId: initialClassId,
+      ),
     ),
   );
 }
@@ -36,18 +46,7 @@ String _errorText(Object error) => error is EducationException
     ? error.message
     : '$error'.replaceFirst('Exception: ', '');
 
-String statusLabel(String status) {
-  switch (status) {
-    case GroupDrawEntry.statusPresenting:
-      return 'NA VEZ';
-    case GroupDrawEntry.statusDone:
-      return 'APRESENTOU';
-    case GroupDrawEntry.statusAbsent:
-      return 'AUSENTE';
-    default:
-      return 'AGUARDANDO';
-  }
-}
+String statusLabel(String status) => GroupDrawEntry.labelOf(status);
 
 Color statusColor(String status) {
   switch (status) {
@@ -65,10 +64,22 @@ Color statusColor(String status) {
 class GroupDrawPanel extends StatefulWidget {
   final Discipline discipline;
 
+  /// Turmas (dias de aula) da disciplina. Vazio: o sorteio vale para todos os grupos.
+  final List<ClassGroup> classes;
+
+  /// Turma que ja vem marcada ao criar um sorteio novo.
+  final String? initialClassId;
+
   /// Troca o servico nos testes.
   final EducationService? service;
 
-  const GroupDrawPanel({super.key, required this.discipline, this.service});
+  const GroupDrawPanel({
+    super.key,
+    required this.discipline,
+    this.classes = const [],
+    this.initialClassId,
+    this.service,
+  });
 
   @override
   State<GroupDrawPanel> createState() => _GroupDrawPanelState();
@@ -84,6 +95,8 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
   List<GroupDraw> _history = const [];
   GroupDraw? _draw;
   String _mode = GroupDraw.modeQueue;
+  /// Turma do proximo sorteio; `null` sorteia os grupos de todas as turmas.
+  String? _classId;
   bool _loading = true;
   bool _busy = false;
   bool _creating = false;
@@ -98,6 +111,9 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
   @override
   void initState() {
     super.initState();
+    _classId = widget.classes.any((item) => item.id == widget.initialClassId)
+        ? widget.initialClassId
+        : null;
     _load();
   }
 
@@ -170,6 +186,7 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
           title: _title.text.trim(),
           mode: _mode,
           perDay: perDay != null && perDay > 0 ? perDay : null,
+          classId: _classId,
         ));
     if (_draw != null && mounted) await _refreshHistory();
   }
@@ -212,6 +229,20 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
     final draw = _draw;
     if (draw == null) return;
     await _run(() => _service.drawGroupRepresentative(draw.id, entry.id));
+  }
+
+  /// Imprime (ou salva em PDF) o sorteio como está agora.
+  Future<void> _printOrder() async {
+    final draw = _draw;
+    if (draw == null) return;
+    await offerPdf(
+      context,
+      title: 'Ordem de apresentação',
+      detail: '${draw.title} · ${draw.drawn.length} de ${draw.total} grupos sorteados.',
+      fileName: quizFilename(draw.title, suffix: 'ordem'),
+      saveDialogTitle: 'Salvar ordem de apresentação',
+      build: () => buildGroupDrawPdf(draw: draw, generatedAt: DateTime.now()),
+    );
   }
 
   Future<void> _delete() async {
@@ -338,6 +369,11 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
                     }),
           ),
           IconButton(
+            tooltip: 'Imprimir a ordem de apresentação',
+            icon: const Icon(Icons.print_outlined, size: 18),
+            onPressed: _busy ? null : _printOrder,
+          ),
+          IconButton(
             tooltip: 'Excluir sorteio',
             icon: const Icon(Icons.delete_outline, size: 18),
             onPressed: _busy ? null : _delete,
@@ -368,6 +404,35 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
             'O resultado pode ser conferido depois pela semente.',
             style: TextStyle(fontSize: 12, color: AssistantTheme.textMuted),
           ),
+          if (widget.classes.isNotEmpty) ...[
+            DropdownButtonFormField<String>(
+              value: _classId ?? 'all',
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Turma (dia de aula)'),
+              items: [
+                const DropdownMenuItem(
+                    value: 'all', child: Text('Todas as turmas')),
+                for (final turma in widget.classes)
+                  DropdownMenuItem(
+                    value: turma.id,
+                    child: Text(classDisplay(turma),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) =>
+                      setState(() => _classId = value == 'all' ? null : value),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _classId == null
+                  ? 'Sorteia os grupos de todas as turmas juntos.'
+                  : 'Só os grupos desta turma entram no sorteio.',
+              style: const TextStyle(
+                  fontSize: 11, color: AssistantTheme.textMuted),
+            ),
+          ],
           const SizedBox(height: 14),
           SegmentedButton<String>(
             segments: const [
@@ -476,6 +541,11 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
           draw.title,
           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         ),
+        if (draw.classLabel.isNotEmpty)
+          Text(
+            'Turma ${draw.classLabel}',
+            style: const TextStyle(fontSize: 11, color: AssistantTheme.c2),
+          ),
         const SizedBox(height: 2),
         Text(
           '${draw.total} grupos · ${draw.count(GroupDrawEntry.statusDone)} '

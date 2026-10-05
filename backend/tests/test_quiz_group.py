@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import (
+    ClassGroupModel,
     DisciplineModel,
     ProjectGroupMemberModel,
     ProjectGroupModel,
@@ -34,7 +35,7 @@ from app.routers import education, quiz_group, quiz_play
 
 USER = {"uid": "u1", "tutor_id": "t1"}
 TABELAS = (
-    DisciplineModel, ProjectGroupModel, ProjectGroupMemberModel, StudentModel,
+    ClassGroupModel, DisciplineModel, ProjectGroupModel, ProjectGroupMemberModel, StudentModel,
     QuizModel, QuestionModel, QuizParticipantModel, StudentAnswerModel,
     QuestionTranslationModel, QuizGroupConfigModel, QuizGroupLinkModel,
     QuizGroupRepresentativeModel, QuizJobModel, QuizSourceModel,

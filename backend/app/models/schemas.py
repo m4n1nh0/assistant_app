@@ -901,6 +901,9 @@ class ProjectGroupTextRequest(BaseModel):
     """Lista de grupos a conferir antes de cadastrar."""
     discipline_id: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=250000)
+    # Turma dona dos grupos (a da segunda, a da quinta). Sem ela os grupos ficam sem
+    # turma, como antes da separacao.
+    class_id: Optional[str] = None
 
 
 class ProjectGroupImportMemberLink(BaseModel):
@@ -912,6 +915,12 @@ class ProjectGroupImportMemberLink(BaseModel):
 class ProjectGroupCommitRequest(ProjectGroupTextRequest):
     preview_sha256: str = Field(min_length=64, max_length=64)
     member_links: list[ProjectGroupImportMemberLink] = Field(default_factory=list, max_length=250)
+
+
+class ProjectGroupAssignClass(BaseModel):
+    """Liga grupos que ja existem a uma turma (ou os solta, com `class_id` nulo)."""
+    group_ids: list[str] = Field(min_length=1, max_length=200)
+    class_id: Optional[str] = None
 
 
 class ProjectGroupUpdate(BaseModel):

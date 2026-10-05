@@ -39,6 +39,13 @@ O ícone de projetar troca a lista por uma tela grande para o telão: o grupo na
 representante, quem vem depois, e o botão de sortear o próximo (com os nomes girando
 antes do resultado).
 
+## Imprimir
+
+Há dois PDFs, com o mesmo padrão dos outros documentos do app, e cada um pergunta se vai para a impressora ou para um arquivo:
+
+- **Relação de grupos** - aba **Grupos de projeto** → **Imprimir relação**. Lista cada grupo da disciplina com o título do projeto, os integrantes (na ordem da lista) e a matrícula de cada um. Integrante cujo nome ainda não foi ligado a um aluno cadastrado sai com "—" na matrícula. Os grupos saem em ordem numérica ("Grupo 2" antes de "Grupo 10").
+- **Ordem de apresentação** - janela do sorteio → ícone da impressora. Traz a posição, o grupo, o representante e a situação, dividido por dia quando houver mais de um, e a lista dos grupos ainda não sorteados. No rodapé vão a semente e a regra do sorteio, para quem quiser conferir.
+
 ## Como o sorteio é provado justo
 
 O sorteio não usa gerador aleatório escondido. Cada passo vem de um hash:

@@ -152,6 +152,10 @@ class QuizGroupInfo {
   final String disciplineId;
   final String discipline;
   final String semester;
+
+  /// Turma (dia de aula) cujos grupos jogam; vazio vale para a disciplina toda.
+  final String classId;
+  final String classLabel;
   final String seed;
   final List<QuizGroupTeam> groups;
   final List<Map<String, dynamic>> ranking;
@@ -166,6 +170,8 @@ class QuizGroupInfo {
     this.disciplineId = '',
     this.discipline = '',
     this.semester = '',
+    this.classId = '',
+    this.classLabel = '',
     this.seed = '',
     this.groups = const [],
     this.ranking = const [],
@@ -193,6 +199,8 @@ class QuizGroupInfo {
       disciplineId: json['discipline_id']?.toString() ?? '',
       discipline: json['discipline']?.toString() ?? '',
       semester: json['semester']?.toString() ?? '',
+      classId: json['class_id']?.toString() ?? '',
+      classLabel: json['class_label']?.toString() ?? '',
       seed: json['seed']?.toString() ?? '',
       groups: ((json['groups'] as List?) ?? const [])
           .map((item) =>

@@ -35,6 +35,20 @@ class GroupDrawEntry {
   static const statusDone = 'apresentou';
   static const statusAbsent = 'ausente';
 
+  /// Rótulo curto do estado, na tela e no papel.
+  static String labelOf(String status) {
+    switch (status) {
+      case statusPresenting:
+        return 'NA VEZ';
+      case statusDone:
+        return 'APRESENTOU';
+      case statusAbsent:
+        return 'AUSENTE';
+      default:
+        return 'AGUARDANDO';
+    }
+  }
+
   bool get drawn => position != null;
   bool get hasRepresentative => representativeName.isNotEmpty;
 
@@ -62,6 +76,10 @@ class GroupDraw {
   final String semester;
   final String title;
 
+  /// Turma sorteada (a da segunda, a da quinta); vazio sorteia todas.
+  final String classId;
+  final String classLabel;
+
   /// `fila` (ordem inteira de uma vez) ou `avulso` (um grupo por clique).
   final String mode;
   final String seed;
@@ -81,6 +99,8 @@ class GroupDraw {
     required this.discipline,
     required this.semester,
     required this.title,
+    this.classId = '',
+    this.classLabel = '',
     required this.mode,
     required this.seed,
     required this.algorithm,
@@ -152,6 +172,8 @@ class GroupDraw {
         discipline: json['discipline']?.toString() ?? '',
         semester: json['semester']?.toString() ?? '',
         title: json['title']?.toString() ?? '',
+        classId: json['class_id']?.toString() ?? '',
+        classLabel: json['class_label']?.toString() ?? '',
         mode: json['mode']?.toString() ?? modeQueue,
         seed: json['seed']?.toString() ?? '',
         algorithm: json['algorithm']?.toString() ?? '',

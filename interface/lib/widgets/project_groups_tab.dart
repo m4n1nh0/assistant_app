@@ -3,8 +3,12 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../models/group_class.dart';
 import '../services/education_service.dart';
+import '../services/group_pdf_service.dart';
+import '../services/quiz_report.dart' show quizFilename;
 import 'group_draw_dialog.dart';
+import 'pdf_output.dart';
 
 String projectGroupDisciplineCode(Discipline item) =>
   RegExp(r'ARA\d{4}', caseSensitive: false).firstMatch(item.code)?.group(0)?.toUpperCase()
@@ -45,7 +49,13 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   List<Discipline> disciplines = [];
   List<ClassGroup> classes = [];
   List<Student> students = [];
+  /// Todos os grupos da disciplina; `groups` e o recorte da turma escolhida.
+  List<Map<String, dynamic>> allGroups = [];
   List<Map<String, dynamic>> groups = [];
+  /// Turma escolhida na tela: `null` todas, [noClassFilter] os sem turma.
+  String? classFilter;
+  /// Turma da lista que esta sendo conferida; restringe os alunos oferecidos.
+  String? importClassId;
   /// Apresentacoes gravadas, por grupo. Ficam aqui para a avaliacao ter ao lado
   /// o que o grupo falou, e nao so a nota.
   Map<String, List<Lesson>> presentations = {};
@@ -54,6 +64,16 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   bool busy = false;
 
   String disciplineCode(Discipline item) => projectGroupDisciplineCode(item);
+  List<ClassGroup> get turmas => classesOfDiscipline(classes, selectedId);
+
+  /// Rotulo da turma escolhida no filtro, ou vazio.
+  String get classFilterLabel {
+    for (final turma in turmas) {
+      if (turma.id == classFilter) return classDisplay(turma);
+    }
+    return '';
+  }
+
   Discipline? inferDiscipline(String source) =>
     inferProjectGroupDiscipline(disciplines, source);
 
@@ -97,8 +117,14 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   }
 
   Future<void> loadGroups() async {
-    groups = selectedId == null ? [] :
+    allGroups = selectedId == null ? [] :
       await education.listProjectGroups(disciplineId: selectedId);
+    // Turma que sumiu (apagada, outra disciplina) nao deixa a lista vazia sem motivo.
+    if (classFilter != null && classFilter != noClassFilter &&
+        !turmas.any((turma) => turma.id == classFilter)) {
+      classFilter = null;
+    }
+    groups = filterGroupsByClass(allGroups, classFilter);
     await loadPresentations();
     if (mounted) setState(() {});
   }
@@ -192,16 +218,145 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     return chosen;
   }
 
+  /// Filtro por turma (dia de aula) ao lado do seletor de disciplina.
+  Widget turmaFilter() {
+    const all = 'all';
+    int count(bool Function(Map<String, dynamic>) test) =>
+      allGroups.where(test).length;
+    final semTurma = count((group) => '${group['class_id'] ?? ''}'.isEmpty);
+    return SizedBox(width: 340, child: DropdownButtonFormField<String>(
+      value: classFilter ?? all,
+      isExpanded: true,
+      decoration: const InputDecoration(labelText: 'Turma (dia de aula)'),
+      items: [
+        DropdownMenuItem(value: all,
+          child: Text('Todas as turmas (${allGroups.length})')),
+        for (final turma in turmas)
+          DropdownMenuItem(value: turma.id, child: Text(
+            '${classDisplay(turma)} '
+            '(${count((group) => group['class_id'] == turma.id)})',
+            overflow: TextOverflow.ellipsis)),
+        if (semTurma > 0)
+          DropdownMenuItem(value: noClassFilter,
+            child: Text('Sem turma ($semTurma)')),
+      ],
+      onChanged: (value) => setState(() {
+        classFilter = value == all ? null : value;
+        groups = filterGroupsByClass(allGroups, classFilter);
+      }),
+    ));
+  }
+
+  /// Pergunta de qual turma e a lista que vai ser cadastrada.
+  ///
+  /// Disciplina com duas turmas repete os nomes ("GRUPO 1" na segunda e na quinta);
+  /// sem dizer a turma, a lista nova pareceria a mesma dos grupos que ja existem.
+  /// Devolve `null` se cancelou e '' para "sem turma".
+  Future<String?> chooseImportClass() async {
+    final options = turmas;
+    if (options.isEmpty) return '';
+    final suggested = inferClassFromListText(textController.text, options)?.id
+      ?? (classFilter != null && classFilter != noClassFilter ? classFilter : null);
+    final fromText = suggested != null &&
+      inferClassFromListText(textController.text, options)?.id == suggested;
+    String? picked = suggested;
+    return showDialog<String>(context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: const Text('Esta lista é de qual turma?'),
+          content: SizedBox(width: 460, child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(fromText
+                ? 'O título da lista indica a turma marcada abaixo; confira.'
+                : 'Os grupos ficam ligados à turma, e o nome de cada grupo vale só '
+                  'dentro dela: o GRUPO 1 da segunda não se confunde com o da quinta.'),
+              const SizedBox(height: 8),
+              for (final turma in options)
+                RadioListTile<String>(
+                  dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(classDisplay(turma)),
+                  subtitle: Text('${turma.studentCount} alunos'),
+                  value: turma.id, groupValue: picked,
+                  onChanged: (value) => update(() => picked = value)),
+              RadioListTile<String>(
+                dense: true, contentPadding: EdgeInsets.zero,
+                title: const Text('Sem turma'),
+                subtitle: const Text('Como era antes: vale para a disciplina toda.'),
+                value: '', groupValue: picked,
+                onChanged: (value) => update(() => picked = value)),
+            ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: picked == null ? null
+                : () => Navigator.pop(dialogContext, picked),
+              child: const Text('Continuar')),
+          ],
+        )));
+  }
+
+  /// Liga os grupos que ainda estao sem turma a uma turma da disciplina.
+  Future<void> assignClassToUnassigned() async {
+    final loose = allGroups
+      .where((group) => '${group['class_id'] ?? ''}'.isEmpty).toList();
+    if (loose.isEmpty || turmas.isEmpty) return;
+    String? picked = turmas.length == 1 ? turmas.single.id : null;
+    final chosen = await showDialog<String>(context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: Text('Ligar ${loose.length} grupos sem turma'),
+          content: SizedBox(width: 460, child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Escolha a turma a que estes grupos pertencem. Integrantes, '
+                'vínculos e notas não mudam.'),
+              const SizedBox(height: 8),
+              for (final turma in turmas)
+                RadioListTile<String>(
+                  dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(classDisplay(turma)),
+                  value: turma.id, groupValue: picked,
+                  onChanged: (value) => update(() => picked = value)),
+            ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: picked == null ? null
+                : () => Navigator.pop(dialogContext, picked),
+              child: const Text('Ligar à turma')),
+          ],
+        )));
+    if (chosen == null) return;
+    setState(() => busy = true);
+    try {
+      final count = await education.assignProjectGroupsToClass(
+        loose.map((group) => '${group['id']}').toList(), chosen);
+      await loadGroups();
+      if (mounted) setState(() => message = '$count grupos ligados à turma.');
+    } catch (error) {
+      if (mounted) setState(() => message = 'Não consegui ligar os grupos: $error');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> previewAndImport() async {
     if (selectedId == null) {
       setState(() => message = 'Selecione a disciplina correta para comparar as matrículas.');
       return;
     }
     if (textController.text.trim().isEmpty) return;
+    final turmaDaLista = await chooseImportClass();
+    if (turmaDaLista == null || !mounted) return;
+    final classId = turmaDaLista.isEmpty ? null : turmaDaLista;
+    importClassId = classId;
     setState(() => busy = true);
     try {
       final preview = await education.previewProjectGroups(
-        selectedId!, textController.text);
+        selectedId!, textController.text, classId: classId);
       if (!mounted) return;
       final choices = <String, String>{};
       var acknowledgedLowMatch = false;
@@ -231,6 +386,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
               Text('${preview['discipline_code']}'
                 '${'${preview['discipline_name']}'.trim().isEmpty ? '' : ' • ${preview['discipline_name']}'}'
                 ' • ${preview['semester']}'),
+              if ('${preview['class_label'] ?? ''}'.isNotEmpty)
+                Text('Turma: ${preview['class_label']}',
+                  style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 10),
               Text('${preview['groups']} grupos e ${preview['members']} nomes.'),
               Text('${preview['new_groups']} grupos novos; ${preview['updated_groups']} atualizados.'),
@@ -319,6 +477,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       }
       final result = await education.importProjectGroups(
         selectedId!, textController.text, '${preview['preview_sha256']}',
+        classId: classId,
         memberLinks: choices.entries.map((entry) {
           final parts = entry.key.split('\u0000');
           return <String, dynamic>{'group_name': parts[0], 'member_name': parts[1],
@@ -334,12 +493,14 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     } catch (error) {
       if (mounted) setState(() => message = 'Falha no cadastro: $error');
     } finally {
+      importClassId = null;
       if (mounted) setState(() => busy = false);
     }
   }
 
   List<Student> get roster {
-    final ids = classes.where((item) => item.disciplineId == selectedId)
+    final ids = classes.where((item) => item.disciplineId == selectedId
+        && (importClassId == null || item.id == importClassId))
         .map((item) => item.id).toSet();
     return students.where((student) => student.active && ids.contains(student.classId)).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
@@ -590,12 +751,12 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   Future<void> deleteAll() async {
     setState(() => busy = true);
     try {
-      final allGroups = await education.listProjectGroups();
+      final todosOsGrupos = await education.listProjectGroups();
       if (!mounted) return;
       final confirmed = await showDialog<bool>(context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Excluir todos os grupos de projeto?'),
-          content: Text('${allGroups.length} grupos, seus integrantes e as correções de vínculo aprendidas serão excluídos de todas as suas disciplinas e períodos. A disciplina selecionada não limita esta exclusão.'),
+          content: Text('${todosOsGrupos.length} grupos, seus integrantes e as correções de vínculo aprendidas serão excluídos de todas as suas disciplinas e períodos. A disciplina selecionada não limita esta exclusão.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Cancelar')),
@@ -614,11 +775,41 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     }
   }
 
+  /// Imprime (ou salva em PDF) a relação de grupos da disciplina escolhida.
+  Future<void> printGroupList() async {
+    final matches = disciplines.where((item) => item.id == selectedId);
+    if (matches.isEmpty || groups.isEmpty) return;
+    final discipline = matches.first;
+    final list = groupListFrom(groups, students);
+    final turma = classFilterLabel;
+    await offerPdf(
+      context,
+      title: 'Relação de grupos',
+      detail: '${discipline.label}${turma.isEmpty ? "" : " · $turma"} · '
+        '${list.length} grupos.',
+      fileName: quizFilename('${discipline.label} $turma', suffix: 'grupos'),
+      saveDialogTitle: 'Salvar relação de grupos',
+      build: () => buildGroupListPdf(
+        discipline: discipline.label,
+        classLabel: turma,
+        semester: discipline.semester,
+        groups: list,
+        generatedAt: DateTime.now(),
+      ),
+    );
+  }
+
   /// Abre o sorteio da ordem de apresentação da disciplina escolhida.
   Future<void> openDraw() async {
     final discipline = disciplines.where((item) => item.id == selectedId);
     if (discipline.isEmpty) return;
-    await showGroupDrawDialog(context, discipline: discipline.first);
+    await showGroupDrawDialog(
+      context,
+      discipline: discipline.first,
+      classes: turmas,
+      initialClassId:
+        classFilter != null && classFilter != noClassFilter ? classFilter : null,
+    );
   }
 
   @override
@@ -639,15 +830,29 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
               value: item.id, child: Text('${item.code} • ${item.name} (${item.semester})',
                 overflow: TextOverflow.ellipsis))).toList(),
             onChanged: (value) async {
-              setState(() => selectedId = value);
+              setState(() {
+                selectedId = value;
+                classFilter = null;
+              });
               await loadGroups();
             },
           )),
+          if (turmas.isNotEmpty) turmaFilter(),
           OutlinedButton.icon(onPressed: busy ? null : pickText,
             icon: const Icon(Icons.upload_file), label: const Text('Carregar TXT')),
           ElevatedButton.icon(onPressed: busy || selectedId == null ? null : previewAndImport,
             icon: const Icon(Icons.fact_check_outlined),
             label: const Text('Conferir e cadastrar grupos')),
+          if (turmas.isNotEmpty &&
+              allGroups.any((group) => '${group['class_id'] ?? ''}'.isEmpty))
+            OutlinedButton.icon(
+              onPressed: busy ? null : assignClassToUnassigned,
+              icon: const Icon(Icons.event_available_outlined),
+              label: const Text('Ligar grupos sem turma')),
+          OutlinedButton.icon(
+            onPressed: busy || groups.isEmpty ? null : printGroupList,
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Imprimir relação')),
           OutlinedButton.icon(
             onPressed: busy || groups.isEmpty ? null : openDraw,
             icon: const Icon(Icons.casino_outlined),
@@ -662,7 +867,8 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             icon: const Icon(Icons.delete_forever_outlined),
             label: const Text('Excluir todos os grupos')),
           Text(selectedId == null ? 'Selecione a disciplina' :
-            '${groups.length} grupos cadastrados'),
+            '${groups.length} grupos cadastrados'
+            '${classFilter != null && groups.length != allGroups.length ? " (de ${allGroups.length} na disciplina)" : ""}'),
         ]),
       const SizedBox(height: 10),
       TextField(controller: textController, minLines: 2, maxLines: 5,
@@ -702,7 +908,9 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           return Card(child: Padding(padding: const EdgeInsets.all(14),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Expanded(child: Text('${group['name']} • ${group['semester']}',
+                Expanded(child: Text('${group['name']} • '
+                  '${'${group['class_label'] ?? ''}'.isEmpty ? '' : '${group['class_label']} • '}'
+                  '${group['semester']}',
                   style: Theme.of(context).textTheme.titleLarge)),
                 IconButton(icon: const Icon(Icons.edit_note), tooltip: 'Editar projeto e análise',
                   onPressed: () => editProject(group)),

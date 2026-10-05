@@ -7,6 +7,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../models/group_class.dart';
 import '../models/quiz_group.dart';
 import '../services/education_service.dart';
 import '../services/quiz_center_service.dart';
@@ -17,6 +18,7 @@ Future<void> showQuizGroupDialog(
   required String quizId,
   QuizCenterService? service,
   Future<List<Discipline>> Function()? loadDisciplines,
+  Future<List<ClassGroup>> Function()? loadClasses,
   VoidCallback? onChanged,
 }) {
   return showDialog<void>(
@@ -28,6 +30,7 @@ Future<void> showQuizGroupDialog(
         quizId: quizId,
         service: service,
         loadDisciplines: loadDisciplines,
+        loadClasses: loadClasses,
         onChanged: onChanged,
       ),
     ),
@@ -38,6 +41,7 @@ class QuizGroupPanel extends StatefulWidget {
   final String quizId;
   final QuizCenterService? service;
   final Future<List<Discipline>> Function()? loadDisciplines;
+  final Future<List<ClassGroup>> Function()? loadClasses;
   final VoidCallback? onChanged;
 
   const QuizGroupPanel({
@@ -45,6 +49,7 @@ class QuizGroupPanel extends StatefulWidget {
     required this.quizId,
     this.service,
     this.loadDisciplines,
+    this.loadClasses,
     this.onChanged,
   });
 
@@ -57,6 +62,9 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
 
   QuizGroupInfo _info = const QuizGroupInfo();
   List<Discipline> _disciplines = const [];
+  List<ClassGroup> _classes = const [];
+  /// Turma dos grupos do quiz; `null` vale para a disciplina toda.
+  String? _classId;
   String _mode = QuizGroupMode.average;
   String _absence = AbsencePenalty.none;
   final _percent = TextEditingController(text: '10');
@@ -95,9 +103,12 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
       final info = await _service.groupInfo(widget.quizId);
       final disciplines =
           await (widget.loadDisciplines ?? () => education.listDisciplines())();
+      final classes = await (widget.loadClasses ??
+          () => education.listClasses(activeOnly: false))();
       if (!mounted) return;
       setState(() {
         _disciplines = disciplines;
+        _classes = classes;
         _apply(info);
         _disciplineId ??= disciplines.isEmpty ? null : disciplines.first.id;
         _loading = false;
@@ -114,6 +125,7 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
     if (info.enabled) {
       _mode = info.mode;
       _disciplineId = info.disciplineId;
+      _classId = info.classId.isEmpty ? null : info.classId;
       _absence = info.absenceMode;
       if (info.absencePercent > 0) _percent.text = '${info.absencePercent}';
     }
@@ -134,6 +146,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  List<ClassGroup> get _turmas => classesOfDiscipline(_classes, _disciplineId);
 
   Discipline? get _discipline {
     for (final item in _disciplines) {
@@ -164,6 +178,7 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
         mode: _mode,
         disciplineId: discipline.id,
         semester: discipline.semester,
+        classId: _classId,
         absenceMode: _absence,
         absencePercent: _absencePercent,
       ),
@@ -359,6 +374,36 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
           style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
         ),
         const SizedBox(height: 12),
+        if (_turmas.isNotEmpty) ...[
+          DropdownButtonFormField<String>(
+            value: _turmas.any((item) => item.id == _classId)
+                ? _classId
+                : 'all',
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Turma (dia de aula)'),
+            items: [
+              const DropdownMenuItem(
+                  value: 'all', child: Text('Todas as turmas da disciplina')),
+              for (final turma in _turmas)
+                DropdownMenuItem(
+                  value: turma.id,
+                  child: Text(classDisplay(turma), overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: _busy
+                ? null
+                : (value) =>
+                    setState(() => _classId = value == 'all' ? null : value),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _classId == null
+                ? 'Entram os alunos de todos os grupos da disciplina.'
+                : 'Só entram os alunos dos grupos desta turma; a matrícula de quem é de outra turma não vale neste quiz.',
+            style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+          ),
+          const SizedBox(height: 12),
+        ],
         Row(
           children: [
             Expanded(
@@ -382,7 +427,10 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
                 ],
                 onChanged: _busy
                     ? null
-                    : (value) => setState(() => _disciplineId = value),
+                    : (value) => setState(() {
+                        _disciplineId = value;
+                        _classId = null; // a turma pertence a uma disciplina
+                      }),
               ),
             ),
             const SizedBox(width: 12),
@@ -413,7 +461,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
           children: [
             Expanded(
               child: Text(
-                '${_info.groups.length} grupos · ${_info.discipline}',
+                '${_info.groups.length} grupos · ${_info.discipline}'
+                '${_info.classLabel.isEmpty ? "" : " · ${_info.classLabel}"}',
                 style: const TextStyle(
                     fontSize: 13, fontWeight: FontWeight.w600),
               ),

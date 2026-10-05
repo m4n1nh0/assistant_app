@@ -580,12 +580,18 @@ class ProjectGroupModel(Base):
 
     __tablename__ = "project_groups"
     __table_args__ = (
-        UniqueConstraint("tutor_id", "discipline_id", "name",
-                         name="uq_project_group_owner_discipline_name"),
+        # O nome se repete entre turmas: "GRUPO 1" existe na turma da segunda e na
+        # da quinta. Sem turma (`class_id` nulo, grupos de antes da separacao) o
+        # MySQL nao compara NULLs, entao a unicidade desses fica na aplicacao.
+        UniqueConstraint("tutor_id", "discipline_id", "class_id", "name",
+                         name="uq_project_group_owner_class_name"),
     )
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     tutor_id = Column(String(64), nullable=False, index=True)
     discipline_id = Column(String(64), nullable=False, index=True)
+    #: Turma a que o grupo pertence (a da segunda, a da quinta). Nulo: grupo de
+    #: antes de a disciplina ser separada por turma.
+    class_id = Column(String(64), nullable=True, index=True)
     semester = Column(String(16), nullable=False, index=True)
     name = Column(String(120), nullable=False)
     project_title = Column(String(255), nullable=False, default="")
@@ -643,6 +649,8 @@ class GroupDrawModel(Base):
     semester      = Column(String(16), nullable=False, default="", index=True)
     title         = Column(String(255), nullable=False, default="")
     mode          = Column(String(16), nullable=False, default="fila")
+    # Turma sorteada; nulo sorteia os grupos de todas as turmas da disciplina.
+    class_id      = Column(String(64), nullable=True, index=True)
     seed          = Column(String(64), nullable=False)
     algorithm     = Column(String(16), nullable=False, default="sha256-v1")
     # Quantos grupos se apresentam por dia; vazio e tudo no mesmo dia.
@@ -1011,6 +1019,8 @@ class QuizGroupConfigModel(Base):
     tutor_id      = Column(String(64), nullable=False, index=True)
     mode          = Column(String(16), nullable=False, default="media")
     discipline_id = Column(String(64), nullable=False, index=True)
+    # Turma do quiz em grupo; nulo vale para os grupos da disciplina inteira.
+    class_id      = Column(String(64), nullable=True, index=True)
     semester      = Column(String(16), nullable=False, default="")
     seed          = Column(String(64), nullable=False)
     #: Penalidade por ausente: `none`, `zero` (ausente conta zero na media) ou
@@ -1125,6 +1135,7 @@ async def init_db():
         await conn.run_sync(_rename_subject_to_discipline)
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_compatibility_columns)
+        await conn.run_sync(_scope_project_group_names_by_class)
         await conn.run_sync(_widen_credential_secret_ref)
         await conn.run_sync(_widen_material_content)
     await _backfill_account_ownership()
@@ -1170,6 +1181,49 @@ def _rename_subject_to_discipline(sync_conn) -> None:
                     )
                 )
                 logger.info(f"Coluna renomeada: {table_name}.{old_name} -> {new_name}")
+
+
+def _scope_project_group_names_by_class(sync_conn) -> None:
+    """Troca a unicidade do nome do grupo: de "por disciplina" para "por turma".
+
+    Antes, `("tutor_id", "discipline_id", "name")` era unico, e o "GRUPO 1" da turma
+    da quinta colidia com o da segunda. Agora a turma entra na chave. O `create_all`
+    nao altera tabela que ja existe, entao a troca e feita aqui, no MySQL, e e segura
+    de repetir: so age se a trava antiga ainda estiver la.
+
+    Outros bancos (SQLite local) nao deixam soltar uma restricao sem reconstruir a
+    tabela; ficam como estao e o aviso diz o que isso limita.
+    """
+    inspector = inspect(sync_conn)
+    if "project_groups" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("project_groups")}
+    if "class_id" not in columns:
+        return
+
+    old, new = "uq_project_group_owner_discipline_name", "uq_project_group_owner_class_name"
+    constraints = {item["name"]: item for item in inspector.get_unique_constraints("project_groups")}
+    has_old = old in constraints
+    has_new = new in constraints
+    if not has_old and has_new:
+        return
+    if sync_conn.dialect.name != "mysql":
+        if has_old:
+            logger.warning(
+                "project_groups ainda tem a unicidade antiga por disciplina; neste banco "
+                "dois grupos de turmas diferentes nao podem ter o mesmo nome."
+            )
+        return
+    try:
+        if has_old:
+            sync_conn.execute(text(f"ALTER TABLE project_groups DROP INDEX {old}"))
+        if not has_new:
+            sync_conn.execute(text(
+                f"ALTER TABLE project_groups ADD CONSTRAINT {new} "
+                "UNIQUE (tutor_id, discipline_id, class_id, name)"
+            ))
+    except SQLAlchemyError as exc:
+        logger.warning("Nao troquei a unicidade dos grupos de projeto por turma: {}", exc)
 
 
 def _add_compatibility_columns(sync_conn) -> None:
@@ -1247,10 +1301,15 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "project_groups": {
             "penalty_points": "FLOAT NOT NULL DEFAULT 0",
+            "class_id": "VARCHAR(64) NULL",
         },
         "quiz_group_configs": {
+            "class_id": "VARCHAR(64) NULL",
             "absence_mode": "VARCHAR(8) NOT NULL DEFAULT 'none'",
             "absence_percent": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "group_draws": {
+            "class_id": "VARCHAR(64) NULL",
         },
     }
     for table_name, columns in additions.items():

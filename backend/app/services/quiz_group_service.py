@@ -36,6 +36,7 @@ from ..core.database import (
     StudentModel,
 )
 from . import group_draw_service as draw_rule
+from . import project_group_service as project_groups
 
 MODE_AVERAGE = "media"
 MODE_REPRESENTATIVE = "representante"
@@ -375,6 +376,8 @@ async def _groups_of(db: AsyncSession, config: QuizGroupConfigModel) -> list[Pro
     )
     if config.semester:
         query = query.where(ProjectGroupModel.semester == config.semester)
+    if config.class_id:
+        query = query.where(ProjectGroupModel.class_id == config.class_id)
     return list((await db.execute(query)).scalars().all())
 
 
@@ -416,9 +419,23 @@ async def resolve_enrollment(
     groups = await _groups_of(db, config)
     members = await _members_of(db, [group.id for group in groups])
     students = await _students_of(db, config.tutor_id, members)
-    return find_member(
-        enrollment, students, members, {group.id: group.name for group in groups}
-    )
+    try:
+        return find_member(
+            enrollment, students, members, {group.id: group.name for group in groups}
+        )
+    except EnrollmentError as exc:
+        if exc.code != "unknown":
+            raise
+        # So os alunos de grupos deste quiz foram carregados. Matricula de quem
+        # existe na disciplina mas esta em outra turma (ou sem grupo) nao e
+        # "matricula inexistente": o aluno precisa saber que o problema e o grupo.
+        alvo = normalize_enrollment(enrollment)
+        elenco = await project_groups.roster_for_discipline(
+            db, config.tutor_id, config.discipline_id
+        )
+        if alvo and any(normalize_enrollment(item.external_id) == alvo for item in elenco):
+            raise EnrollmentError("no_group") from exc
+        raise
 
 
 async def link_attempt(

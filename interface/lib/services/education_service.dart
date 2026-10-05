@@ -40,33 +40,57 @@ class EducationService {
       };
 
   Future<Map<String, dynamic>> previewProjectGroups(
-      String disciplineId, String text) async {
+      String disciplineId, String text, {String? classId}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/project-groups/preview'),
       headers: _headers,
-      body: jsonEncode({'discipline_id': disciplineId, 'text': text}),
+      body: jsonEncode({
+        'discipline_id': disciplineId,
+        'text': text,
+        if (classId != null) 'class_id': classId,
+      }),
     );
     return Map<String, dynamic>.from(_decode(response) as Map);
   }
 
   Future<Map<String, dynamic>> importProjectGroups(
       String disciplineId, String text, String previewSha256,
-      {List<Map<String, dynamic>> memberLinks = const []}) async {
+      {List<Map<String, dynamic>> memberLinks = const [],
+      String? classId}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/project-groups/import'),
       headers: _headers,
       body: jsonEncode({'discipline_id': disciplineId, 'text': text,
-        'preview_sha256': previewSha256, 'member_links': memberLinks}),
+        'preview_sha256': previewSha256, 'member_links': memberLinks,
+        if (classId != null) 'class_id': classId}),
     );
     return Map<String, dynamic>.from(_decode(response) as Map);
   }
 
-  Future<List<Map<String, dynamic>>> listProjectGroups({String? disciplineId}) async {
+  /// Grupos do professor. `classId` filtra por turma; `'none'` traz os sem turma.
+  Future<List<Map<String, dynamic>>> listProjectGroups(
+      {String? disciplineId, String? classId}) async {
     final uri = Uri.parse('$_baseUrl/education/project-groups').replace(
-      queryParameters: {if (disciplineId != null) 'discipline_id': disciplineId});
+      queryParameters: {
+        if (disciplineId != null) 'discipline_id': disciplineId,
+        if (classId != null) 'class_id': classId,
+      });
     final response = await http.get(uri, headers: _headers);
     return (_decode(response) as List)
         .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  /// Liga grupos que já existem a uma turma (ou os solta, com `classId` nulo).
+  /// O servidor recusa se a turma de destino já tem um grupo com o mesmo nome.
+  Future<int> assignProjectGroupsToClass(
+      List<String> groupIds, String? classId) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/project-groups/assign-class'),
+      headers: _headers,
+      body: jsonEncode({'group_ids': groupIds, 'class_id': classId}),
+    );
+    return (Map<String, dynamic>.from(_decode(response) as Map)['assigned'] as num)
+        .toInt();
   }
 
   Future<void> updateProjectGroup(String id, Map<String, dynamic> fields) async {
@@ -573,6 +597,7 @@ class EducationService {
     String mode = GroupDraw.modeQueue,
     int? perDay,
     List<String> groupIds = const [],
+    String? classId,
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/group-draws'),
@@ -584,6 +609,7 @@ class EducationService {
         'mode': mode,
         if (perDay != null) 'per_day': perDay,
         if (groupIds.isNotEmpty) 'group_ids': groupIds,
+        if (classId != null) 'class_id': classId,
       }),
     );
     return GroupDraw.fromJson(_decode(response) as Map<String, dynamic>);

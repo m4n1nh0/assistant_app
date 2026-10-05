@@ -73,6 +73,8 @@ class _FakeCenter extends QuizCenterService {
 
   QuizGroupInfo current;
   final List<String> calls = [];
+  /// Turma enviada em cada ativacao, na ordem.
+  final List<String?> classIds = [];
   Object? error;
 
   Future<QuizGroupInfo> _answer(String call, QuizGroupInfo next) async {
@@ -90,12 +92,15 @@ class _FakeCenter extends QuizCenterService {
           {required String mode,
           required String disciplineId,
           String semester = '',
+          String? classId,
           String absenceMode = 'none',
-          int absencePercent = 0}) =>
-      _answer(
+          int absencePercent = 0}) {
+    classIds.add(classId);
+    return _answer(
           'set:$mode:$disciplineId:$semester:$absenceMode:$absencePercent',
           QuizGroupInfo.fromJson(_info(
               mode: mode, absence: absenceMode, percent: absencePercent)));
+  }
 
   @override
   Future<void> unsetGroup(String quizId) async {
@@ -143,7 +148,8 @@ class _FakeCenter extends QuizCenterService {
       );
 }
 
-Future<void> _open(WidgetTester tester, _FakeCenter center) async {
+Future<void> _open(WidgetTester tester, _FakeCenter center,
+    {List<ClassGroup> classes = const []}) async {
   tester.view.physicalSize = const Size(1400, 1200);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -153,6 +159,7 @@ Future<void> _open(WidgetTester tester, _FakeCenter center) async {
         quizId: 'quiz-1',
         service: center,
         loadDisciplines: () async => const [_discipline],
+        loadClasses: () async => classes,
       ),
     ),
   ));
@@ -268,6 +275,80 @@ void main() {
       expect(AbsencePenalty.explanation('percent', 15), contains('15%'));
       expect(AbsencePenalty.explanation('zero', 0), contains('conta zero'));
       expect(AbsencePenalty.explanation('none', 0), contains('não muda'));
+    });
+  });
+
+  group('turma do quiz em grupo', () {
+    ClassGroup turma(String id, String code, String name, int weekday) =>
+        ClassGroup(
+          id: id,
+          code: code,
+          name: name,
+          discipline: 'BANCO DE DADOS',
+          label: '$code $name',
+          disciplineId: 'd1',
+          schedules: [ClassSchedule(weekday: weekday)],
+        );
+
+    final turmas = [
+      turma('c-qui', '3002', 'Quinta', 3),
+      turma('c-seg', '3001', 'Segunda', 0),
+    ];
+
+    testWidgets('sem turmas cadastradas o seletor não aparece', (tester) async {
+      await _open(tester, _FakeCenter(const QuizGroupInfo()));
+      expect(find.text('Turma (dia de aula)'), findsNothing);
+    });
+
+    testWidgets('escolher a turma e ativar manda o id dela', (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center, classes: turmas);
+
+      expect(find.text('Entram os alunos de todos os grupos da disciplina.'),
+          findsOneWidget);
+      await tester.tap(find.text('Todas as turmas da disciplina'));
+      await tester.pumpAndSettle();
+      // Ordenadas pelo primeiro dia de aula: segunda antes de quinta.
+      expect(
+        tester.getTopLeft(find.text('3001 Segunda · segunda').last).dy <
+            tester.getTopLeft(find.text('3002 Quinta · quinta').last).dy,
+        isTrue,
+      );
+      await tester.tap(find.text('3002 Quinta · quinta').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Só entram os alunos dos grupos desta turma'),
+          findsOneWidget);
+
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+
+      expect(center.classIds, ['c-qui']);
+    });
+
+    testWidgets('por padrão vale a disciplina toda (sem turma)', (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center, classes: turmas);
+
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+
+      expect(center.classIds, [null]);
+    });
+
+    testWidgets('quiz já ligado numa turma abre com ela marcada', (tester) async {
+      final info = QuizGroupInfo.fromJson({
+        ..._info(mode: 'media'),
+        'class_id': 'c-seg',
+        'class_label': '3001 Segunda · segunda',
+      });
+      expect(info.classId, 'c-seg');
+      expect(info.classLabel, '3001 Segunda · segunda');
+
+      await _open(tester, _FakeCenter(info), classes: turmas);
+
+      expect(find.text('3001 Segunda · segunda'), findsWidgets);
+      expect(find.textContaining('2 grupos · ARA0040 - BANCO DE DADOS · 3001 Segunda'),
+          findsOneWidget);
     });
   });
 

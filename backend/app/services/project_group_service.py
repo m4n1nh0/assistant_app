@@ -14,12 +14,17 @@ from functools import lru_cache
 from sqlalchemy import select
 
 from ..core.database import (
-    AsyncSessionLocal, ClassGroupModel, DisciplineModel, ProjectGroupMemberModel,
-    ProjectGroupModel, ProjectGroupNameResolutionModel, StudentModel,
+    AsyncSessionLocal, ClassGroupModel, ClassScheduleModel, DisciplineModel,
+    ProjectGroupMemberModel, ProjectGroupModel, ProjectGroupNameResolutionModel,
+    StudentModel,
 )
 
 _GROUP = re.compile(r"^[ \t]*GRUPO\s+(\d+)\b[ \t]*(.*)$", re.I | re.M)
 _MEMBER_MARK = re.compile(r"\s+v\s*$", re.I)
+# Marcador de lista antes do nome: "- Ana", "• Ana", "* Ana", "1. Ana", "1) Ana". Listas
+# coladas do chat e de editores chegam assim. Hifen colado no nome ("Ana-Maria") nao
+# conta: o marcador precisa de espaco depois.
+_BULLET = re.compile(r"^\s*(?:[-–—•*·▪●◦]+|\d{1,3}[.)])\s+")
 
 
 def normalize_person(value: str) -> str:
@@ -58,6 +63,7 @@ def parse_project_group_text(text: str) -> tuple[list[dict], str]:
             continue
         if re.search(r"\b(cadastre|cadastrar|por favor|segue a lista)\b", line, re.I):
             continue
+        line = _BULLET.sub("", line)
         marker = bool(_MEMBER_MARK.search(line))
         name = _MEMBER_MARK.sub("", line).strip()
         if not name or not re.fullmatch(r"[\wÀ-ÿ][\wÀ-ÿ .'-]{1,178}", name):
@@ -147,11 +153,62 @@ async def project_group_chat_data(tutor_id: str, message: str) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-async def roster_for_discipline(db, tutor_id: str, discipline_id: str) -> list[StudentModel]:
+WEEKDAY_NAMES = ("segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo")
+
+
+def _days_text(days: list[str]) -> str:
+    if len(days) <= 1:
+        return "".join(days)
+    return ", ".join(days[:-1]) + " e " + days[-1]
+
+
+async def class_labels(db, tutor_id: str, class_ids) -> dict[str, dict]:
+    """Nome e dias de aula de cada turma, para dizer "turma da segunda" na tela.
+
+    `display` junta os dois ("3001 Presencial · segunda e quinta"); turma sem horario
+    cadastrado sai so com o nome.
+    """
+    ids = [item for item in dict.fromkeys(class_ids) if item]
+    if not ids:
+        return {}
     classes = (await db.execute(select(ClassGroupModel).where(
+        ClassGroupModel.tutor_id == tutor_id, ClassGroupModel.id.in_(ids),
+    ))).scalars().all()
+    schedules = (await db.execute(select(ClassScheduleModel).where(
+        ClassScheduleModel.class_group_id.in_(ids),
+    ))).scalars().all()
+    by_class: dict[str, set[int]] = {}
+    for row in schedules:
+        by_class.setdefault(row.class_group_id, set()).add(row.weekday)
+
+    labels = {}
+    for item in classes:
+        name = " ".join(part for part in ((item.code or "").strip(),
+                                          (item.name or "").strip()) if part)
+        name = name or (item.discipline or "").strip() or "turma"
+        days = [WEEKDAY_NAMES[day] for day in sorted(by_class.get(item.id, ()))
+                if 0 <= day < 7]
+        labels[item.id] = dict(
+            label=name, days=days,
+            display=f"{name} · {_days_text(days)}" if days else name)
+    return labels
+
+
+async def roster_for_discipline(db, tutor_id: str, discipline_id: str,
+                                class_id: str | None = None) -> list[StudentModel]:
+    """Alunos da disciplina; com `class_id`, so os daquela turma.
+
+    Por turma o casamento de nomes fica mais certo: a lista da segunda so se confunde
+    com os alunos da segunda, e dois colegas de turmas diferentes com o mesmo nome
+    deixam de parecer ambiguos.
+    """
+    query = select(ClassGroupModel).where(
         ClassGroupModel.tutor_id == tutor_id,
         ClassGroupModel.discipline_id == discipline_id,
-    ))).scalars().all()
+    )
+    if class_id:
+        query = query.where(ClassGroupModel.id == class_id)
+    classes = (await db.execute(query)).scalars().all()
     class_ids = [item.id for item in classes]
     if not class_ids:
         return []
@@ -432,15 +489,31 @@ def preview_member_match(name: str, roster: list[StudentModel],
                 candidates=suggested_student_matches(name, roster, index))
 
 
-async def preview_project_groups(db, tutor_id: str, discipline_id: str,
-                                 parsed: list[dict]) -> dict:
-    roster = await roster_for_discipline(db, tutor_id, discipline_id)
-    learned = await learned_name_resolutions(db, tutor_id, discipline_id, roster)
-    index = NameSimilarityIndex(roster)
-    existing = (await db.execute(select(ProjectGroupModel).where(
+async def groups_in_class(db, tutor_id: str, discipline_id: str,
+                          class_id: str | None) -> list[ProjectGroupModel]:
+    """Grupos da disciplina que pertencem a esta turma.
+
+    Sem turma, so os grupos sem turma: importar a lista da quinta nao pode achar,
+    pelo nome, os grupos da segunda e troca-los (o "GRUPO 1" existe nas duas).
+    """
+    query = select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == tutor_id,
         ProjectGroupModel.discipline_id == discipline_id,
-    ))).scalars().all()
+    )
+    if class_id:
+        query = query.where(ProjectGroupModel.class_id == class_id)
+    else:
+        query = query.where(ProjectGroupModel.class_id.is_(None))
+    return list((await db.execute(query)).scalars().all())
+
+
+async def preview_project_groups(db, tutor_id: str, discipline_id: str,
+                                 parsed: list[dict],
+                                 class_id: str | None = None) -> dict:
+    roster = await roster_for_discipline(db, tutor_id, discipline_id, class_id)
+    learned = await learned_name_resolutions(db, tutor_id, discipline_id, roster)
+    index = NameSimilarityIndex(roster)
+    existing = await groups_in_class(db, tutor_id, discipline_id, class_id)
     existing_names = {group.name for group in existing}
     existing_members = (await db.execute(select(ProjectGroupMemberModel).where(
         ProjectGroupMemberModel.group_id.in_([group.id for group in existing] or [""])
@@ -493,14 +566,12 @@ def validate_import_member_links(parsed: list[dict], links: list,
 
 
 async def import_project_groups(db, tutor_id: str, discipline, parsed: list[dict],
-                                context: str, member_links: list | None = None) -> dict:
-    roster = await roster_for_discipline(db, tutor_id, discipline.id)
+                                context: str, member_links: list | None = None,
+                                class_id: str | None = None) -> dict:
+    roster = await roster_for_discipline(db, tutor_id, discipline.id, class_id)
     learned = await learned_name_resolutions(db, tutor_id, discipline.id, roster)
     choices = validate_import_member_links(parsed, member_links or [], roster)
-    existing = (await db.execute(select(ProjectGroupModel).where(
-        ProjectGroupModel.tutor_id == tutor_id,
-        ProjectGroupModel.discipline_id == discipline.id,
-    ))).scalars().all()
+    existing = await groups_in_class(db, tutor_id, discipline.id, class_id)
     by_name = {group.name: group for group in existing}
     created = updated = linked = 0
     for row in parsed:
@@ -508,7 +579,7 @@ async def import_project_groups(db, tutor_id: str, discipline, parsed: list[dict
         if group is None:
             group = ProjectGroupModel(tutor_id=tutor_id,
                 discipline_id=discipline.id, semester=discipline.semester,
-                name=row["name"])
+                class_id=class_id or None, name=row["name"])
             db.add(group)
             await db.flush()
             created += 1
