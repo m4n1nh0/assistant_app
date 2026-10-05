@@ -12,7 +12,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:record/record.dart';
 
@@ -22,6 +21,7 @@ import '../services/audio_input_service.dart';
 import '../services/connected_ai_service.dart';
 import '../services/education_service.dart';
 import '../services/in_app_notification_service.dart';
+import '../services/lesson_recovery_service.dart';
 import '../services/lesson_pdf_service.dart';
 import '../services/student_csv_parser.dart';
 import '../services/system_audio_service.dart';
@@ -32,6 +32,7 @@ import '../branding/intarq_brand.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'education_dashboard.dart';
+import 'lesson_recovery_banner.dart';
 import 'quiz_generator_widget.dart';
 import 'materials_panel.dart';
 import 'quiz_center.dart';
@@ -364,6 +365,11 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   static const _sourceMeeting = 'meeting';
 
   final _recorder = AudioRecorder();
+
+  /// Audio de gravacoes que o app deixou para tras (queda, janela fechada).
+  List<RecoverableLesson> _recoverable = const [];
+  final Map<String, String> _recoverLabels = {};
+  String? _recoveringId;
   final _systemRecorder = SystemAudioRecorder();
   final _titleCtrl = TextEditingController();
   final _focusCtrl = TextEditingController();
@@ -432,6 +438,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _loadEmbeddingStatus();
     _preselectSingleClass(widget.classes.value);
     widget.classes.addListener(_onClassesChanged);
+    unawaited(_scanRecovery());
   }
 
   @override
@@ -692,11 +699,10 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _activeInputLabel = selected?.label ?? 'padrao do sistema';
   }
 
-  Future<String> _newChunkPath(String extension) async {
-    final dir = await getTemporaryDirectory();
-    return '${dir.path}${Platform.pathSeparator}'
-        'lesson_${DateTime.now().millisecondsSinceEpoch}.$extension';
-  }
+  /// Cada bloco vai para a pasta da propria aula, no disco do app. Se o app cair, o
+  /// que ainda nao subiu fica guardado e e oferecido de volta ao reabrir.
+  Future<String> _newChunkPath(String extension) =>
+      lessonRecovery.newChunkPath(_lesson!.id, extension);
 
   Future<void> _startChunk() async {
     if (_fromMeeting) {
@@ -878,6 +884,97 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _setStatus('Sessao expirada. Faca login de novo: '
         '${_pendingUploads.length} bloco(s) seguem guardados aqui.');
     return false;
+  }
+
+  /// Procura audio guardado de gravacoes interrompidas. A aula que esta gravando
+  /// agora fica de fora: os arquivos dela estao em uso.
+  Future<void> _scanRecovery() async {
+    try {
+      final found = await lessonRecovery.scan(ignoreLessonId: _lesson?.id);
+      if (!mounted) return;
+      setState(() => _recoverable = found);
+      for (final lesson in found) {
+        unawaited(_labelRecoverable(lesson.lessonId));
+      }
+    } catch (_) {
+      // Sem a varredura a gravacao continua funcionando; so nao oferece recuperar.
+    }
+  }
+
+  Future<void> _labelRecoverable(String lessonId) async {
+    try {
+      final lesson = await education.getLesson(lessonId, includeSegments: false);
+      final label = [lesson.discipline, lesson.title]
+          .where((part) => part.trim().isNotEmpty)
+          .join(' - ');
+      if (mounted && label.isNotEmpty) {
+        setState(() => _recoverLabels[lessonId] = label);
+      }
+    } catch (_) {
+      // Aula que o servidor nao devolve: o aviso fica sem o nome.
+    }
+  }
+
+  Future<void> _recoverAudio(RecoverableLesson lesson) async {
+    if (_recoveringId != null) return;
+    setState(() => _recoveringId = lesson.lessonId);
+    _setStatus('Enviando o audio guardado da gravacao interrompida...');
+    try {
+      // O login pode ter vencido enquanto o app estava fechado.
+      await api.refreshSession();
+      final result = await lessonRecovery.recover(lesson, (chunk, bytes) async {
+        await education.uploadAudioChunk(
+          lesson.lessonId,
+          bytes,
+          filename: chunk.name,
+          durationMs: chunk.durationMs,
+        );
+      });
+      if (!mounted) return;
+      await _scanRecovery();
+      if (result.complete) {
+        _setStatus('${result.sent} bloco(s) recuperado(s) e enviados para '
+            'transcricao. Abra a aula no historico para ver o texto.');
+      } else {
+        final reason = '${result.error}'.contains('HTTP 409')
+            ? 'a aula ja foi encerrada e o servidor nao aceita mais audio nela'
+            : '${result.error}'.replaceFirst('Exception: ', '');
+        _setStatus('${result.sent} bloco(s) enviado(s); ${result.remaining} '
+            'continuam guardados: $reason');
+      }
+    } catch (e) {
+      _setStatus('Nao consegui recuperar o audio: ${_errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _recoveringId = null);
+    }
+  }
+
+  Future<void> _discardRecovery(RecoverableLesson lesson) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Descartar o audio guardado?'),
+        content: Text(
+          '${lesson.chunks.length} bloco(s), cerca de '
+          '${recoveryDuration(lesson.approxSeconds)} de gravacao, saem do '
+          'computador. Nao da para recuperar depois.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('DESCARTAR'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await lessonRecovery.discard(lesson.lessonId);
+    await _scanRecovery();
   }
 
   Future<void> _discard(File file) async {
@@ -1074,6 +1171,14 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                       },
                 child: const Text('REENVIAR', style: TextStyle(fontSize: 10)),
               ),
+            ),
+          for (final lesson in _recoverable)
+            LessonRecoveryBanner(
+              lesson: lesson,
+              label: _recoverLabels[lesson.lessonId] ?? '',
+              busy: _recoveringId == lesson.lessonId,
+              onRecover: () => _recoverAudio(lesson),
+              onDiscard: () => _discardRecovery(lesson),
             ),
           if (_captureFailure != null && !_recording)
             _Banner(

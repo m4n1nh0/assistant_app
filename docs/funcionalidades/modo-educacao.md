@@ -209,6 +209,29 @@ Consequências práticas:
 Título genérico em palestra ("Aula 1") ancora mal: quanto mais específico o
 título, melhor o chat encontra.
 
+## Gravação interrompida (queda do app, janela fechada)
+
+Cada bloco de 60 s é gravado numa pasta da própria aula, dentro da pasta de dados do
+app (`lesson_chunks/<id da aula>`), e não na pasta temporária do sistema, que o Windows
+pode esvaziar. Um bloco só sai do disco depois de ser aceito pelo servidor.
+
+Se o app cai no meio da aula, o que ainda não tinha subido não se perde. Ao reabrir, a
+aba **Gravar** mostra um aviso por aula:
+
+> Gravação interrompida: 3 blocos (cerca de 3 minutos) da aula ARA0040 - BANCO DE DADOS
+> ficaram guardados e ainda não foram transcritos.
+
+- **RECUPERAR** envia os blocos à aula certa, **em ordem** (o servidor tira a sobreposição
+  entre um bloco e o anterior). Se um falha, o envio para ali e o resto continua guardado
+  para tentar de novo. O cabeçalho do WAV é consertado antes: quem grava só o fecha no fim,
+  e um arquivo cortado pela queda declara tamanho zero.
+- **DESCARTAR** apaga o áudio guardado, depois de pedir confirmação.
+
+Limites: a aula precisa continuar aberta no servidor (aula encerrada recusa áudio, e o
+bloco continua guardado); e o último bloco, o que estava sendo gravado na hora da queda,
+vale só até onde o arquivo foi escrito. A aula que está gravando agora nunca é oferecida
+para recuperação.
+
 ## Reunião online (Meet, Teams)
 
 O microfone sozinho não registra uma reunião online: a voz dos outros
