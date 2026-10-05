@@ -15,6 +15,8 @@ import math
 import os
 import re
 import tempfile
+import threading
+import time
 from loguru import logger
 from ..models.schemas import STTResponse
 from .user_llm_config_service import runtime_settings
@@ -22,6 +24,25 @@ from .user_llm_config_service import runtime_settings
 settings = runtime_settings
 
 _whisper_model = None
+
+# Uma carga por vez. Duas gravacoes que chegam juntas logo depois do deploy abriam dois
+# carregamentos do mesmo modelo ao mesmo tempo - dois downloads e o dobro de memoria.
+_whisper_lock = threading.Lock()
+
+# Quando e por que a ultima carga falhou. Sem isso cada bloco de aula (a cada 60 s)
+# disparava um download novo do modelo, e todos falhavam do mesmo jeito.
+_whisper_failure: tuple[float, str] | None = None
+
+#: Depois de uma falha na carga, quanto tempo se espera antes de tentar de novo.
+WHISPER_RETRY_SECONDS = 60
+
+
+class STTUnavailable(RuntimeError):
+    """O reconhecimento de voz nao esta pronto neste servidor.
+
+    A mensagem e para o professor ler: diz o que aconteceu e que vale tentar de
+    novo. O app guarda o bloco de aula e reenvia sozinho, entao nao se perde fala.
+    """
 
 
 def _register_cuda_libraries() -> None:
@@ -54,8 +75,24 @@ def _register_cuda_libraries() -> None:
 
 
 def _load_whisper():
-    global _whisper_model
-    if _whisper_model is None:
+    """Modelo de transcricao, carregado uma vez.
+
+    Levanta `STTUnavailable` quando nao da para carregar (biblioteca ausente, download
+    do modelo falhou). A falha fica guardada por `WHISPER_RETRY_SECONDS`: nesse prazo
+    quem pede recebe o mesmo aviso na hora, sem disparar outro download.
+    """
+    global _whisper_model, _whisper_failure
+    if _whisper_model is not None:
+        return _whisper_model
+
+    with _whisper_lock:
+        # Quem esperou a vez pode ter encontrado o modelo pronto.
+        if _whisper_model is not None:
+            return _whisper_model
+        if _whisper_failure and (
+            time.monotonic() - _whisper_failure[0] < WHISPER_RETRY_SECONDS
+        ):
+            raise STTUnavailable(_whisper_failure[1])
         try:
             if settings.whisper_device.strip().lower().startswith("cuda"):
                 _register_cuda_libraries()
@@ -69,10 +106,38 @@ def _load_whisper():
                 device=settings.whisper_device,
                 compute_type=settings.whisper_compute_type,
             )
+            _whisper_failure = None
             logger.info("Whisper loaded")
-        except ImportError:
+        except ImportError as exc:
             logger.warning("faster-whisper not installed - STT unavailable")
+            message = "O reconhecimento de voz nao esta instalado neste servidor."
+            _whisper_failure = (time.monotonic(), message)
+            raise STTUnavailable(message) from exc
+        except Exception as exc:
+            logger.error(f"Whisper nao carregou ({type(exc).__name__}): {exc}")
+            message = (
+                "O reconhecimento de voz ainda esta carregando no servidor "
+                "(costuma acontecer na primeira gravacao depois de uma atualizacao). "
+                "Aguarde alguns minutos; o audio gravado fica guardado e e enviado de novo."
+            )
+            _whisper_failure = (time.monotonic(), message)
+            raise STTUnavailable(message) from exc
     return _whisper_model
+
+
+def warm_whisper() -> bool:
+    """Carrega o modelo antes da primeira gravacao. Devolve se ficou pronto.
+
+    Roda na subida do servidor, em segundo plano: o primeiro bloco de aula depois de
+    um deploy nao deve ser quem paga o download do modelo.
+    """
+    if (settings.stt_provider or "").strip().lower() == "openai" and settings.openai_api_key:
+        return False
+    try:
+        _load_whisper()
+        return True
+    except STTUnavailable:
+        return False
 
 
 async def transcribe_audio(

@@ -8,6 +8,7 @@ proposital: o backend roda na maquina do usuario, onde e normal um container
 estar parado.
 """
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -56,6 +57,7 @@ from .routers.quiz_qrcode import router as quiz_qrcode_router
 from .routers.quiz_group import router as quiz_group_router
 from .routers.sia_integration import router as sia_router
 from .services import quiz_job_service
+from .services.voice_service import warm_whisper
 from .services.qdrant_service import ensure_collections, ensure_lesson_collection
 from .services.embedding_service import describe as embedding_describe
 from .services.user_llm_config_service import runtime_settings
@@ -92,6 +94,19 @@ logger.add(
 )
 logger.add("logs/assistant.log", rotation="10 MB", retention="7 days", level="DEBUG")
 logging.getLogger("uvicorn.access").addFilter(_HealthAccessLogFilter())
+
+
+async def _warm_voice_model() -> None:
+    """Carrega o Whisper sem travar o event loop. Falha vira aviso, nao queda."""
+    try:
+        ready = await asyncio.get_running_loop().run_in_executor(None, warm_whisper)
+        logger.info(
+            "Reconhecimento de voz pronto"
+            if ready
+            else "Reconhecimento de voz nao carregou na subida; tenta de novo no primeiro uso"
+        )
+    except Exception as exc:
+        logger.warning(f"Reconhecimento de voz nao carregou na subida: {exc}")
 
 
 @asynccontextmanager
@@ -163,9 +178,13 @@ async def lifespan(app: FastAPI):
         await quiz_job_service.queue.recover()
     except Exception as e:
         logger.warning(f"Fila de quiz nao retomada: {e}")
+    # O modelo de voz carrega em segundo plano: o primeiro bloco de aula depois de um
+    # deploy nao deve pagar o download, e a subida do servidor nao espera por ele.
+    warmup = asyncio.create_task(_warm_voice_model())
     logger.info(f"Local AI services: {runtime_settings.active_llms}")
     logger.info(f"Listening on {settings.host}:{settings.port}")
     yield
+    warmup.cancel()
     await quiz_job_service.queue.shutdown()
     stop_scheduler()
     shutdown_observability()

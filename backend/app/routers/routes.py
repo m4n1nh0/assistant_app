@@ -1935,7 +1935,7 @@ async def test_whatsapp(
 import base64
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import Response
-from ..services.voice_service import transcribe_audio, text_to_speech
+from ..services.voice_service import STTUnavailable, transcribe_audio, text_to_speech
 from ..models.schemas import STTResponse, TTSRequest
 
 router_voice = APIRouter(
@@ -1952,11 +1952,16 @@ async def transcribe(
 ):
     """Transcreve o audio enviado pela interface."""
     audio_bytes = await file.read()
-    return await transcribe_audio(
-        audio_bytes,
-        language,
-        assistant_name=assistant_name,
-    )
+    try:
+        return await transcribe_audio(
+            audio_bytes,
+            language,
+            assistant_name=assistant_name,
+        )
+    except STTUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail=str(exc), headers={"Retry-After": "60"}
+        ) from exc
 
 
 @router_voice.post("/tts")

@@ -114,7 +114,11 @@ from ..services import (
     lesson_index_service,
     qdrant_service,
 )
-from ..services.voice_service import transcribe_audio, trim_transcript_overlap
+from ..services.voice_service import (
+    STTUnavailable,
+    transcribe_audio,
+    trim_transcript_overlap,
+)
 from ..services.user_llm_config_service import (
     activate_user_llms,
     load_user_llm_runtime,
@@ -2363,11 +2367,18 @@ async def ingest_lesson_audio(
 
     audio_bytes = await file.read()
     context_parts = [lesson.semester or "", lesson.discipline, lesson.title or ""]
-    stt = await transcribe_audio(
-        audio_bytes,
-        language,
-        context="; ".join(part.strip() for part in context_parts if part.strip()),
-    )
+    try:
+        stt = await transcribe_audio(
+            audio_bytes,
+            language,
+            context="; ".join(part.strip() for part in context_parts if part.strip()),
+        )
+    except STTUnavailable as exc:
+        # 503 e nao 500: nao e defeito do bloco. O app mantem o audio na fila e
+        # reenvia sozinho, e a mensagem diz ao professor o que esta acontecendo.
+        raise HTTPException(
+            status_code=503, detail=str(exc), headers={"Retry-After": "60"}
+        ) from exc
     if not stt.transcript.strip():
         # O nivel do sinal so explica o vazio; nunca decide antes do
         # reconhecimento, que entende fala bem mais baixa do que parece.

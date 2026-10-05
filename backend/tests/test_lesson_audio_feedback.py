@@ -120,3 +120,20 @@ def test_audio_que_nao_e_wav_segue_para_o_reconhecimento(api):
 
     assert resposta.json()["skipped_reason"] == "nenhuma fala reconhecida no bloco."
     assert len(api.stt_chamadas) == 1
+
+
+@pytest.mark.integration
+def test_reconhecimento_indisponivel_responde_503_sem_perder_o_bloco(api, monkeypatch):
+    from app.services.voice_service import STTUnavailable
+
+    async def indisponivel(*args, **kwargs):
+        raise STTUnavailable("O reconhecimento de voz ainda esta carregando.")
+
+    monkeypatch.setattr(education, "transcribe_audio", indisponivel)
+
+    resposta = enviar(api, wav(0.3))
+
+    # 503 (e nao 500): o app trata como "tente de novo" e mantem o audio na fila.
+    assert resposta.status_code == 503
+    assert "ainda esta carregando" in resposta.json()["detail"]
+    assert resposta.headers["retry-after"] == "60"

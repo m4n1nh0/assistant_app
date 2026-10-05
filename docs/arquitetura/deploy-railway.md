@@ -468,6 +468,16 @@ CHECKPOINT_MAX_THREADS="200"
 # TELEGRAM_BOT_TOKEN=""   TELEGRAM_CHAT_ID=""
 ```
 
+> **Modelo de voz (Whisper) vai dentro da imagem.** O disco do serviço é descartado a
+> cada deploy, e o Whisper antes só era baixado na primeira gravação depois dele, o que
+> falhava ou travava a transcrição da aula. Agora o `Dockerfile` baixa o modelo no build
+> (`ARG WHISPER_MODEL`, que o Railway preenche com a variável do serviço; sem ela vale
+> `small`) e o servidor o carrega em segundo plano na subida. Se a gravação chegar antes
+> de o modelo estar pronto, a API responde **503** com uma mensagem legível, e o app guarda
+> o áudio e reenvia sozinho. Para conferir nos logs: `Loading Whisper model` e `Whisper
+> loaded` na subida; `Whisper nao carregou (...)` mostra o motivo técnico de uma falha.
+> Mudar `WHISPER_MODEL` exige novo build da imagem para o modelo novo ser embutido.
+
 > **`TOOL_TRANSPORT` e `MCP_TRANSPORT` aparecem aqui e no
 > `agent-orchestrator`, e as duas cópias fazem coisas diferentes.** São
 > variáveis de *cliente*: quem as lê é o processo que vai alcançar a
