@@ -67,6 +67,10 @@ excluído (**Excluir**), mas leva junto as respostas, o ranking, as traduções,
 participantes e a configuração de grupo. O app pede confirmação, e o servidor só aceita
 com `force=true`. Com uma pergunta aberta para a turma, o servidor recusa.
 
+### Em lote
+
+Na lista de quizzes, marque os quizzes (ou **Selecionar todos**) e use **Excluir selecionados**. A confirmação diz quantos são rascunhos e quantos já foram liberados ou encerrados (e perdem respostas e ranking). O que não puder sair, como um quiz com pergunta aberta, continua na lista e o app mostra o motivo. O servidor aceita até 100 quizzes por pedido.
+
 ## API
 
 Sob `/education/quiz/{id}/group` (professor dono do quiz):
@@ -80,4 +84,9 @@ Sob `/education/quiz/{id}/group` (professor dono do quiz):
 | `POST` | `/representatives/{grupo}/redraw` | Sorteia outro para um grupo |
 | `PUT` | `/representatives/{grupo}` | O professor escolhe (`member_id`) |
 
-E `DELETE /education/quiz/{id}?force=true` para excluir um quiz liberado ou encerrado.
+E, para excluir quizzes:
+
+| Método | Rota | Para quê |
+|---|---|---|
+| `DELETE` | `/education/quiz/{id}?force=true` | Um quiz liberado ou encerrado (rascunho dispensa `force`) |
+| `POST` | `/education/quiz/bulk-delete` | Vários, com `{"ids": [...], "force": true}`; devolve `deleted`, `ignored`, `answers`, `participants` e `blocked` (id, título e motivo) |

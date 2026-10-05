@@ -1182,6 +1182,17 @@ class BankQuestionBulkDelete(BaseModel):
     ids: List[str] = Field(default_factory=list, max_length=500)
 
 
+class QuizBulkDelete(BaseModel):
+    """Quizzes que saem de uma vez.
+
+    `force` e a confirmacao de quem ja viu que quiz liberado ou encerrado leva
+    respostas e ranking junto; sem ele, so rascunho sai.
+    """
+
+    ids: List[str] = Field(default_factory=list, max_length=500)
+    force: bool = False
+
+
 class DisciplineUpdate(BaseModel):
     """Alteracao de disciplina."""
     code: Optional[str] = None

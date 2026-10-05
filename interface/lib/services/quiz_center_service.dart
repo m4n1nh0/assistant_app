@@ -332,6 +332,58 @@ class BankCleanupResult {
   }
 }
 
+/// Quiz que ficou de fora de uma exclusão em lote, e por quê.
+class BlockedQuiz {
+  final String id;
+  final String titulo;
+  final String reason;
+
+  const BlockedQuiz(this.id, this.titulo, this.reason);
+}
+
+/// O que sobrou depois de apagar vários quizzes.
+class QuizBulkDeleteResult {
+  final int deleted;
+  final int ignored;
+  final int answers;
+  final int participants;
+  final List<BlockedQuiz> blocked;
+
+  const QuizBulkDeleteResult({
+    required this.deleted,
+    this.ignored = 0,
+    this.answers = 0,
+    this.participants = 0,
+    this.blocked = const [],
+  });
+
+  factory QuizBulkDeleteResult.fromJson(Map<String, dynamic> json) =>
+      QuizBulkDeleteResult(
+        deleted: _int(json['deleted']),
+        ignored: _int(json['ignored']),
+        answers: _int(json['answers']),
+        participants: _int(json['participants']),
+        blocked: _maps(json['blocked'])
+            .map((item) => BlockedQuiz(
+                  item['id']?.toString() ?? '',
+                  item['titulo']?.toString() ?? 'Quiz',
+                  item['reason']?.toString() ?? '',
+                ))
+            .toList(),
+      );
+
+  String get resumo {
+    final partes = [
+      '$deleted quiz${deleted == 1 ? "" : "zes"} '
+          'apagado${deleted == 1 ? "" : "s"}',
+      if (answers > 0) '$answers resposta${answers == 1 ? "" : "s"} removida${answers == 1 ? "" : "s"}',
+      if (blocked.isNotEmpty)
+        blocked.length == 1 ? '1 não saiu' : '${blocked.length} não saíram',
+    ];
+    return '${partes.join(' · ')}.';
+  }
+}
+
 /// Monta a query string sem os filtros vazios.
 String withQuery(String path, Map<String, Object?> params) {
   final query = <String, String>{
@@ -504,6 +556,18 @@ class QuizCenterService {
       QuizGroupInfo.fromJson(await _ok(api.put(
         '/education/quiz/$quizId/group/representatives/$groupId',
         body: {'member_id': memberId},
+      )));
+
+  /// Apaga vários quizzes. `force` é a confirmação de que quiz liberado ou
+  /// encerrado pode sair com as respostas; sem ela, só rascunho sai. Quem não
+  /// pôde sair volta em `blocked`, com o motivo.
+  Future<QuizBulkDeleteResult> deleteQuizzes(
+    List<String> quizIds, {
+    bool force = false,
+  }) async =>
+      QuizBulkDeleteResult.fromJson(await _ok(api.post(
+        '/education/quiz/bulk-delete',
+        body: {'ids': quizIds, 'force': force},
       )));
 
   /// Apaga um quiz ja liberado ou encerrado, com as respostas e o ranking.

@@ -189,3 +189,95 @@ def test_quiz_de_outro_professor_ou_inexistente_da_404(api):
         resposta = api.delete(f"/education/quiz/{quiz}", params={"force": "true"})
         assert resposta.status_code == 404
     assert contar(api, QuestionModel, QuestionModel.quiz_id == "alheio") == 1
+
+
+# --- em lote -------------------------------------------------------------------------
+
+LOTE = "/education/quiz/bulk-delete"
+
+
+def ids_dos_quizzes(api):
+    async def consulta(db):
+        return sorted((await db.execute(select(QuizModel.id))).scalars())
+
+    return asyncio.run(_executar(api, consulta))
+
+
+async def _executar(api, consulta):
+    async with api.sessions() as db:
+        return await consulta(db)
+
+
+@pytest.mark.integration
+def test_lote_sem_confirmacao_so_apaga_rascunho_e_explica_o_resto(api):
+    resposta = api.post(LOTE, json={"ids": ["rascunho", "encerrado", "liberado", "ao-vivo"]})
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["deleted"] == 1
+    motivos = {item["id"]: item["reason"] for item in corpo["blocked"]}
+    assert set(motivos) == {"encerrado", "liberado", "ao-vivo"}
+    assert "2 participante(s) e 3 resposta(s)" in motivos["encerrado"]
+    assert "pergunta aberta" in motivos["ao-vivo"]
+    assert set(ids_dos_quizzes(api)) == {"encerrado", "ao-vivo", "liberado", "alheio"}
+
+
+@pytest.mark.integration
+def test_lote_confirmado_apaga_tudo_menos_o_quiz_com_pergunta_aberta(api):
+    resposta = api.post(
+        LOTE, json={"ids": ["rascunho", "encerrado", "liberado", "ao-vivo"], "force": True}
+    )
+
+    corpo = resposta.json()
+    assert corpo["deleted"] == 3
+    assert corpo["answers"] == 3 and corpo["participants"] == 2
+    assert [item["id"] for item in corpo["blocked"]] == ["ao-vivo"]
+    assert ids_dos_quizzes(api) == ["alheio", "ao-vivo"]
+
+
+@pytest.mark.integration
+def test_lote_limpa_o_que_depende_dos_quizzes_apagados(api):
+    api.post(LOTE, json={"ids": ["encerrado", "liberado"], "force": True})
+
+    ids = ["e1", "e2", "l1"]
+    assert contar(api, QuestionModel, QuestionModel.id.in_(ids)) == 0
+    assert contar(api, StudentAnswerModel, StudentAnswerModel.question_id.in_(ids)) == 0
+    assert contar(api, QuestionTranslationModel, QuestionTranslationModel.question_id.in_(ids)) == 0
+    assert contar(api, QuizParticipantModel, QuizParticipantModel.quiz_id == "encerrado") == 0
+    assert contar(api, QuizJobModel, QuizJobModel.id.in_(["job-encerrado", "job-outro"])) == 0
+
+
+@pytest.mark.integration
+def test_lote_nunca_toca_em_quiz_de_outro_professor(api):
+    resposta = api.post(LOTE, json={"ids": ["alheio", "encerrado"], "force": True}).json()
+
+    assert resposta["deleted"] == 1 and resposta["ignored"] == 1
+    assert contar(api, QuestionModel, QuestionModel.quiz_id == "alheio") == 1
+    assert contar(api, StudentAnswerModel, StudentAnswerModel.question_id == "a1") == 1
+    assert contar(api, QuizJobModel, QuizJobModel.id == "job-alheio") == 1
+
+
+@pytest.mark.integration
+def test_lote_ignora_id_inexistente_e_repetido(api):
+    resposta = api.post(
+        LOTE, json={"ids": ["rascunho", "rascunho", "nao-existe", ""], "force": True}
+    ).json()
+
+    assert resposta["deleted"] == 1 and resposta["ignored"] == 1
+    assert resposta["blocked"] == []
+
+
+@pytest.mark.integration
+def test_lote_vazio_e_grande_demais(api):
+    assert api.post(LOTE, json={"ids": []}).json()["deleted"] == 0
+    excesso = api.post(LOTE, json={"ids": [f"q{n}" for n in range(101)], "force": True})
+    assert excesso.status_code == 422 and "no máximo 100" in excesso.json()["detail"]
+    assert len(ids_dos_quizzes(api)) == 5
+
+
+@pytest.mark.integration
+def test_exclusao_individual_continua_igual_depois_do_helper_compartilhado(api):
+    assert api.delete("/education/quiz/rascunho").json()["deleted"] is True
+    assert api.delete("/education/quiz/encerrado").status_code == 409
+    resposta = api.delete("/education/quiz/encerrado", params={"force": "true"})
+    assert resposta.json() == {"deleted": True, "answers": 3, "participants": 2}

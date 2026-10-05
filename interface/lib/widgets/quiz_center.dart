@@ -650,14 +650,22 @@ class _QuizQueuePanelState extends State<QuizQueuePanel> {
 // --- quizzes ---------------------------------------------------------------
 
 class QuizListPanel extends StatefulWidget {
-  const QuizListPanel({super.key});
+  /// Troca o servico nos testes.
+  final QuizCenterService? service;
+
+  const QuizListPanel({super.key, this.service});
 
   @override
   State<QuizListPanel> createState() => _QuizListPanelState();
 }
 
 class _QuizListPanelState extends State<QuizListPanel> {
+  QuizCenterService get _center => widget.service ?? quizCenter;
+
   final _search = TextEditingController();
+  /// Quizzes marcados para excluir em lote.
+  final Set<String> _selected = {};
+  bool _deleting = false;
   Timer? _debounce;
   String _status = '';
   String _discipline = '';
@@ -685,7 +693,7 @@ class _QuizListPanelState extends State<QuizListPanel> {
       _error = '';
     });
     try {
-      final result = await quizCenter.listQuizzes(
+      final result = await _center.listQuizzes(
         status: _status,
         discipline: _discipline,
         search: _search.text.trim(),
@@ -694,6 +702,9 @@ class _QuizListPanelState extends State<QuizListPanel> {
       setState(() {
         _quizzes = result.quizzes;
         _disciplinas = result.disciplinas;
+        // O filtro muda a lista: o que saiu dela não segue marcado.
+        final visiveis = _quizzes.map((quiz) => quiz.id).toSet();
+        _selected.removeWhere((id) => !visiveis.contains(id));
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -757,6 +768,7 @@ class _QuizListPanelState extends State<QuizListPanel> {
               padding: const EdgeInsets.all(8),
               child: Text(_error, style: const TextStyle(color: AssistantTheme.danger)),
             ),
+          if (_quizzes.isNotEmpty) _selectionBar(),
           Expanded(
             child: _quizzes.isEmpty && !_loading
                 ? const _Empty(Icons.quiz_outlined, 'Nenhum quiz com esses filtros.')
@@ -771,6 +783,128 @@ class _QuizListPanelState extends State<QuizListPanel> {
     );
   }
 
+  /// Marcar todos / excluir os marcados. Aparece sempre que há quiz na lista.
+  Widget _selectionBar() {
+    final todos = _quizzes.length;
+    final marcados = _selected.length;
+    return Row(
+      children: [
+        Checkbox(
+          tristate: true,
+          value: marcados == 0 ? false : (marcados == todos ? true : null),
+          onChanged: _deleting
+              ? null
+              : (_) => setState(() {
+                    if (marcados == todos) {
+                      _selected.clear();
+                    } else {
+                      _selected
+                        ..clear()
+                        ..addAll(_quizzes.map((quiz) => quiz.id));
+                    }
+                  }),
+        ),
+        Text(
+          marcados == 0
+              ? 'Selecionar todos ($todos)'
+              : '$marcados selecionado${marcados == 1 ? "" : "s"}',
+          style: const TextStyle(
+              fontSize: 12, color: AssistantTheme.textSecondary),
+        ),
+        const Spacer(),
+        if (marcados > 0)
+          TextButton.icon(
+            onPressed: _deleting ? null : _deleteSelected,
+            icon: _deleting
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.delete_outline, size: 16),
+            label: Text(_deleting ? 'EXCLUINDO...' : 'EXCLUIR SELECIONADOS'),
+            style:
+                TextButton.styleFrom(foregroundColor: AssistantTheme.danger),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _deleteSelected() async {
+    final escolhidos =
+        _quizzes.where((quiz) => _selected.contains(quiz.id)).toList();
+    if (escolhidos.isEmpty) return;
+    final aplicados =
+        escolhidos.where((quiz) => quiz.status != QuizStatus.draft).length;
+    final rascunhos = escolhidos.length - aplicados;
+
+    final partes = <String>[
+      if (rascunhos > 0)
+        rascunhos == 1
+            ? '1 rascunho será descartado.'
+            : '$rascunhos rascunhos serão descartados.',
+      if (aplicados > 0)
+        aplicados == 1
+            ? '1 já foi liberado ou encerrado: as respostas dos alunos e o '
+                'ranking dele serão apagados.'
+            : '$aplicados já foram liberados ou encerrados: as respostas dos '
+                'alunos e o ranking deles serão apagados.',
+      'Não dá para desfazer.',
+    ];
+    final ok = await _confirm(
+      context,
+      'Excluir ${escolhidos.length} quiz${escolhidos.length == 1 ? "" : "zes"}?',
+      partes.join('\n'),
+      confirm: 'Excluir',
+    );
+    if (!ok || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      // O professor acabou de confirmar o que se perde: é o `force` do servidor.
+      final result = await _center.deleteQuizzes(
+        escolhidos.map((quiz) => quiz.id).toList(),
+        force: true,
+      );
+      if (!mounted) return;
+      _selected.clear();
+      await reload();
+      if (!mounted) return;
+      if (result.blocked.isEmpty) {
+        _snack(context, result.resumo);
+      } else {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(result.resumo),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Estes quizzes continuam na lista:'),
+                const SizedBox(height: 8),
+                for (final item in result.blocked)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('• ${item.titulo}: ${item.reason}'),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Fechar'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) _snack(context, '$e', error: true);
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   Widget _quizTile(QuizSummary quiz) {
     final detalhes = [
       if (quiz.disciplinas.isNotEmpty) quiz.disciplinas.join(', '),
@@ -780,7 +914,24 @@ class _QuizListPanelState extends State<QuizListPanel> {
     ].join(' · ');
     return ListTile(
       dense: true,
-      leading: _StatusChip(quizStatusLabel(quiz.status), quizStatusColor(quiz.status)),
+      leading: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Checkbox(
+            value: _selected.contains(quiz.id),
+            onChanged: _deleting
+                ? null
+                : (marcado) => setState(() {
+                      if (marcado == true) {
+                        _selected.add(quiz.id);
+                      } else {
+                        _selected.remove(quiz.id);
+                      }
+                    }),
+          ),
+          _StatusChip(quizStatusLabel(quiz.status), quizStatusColor(quiz.status)),
+        ],
+      ),
       title: Text(quiz.titulo, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(detalhes, style: const TextStyle(fontSize: 11)),
       trailing: Wrap(
@@ -817,12 +968,18 @@ class _QuizListPanelState extends State<QuizListPanel> {
               context,
               quizId: quiz.id,
               onChanged: reload,
+              service: _center,
             ),
             child: Text(quiz.status == QuizStatus.draft ? 'REVISAR' : 'ABRIR'),
           ),
         ],
       ),
-      onTap: () => openQuizReview(context, quizId: quiz.id, onChanged: reload),
+      onTap: () => openQuizReview(
+        context,
+        quizId: quiz.id,
+        onChanged: reload,
+        service: _center,
+      ),
     );
   }
 }

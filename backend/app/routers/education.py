@@ -46,6 +46,7 @@ from ..core.database import (
 from ..core.security import get_current_user
 from ..models.schemas import (
     BankQuestionBulkDelete,
+    QuizBulkDelete,
     ClassGroupCreate,
     ClassGroupResponse,
     ClassGroupUpdate,
@@ -3711,39 +3712,135 @@ async def delete_quiz(
             detail="Há uma pergunta aberta para a turma. Encerre a pergunta antes de apagar o quiz.",
         )
 
+    question_ids, answers, participants = await _quiz_footprint(db, quiz)
+    if quiz.status != "draft" and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Este quiz já foi liberado e tem {participants} participante(s) e "
+                f"{answers} resposta(s). Apagar remove tudo isso; confirme para continuar."
+            ),
+        )
+
+    await _purge_quiz(db, quiz, question_ids)
+    await db.commit()
+    return {"deleted": True, "answers": answers, "participants": participants}
+
+
+#: Quantos quizzes uma exclusao em lote aceita. A tela mostra listas bem menores;
+#: o teto so impede um pedido que seguraria a conexao por minutos.
+QUIZ_BULK_DELETE_LIMIT = 100
+
+
+@router.post("/quiz/bulk-delete")
+async def bulk_delete_quizzes(
+    body: QuizBulkDelete,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apaga varios quizzes de uma vez.
+
+    A regra de cada quiz e a da exclusao individual, e nao se afrouxa por ser em lote:
+    rascunho sai direto; liberado ou encerrado leva respostas e ranking e so sai com
+    `force=true`; quiz com pergunta aberta para a turma nunca sai. Quem nao pode sair
+    nao derruba o lote - volta em `blocked`, com o motivo, para o professor saber o que
+    sobrou. Id que nao existe ou nao e do professor e ignorado.
+    """
+
+    ids = list(dict.fromkeys(item for item in body.ids if item))
+    if not ids:
+        return {"deleted": 0, "ignored": 0, "answers": 0, "participants": 0, "blocked": []}
+    if len(ids) > QUIZ_BULK_DELETE_LIMIT:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Escolha no máximo {QUIZ_BULK_DELETE_LIMIT} quizzes por vez.",
+        )
+
+    quizzes = (
+        await db.execute(
+            select(QuizModel).where(
+                QuizModel.id.in_(ids), QuizModel.tutor_id == user["tutor_id"]
+            )
+        )
+    ).scalars().all()
+    found = {quiz.id: quiz for quiz in quizzes}
+
+    deleted = answers_total = participants_total = 0
+    blocked: list[dict] = []
+    for quiz_id in ids:
+        quiz = found.get(quiz_id)
+        if quiz is None:
+            continue
+        if quiz.status == "open" and (quiz.live_phase or "lobby") == "question":
+            blocked.append({
+                "id": quiz.id,
+                "titulo": quiz.titulo,
+                "reason": "Há uma pergunta aberta para a turma.",
+            })
+            continue
+        question_ids, answers, participants = await _quiz_footprint(db, quiz)
+        if quiz.status != "draft" and not body.force:
+            blocked.append({
+                "id": quiz.id,
+                "titulo": quiz.titulo,
+                "reason": (
+                    f"Tem {participants} participante(s) e {answers} resposta(s); "
+                    "confirme para apagar."
+                ),
+            })
+            continue
+        await _purge_quiz(db, quiz, question_ids)
+        deleted += 1
+        answers_total += answers
+        participants_total += participants
+
+    await db.commit()
+    return {
+        "deleted": deleted,
+        "ignored": len(ids) - len(found),
+        "answers": answers_total,
+        "participants": participants_total,
+        "blocked": blocked,
+    }
+
+
+async def _quiz_footprint(db: AsyncSession, quiz: QuizModel) -> tuple[list[str], int, int]:
+    """Perguntas do quiz e quanto dado de turma (respostas, participantes) ele guarda.
+
+    Rascunho nao teve turma: as duas contas ficam em zero sem consultar.
+    """
     question_ids = list(
         (
-            await db.execute(
-                select(QuestionModel.id).where(QuestionModel.quiz_id == quiz_id)
-            )
+            await db.execute(select(QuestionModel.id).where(QuestionModel.quiz_id == quiz.id))
         ).scalars()
     )
-    answers = participants = 0
-    if quiz.status != "draft":
-        if question_ids:
-            answers = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(StudentAnswerModel)
-                    .where(StudentAnswerModel.question_id.in_(question_ids))
-                )
-            ).scalar_one()
-        participants = (
+    if quiz.status == "draft":
+        return question_ids, 0, 0
+    answers = 0
+    if question_ids:
+        answers = (
             await db.execute(
                 select(func.count())
-                .select_from(QuizParticipantModel)
-                .where(QuizParticipantModel.quiz_id == quiz_id)
+                .select_from(StudentAnswerModel)
+                .where(StudentAnswerModel.question_id.in_(question_ids))
             )
         ).scalar_one()
-        if not force:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Este quiz já foi liberado e tem {participants} participante(s) e "
-                    f"{answers} resposta(s). Apagar remove tudo isso; confirme para continuar."
-                ),
-            )
+    participants = (
+        await db.execute(
+            select(func.count())
+            .select_from(QuizParticipantModel)
+            .where(QuizParticipantModel.quiz_id == quiz.id)
+        )
+    ).scalar_one()
+    return question_ids, answers, participants
 
+
+async def _purge_quiz(db: AsyncSession, quiz: QuizModel, question_ids: list[str]) -> None:
+    """Remove o quiz e tudo que depende dele. Nao confirma a transacao.
+
+    Uma lista so para a exclusao individual e a em lote: duas cascatas separadas
+    divergem na primeira tabela que alguem acrescenta a uma delas.
+    """
     if question_ids:
         await db.execute(
             sql_delete(StudentAnswerModel).where(StudentAnswerModel.question_id.in_(question_ids))
@@ -3753,21 +3850,19 @@ async def delete_quiz(
                 QuestionTranslationModel.question_id.in_(question_ids)
             )
         )
-    await db.execute(sql_delete(QuizParticipantModel).where(QuizParticipantModel.quiz_id == quiz_id))
-    await db.execute(sql_delete(QuestionModel).where(QuestionModel.quiz_id == quiz_id))
-    await db.execute(sql_delete(QuizSourceModel).where(QuizSourceModel.quiz_id == quiz_id))
+    await db.execute(sql_delete(QuizParticipantModel).where(QuizParticipantModel.quiz_id == quiz.id))
+    await db.execute(sql_delete(QuestionModel).where(QuestionModel.quiz_id == quiz.id))
+    await db.execute(sql_delete(QuizSourceModel).where(QuizSourceModel.quiz_id == quiz.id))
     for model in (QuizGroupRepresentativeModel, QuizGroupLinkModel, QuizGroupConfigModel):
-        await db.execute(sql_delete(model).where(model.quiz_id == quiz_id))
+        await db.execute(sql_delete(model).where(model.quiz_id == quiz.id))
     # O pedido de geracao que originou o quiz: sem o quiz, "abrir" nao leva a lugar
     # nenhum e a notificacao de fim ficaria apontando para o vazio.
     await db.execute(
         sql_delete(QuizJobModel).where(
-            QuizJobModel.quiz_id == quiz_id, QuizJobModel.tutor_id == user["tutor_id"]
+            QuizJobModel.quiz_id == quiz.id, QuizJobModel.tutor_id == quiz.tutor_id
         )
     )
     await db.delete(quiz)
-    await db.commit()
-    return {"deleted": True, "answers": answers, "participants": participants}
 
 
 def _bank_question(row: QuestionModel, item: Dict[str, Any]) -> Dict[str, Any]:
