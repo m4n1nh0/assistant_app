@@ -23,6 +23,11 @@ from ..core.database import (
     LessonPointModel,
     LessonSegmentModel,
     MaterialModel,
+    QuizGroupConfigModel,
+    QuizGroupLinkModel,
+    QuizGroupRepresentativeModel,
+    QuizJobModel,
+    QuestionTranslationModel,
     QuizSourceModel,
     StudentModel,
     StudyTimeModel,
@@ -3679,26 +3684,90 @@ async def list_quizzes(
 
 
 @router.delete("/quiz/{quiz_id}")
-async def discard_quiz_draft(
+async def delete_quiz(
     quiz_id: str,
+    force: bool = False,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Descarta um rascunho. Quiz ja liberado guarda respostas e fica."""
+    """Apaga um quiz.
+
+    Rascunho sai sem pergunta nenhuma. Quiz ja liberado ou encerrado leva junto as
+    respostas e o ranking da turma, que nao tem volta - por isso so sai com
+    `force=true`, que a interface manda depois de o professor confirmar. Sem isso,
+    a chamada responde 409 dizendo quanto seria perdido.
+
+    Enquanto uma pergunta esta aberta para a turma o quiz nao pode ser apagado:
+    os alunos estariam respondendo a algo que deixaria de existir.
+    """
 
     quiz = await db.get(QuizModel, quiz_id)
     if quiz is None or quiz.tutor_id != user["tutor_id"]:
         raise HTTPException(status_code=404, detail="Quiz não encontrado")
-    if quiz.status != "draft":
+
+    if quiz.status == "open" and (quiz.live_phase or "lobby") == "question":
         raise HTTPException(
             status_code=409,
-            detail="Só rascunho pode ser descartado: este quiz já foi liberado para a turma.",
+            detail="Há uma pergunta aberta para a turma. Encerre a pergunta antes de apagar o quiz.",
         )
+
+    question_ids = list(
+        (
+            await db.execute(
+                select(QuestionModel.id).where(QuestionModel.quiz_id == quiz_id)
+            )
+        ).scalars()
+    )
+    answers = participants = 0
+    if quiz.status != "draft":
+        if question_ids:
+            answers = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(StudentAnswerModel)
+                    .where(StudentAnswerModel.question_id.in_(question_ids))
+                )
+            ).scalar_one()
+        participants = (
+            await db.execute(
+                select(func.count())
+                .select_from(QuizParticipantModel)
+                .where(QuizParticipantModel.quiz_id == quiz_id)
+            )
+        ).scalar_one()
+        if not force:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Este quiz já foi liberado e tem {participants} participante(s) e "
+                    f"{answers} resposta(s). Apagar remove tudo isso; confirme para continuar."
+                ),
+            )
+
+    if question_ids:
+        await db.execute(
+            sql_delete(StudentAnswerModel).where(StudentAnswerModel.question_id.in_(question_ids))
+        )
+        await db.execute(
+            sql_delete(QuestionTranslationModel).where(
+                QuestionTranslationModel.question_id.in_(question_ids)
+            )
+        )
+    await db.execute(sql_delete(QuizParticipantModel).where(QuizParticipantModel.quiz_id == quiz_id))
     await db.execute(sql_delete(QuestionModel).where(QuestionModel.quiz_id == quiz_id))
     await db.execute(sql_delete(QuizSourceModel).where(QuizSourceModel.quiz_id == quiz_id))
+    for model in (QuizGroupRepresentativeModel, QuizGroupLinkModel, QuizGroupConfigModel):
+        await db.execute(sql_delete(model).where(model.quiz_id == quiz_id))
+    # O pedido de geracao que originou o quiz: sem o quiz, "abrir" nao leva a lugar
+    # nenhum e a notificacao de fim ficaria apontando para o vazio.
+    await db.execute(
+        sql_delete(QuizJobModel).where(
+            QuizJobModel.quiz_id == quiz_id, QuizJobModel.tutor_id == user["tutor_id"]
+        )
+    )
     await db.delete(quiz)
     await db.commit()
-    return {"deleted": True}
+    return {"deleted": True, "answers": answers, "participants": participants}
 
 
 def _bank_question(row: QuestionModel, item: Dict[str, Any]) -> Dict[str, Any]:

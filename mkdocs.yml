@@ -107,6 +107,7 @@ nav:
       - Quiz:
           - Modo Educacao: funcionalidades/quiz/modo-educacao.md
           - Gerador automatico: funcionalidades/quiz/gerador-automatico.md
+          - Quiz em grupo: funcionalidades/quiz/quiz-em-grupo.md
           - Integracao Flutter: funcionalidades/quiz/flutter.md
           - WebSocket e QR Code: funcionalidades/quiz/websocket-qrcode.md
           - Guia de testes: funcionalidades/quiz/testes.md

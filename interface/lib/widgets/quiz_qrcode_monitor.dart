@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:convert';
+import '../models/quiz_group.dart';
 import '../services/api_service.dart';
 import '../services/quiz_center_service.dart';
 import '../services/quiz_translation_agent.dart';
@@ -928,9 +929,8 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
         const SizedBox(height: 20),
         if (showRanking) ...[
           Text(
-            livePhase == 'results'
-                ? 'Ranking · pontos acumulados'
-                : 'Ranking Final',
+            '${livePhase == 'results' ? 'Ranking · pontos acumulados' : 'Ranking Final'}'
+            '${_stats!['group_mode'] != null ? ' · por grupo' : ''}',
             style: TextStyle(
               fontSize: 17 * _scale,
               fontWeight: FontWeight.bold,
@@ -1382,7 +1382,16 @@ class _QuizQRCodeMonitorState extends State<QuizQRCodeMonitor> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (showRound)
+                    if (row['mode'] != null)
+                      Text(
+                        groupRankingDetail(row, showRound: showRound),
+                        style: TextStyle(
+                          fontSize: 12 * _scale,
+                          fontWeight: FontWeight.w600,
+                          color: AssistantTheme.textSecondary,
+                        ),
+                      )
+                    else if (showRound)
                       Text(
                         row['round_correct'] == true
                             ? '+$roundScore nesta pergunta'

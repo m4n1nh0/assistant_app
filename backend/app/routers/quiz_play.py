@@ -21,7 +21,7 @@ from ..core.database import (
     StudentAnswerModel,
     get_db,
 )
-from ..services import quiz_live_service, quiz_translation_service
+from ..services import quiz_group_service, quiz_live_service, quiz_translation_service
 
 router = APIRouter(prefix="/education/quiz", tags=["education-quiz"])
 
@@ -36,6 +36,15 @@ _PUBLIC_TEXT = {
         "of": "de",
         "answer": "Sua Resposta",
         "name": "Seu nome",
+        "enrollment": "Sua matrícula",
+        "group_intro": "Quiz em grupo: entre com a sua matrícula.",
+        "enrollment_invalid": "Digite a sua matrícula.",
+        "enrollment_unknown": "Não encontrei essa matrícula. Confira o número e tente de novo.",
+        "enrollment_no_group": "Essa matrícula não está em nenhum grupo desta disciplina. Fale com o professor.",
+        "group": "Grupo",
+        "rep_only_title": "Quem responde é o representante",
+        "rep_only_message": "O representante do {group} é {name}. Acompanhe e ajude o grupo a decidir.",
+        "rep_missing_message": "O professor ainda não escolheu o representante do {group}.",
         "join": "ENTRAR NO QUIZ",
         "waiting_title": "Aguardando o professor",
         "waiting_message": "A próxima pergunta aparecerá automaticamente.",
@@ -85,6 +94,15 @@ _PUBLIC_TEXT = {
         "of": "de",
         "answer": "Tu Respuesta",
         "name": "Tu nombre",
+        "enrollment": "Tu matrícula",
+        "group_intro": "Quiz en grupo: entra con tu matrícula.",
+        "enrollment_invalid": "Escribe tu matrícula.",
+        "enrollment_unknown": "No encontré esa matrícula. Revisa el número e inténtalo de nuevo.",
+        "enrollment_no_group": "Esa matrícula no está en ningún grupo de esta asignatura. Habla con el profesor.",
+        "group": "Grupo",
+        "rep_only_title": "Responde el representante",
+        "rep_only_message": "El representante de {group} es {name}. Acompaña y ayuda al grupo a decidir.",
+        "rep_missing_message": "El profesor aún no eligió al representante de {group}.",
         "join": "ENTRAR",
         "waiting_title": "Esperando al profesor",
         "waiting_message": "La próxima pregunta aparecerá automáticamente.",
@@ -134,6 +152,15 @@ _PUBLIC_TEXT = {
         "of": "of",
         "answer": "Your Answer",
         "name": "Your name",
+        "enrollment": "Your student ID",
+        "group_intro": "Group quiz: join with your student ID.",
+        "enrollment_invalid": "Enter your student ID.",
+        "enrollment_unknown": "I could not find that student ID. Check the number and try again.",
+        "enrollment_no_group": "That student ID is not in any group of this course. Talk to the teacher.",
+        "group": "Group",
+        "rep_only_title": "The representative answers",
+        "rep_only_message": "The representative of {group} is {name}. Follow along and help the group decide.",
+        "rep_missing_message": "The teacher has not chosen the representative of {group} yet.",
         "join": "JOIN QUIZ",
         "waiting_title": "Waiting for the teacher",
         "waiting_message": "The next question will appear automatically.",
@@ -966,6 +993,8 @@ def _generate_join_page(
     quiz_id: str,
     language: str = "pt",
     prefill_name: str = "",
+    group_mode: bool = False,
+    error: str = "",
 ) -> HTMLResponse:
     """Tela de entrada: o aluno informa o nome e escolhe o idioma do quiz.
 
@@ -981,12 +1010,34 @@ def _generate_join_page(
 <span>{label}</span></label>"""
         for code, label in _LANGUAGE_CHOICES
     )
+    if group_mode:
+        # Quiz em grupo: a matricula leva ao grupo; o nome vem do cadastro.
+        field_html = (
+            f'<input name="enrollment" id="student_name" maxlength="40" required '
+            f'autofocus autocomplete="off" aria-label="{text["enrollment"]}" '
+            f'placeholder="{text["enrollment"]}" value="{escape(prefill_name)}">'
+        )
+        group_intro_html = f'<p class="intro">{text["group_intro"]}</p>'
+    else:
+        field_html = (
+            f'<input name="student_name" id="student_name" maxlength="80" required '
+            f'autofocus autocomplete="name" aria-label="{text["name"]}" '
+            f'placeholder="{text["name"]}" value="{escape(prefill_name)}">'
+        )
+        group_intro_html = ""
+    error_html = (
+        f'<p class="error" role="alert">{escape(error)}</p>' if error else ""
+    )
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{text["page_prefix"]}</title>
 <style>
+.intro{{margin:0 0 4px;color:#4b5563;font-size:14px}}
+.error{{margin:10px 0 0;padding:10px 12px;border-radius:8px;background:#fef2f2;
+color:#b91c1c;font-size:14px;font-weight:600}}
+input[name=enrollment]:focus-visible{{outline:3px solid #4f46e5;outline-offset:2px}}
 *{{box-sizing:border-box}}
 body{{margin:0;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#111827;
 font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;
@@ -1013,9 +1064,7 @@ input[name=student_name]:focus-visible,button:focus-visible{{outline:3px solid #
 <div class="brand">{text["brand"]}</div>
 <h1>{text["page_prefix"]}</h1>
 <form method="post" action="?lang={language}" id="join">
-<input name="student_name" id="student_name" maxlength="80" required autofocus
-autocomplete="name" aria-label="{text["name"]}"
-placeholder="{text["name"]}" value="{escape(prefill_name)}">
+{group_intro_html}{error_html}{field_html}
 <fieldset class="langs"><legend>{text["join_language"]}</legend><div>{choices_html}</div></fieldset>
 <button type="submit">{text["join"]}</button>
 </form>
@@ -1039,10 +1088,15 @@ def _generate_waiting_page(
     language: str = "pt",
     answered: bool = False,
     signature: str = "",
+    notice: Optional[tuple[str, str]] = None,
 ) -> HTMLResponse:
+    """Tela de espera. `notice` troca o titulo e a mensagem (quiz em grupo)."""
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
     title = text["answer_saved"] if answered else text["waiting_title"]
+    message = text["waiting_message"]
+    if notice is not None:
+        title, message = notice
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="{text["html_lang"]}"><head><meta charset="utf-8">
@@ -1066,7 +1120,7 @@ p{{color:#cbd5e1;margin:6px 0}}
 <div class="pulse" aria-hidden="true"></div>
 <p class="player">{escape(student_name)}</p>
 <h1 id="live-heading" tabindex="-1">{escape(title)}</h1>
-<p>{text["waiting_message"]}</p>
+<p>{escape(message)}</p>
 </main>
 {_live_block(quiz_id=quiz_id, language=language, signature=signature)}
 </body></html>""",
@@ -1101,6 +1155,11 @@ async def _ranking_for_quiz(
         StudentAnswerModel.question_id.in_(question_ids)
     )
     answers = list((await db.execute(stmt)).scalars().all())
+    # Quiz em grupo: a turma ve o ranking dos grupos, no mesmo formato.
+    group_config = await quiz_group_service.get_config(db, quiz_id)
+    if group_config is not None:
+        ctx = await quiz_group_service.load_context(db, group_config)
+        return quiz_group_service.group_ranking_rows(answers, question_id, ctx)
     return _ranking_rows(answers, question_id)
 
 
@@ -1231,6 +1290,17 @@ async def _render_live_quiz_page(
     attempt_id = _attempt_id(request, quiz.id)
     response: HTMLResponse
 
+    # Quiz em grupo: o ranking mostrado e o dos grupos, e "voce" e o seu grupo.
+    group_config = await quiz_group_service.get_config(db, quiz.id)
+    group_ctx = (
+        await quiz_group_service.load_context(db, group_config)
+        if group_config is not None
+        else None
+    )
+    viewer_id = attempt_id
+    if group_ctx is not None:
+        viewer_id = group_ctx.group_of_attempt(attempt_id) or attempt_id
+
     # Prazo vencido vira ranking aqui mesmo: o aluno nao depende de o painel do
     # professor estar aberto para a pergunta encerrar.
     await quiz_live_service.expire_question_if_due(db, quiz)
@@ -1257,7 +1327,7 @@ async def _render_live_quiz_page(
                 question_language = language
         response = _generate_ranking_page(
             quiz_id=quiz.id,
-            student_id=attempt_id,
+            student_id=viewer_id,
             student_name=student_name,
             rows=rows,
             current_question_text=question_text,
@@ -1286,6 +1356,31 @@ async def _render_live_quiz_page(
                 student_name=student_name,
                 language=language,
                 signature=signature,
+            )
+        elif group_ctx is not None and not group_ctx.may_answer(attempt_id):
+            # Modo representante: este integrante acompanha, nao responde.
+            text = _PUBLIC_TEXT[language]
+            grupo = group_ctx.group_of_attempt(attempt_id) or ""
+            nome_grupo = group_ctx.group_names.get(grupo, text["group"])
+            rep = group_ctx.representatives.get(grupo)
+            if rep:
+                notice = (
+                    text["rep_only_title"],
+                    text["rep_only_message"].format(
+                        group=nome_grupo, name=group_ctx.member_names.get(rep, "")
+                    ),
+                )
+            else:
+                notice = (
+                    text["rep_only_title"],
+                    text["rep_missing_message"].format(group=nome_grupo),
+                )
+            response = _generate_waiting_page(
+                quiz_id=quiz.id,
+                student_name=student_name,
+                language=language,
+                signature=signature,
+                notice=notice,
             )
         else:
             answered_ids = await _answered_question_ids(
@@ -1462,6 +1557,12 @@ p{{color:#6b7280;font-size:14px;margin:0}}
         return _generate_empty_page(language=language)
 
     student_name = _student_name(request, quiz_token)
+    group_config = await quiz_group_service.get_config(db, quiz.id)
+    if group_config is not None:
+        # Quiz em grupo: quem vale e o vinculo gravado pela matricula, nao o
+        # nome que estiver no cookie. Sem vinculo, volta para a entrada.
+        group_link = await quiz_group_service.get_link(db, quiz.id, attempt_id)
+        student_name = group_link.member_name if group_link else ""
     if not student_name:
         if quiz.status == "closed":
             return _generate_closed_page(language=language)
@@ -1470,6 +1571,7 @@ p{{color:#6b7280;font-size:14px;margin:0}}
                 quiz_id=quiz_token,
                 language=language,
                 prefill_name=(name or "").strip(),
+                group_mode=group_config is not None,
             ),
             quiz_id=quiz_token,
             attempt_id=attempt_id,
@@ -1511,6 +1613,7 @@ async def quiz_submit_answer(
     answer: Optional[str] = Form(default=None),
     question_id: Optional[str] = Form(default=None),
     student_name: Optional[str] = Form(default=None),
+    enrollment: Optional[str] = Form(default=None, max_length=40),
     skip: Optional[str] = Form(default=None),
     language_choice: Optional[str] = Form(default=None, alias="language"),
     db: AsyncSession = Depends(get_db),
@@ -1545,11 +1648,48 @@ async def quiz_submit_answer(
         return _generate_empty_page(language=language)
 
     display_name = (student_name or _student_name(request, quiz_token)).strip()[:80]
+    group_config = await quiz_group_service.get_config(db, quiz.id)
+    group_ctx = None
+    if group_config is not None:
+        group_link = await quiz_group_service.get_link(db, quiz.id, attempt_id)
+        if enrollment is not None and quiz.status == "open":
+            # Entrada pela matricula: o servidor acha o grupo, o aluno nao escolhe.
+            try:
+                resolved = await quiz_group_service.resolve_enrollment(
+                    db, group_config, enrollment
+                )
+            except quiz_group_service.EnrollmentError as exc:
+                text = _PUBLIC_TEXT[language]
+                key = {
+                    "invalid": "enrollment_invalid",
+                    "no_group": "enrollment_no_group",
+                }.get(exc.code, "enrollment_unknown")
+                return _attach_attempt_cookie(
+                    _generate_join_page(
+                        quiz_id=quiz_token,
+                        language=language,
+                        prefill_name=enrollment.strip(),
+                        group_mode=True,
+                        error=text[key],
+                    ),
+                    quiz_id=quiz_token,
+                    attempt_id=attempt_id,
+                )
+            group_link = await quiz_group_service.link_attempt(
+                db, quiz.id, attempt_id, resolved
+            )
+        display_name = group_link.member_name if group_link else ""
+        if group_link is not None:
+            group_ctx = await quiz_group_service.load_context(db, group_config)
     if not display_name:
         if quiz.status == "closed":
             return _generate_closed_page(language=language)
         return _attach_attempt_cookie(
-            _generate_join_page(quiz_id=quiz_token, language=language),
+            _generate_join_page(
+                quiz_id=quiz_token,
+                language=language,
+                group_mode=group_config is not None,
+            ),
             quiz_id=quiz_token,
             attempt_id=attempt_id,
         )
@@ -1576,8 +1716,12 @@ async def quiz_submit_answer(
     await quiz_live_service.expire_question_if_due(db, quiz)
 
     submitted_question = _question_by_id(all_questions, question_id)
+    # No modo representante so ele responde: a resposta dos outros integrantes
+    # nao e gravada, e a tela deles ja avisa quem responde pelo grupo.
+    may_answer = group_ctx is None or group_ctx.may_answer(attempt_id)
     if (
-        quiz.live_phase == "question"
+        may_answer
+        and quiz.live_phase == "question"
         and submitted_question is not None
         and submitted_question.id == quiz.current_question_id
     ):

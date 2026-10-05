@@ -26,6 +26,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.database import (
     QuestionModel,
     QuestionTranslationModel,
+    QuizGroupConfigModel,
+    QuizGroupLinkModel,
+    QuizGroupRepresentativeModel,
     QuizModel,
     QuizParticipantModel,
     StudentAnswerModel,
@@ -87,7 +90,9 @@ def aula(monkeypatch):
     async def seed():
         async with engine.begin() as conn:
             for model in (QuizModel, QuestionModel, StudentAnswerModel,
-                          QuizParticipantModel, QuestionTranslationModel):
+                          QuizParticipantModel, QuestionTranslationModel,
+                          QuizGroupConfigModel, QuizGroupLinkModel,
+                          QuizGroupRepresentativeModel):
                 await conn.run_sync(model.__table__.create)
         async with sessions() as db:
             db.add(QuizModel(id=QUIZ, tutor_id="t1", lesson_id="l1", titulo="Modelagem",

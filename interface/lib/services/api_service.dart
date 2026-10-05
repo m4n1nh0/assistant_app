@@ -1387,6 +1387,16 @@ class ApiService {
     }
   }
 
+  Future<GenericApiResponse> put(
+    String endpoint, {
+    required Map<String, dynamic> body,
+  }) =>
+      _send(() => http.put(
+            Uri.parse('$baseUrl$endpoint'),
+            headers: _headers,
+            body: jsonEncode(body),
+          ));
+
   Future<GenericApiResponse> patch(
     String endpoint, {
     required Map<String, dynamic> body,

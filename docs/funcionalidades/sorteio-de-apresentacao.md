@@ -71,4 +71,5 @@ Todas sob `/education/group-draws`, só para o professor dono:
 ## Ainda não existe
 
 - Página pública para os alunos verem a ordem (como a do quiz).
-- Quiz por grupo, com o representante respondendo ou a média do grupo.
+- Ligação automática do representante sorteado aqui ao quiz em grupo (hoje o quiz
+  em grupo tem o próprio sorteio de representantes; veja [Quiz em grupo](quiz/quiz-em-grupo.md)).

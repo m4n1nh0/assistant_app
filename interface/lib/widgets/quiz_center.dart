@@ -20,6 +20,7 @@ import '../services/quiz_queue_watcher.dart';
 import '../services/quiz_specialist_review.dart';
 import '../utils/theme.dart';
 import 'quiz_export.dart';
+import 'quiz_group_dialog.dart';
 import 'quiz_preview_dialog.dart';
 import 'quiz_qrcode_monitor.dart';
 import 'quiz_report_dialog.dart';
@@ -213,6 +214,16 @@ Future<void> openQuizReview(
             service: center,
           ),
         ),
+      IconButton(
+        tooltip: 'Quiz em grupo',
+        icon: const Icon(Icons.groups_2_outlined),
+        onPressed: () => showQuizGroupDialog(
+          dialogContext,
+          quizId: quizId,
+          service: center,
+          onChanged: onChanged,
+        ),
+      ),
       if (status != QuizStatus.draft)
         IconButton(
           tooltip: 'Relatório de desempenho',
@@ -223,6 +234,29 @@ Future<void> openQuizReview(
             title: titulo,
             service: center,
           ),
+        ),
+      if (status != QuizStatus.draft)
+        TextButton.icon(
+          onPressed: () async {
+            final ok = await _confirm(
+              dialogContext,
+              'Excluir este quiz?',
+              '"$titulo" será apagado com as ${questions.length} pergunta(s), '
+                  'as respostas dos alunos e o ranking. Não dá para desfazer.',
+              confirm: 'Excluir',
+            );
+            if (!ok) return;
+            try {
+              await center.deleteQuiz(quizId);
+              onChanged?.call();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            } catch (e) {
+              if (dialogContext.mounted) _snack(dialogContext, '$e', error: true);
+            }
+          },
+          icon: const Icon(Icons.delete_outline, size: 16),
+          label: const Text('EXCLUIR'),
+          style: TextButton.styleFrom(foregroundColor: AssistantTheme.danger),
         ),
       if (status == QuizStatus.draft) ...[
         TextButton.icon(

@@ -22,6 +22,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import (
     QuestionModel,
+    QuizGroupConfigModel,
+    QuizGroupLinkModel,
+    QuizGroupRepresentativeModel,
     QuizModel,
     QuizParticipantModel,
     StudentAnswerModel,
@@ -43,7 +46,9 @@ def sala():
 
     async def seed():
         async with engine.begin() as conn:
-            for model in (QuizModel, QuestionModel, StudentAnswerModel, QuizParticipantModel):
+            for model in (QuizModel, QuestionModel, StudentAnswerModel, QuizParticipantModel,
+                          QuizGroupConfigModel, QuizGroupLinkModel,
+                          QuizGroupRepresentativeModel):
                 await conn.run_sync(model.__table__.create)
         async with sessions() as db:
             db.add_all([

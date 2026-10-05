@@ -53,6 +53,7 @@ from .routers.quiz_web import router as quiz_web_router
 from .routers.quiz_play import router as quiz_play_router
 from .routers.quiz_websocket import router as quiz_websocket_router
 from .routers.quiz_qrcode import router as quiz_qrcode_router
+from .routers.quiz_group import router as quiz_group_router
 from .routers.sia_integration import router as sia_router
 from .services import quiz_job_service
 from .services.qdrant_service import ensure_collections, ensure_lesson_collection
@@ -245,6 +246,7 @@ app.include_router(quiz_web_router)
 app.include_router(quiz_play_router)
 app.include_router(quiz_websocket_router)
 app.include_router(quiz_qrcode_router)
+app.include_router(quiz_group_router)
 app.include_router(sia_router)
 app.include_router(router_auth)
 app.include_router(router_calendar_public)

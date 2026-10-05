@@ -1,0 +1,83 @@
+# Quiz em grupo
+
+O quiz pode valer por grupo de projeto em vez de por aluno. O professor liga o modo
+no próprio quiz e escolhe como o grupo pontua.
+
+**Onde:** Central de quizzes → abrir o quiz → ícone **Quiz em grupo**.
+
+## Dois modos
+
+| Modo | Quem responde | Quanto o grupo vale |
+|---|---|---|
+| **Média do grupo** | Todos, cada um no próprio celular | A média dos pontos dos integrantes que **entraram** |
+| **Só o representante** | Apenas o representante do grupo | Os pontos do representante |
+
+Na média, quem não apareceu não entra na conta (a tela mostra "2 de 3 integrantes" para
+o professor julgar). No modo representante, a resposta dos outros integrantes não é
+gravada, e a tela deles diz quem responde pelo grupo.
+
+## Como o aluno entra
+
+A página de entrada pede a **matrícula**, não o nome. O servidor procura a matrícula nos
+grupos da disciplina escolhida e liga o aluno ao grupo dele. O nome exibido vem do
+cadastro, então não há nome digitado errado nem dois alunos com o mesmo nome.
+
+- A comparação ignora pontuação e caixa: `2024-0001` e `20240001` são a mesma matrícula.
+- Zeros à esquerda contam: `0123` e `123` são matrículas diferentes.
+- O aluno precisa estar **vinculado a um integrante** do grupo e ter matrícula
+  cadastrada. Quem não tem não consegue entrar. A janela do professor marca esses
+  integrantes, e o vínculo se faz em **Grupos de projeto → Sugerir nomes e matrículas**.
+- A matrícula não é segredo: quem souber a de um colega responde por ele. É o nível de
+  confiança de uma sala de aula; o servidor garante só que a matrícula vale apenas dentro
+  da disciplina do quiz.
+
+## Representantes
+
+No modo representante, a janela oferece:
+
+- **Sortear representantes**: escolhe um integrante de cada grupo que ainda não tem. Só
+  entra no sorteio quem tem matrícula, senão o grupo ficaria sem ninguém para responder.
+- **Sortear outro**: refaz um grupo (o escolhido faltou, por exemplo).
+- **Escolher manualmente**: o professor indica quem responde pelo grupo.
+- **Refazer todos**.
+
+O sorteio usa a mesma regra verificável do [sorteio de apresentação](../sorteio-de-apresentacao.md):
+a semente do quiz fica à mostra, e o resultado pode ser refeito por quem a tiver.
+
+## Ranking
+
+O ranking do quiz em grupo sai no mesmo formato do individual, com o grupo no lugar do
+aluno. A tela do aluno e o painel ao vivo do professor mostram "por grupo", e cada aluno
+vê o próprio grupo destacado. O ranking individual continua disponível no painel do
+professor, para ver quem puxou o grupo.
+
+## Travas
+
+- Só se liga, muda de modo ou se volta a individual **sem pergunta aberta** e com o quiz
+  **não encerrado**.
+- Depois que a turma respondeu, não dá para trocar o modo nem a disciplina, nem voltar a
+  individual: as respostas já foram gravadas de um jeito.
+- Respostas de aparelhos sem vínculo não entram no ranking de grupo.
+- O mesmo aluno em dois aparelhos conta a **primeira** resposta de cada pergunta.
+
+## Excluir um quiz
+
+Rascunho sai direto (**Descartar**). Quiz **liberado ou encerrado** também pode ser
+excluído (**Excluir**), mas leva junto as respostas, o ranking, as traduções, os
+participantes e a configuração de grupo. O app pede confirmação, e o servidor só aceita
+com `force=true`. Com uma pergunta aberta para a turma, o servidor recusa.
+
+## API
+
+Sob `/education/quiz/{id}/group` (professor dono do quiz):
+
+| Método | Rota | Para quê |
+|---|---|---|
+| `GET` | `/` | Situação (`enabled: false` se for individual), grupos, representantes e ranking |
+| `PUT` | `/` | Liga ou ajusta (`mode`, `discipline_id`, `semester`) |
+| `DELETE` | `/` | Volta a individual |
+| `POST` | `/representatives/draw` | Sorteia os que faltam (`redraw: true` refaz todos) |
+| `POST` | `/representatives/{grupo}/redraw` | Sorteia outro para um grupo |
+| `PUT` | `/representatives/{grupo}` | O professor escolhe (`member_id`) |
+
+E `DELETE /education/quiz/{id}?force=true` para excluir um quiz liberado ou encerrado.

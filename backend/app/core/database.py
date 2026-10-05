@@ -990,6 +990,73 @@ class QuestionTranslationModel(Base):
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class QuizGroupConfigModel(Base):
+    """Marca um quiz como "em grupo" e diz como a pontuacao do grupo e formada.
+
+    Tabela propria, e nao coluna em `quizzes`, pelo mesmo motivo de
+    `QuizSourceModel`: `create_all` cria tabela nova, mas nao acrescenta coluna a
+    uma tabela que ja existe em producao. Quiz sem linha aqui e individual.
+
+    - `media`: todos respondem no proprio celular e o grupo vale a media dos
+      integrantes que entraram;
+    - `representante`: so o representante responde, e o grupo vale o que ele fez.
+
+    `seed` alimenta o sorteio dos representantes, pela mesma regra verificavel do
+    sorteio de apresentacao.
+    """
+
+    __tablename__ = "quiz_group_configs"
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id       = Column(String(64), nullable=False, unique=True, index=True)
+    tutor_id      = Column(String(64), nullable=False, index=True)
+    mode          = Column(String(16), nullable=False, default="media")
+    discipline_id = Column(String(64), nullable=False, index=True)
+    semester      = Column(String(16), nullable=False, default="")
+    seed          = Column(String(64), nullable=False)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class QuizGroupRepresentativeModel(Base):
+    """Quem responde pelo grupo num quiz em modo `representante`."""
+
+    __tablename__ = "quiz_group_representatives"
+    __table_args__ = (
+        UniqueConstraint("quiz_id", "group_id", name="uq_quiz_group_representative"),
+    )
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id     = Column(String(64), nullable=False, index=True)
+    group_id    = Column(String(64), nullable=False, index=True)
+    member_id   = Column(String(64), nullable=False)
+    member_name = Column(String(180), nullable=False, default="")
+    #: Quantas vezes o sorteio deste grupo foi refeito; entra na conta do sorteio.
+    round       = Column(Integer, nullable=False, default=0)
+    #: `sorteio` ou `manual` (o professor escolheu).
+    origin      = Column(String(16), nullable=False, default="sorteio")
+
+
+class QuizGroupLinkModel(Base):
+    """Liga um aparelho (tentativa) ao integrante e ao grupo, pela matricula.
+
+    O aluno informa a matricula ao entrar; o servidor acha o integrante nos grupos
+    da disciplina e grava o vinculo. O nome do grupo e do aluno ficam copiados: o
+    quiz e um registro do que aconteceu naquele dia.
+    """
+
+    __tablename__ = "quiz_group_links"
+    __table_args__ = (
+        UniqueConstraint("quiz_id", "attempt_id", name="uq_quiz_group_link"),
+    )
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id     = Column(String(64), nullable=False, index=True)
+    attempt_id  = Column(String(64), nullable=False)
+    group_id    = Column(String(64), nullable=False, index=True)
+    group_name  = Column(String(120), nullable=False, default="")
+    member_id   = Column(String(64), nullable=False, index=True)
+    member_name = Column(String(180), nullable=False, default="")
+    enrollment  = Column(String(80), nullable=False, default="")
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class QuizJobModel(Base):
     """Um pedido de geracao de quiz na fila do professor.
 

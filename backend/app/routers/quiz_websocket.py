@@ -16,7 +16,7 @@ from ..core.database import (
     StudentAnswerModel,
     get_db,
 )
-from ..services import quiz_live_service, quiz_translation_service
+from ..services import quiz_group_service, quiz_live_service, quiz_translation_service
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
@@ -231,6 +231,22 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
         current_answers, quiz.current_question_id if quiz else None
     )
 
+    # Quiz em grupo: o ranking que o professor projeta e o dos grupos, no mesmo
+    # formato. O individual segue no payload, para ver quem puxou o grupo.
+    individual_ranking = overall_ranking
+    group_mode = None
+    group_config = await quiz_group_service.get_config(db, quiz_id)
+    if group_config is not None:
+        group_ctx = await quiz_group_service.load_context(db, group_config)
+        current_id = quiz.current_question_id if quiz else None
+        overall_ranking = quiz_group_service.group_ranking_rows(
+            all_answers, current_id, group_ctx
+        )
+        current_ranking = quiz_group_service.group_ranking_rows(
+            current_answers, current_id, group_ctx
+        )
+        group_mode = group_config.mode
+
     # Quem entrou, mesmo sem ter respondido: e o que o lobby precisa mostrar.
     joined = list((await db.execute(
         select(QuizParticipantModel)
@@ -319,7 +335,9 @@ async def get_quiz_stats(quiz_id: str, db: AsyncSession) -> dict:
         "questions": questions_stats,
         "ranking_top10": overall_ranking[:10],
         "current_ranking_top10": current_ranking[:10],
-        "participants": max(len(joined), len(overall_ranking)),
+        "group_mode": group_mode,
+        "individual_ranking_top10": individual_ranking[:10] if group_mode else [],
+        "participants": max(len(joined), len(individual_ranking)),
         "participants_online": len(online),
         "participant_names": [item.student_name for item in online][:60],
         "active_connections": manager.get_connection_count(quiz_id),

@@ -6,6 +6,7 @@
 /// reaproveitaveis, em vez de sumirem depois da aula.
 library;
 
+import '../models/quiz_group.dart';
 import 'api_service.dart';
 import 'quiz_report.dart';
 
@@ -448,6 +449,70 @@ class QuizCenterService {
 
   Future<void> discardDraft(String quizId) async {
     await _ok(api.delete('/education/quiz/$quizId'));
+  }
+
+  // --- quiz em grupo ------------------------------------------------------
+
+  Future<QuizGroupInfo> groupInfo(String quizId) async =>
+      QuizGroupInfo.fromJson(await _ok(api.get('/education/quiz/$quizId/group')));
+
+  /// Liga (ou ajusta) o modo em grupo. O servidor recusa depois que a turma
+  /// respondeu, com pergunta aberta ou com o quiz encerrado.
+  Future<QuizGroupInfo> setGroup(
+    String quizId, {
+    required String mode,
+    required String disciplineId,
+    String semester = '',
+  }) async =>
+      QuizGroupInfo.fromJson(await _ok(api.put(
+        '/education/quiz/$quizId/group',
+        body: {
+          'mode': mode,
+          'discipline_id': disciplineId,
+          'semester': semester,
+        },
+      )));
+
+  Future<void> unsetGroup(String quizId) async {
+    await _ok(api.delete('/education/quiz/$quizId/group'));
+  }
+
+  /// Sorteia o representante dos grupos que ainda não têm (ou de todos).
+  Future<QuizGroupInfo> drawRepresentatives(
+    String quizId, {
+    bool redraw = false,
+  }) async =>
+      QuizGroupInfo.fromJson(await _ok(api.post(
+        '/education/quiz/$quizId/group/representatives/draw',
+        body: {'redraw': redraw},
+      )));
+
+  Future<QuizGroupInfo> redrawRepresentative(
+    String quizId,
+    String groupId,
+  ) async =>
+      QuizGroupInfo.fromJson(await _ok(api.post(
+        '/education/quiz/$quizId/group/representatives/$groupId/redraw',
+        body: const {},
+      )));
+
+  Future<QuizGroupInfo> setRepresentative(
+    String quizId,
+    String groupId,
+    String memberId,
+  ) async =>
+      QuizGroupInfo.fromJson(await _ok(api.put(
+        '/education/quiz/$quizId/group/representatives/$groupId',
+        body: {'member_id': memberId},
+      )));
+
+  /// Apaga um quiz ja liberado ou encerrado, com as respostas e o ranking.
+  ///
+  /// So chega aqui depois de o professor confirmar: o `force` e a confirmacao
+  /// que o servidor exige para algo sem volta. Pergunta aberta para a turma
+  /// continua sendo recusada la.
+  Future<void> deleteQuiz(String quizId) async {
+    await _ok(api.delete('/education/quiz/$quizId?force=true'));
   }
 
   // --- banco de questoes -------------------------------------------------

@@ -22,9 +22,15 @@ from app.core.database import (
     LessonModel,
     MaterialModel,
     QuestionModel,
+    QuestionTranslationModel,
+    QuizGroupConfigModel,
+    QuizGroupLinkModel,
+    QuizGroupRepresentativeModel,
     QuizJobModel,
     QuizModel,
+    QuizParticipantModel,
     QuizSourceModel,
+    StudentAnswerModel,
     get_db,
 )
 from app.core.security import get_current_user
@@ -44,7 +50,12 @@ def make_engine():
 
 async def create_tables(engine):
     async with engine.begin() as conn:
-        for model in (QuizJobModel, QuizModel, QuizSourceModel, QuestionModel, LessonModel, MaterialModel):
+        for model in (
+            QuizJobModel, QuizModel, QuizSourceModel, QuestionModel, LessonModel,
+            MaterialModel, QuizParticipantModel, StudentAnswerModel,
+            QuestionTranslationModel, QuizGroupConfigModel, QuizGroupLinkModel,
+            QuizGroupRepresentativeModel,
+        ):
             await conn.run_sync(model.__table__.create)
 
 
@@ -505,9 +516,9 @@ def test_montar_quiz_copia_questoes_na_ordem_escolhida(banco):
     assert arquivada.status_code == 409
 
 
-def test_descartar_so_rascunho(banco):
+def test_descartar_rascunho_e_quiz_aplicado_pede_confirmacao(banco):
     assert banco.delete("/education/quiz/aplicado").status_code == 409
-    assert banco.delete("/education/quiz/rascunho").json() == {"deleted": True}
+    assert banco.delete("/education/quiz/rascunho").json()["deleted"] is True
     assert banco.get("/education/quiz/rascunho").status_code == 404
 
 
