@@ -178,7 +178,7 @@ void main() {
       return (await service.scan()).single;
     }
 
-    test('envia em ordem, com o cabeçalho consertado, e apaga o que subiu',
+    test('envia em ordem, com o cabeçalho consertado, e guarda o que subiu',
         () async {
       final lesson = await tres();
       final sent = <int>[];
@@ -188,14 +188,17 @@ void main() {
         // O servidor recebe um WAV coerente, não o cabeçalho zerado da queda.
         expect(_u32(bytes, 40), 32000);
         expect(_u32(bytes, 4), bytes.length - 8);
+        return null;
       });
 
       expect(sent, [1, 2, 3]);
       expect(result.complete, isTrue);
       expect(result.sent, 3);
+      // Nada fica pendente, mas o áudio continua guardado, agora como entregue.
       expect(await service.scan(), isEmpty);
-      expect(await Directory('${root.path}${Platform.pathSeparator}aula-a').exists(),
-          isFalse);
+      final kept = await service.chunksOf('aula-a');
+      expect(kept.map((c) => c.state), everyElement(ChunkState.sent));
+      expect(kept, hasLength(3));
     });
 
     test('para no primeiro que falha e deixa o resto guardado', () async {
@@ -205,6 +208,7 @@ void main() {
       final result = await service.recover(lesson, (c, bytes) async {
         calls++;
         if (calls == 2) throw Exception('HTTP 503: carregando');
+        return null;
       });
 
       expect(calls, 2); // o terceiro nem foi tentado: a ordem importa
@@ -224,7 +228,7 @@ void main() {
       lesson = (await service.scan()).single;
       expect(lesson.chunks, hasLength(3)); // nada foi perdido
 
-      final result = await service.recover(lesson, (c, bytes) async {});
+      final result = await service.recover(lesson, (c, bytes) async => null);
 
       expect(result.complete, isTrue);
       expect(await service.scan(), isEmpty);
@@ -236,9 +240,249 @@ void main() {
       final lesson = (await service.scan()).single;
       Uint8List? received;
 
-      await service.recover(lesson, (c, bytes) async => received = bytes);
+      await service.recover(lesson, (c, bytes) async {
+        received = bytes;
+        return null;
+      });
 
       expect(received, original);
+    });
+  });
+
+  group('estados do bloco', () {
+    test('o resultado do envio troca o prefixo do nome e guarda o motivo',
+        () async {
+      final file = await chunk('aula-a', 1700000000000, _wav(32000));
+
+      final renamed = await service.markResult('aula-a', file,
+          state: ChunkState.quiet, detail: 'nenhuma fala reconhecida');
+
+      expect(await file.exists(), isFalse);
+      expect(renamed.path.endsWith('quiet_1700000000000.wav'), isTrue);
+      final stored = (await service.chunksOf('aula-a')).single;
+      expect(stored.state, ChunkState.quiet);
+      expect(stored.detail, 'nenhuma fala reconhecida');
+    });
+
+    test('só o que não foi aceito é oferecido para recuperar', () async {
+      final sent = await chunk('aula-a', 1700000001000, _wav(32000));
+      await service.markResult('aula-a', sent, state: ChunkState.sent);
+      final quiet = await chunk('aula-a', 1700000002000, _wav(32000));
+      await service.markResult('aula-a', quiet, state: ChunkState.quiet);
+      await chunk('aula-a', 1700000003000, _wav(32000));
+
+      final lesson = (await service.scan()).single;
+
+      expect(lesson.chunks.map((c) => c.startedAt.millisecondsSinceEpoch),
+          [1700000003000]);
+    });
+
+    test('aula só com áudio entregue não é "interrompida" nem é apagada',
+        () async {
+      final file = await chunk('aula-a', 1700000001000, _wav(32000));
+      await service.markResult('aula-a', file, state: ChunkState.sent);
+
+      expect(await service.scan(), isEmpty);
+      expect(await service.chunksOf('aula-a'), hasLength(1));
+    });
+
+    test('reenviar um bloco sem fala devolve ele à fila', () async {
+      final file = await chunk('aula-a', 1700000000000, _wav(32000));
+      final quiet = await service.markResult('aula-a', file,
+          state: ChunkState.quiet, detail: 'sem fala');
+
+      final back = await service.requeue('aula-a', quiet);
+
+      expect(back.path.endsWith('chunk_1700000000000.wav'), isTrue);
+      expect((await service.scan()).single.chunks, hasLength(1));
+      expect((await service.chunksOf('aula-a')).single.detail, '');
+    });
+
+    test('recuperar guarda como "sem fala" o que o servidor ignorou', () async {
+      await chunk('aula-a', 1700000001000, _wav(32000));
+      await chunk('aula-a', 1700000002000, _wav(32000));
+      final lesson = (await service.scan()).single;
+      var n = 0;
+
+      await service.recover(lesson, (c, bytes) async {
+        n++;
+        return n == 1
+            ? const ChunkDelivery(quiet: true, detail: 'nenhuma fala reconhecida')
+            : null;
+      });
+
+      final states = (await service.chunksOf('aula-a')).map((c) => c.state);
+      expect(states, [ChunkState.quiet, ChunkState.sent]);
+    });
+
+    test('falha no envio fica anotada no bloco, que segue pendente', () async {
+      await chunk('aula-a', 1700000001000, _wav(32000));
+      final lesson = (await service.scan()).single;
+
+      await service.recover(
+          lesson, (c, bytes) async => throw Exception('HTTP 503: carregando'));
+
+      final stored = (await service.chunksOf('aula-a')).single;
+      expect(stored.state, ChunkState.pending);
+      expect(stored.detail, contains('HTTP 503'));
+    });
+  });
+
+  group('manifesto', () {
+    test('guarda o nível de áudio que o bloco tinha', () async {
+      final file = await chunk('aula-a', 1700000000000, _wav(32000));
+
+      await service.noteChunk('aula-a', file.path,
+          peak: 0.25, micPeak: 0.25, systemPeak: 0.0);
+
+      final stored = (await service.chunksOf('aula-a')).single;
+      expect(stored.peak, 0.25);
+      expect(stored.micPeak, 0.25);
+      expect(stored.systemPeak, 0.0);
+      expect(stored.peakDb, closeTo(-12.04, 0.01));
+    });
+
+    test('anotações do mesmo bloco se somam', () async {
+      final file = await chunk('aula-a', 1700000000000, _wav(32000));
+      await service.noteChunk('aula-a', file.path, peak: 0.5);
+      await service.noteChunk('aula-a', file.path, micPeak: 0.4);
+
+      final stored = (await service.chunksOf('aula-a')).single;
+      expect((stored.peak, stored.micPeak), (0.5, 0.4));
+    });
+
+    test('escritas simultâneas não perdem nenhuma', () async {
+      final files = [
+        for (var i = 0; i < 8; i++)
+          await chunk('aula-a', 1700000000000 + i * 1000, _wav(32000)),
+      ];
+
+      await Future.wait([
+        for (var i = 0; i < files.length; i++)
+          service.noteChunk('aula-a', files[i].path, peak: (i + 1) / 10),
+      ]);
+
+      final peaks =
+          (await service.chunksOf('aula-a')).map((c) => c.peak).toList();
+      expect(peaks, [for (var i = 1; i <= 8; i++) i / 10]);
+    });
+
+    test('manifesto corrompido não atrapalha o áudio', () async {
+      await chunk('aula-a', 1700000000000, _wav(32000));
+      await File('${root.path}${Platform.pathSeparator}aula-a'
+              '${Platform.pathSeparator}manifest.json')
+          .writeAsString('{ isto nao e json');
+
+      final stored = (await service.chunksOf('aula-a')).single;
+
+      expect(stored.peak, isNull);
+      expect(stored.bytes, 44 + 32000);
+    });
+
+    test('sem manifesto, lista os blocos mesmo assim', () async {
+      await chunk('aula-a', 1700000002000, _wav(32000));
+      await chunk('aula-a', 1700000001000, _wav(32000));
+
+      final stored = await service.chunksOf('aula-a');
+
+      expect(stored.map((c) => c.startedAt.millisecondsSinceEpoch),
+          [1700000001000, 1700000002000]);
+    });
+  });
+
+  group('limpeza do áudio guardado', () {
+    Future<void> montar() async {
+      final a = await chunk('aula-a', 1700000001000, _wav(32000));
+      await service.markResult('aula-a', a, state: ChunkState.sent);
+      final b = await chunk('aula-a', 1700000002000, _wav(32000));
+      await service.markResult('aula-a', b, state: ChunkState.quiet);
+      await chunk('aula-a', 1700000003000, _wav(32000)); // pendente
+      final c = await chunk('aula-b', 1700000004000, _wav(64000));
+      await service.markResult('aula-b', c, state: ChunkState.sent);
+    }
+
+    test('conta o que já foi entregue e o que ainda está pendente', () async {
+      await montar();
+
+      final geral = await service.usage();
+      final aulaA = await service.usage(lessonId: 'aula-a');
+
+      expect((geral.chunks, geral.pending), (3, 1));
+      expect(geral.bytes, 2 * (44 + 32000) + (44 + 64000));
+      expect((aulaA.chunks, aulaA.pending), (2, 1));
+      expect(geral.isEmpty, isFalse);
+    });
+
+    test('rótulo de tamanho em KB e MB', () {
+      expect(const StoredAudioUsage(chunks: 1, bytes: 512 * 1024).sizeLabel,
+          '512 KB');
+      expect(
+          const StoredAudioUsage(chunks: 1, bytes: 3 * 1024 * 1024).sizeLabel,
+          '3.0 MB');
+    });
+
+    test('limpar uma aula apaga o entregue e nunca o que ainda não subiu',
+        () async {
+      await montar();
+
+      final removed = await service.clearDelivered(lessonId: 'aula-a');
+
+      expect(removed, 2);
+      final left = await service.chunksOf('aula-a');
+      expect(left.map((c) => c.state), [ChunkState.pending]);
+      // A outra aula não foi tocada.
+      expect(await service.chunksOf('aula-b'), hasLength(1));
+    });
+
+    test('limpar tudo remove as pastas que ficaram sem nada', () async {
+      await montar();
+      await service.discard('aula-a'); // tira o pendente para a pasta esvaziar
+
+      final removed = await service.clearDelivered();
+
+      expect(removed, 1);
+      expect(await root.list().toList(), isEmpty);
+    });
+
+    test('sem nada guardado não há o que limpar', () async {
+      expect(await service.clearDelivered(), 0);
+      expect((await service.usage()).isEmpty, isTrue);
+    });
+  });
+
+  group('nível de áudio', () {
+    test('pico do WAV de 16 bits', () {
+      final wav = _wav(1000, fill: 0);
+      ByteData.sublistView(wav).setInt16(44 + 200, -16384, Endian.little);
+
+      expect(LessonRecoveryService.wavPeak(wav), closeTo(0.5, 0.0001));
+    });
+
+    test('silêncio absoluto tem pico zero e vira -120 dB', () {
+      final wav = _wav(1000, fill: 0);
+      expect(LessonRecoveryService.wavPeak(wav), 0);
+      expect(peakToDb(0), -120);
+    });
+
+    test('o que não é WAV não tem pico', () {
+      expect(LessonRecoveryService.wavPeak(Uint8List(100)), isNull);
+    });
+
+    test('conversão para dBFS', () {
+      expect(peakToDb(1), 0);
+      expect(peakToDb(0.5), closeTo(-6.02, 0.01));
+      expect(peakToDb(0.0025), closeTo(-52.04, 0.01));
+      expect(peakToDb(2), 0); // nunca passa de zero
+    });
+
+    test('acha os dados depois de um bloco LIST', () {
+      final base = _wav(100, fill: 0);
+      final list = [...'LIST'.codeUnits, 4, 0, 0, 0, 1, 2, 3, 4];
+      final bytes = Uint8List.fromList(
+          [...base.sublist(0, 36), ...list, ...base.sublist(36)]);
+      ByteData.sublistView(bytes).setInt16(48 + 8 + 10, 8192, Endian.little);
+
+      expect(LessonRecoveryService.wavPeak(bytes), closeTo(0.25, 0.0001));
     });
   });
 

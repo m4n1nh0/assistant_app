@@ -35,6 +35,31 @@ class SystemAudioChunk {
   }
 }
 
+/// O que a captura ouviu nos ultimos instantes, para o medidor ao vivo.
+class SystemAudioLevel {
+  /// Picos (0 a 1) desde a consulta anterior.
+  final double micPeak;
+  final double systemPeak;
+
+  /// Quanto do bloco atual ja foi gravado, em bytes de audio.
+  final int bytes;
+
+  const SystemAudioLevel({
+    this.micPeak = 0,
+    this.systemPeak = 0,
+    this.bytes = 0,
+  });
+
+  static SystemAudioLevel? fromChannel(Object? value) {
+    if (value is! Map) return null;
+    return SystemAudioLevel(
+      micPeak: (value['micPeak'] as num?)?.toDouble() ?? 0,
+      systemPeak: (value['systemPeak'] as num?)?.toDouble() ?? 0,
+      bytes: (value['bytes'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 /// Grava o que o computador esta tocando junto com o microfone.
 ///
 /// O microfone sozinho nao registra uma reuniao do Meet ou do Teams: a voz dos
@@ -59,6 +84,19 @@ class SystemAudioRecorder {
       SystemAudioChunk.fromChannel(
         await _channel.invokeMethod<Object?>('rotate', {'path': path}),
       );
+
+  /// Picos recentes do microfone e do som do computador. Zera a contagem: cada
+  /// consulta mostra o que chegou desde a anterior. Executavel antigo, sem o metodo,
+  /// devolve `null` e a tela segue sem o medidor em vez de falhar.
+  Future<SystemAudioLevel?> level() async {
+    try {
+      return SystemAudioLevel.fromChannel(
+        await _channel.invokeMethod<Object?>('level'),
+      );
+    } on MissingPluginException {
+      return null;
+    }
+  }
 
   /// Para a captura e devolve o ultimo bloco, se havia gravacao.
   Future<SystemAudioChunk?> stop() async => SystemAudioChunk.fromChannel(

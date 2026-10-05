@@ -318,6 +318,21 @@ void SystemAudioCapture::HandleMethodCall(
     StopThread();
     std::lock_guard<std::mutex> lock(chunk_mutex_);
     result->Success(CloseChunk());
+  } else if (method == "level") {
+    // Sem gravacao em andamento tudo volta zerado: a tela mostra "sem sinal".
+    std::lock_guard<std::mutex> lock(chunk_mutex_);
+    flutter::EncodableMap info = {
+        {flutter::EncodableValue("systemPeak"),
+         flutter::EncodableValue(
+             static_cast<double>(chunk_.recent_system_peak))},
+        {flutter::EncodableValue("micPeak"),
+         flutter::EncodableValue(static_cast<double>(chunk_.recent_mic_peak))},
+        {flutter::EncodableValue("bytes"),
+         flutter::EncodableValue(static_cast<int64_t>(chunk_.data_bytes))},
+    };
+    chunk_.recent_system_peak = 0.0f;
+    chunk_.recent_mic_peak = 0.0f;
+    result->Success(flutter::EncodableValue(info));
   } else {
     result->NotImplemented();
   }
@@ -528,4 +543,6 @@ void SystemAudioCapture::WriteMix(const float* samples, size_t count,
   chunk_.data_bytes += static_cast<uint32_t>(written * sizeof(int16_t));
   chunk_.system_peak = std::max(chunk_.system_peak, system_peak);
   chunk_.mic_peak = std::max(chunk_.mic_peak, mic_peak);
+  chunk_.recent_system_peak = std::max(chunk_.recent_system_peak, system_peak);
+  chunk_.recent_mic_peak = std::max(chunk_.recent_mic_peak, mic_peak);
 }

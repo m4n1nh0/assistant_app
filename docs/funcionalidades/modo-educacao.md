@@ -209,14 +209,54 @@ Consequências práticas:
 Título genérico em palestra ("Aula 1") ancora mal: quanto mais específico o
 título, melhor o chat encontra.
 
-## Gravação interrompida (queda do app, janela fechada)
+## Painel de áudio da gravação
 
-Cada bloco de 60 s é gravado numa pasta da própria aula, dentro da pasta de dados do
-app (`lesson_chunks/<id da aula>`), e não na pasta temporária do sistema, que o Windows
-pode esvaziar. Um bloco só sai do disco depois de ser aceito pelo servidor.
+Na aba **Gravar**, o painel **ÁUDIO** mostra se a gravação está de fato captando som:
 
-Se o app cai no meio da aula, o que ainda não tinha subido não se perde. Ao reabrir, a
-aba **Gravar** mostra um aviso por aula:
+- **Medidor de nível ao vivo**, em dBFS, que se mexe com a sua voz. Na reunião online são
+  duas barras: **seu microfone** e **som do computador**. As faixas são: *sem sinal*
+  (abaixo de -60 dB: microfone mudo ou desconectado), *baixo* (-60 a -30), *bom* (-30 a
+  -3) e *alto demais* (acima de -3, distorce).
+- **Aviso de silêncio:** se nenhum som chegar por 8 s (20 s na reunião, onde só o outro
+  lado fala), o painel diz que nada está chegando e sugere trocar o dispositivo.
+- **Dispositivo de entrada:** lista de microfones do Windows com botão de atualizar. A
+  escolha vale também em Configurações. Trocar **durante a aula** fecha o bloco atual, que
+  segue para a fila, e abre o próximo já no aparelho novo, sem parar a gravação. A captura
+  usa os dispositivos do Windows (WASAPI); o "driver" é o próprio dispositivo escolhido, e
+  não há outro seletor.
+- **Bloco atual:** quanto tempo tem e, quando o arquivo já cresceu, quantos KB foram
+  gravados.
+
+## Blocos guardados (e o que fazer com eles)
+
+Cada bloco de 60 s é gravado numa pasta da própria aula, dentro da pasta de dados do app
+(`lesson_chunks/<id da aula>`), e **não é apagado quando o servidor o aceita**. Ele fica
+guardado até a aula acabar e você decidir. O estado vai no nome do arquivo: `chunk_` ainda
+não foi aceito, `sent_` foi transcrito e `quiet_` foi aceito mas sem fala reconhecida. Um
+`manifest.json` ao lado guarda o nível de áudio de cada bloco e o motivo de uma falha.
+
+A lista **Blocos gravados** mostra, para cada bloco: horário, duração, nível de áudio,
+estado (*gravando*, *aguardando*, *falhou*, *transcrito*, *sem fala*) e, para quem voltou sem
+fala, a explicação a partir do nível:
+
+| Nível do bloco | O que significa |
+|---|---|
+| sem sinal | O problema é a captura (microfone mudo, dispositivo errado ou desconectado) |
+| baixo | Aproxime o microfone ou aumente o volume de entrada no Windows |
+| normal | Havia som, mas o reconhecimento não entendeu: ouça e reenvie |
+
+Em cada bloco: **ouvir** (toca o arquivo gravado) e **reenviar para transcrição**. Os botões
+**ABRIR PASTA** e **LIMPAR ENTREGUES** ficam no topo da lista.
+
+**Ao encerrar a aula** o app pergunta se deve apagar o áudio já entregue (quantos blocos e
+quantos MB), com **MANTER** e **APAGAR**. Blocos ainda não aceitos pelo servidor nunca são
+apagados por essa limpeza. Fora de uma aula, a aba mostra quanto áudio de aulas antigas
+está guardado, com um botão de limpar.
+
+### Gravação interrompida (queda do app, janela fechada)
+
+Se o app cai no meio da aula, o que ainda não tinha subido não se perde: os arquivos ficam
+na pasta da aula. Ao reabrir, a aba mostra um aviso por aula:
 
 > Gravação interrompida: 3 blocos (cerca de 3 minutos) da aula ARA0040 - BANCO DE DADOS
 > ficaram guardados e ainda não foram transcritos.
@@ -224,13 +264,15 @@ aba **Gravar** mostra um aviso por aula:
 - **RECUPERAR** envia os blocos à aula certa, **em ordem** (o servidor tira a sobreposição
   entre um bloco e o anterior). Se um falha, o envio para ali e o resto continua guardado
   para tentar de novo. O cabeçalho do WAV é consertado antes: quem grava só o fecha no fim,
-  e um arquivo cortado pela queda declara tamanho zero.
+  e um arquivo cortado pela queda declara tamanho zero. Depois, o app pergunta se apaga o
+  áudio já entregue.
 - **DESCARTAR** apaga o áudio guardado, depois de pedir confirmação.
 
 Limites: a aula precisa continuar aberta no servidor (aula encerrada recusa áudio, e o
 bloco continua guardado); e o último bloco, o que estava sendo gravado na hora da queda,
-vale só até onde o arquivo foi escrito. A aula que está gravando agora nunca é oferecida
-para recuperação.
+vale só até onde o arquivo foi escrito (o que o sistema ainda guardava em buffer na hora da
+queda se perde, e o cabeçalho, que só é fechado no fim do bloco, é consertado na
+recuperação). A aula que está gravando agora nunca é oferecida para recuperação.
 
 ## Reunião online (Meet, Teams)
 

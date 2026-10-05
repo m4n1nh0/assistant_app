@@ -24,6 +24,8 @@
 //   start  {path, micDeviceId}  -> null
 //   rotate {path}               -> {path, systemPeak, micPeak}
 //   stop                        -> {path, systemPeak, micPeak} | null
+//   level                       -> {systemPeak, micPeak, bytes}  (desde a ultima
+//                                  consulta; zera os picos recentes)
 class SystemAudioCapture {
  public:
   explicit SystemAudioCapture(flutter::BinaryMessenger* messenger);
@@ -41,6 +43,10 @@ class SystemAudioCapture {
     uint32_t data_bytes = 0;
     float system_peak = 0.0f;
     float mic_peak = 0.0f;
+    // Picos desde a ultima consulta `level`: o medidor ao vivo da tela mostra o
+    // que chegou nos ultimos instantes, nao o maximo do bloco inteiro.
+    float recent_system_peak = 0.0f;
+    float recent_mic_peak = 0.0f;
   };
 
   void HandleMethodCall(

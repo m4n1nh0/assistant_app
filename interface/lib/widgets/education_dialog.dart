@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +34,7 @@ import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'education_dashboard.dart';
 import 'lesson_recovery_banner.dart';
+import 'recording_monitor.dart';
 import 'quiz_generator_widget.dart';
 import 'materials_panel.dart';
 import 'quiz_center.dart';
@@ -370,6 +372,25 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   List<RecoverableLesson> _recoverable = const [];
   final Map<String, String> _recoverLabels = {};
   String? _recoveringId;
+
+  /// Medidor ao vivo: so ele se redesenha 5 vezes por segundo, nao a aba inteira.
+  final _level = ValueNotifier<LevelReading>(const LevelReading());
+  StreamSubscription<Amplitude>? _amplitudeSub;
+  Timer? _levelTimer;
+  DateTime? _lastSignalAt;
+  Duration? _silentFor;
+  DateTime? _blockStartedAt;
+  int _blockBytes = 0;
+  List<InputDevice> _inputDevices = const [];
+  bool _switchingDevice = false;
+
+  /// Blocos guardados da aula aberta e o que ja foi entregue de todas as aulas.
+  List<StoredChunk> _chunks = const [];
+  StoredAudioUsage _usage = const StoredAudioUsage();
+  StoredAudioUsage _usageAll = const StoredAudioUsage();
+  bool _showChunks = false;
+  AudioPlayer? _player;
+  String? _playingPath;
   final _systemRecorder = SystemAudioRecorder();
   final _titleCtrl = TextEditingController();
   final _focusCtrl = TextEditingController();
@@ -439,6 +460,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _preselectSingleClass(widget.classes.value);
     widget.classes.addListener(_onClassesChanged);
     unawaited(_scanRecovery());
+    unawaited(_loadInputDevices());
   }
 
   @override
@@ -448,6 +470,10 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _clockTimer?.cancel();
     _retryTimer?.cancel();
     _sessionTimer?.cancel();
+    _levelTimer?.cancel();
+    _amplitudeSub?.cancel();
+    _level.dispose();
+    _player?.dispose();
     // Sem await no dispose: o recorder e liberado em background.
     _recorder.dispose();
     if (_systemCapturing) _systemRecorder.stop().ignore();
@@ -666,6 +692,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _clockTimer?.cancel();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || _startedAt == null) return;
+      _tickMonitor();
       setState(() => _elapsed = DateTime.now().difference(_startedAt!));
     });
     _sessionTimer?.cancel();
@@ -678,6 +705,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         _recording = true;
         _captureFailure = null;
       });
+      _startLevelWatch();
     }
   }
 
@@ -705,6 +733,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       lessonRecovery.newChunkPath(_lesson!.id, extension);
 
   Future<void> _startChunk() async {
+    _blockStartedAt = DateTime.now();
+    _blockBytes = 0;
     if (_fromMeeting) {
       _currentPath = await _newChunkPath('wav');
       await _systemRecorder.start(
@@ -734,10 +764,12 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   /// "gravando" sobre um arquivo que nao existe.
   Future<void> _rotateChunk({bool restart = true}) async {
     String? path;
+    SystemAudioChunk? system;
     Object? failure;
     try {
       if (_systemCapturing) {
-        path = await _rotateSystemChunk(restart: restart);
+        system = await _rotateSystemChunk(restart: restart);
+        path = system?.path;
       } else {
         path = await _recorder.stop();
         if (restart) {
@@ -757,16 +789,23 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     }
     if (!restart) _currentPath = null;
     if (path != null) {
-      _pendingUploads.add(_PendingChunk(path, _chunkDuration.inMilliseconds));
+      _pendingUploads.add(_PendingChunk(
+        path,
+        _chunkDuration.inMilliseconds,
+        micPeak: system?.micPeak,
+        systemPeak: system?.systemPeak,
+      ));
       unawaited(_drainUploads());
     }
     if (failure != null) _captureLost(failure);
+    unawaited(_refreshChunks());
   }
 
   void _captureLost(Object error) {
     _chunkTimer?.cancel();
     _clockTimer?.cancel();
     _sessionTimer?.cancel();
+    _stopLevelWatch();
     _currentPath = null;
     _systemCapturing = false;
     final reason = _errorText(error).replaceFirst('Exception: ', '');
@@ -781,7 +820,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   }
 
   /// Na captura do som do computador o arquivo e trocado sem parar de gravar.
-  Future<String?> _rotateSystemChunk({required bool restart}) async {
+  Future<SystemAudioChunk?> _rotateSystemChunk({required bool restart}) async {
     final SystemAudioChunk? chunk;
     if (restart) {
       final next = await _newChunkPath('wav');
@@ -794,7 +833,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     if (chunk != null && mounted) {
       setState(() => _systemSilent = chunk!.systemSilent);
     }
-    return chunk?.path;
+    return chunk;
   }
 
   /// Envia a fila em ordem. Bloco que falha continua na fila: perder audio de
@@ -841,6 +880,16 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         return true;
       }
 
+      // O nivel que o bloco tinha, para a lista de blocos dizer se o problema foi
+      // o microfone (silencio) ou o reconhecimento (tinha som, mas nao entendeu).
+      await lessonRecovery.noteChunk(
+        lesson.id,
+        chunk.path,
+        peak: LessonRecoveryService.wavPeak(bytes),
+        micPeak: chunk.micPeak,
+        systemPeak: chunk.systemPeak,
+      );
+
       final result = await education.uploadAudioChunk(
         lesson.id,
         bytes,
@@ -848,7 +897,15 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         durationMs: chunk.durationMs,
       );
 
-      await _discard(file);
+      // O bloco fica guardado ate a aula acabar e o professor decidir limpar: e
+      // ele que permite ouvir o que voltou sem fala e reenviar.
+      await lessonRecovery.markResult(
+        lesson.id,
+        file,
+        state: result.skippedReason != null ? ChunkState.quiet : ChunkState.sent,
+        detail: result.skippedReason ?? '',
+      );
+      unawaited(_refreshChunks());
       if (!mounted) return true;
       setState(() {
         _lesson = result.lesson;
@@ -868,6 +925,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       return true;
     } catch (e) {
       if ('$e'.contains('HTTP 401')) return _handleExpiredSession();
+      unawaited(lessonRecovery.noteFailure(lesson.id, chunk.path, '$e'));
+      unawaited(_refreshChunks());
       _setStatus('Falha ao enviar bloco, tentando de novo: $e');
       return false;
     }
@@ -886,13 +945,385 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     return false;
   }
 
+  // --- monitor de audio, dispositivo e blocos guardados -----------------------
+
+  /// Abaixo disto (~ -54 dBFS) nao conta como som: e ruido de fundo do dispositivo.
+  static const _signalThreshold = 0.002;
+
+  void _startLevelWatch() {
+    _stopLevelWatch();
+    _lastSignalAt = DateTime.now();
+    _silentFor = null;
+    if (_fromMeeting) {
+      var polling = false;
+      _levelTimer = Timer.periodic(const Duration(milliseconds: 250), (_) async {
+        if (polling || !_recording) return;
+        polling = true;
+        try {
+          final level = await _systemRecorder.level();
+          if (level != null) {
+            _onLevel(level.micPeak, level.systemPeak);
+            _blockBytes = level.bytes;
+          }
+        } catch (_) {
+          // Sem medidor a gravacao segue: ele so mostra, nao decide nada.
+        } finally {
+          polling = false;
+        }
+      });
+    } else {
+      _amplitudeSub = _recorder
+          .onAmplitudeChanged(const Duration(milliseconds: 200))
+          .listen(
+            (amplitude) => _onLevel(dbToPeak(amplitude.current), 0),
+            onError: (_) {},
+          );
+    }
+  }
+
+  void _stopLevelWatch() {
+    _levelTimer?.cancel();
+    _levelTimer = null;
+    _amplitudeSub?.cancel();
+    _amplitudeSub = null;
+    _level.value = const LevelReading();
+    _silentFor = null;
+  }
+
+  void _onLevel(double mic, double system) {
+    _level.value = LevelReading(mic: mic, system: system);
+    if (mic >= _signalThreshold || system >= _signalThreshold) {
+      _lastSignalAt = DateTime.now();
+    }
+  }
+
+  /// A cada segundo: ha quanto tempo nao chega som e quanto do bloco ja foi escrito.
+  void _tickMonitor() {
+    final last = _lastSignalAt;
+    if (last != null) {
+      final idle = DateTime.now().difference(last);
+      // Na reuniao quem fala e o outro lado: o microfone calado e normal, entao
+      // so se avisa quando nada chega de nenhuma das duas origens, e com mais calma.
+      final limit = Duration(seconds: _fromMeeting ? 20 : 8);
+      _silentFor = idle >= limit ? idle : null;
+    }
+    if (!_fromMeeting) unawaited(_pollBlockBytes());
+  }
+
+  Future<void> _pollBlockBytes() async {
+    final path = _currentPath;
+    if (path == null) return;
+    try {
+      _blockBytes = await File(path).length();
+    } catch (_) {
+      _blockBytes = 0;
+    }
+  }
+
+  Future<void> _loadInputDevices() async {
+    try {
+      final devices = await _recorder.listInputDevices();
+      if (mounted) setState(() => _inputDevices = devices);
+    } catch (_) {
+      // Sem a lista a tela mostra so o padrao do sistema.
+    }
+  }
+
+  /// Guarda o microfone escolhido na configuracao: vale para a proxima aula e e o
+  /// mesmo que a tela de Configuracoes mostra.
+  Future<void> _saveInputDevice(InputDevice? device) {
+    return ref.read(configProvider.notifier).update((config) {
+      final next = AppConfig.fromJson(config.toJson());
+      next.audioInputDeviceId = device?.id ?? '';
+      next.audioInputDeviceLabel = device?.label ?? '';
+      return next;
+    });
+  }
+
+  /// Troca o microfone. Com a gravacao em andamento, fecha o bloco atual (que segue
+  /// para a fila) e abre o proximo ja no aparelho novo, sem parar a aula.
+  Future<void> _switchInputDevice(InputDevice? device) async {
+    if (_switchingDevice) return;
+    setState(() => _switchingDevice = true);
+    try {
+      await _saveInputDevice(device);
+      if (!_recording) {
+        // Ainda nao ha gravacao: um aparelho que nao responde e so um aviso.
+        try {
+          await _resolveInputDevice();
+          _setStatus('Microfone: $_activeInputLabel.');
+        } catch (e) {
+          _setStatus('Microfone indisponivel: ${_errorText(e)}');
+        }
+        return;
+      }
+      _chunkTimer?.cancel();
+      await _rotateChunk(restart: false);
+      await _resolveInputDevice();
+      await _startChunk();
+      _chunkTimer = Timer.periodic(_chunkDuration, (_) => _rotateChunk());
+      _lastSignalAt = DateTime.now();
+      _silentFor = null;
+      _startLevelWatch();
+      _setStatus('Gravando com $_activeInputLabel.');
+    } catch (e) {
+      _captureLost(e);
+    } finally {
+      if (mounted) setState(() => _switchingDevice = false);
+    }
+  }
+
+  /// Relê os blocos guardados da aula aberta e o espaço que o áudio entregue ocupa.
+  Future<void> _refreshChunks() async {
+    try {
+      final lesson = _lesson;
+      final chunks =
+          lesson == null ? const <StoredChunk>[] : await lessonRecovery.chunksOf(lesson.id);
+      final usage = await lessonRecovery.usage(lessonId: lesson?.id);
+      if (!mounted) return;
+      setState(() {
+        _chunks = chunks;
+        _usage = usage;
+      });
+    } catch (_) {
+      // A lista e informativa: sem ela a gravacao e o envio seguem iguais.
+    }
+  }
+
+  Future<void> _playChunk(StoredChunk chunk) async {
+    final player = _player ??= AudioPlayer()
+      ..onPlayerComplete.listen((_) {
+        if (mounted) setState(() => _playingPath = null);
+      });
+    try {
+      if (_playingPath == chunk.file.path) {
+        await player.stop();
+        if (mounted) setState(() => _playingPath = null);
+        return;
+      }
+      await player.stop();
+      await player.play(DeviceFileSource(chunk.file.path));
+      if (mounted) setState(() => _playingPath = chunk.file.path);
+    } catch (e) {
+      _setStatus('Nao consegui tocar o bloco: ${_errorText(e)}');
+    }
+  }
+
+  /// Manda de novo para transcricao um bloco que voltou sem fala ou que falhou.
+  Future<void> _resendChunk(StoredChunk chunk) async {
+    final lesson = _lesson;
+    if (lesson == null) return;
+    try {
+      var file = chunk.file;
+      if (chunk.state == ChunkState.quiet) {
+        file = await lessonRecovery.requeue(lesson.id, file);
+      }
+      if (_pendingUploads.any((item) => item.path == file.path)) return;
+      _pendingUploads.add(_PendingChunk(
+        file.path,
+        chunk.durationMs,
+        micPeak: chunk.micPeak,
+        systemPeak: chunk.systemPeak,
+      ));
+      _setStatus('Reenviando o bloco para transcricao...');
+      unawaited(_drainUploads());
+      await _refreshChunks();
+    } catch (e) {
+      _setStatus('Nao consegui reenviar o bloco: ${_errorText(e)}');
+    }
+  }
+
+  Future<void> _openChunkFolder() async {
+    final lesson = _lesson;
+    if (lesson == null || !Platform.isWindows) return;
+    final dir = await lessonRecovery.folderOf(lesson.id);
+    if (!await dir.exists()) {
+      _setStatus('Ainda nao ha blocos guardados desta aula.');
+      return;
+    }
+    await Process.run('explorer.exe', [dir.path]);
+  }
+
+  /// Limpeza pedida pelo professor, a qualquer momento. O que ainda nao subiu fica.
+  Future<void> _clearDelivered() async {
+    final lesson = _lesson;
+    if (lesson == null) return;
+    await _offerCleanup(lesson.id, closing: false);
+  }
+
+  /// Pergunta se o audio ja entregue desta aula deve sair do computador. Ao encerrar,
+  /// a pergunta vem sozinha; o que ainda nao subiu nunca e apagado por aqui.
+  Future<void> _offerCleanup(String lessonId, {bool closing = true}) async {
+    final usage = await lessonRecovery.usage(lessonId: lessonId);
+    if (!mounted || usage.chunks == 0) return;
+    final clear = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: Text(closing
+            ? 'Aula encerrada. Apagar o audio guardado?'
+            : 'Apagar o audio ja entregue?'),
+        content: Text(
+          '${usage.chunks} bloco(s), ${usage.sizeLabel}, ficam no computador '
+          '${closing ? "para o caso de precisar ouvir ou reenviar algo. " : ""}'
+          'Ja foram aceitos pelo servidor.'
+          '${usage.pending > 0 ? "\n\n${usage.pending} bloco(s) ainda nao foram enviados e continuam guardados." : ""}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('MANTER'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('APAGAR'),
+          ),
+        ],
+      ),
+    );
+    if (clear == true) {
+      final removed = await lessonRecovery.clearDelivered(lessonId: lessonId);
+      _setStatus('$removed bloco(s) de audio apagado(s) do computador.');
+    }
+    await _refreshChunks();
+    await _scanRecovery();
+  }
+
+  /// Medidor, seletor de microfone e lista de blocos. Aparece antes de gravar (so o
+  /// seletor, para escolher o aparelho) e durante a aula.
+  Widget _buildMonitorSection() {
+    final config = ref.watch(configProvider);
+    final resolved = resolveAudioInputDevice(
+      _inputDevices,
+      deviceId: config.audioInputDeviceId,
+      deviceLabel: config.audioInputDeviceLabel,
+    );
+    final lesson = _lesson;
+    final quiet = _chunks.where((chunk) => chunk.state == ChunkState.quiet).length;
+    final failed = _chunks
+        .where((chunk) =>
+            chunk.state == ChunkState.pending && chunk.detail.isNotEmpty)
+        .length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: RecordingMonitor(
+            level: _level,
+            recording: _recording,
+            showSystem: _fromMeeting,
+            devices: _inputDevices,
+            selectedId: resolved?.id ?? config.audioInputDeviceId,
+            selectedLabel: config.audioInputDeviceLabel,
+            onSelectDevice: _switchInputDevice,
+            onRefreshDevices: _loadInputDevices,
+            busy: _switchingDevice || _starting,
+            silentFor: _silentFor,
+            blockElapsed: _blockStartedAt == null
+                ? Duration.zero
+                : DateTime.now().difference(_blockStartedAt!),
+            blockBytes: _blockBytes,
+            idleHint: lesson == null
+                ? 'O medidor funciona durante a gravacao. Escolha o microfone '
+                    'aqui antes de comecar; a escolha vale tambem em Configuracoes.'
+                : null,
+          ),
+        ),
+        if (lesson != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  onTap: () => setState(() => _showChunks = !_showChunks),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _showChunks ? Icons.expand_less : Icons.expand_more,
+                          size: 16,
+                          color: AssistantTheme.textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Blocos gravados: ${_chunks.length}'
+                          '${quiet > 0 ? " · $quiet sem fala" : ""}'
+                          '${failed > 0 ? " · $failed com falha" : ""}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: quiet > 0 || failed > 0
+                                ? AssistantTheme.c4
+                                : AssistantTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_showChunks)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 230),
+                    child: SingleChildScrollView(
+                      child: ChunkList(
+                        chunks: _chunks,
+                        usage: _usage,
+                        livePath: _recording ? _currentPath : null,
+                        playingPath: _playingPath,
+                        onPlay: _playChunk,
+                        onResend: _resendChunk,
+                        onOpenFolder: _openChunkFolder,
+                        onClear: _clearDelivered,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        if (lesson == null && _usageAll.chunks > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.folder_outlined,
+                    size: 14, color: AssistantTheme.textMuted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Audio de aulas guardado neste computador: ${_usageAll.chunks} '
+                    'bloco(s), ${_usageAll.sizeLabel}.',
+                    style: const TextStyle(
+                        fontSize: 10, color: AssistantTheme.textMuted),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    await lessonRecovery.clearDelivered();
+                    await _scanRecovery();
+                  },
+                  child: const Text('LIMPAR', style: TextStyle(fontSize: 10)),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   /// Procura audio guardado de gravacoes interrompidas. A aula que esta gravando
   /// agora fica de fora: os arquivos dela estao em uso.
   Future<void> _scanRecovery() async {
     try {
       final found = await lessonRecovery.scan(ignoreLessonId: _lesson?.id);
+      final usage = await lessonRecovery.usage();
       if (!mounted) return;
-      setState(() => _recoverable = found);
+      setState(() {
+        _recoverable = found;
+        _usageAll = usage;
+      });
       for (final lesson in found) {
         unawaited(_labelRecoverable(lesson.lessonId));
       }
@@ -923,11 +1354,15 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       // O login pode ter vencido enquanto o app estava fechado.
       await api.refreshSession();
       final result = await lessonRecovery.recover(lesson, (chunk, bytes) async {
-        await education.uploadAudioChunk(
+        final sent = await education.uploadAudioChunk(
           lesson.lessonId,
           bytes,
           filename: chunk.name,
           durationMs: chunk.durationMs,
+        );
+        return ChunkDelivery(
+          quiet: sent.skippedReason != null,
+          detail: sent.skippedReason ?? '',
         );
       });
       if (!mounted) return;
@@ -935,6 +1370,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       if (result.complete) {
         _setStatus('${result.sent} bloco(s) recuperado(s) e enviados para '
             'transcricao. Abra a aula no historico para ver o texto.');
+        unawaited(_offerCleanup(lesson.lessonId));
       } else {
         final reason = '${result.error}'.contains('HTTP 409')
             ? 'a aula ja foi encerrada e o servidor nao aceita mais audio nela'
@@ -997,8 +1433,10 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
     _chunkTimer?.cancel();
     _clockTimer?.cancel();
     _sessionTimer?.cancel();
+    _stopLevelWatch();
     if (_recording) await _rotateChunk(restart: false);
     if (mounted) setState(() => _recording = false);
+    unawaited(_refreshChunks());
     _setStatus('Gravacao pausada. Envie o resumo quando quiser.');
   }
 
@@ -1073,6 +1511,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         if (mounted) setState(() => _lesson = refreshed);
         if (refreshed.isClosed) {
           widget.onLessonClosedForQuiz?.call(refreshed);
+          unawaited(_offerCleanup(lesson.id));
         }
       }
     } catch (e) {
@@ -1096,6 +1535,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
       setState(() => _lesson = atualizada);
       _setStatus('Aula encerrada sem resumo. O quiz aceita a transcricao.');
       widget.onLessonClosedForQuiz?.call(atualizada);
+      unawaited(_offerCleanup(lesson.id));
     } catch (e) {
       _setStatus('Falha ao encerrar a aula: $e');
     }
@@ -1122,6 +1562,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                     fontSize: 11, color: AssistantTheme.textSecondary),
               ),
             ),
+          _buildMonitorSection(),
           Expanded(
             child: _lesson == null
                 ? const _HowItWorks()
@@ -1854,7 +2295,11 @@ class _PendingChunk {
   final String path;
   final int durationMs;
 
-  _PendingChunk(this.path, this.durationMs);
+  /// Picos (0 a 1) que a captura da reuniao online mediu no bloco, por origem.
+  final double? micPeak;
+  final double? systemPeak;
+
+  _PendingChunk(this.path, this.durationMs, {this.micPeak, this.systemPeak});
 }
 
 /// O que o formulario de `2. Gravar` informa para abrir uma gravacao.
