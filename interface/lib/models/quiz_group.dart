@@ -4,6 +4,28 @@
 /// aqui fica a leitura da resposta e o texto de apoio das telas.
 library;
 
+class AbsencePenalty {
+  /// Sem penalidade: o ausente só aparece na lista.
+  static const none = 'none';
+
+  /// O ausente conta zero na média (só no modo média).
+  static const zero = 'zero';
+
+  /// Cada ausente tira uma porcentagem da nota do grupo.
+  static const percent = 'percent';
+
+  static String explanation(String mode, int percent) {
+    switch (mode) {
+      case zero:
+        return 'A média é dividida por todos que podiam entrar: quem faltou conta zero.';
+      case AbsencePenalty.percent:
+        return 'Cada ausente tira $percent% da nota do grupo (no máximo 100%).';
+      default:
+        return 'Quem faltar não muda a nota do grupo.';
+    }
+  }
+}
+
 class QuizGroupMode {
   /// Todos respondem; o grupo vale a media dos integrantes que entraram.
   static const average = 'media';
@@ -82,11 +104,20 @@ class QuizGroupTeam {
   final QuizGroupRepresentative? representative;
   final List<QuizGroupMember> members;
 
+  /// Quem faltou: não entrou ou entrou e não respondeu. Só conta quem consegue
+  /// entrar (tem matrícula vinculada).
+  final List<String> absent;
+
+  /// Desconto que a ausência causa hoje na nota do grupo, de 0 a 100.
+  final int penaltyPercent;
+
   const QuizGroupTeam({
     required this.id,
     required this.name,
     this.representative,
     this.members = const [],
+    this.absent = const [],
+    this.penaltyPercent = 0,
   });
 
   List<QuizGroupMember> get eligibleMembers =>
@@ -108,6 +139,10 @@ class QuizGroupTeam {
             .map((item) =>
                 QuizGroupMember.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList(),
+        absent: ((json['absent'] as List?) ?? const [])
+            .map((name) => name.toString())
+            .toList(),
+        penaltyPercent: (json['penalty_percent'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -121,6 +156,10 @@ class QuizGroupInfo {
   final List<QuizGroupTeam> groups;
   final List<Map<String, dynamic>> ranking;
 
+  /// Penalidade por ausente: `none`, `zero` ou `percent` (e o percentual de cada um).
+  final String absenceMode;
+  final int absencePercent;
+
   const QuizGroupInfo({
     this.enabled = false,
     this.mode = QuizGroupMode.average,
@@ -130,9 +169,16 @@ class QuizGroupInfo {
     this.seed = '',
     this.groups = const [],
     this.ranking = const [],
+    this.absenceMode = AbsencePenalty.none,
+    this.absencePercent = 0,
   });
 
   bool get byRepresentative => mode == QuizGroupMode.representative;
+
+  bool get penalizes => absenceMode != AbsencePenalty.none;
+
+  /// Alguém já entrou: antes disso a lista de ausentes é só a turma inteira.
+  bool get anyoneJoined => groups.any((team) => team.joinedCount > 0);
 
   /// Grupos que ainda não têm quem responda por eles (só no modo representante).
   List<QuizGroupTeam> get withoutRepresentative => byRepresentative
@@ -155,6 +201,8 @@ class QuizGroupInfo {
       ranking: ((json['ranking'] as List?) ?? const [])
           .map((item) => Map<String, dynamic>.from(item as Map))
           .toList(),
+      absenceMode: json['absence_mode']?.toString() ?? AbsencePenalty.none,
+      absencePercent: (json['absence_percent'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -172,6 +220,15 @@ String groupRankingDetail(Map<String, dynamic> row, {required bool showRound}) {
     final entraram = (row['members'] as num?)?.toInt() ?? 0;
     final total = (row['members_total'] as num?)?.toInt() ?? entraram;
     partes.add('$entraram de $total integrantes');
+  }
+  final ausentes = (row['absent'] as num?)?.toInt() ?? 0;
+  final regra = row['absence_mode']?.toString() ?? AbsencePenalty.none;
+  if (ausentes > 0 && regra != AbsencePenalty.none) {
+    final desconto = (row['penalty_percent'] as num?)?.toInt() ?? 0;
+    partes.add(
+      '$ausentes ausente${ausentes == 1 ? "" : "s"} '
+      '(${regra == AbsencePenalty.zero ? "contam zero" : "−$desconto%"})',
+    );
   }
   if (showRound) {
     final pontos = (row['round_score'] as num?)?.toInt() ?? 0;

@@ -206,3 +206,167 @@ def test_contribuicao_por_integrante_marca_quem_conta_para_o_grupo():
     ctx = contexto(svc.MODE_REPRESENTATIVE, {"g1": "bia", "g2": "davi"})
     contam = {row["member_id"]: row["counts"] for row in svc.member_rows(RESPOSTAS, None, ctx)}
     assert contam == {"ana": False, "bia": True, "davi": True}
+
+
+# --- penalidade por ausente ------------------------------------------------------------
+
+
+def com_penalidade(mode=svc.MODE_AVERAGE, absence="none", percent=0, representatives=None):
+    """Mesmo cenario, agora sabendo quem consegue entrar.
+
+    G1: Ana e Bia entram; Caio nao tem matricula vinculada (nao pode entrar).
+    G2: Davi entrou; Eva pode entrar e nao apareceu.
+    """
+    ctx = contexto(mode, representatives)
+    ctx.eligible = {"g1": {"ana", "bia"}, "g2": {"davi", "eva"}}
+    ctx.absence_mode = absence
+    ctx.absence_percent = percent
+    return ctx
+
+
+def linhas_de(ctx, respostas=RESPOSTAS, atual=None):
+    return {row["student_id"]: row for row in svc.group_ranking_rows(respostas, atual, ctx)}
+
+
+@pytest.mark.unit
+def test_sem_penalidade_o_ausente_nao_muda_a_nota_mas_aparece_na_lista():
+    linhas = linhas_de(com_penalidade())
+
+    assert linhas["g2"]["score"] == 1400
+    assert linhas["g2"]["absent"] == 1 and linhas["g2"]["absent_names"] == ["Eva"]
+    assert linhas["g2"]["penalty_percent"] == 0
+
+
+@pytest.mark.unit
+def test_ausente_conta_zero_divide_a_media_por_todos_que_podiam_entrar():
+    linhas = linhas_de(com_penalidade(absence="zero"))
+
+    assert linhas["g2"]["score"] == 700  # 1400 / (Davi + Eva)
+    assert linhas["g2"]["score_before_penalty"] == 700
+    # G1 estava completo (o Caio nao entra na conta): nada muda.
+    assert linhas["g1"]["score"] == 1100
+
+
+@pytest.mark.unit
+def test_desconto_percentual_por_ausente():
+    linhas = linhas_de(com_penalidade(absence="percent", percent=10))
+
+    assert linhas["g2"]["score"] == 1260  # 1400 menos 10%
+    assert linhas["g2"]["score_before_penalty"] == 1400
+    assert linhas["g2"]["penalty_percent"] == 10
+    assert linhas["g1"]["score"] == 1100 and linhas["g1"]["penalty_percent"] == 0
+
+
+@pytest.mark.unit
+def test_desconto_soma_por_ausente_e_nunca_passa_de_cem_por_cento():
+    ctx = com_penalidade(absence="percent", percent=60)
+    ctx.eligible["g1"] = {"ana", "bia", "caio"}  # agora o Caio podia entrar e faltou
+
+    linhas = linhas_de(ctx)
+    assert linhas["g1"]["absent_names"] == ["Caio"]
+    assert linhas["g1"]["score"] == 440  # 1100 menos 60%
+
+    ctx.eligible["g1"] = {"ana", "bia", "caio", "x1"}
+    ctx.member_names["x1"] = "X"
+    dois = linhas_de(ctx)["g1"]
+    assert dois["absent"] == 2 and dois["penalty_percent"] == 100 and dois["score"] == 0
+
+
+@pytest.mark.unit
+def test_integrante_sem_matricula_vinculada_nunca_conta_como_ausente():
+    for absence in ("none", "zero", "percent"):
+        linhas = linhas_de(com_penalidade(absence=absence, percent=50))
+        assert "Caio" not in linhas["g1"]["absent_names"]
+        assert linhas["g1"]["score"] == 1100
+
+
+@pytest.mark.unit
+def test_entrou_e_nao_respondeu_nada_tambem_e_ausente():
+    so_ana_e_davi = [r for r in RESPOSTAS if r.student_id != "a-bia"]
+    linhas = linhas_de(com_penalidade(absence="percent", percent=10), so_ana_e_davi)
+
+    # Bia entrou (tem aparelho vinculado) mas nao respondeu: ausente.
+    assert linhas["g1"]["absent_names"] == ["Bia"]
+    assert linhas["g1"]["score"] == round(1800 / 2 * 0.9)
+
+
+@pytest.mark.unit
+def test_ausente_conta_zero_inclui_quem_entrou_e_nao_respondeu():
+    so_ana_e_davi = [r for r in RESPOSTAS if r.student_id != "a-bia"]
+    linhas = linhas_de(com_penalidade(absence="zero"), so_ana_e_davi)
+    assert linhas["g1"]["score"] == 900  # 1800 / (Ana + Bia)
+
+
+@pytest.mark.unit
+def test_pular_a_pergunta_conta_como_ter_respondido():
+    pulou = [resposta("a-bia", "q1", 0, correct=None), *[r for r in RESPOSTAS if r.student_id != "a-bia"]]
+    linhas = linhas_de(com_penalidade(absence="percent", percent=10), pulou)
+    assert linhas["g1"]["absent"] == 0
+
+
+@pytest.mark.unit
+def test_representante_vale_so_o_desconto_e_so_ele_precisa_responder():
+    ctx = com_penalidade(svc.MODE_REPRESENTATIVE, "percent", 10, {"g1": "bia", "g2": "davi"})
+    linhas = linhas_de(ctx)
+
+    # Ana entrou e nao responde por regra: presente. Em G2 a Eva nao entrou.
+    assert linhas["g1"]["absent"] == 0 and linhas["g1"]["score"] == 400
+    assert linhas["g2"]["absent_names"] == ["Eva"]
+    assert linhas["g2"]["score"] == 1260
+
+
+@pytest.mark.unit
+def test_representante_que_entrou_e_nao_respondeu_conta_como_ausente():
+    ctx = com_penalidade(svc.MODE_REPRESENTATIVE, "percent", 10, {"g1": "bia", "g2": "davi"})
+    sem_bia = [r for r in RESPOSTAS if r.student_id != "a-bia"]
+
+    assert linhas_de(ctx, sem_bia)["g1"]["absent_names"] == ["Bia"]
+
+
+@pytest.mark.unit
+def test_pontos_da_rodada_recebem_o_mesmo_desconto():
+    linhas = linhas_de(com_penalidade(absence="percent", percent=10), atual="q1")
+    assert linhas["g2"]["round_score"] == round(700 * 0.9)
+
+
+@pytest.mark.unit
+def test_resumo_inclui_grupo_em_que_ninguem_entrou():
+    ctx = com_penalidade(absence="percent", percent=10)
+    ctx.group_names["g3"] = "Grupo 3"
+    ctx.eligible["g3"] = {"x", "y"}
+    ctx.member_names.update({"x": "Xavier", "y": "Yara"})
+
+    resumo = svc.absence_summary(RESPOSTAS, ctx)
+
+    assert resumo["g3"] == {"absent": ["Xavier", "Yara"], "penalty_percent": 20}
+    assert resumo["g2"] == {"absent": ["Eva"], "penalty_percent": 10}
+    assert resumo["g1"] == {"absent": [], "penalty_percent": 0}
+
+
+@pytest.mark.unit
+def test_antes_da_primeira_resposta_so_quem_nao_entrou_e_ausente():
+    ctx = com_penalidade(absence="percent", percent=10)
+
+    resumo = svc.absence_summary([], ctx)
+
+    # Ana, Bia e Davi entraram e ainda nao responderam: nao e ausencia.
+    assert resumo["g1"]["absent"] == []
+    assert resumo["g2"]["absent"] == ["Eva"]
+
+
+@pytest.mark.unit
+def test_penalidade_desligada_ou_sem_percentual_nao_desconta():
+    ctx = com_penalidade(absence="percent", percent=0)
+    assert svc.penalty_factor(ctx, 3) == 1.0
+    assert svc.penalty_factor(com_penalidade(absence="none", percent=50), 3) == 1.0
+    assert svc.penalty_factor(com_penalidade(absence="percent", percent=50), 0) == 1.0
+
+
+@pytest.mark.unit
+def test_contexto_sem_dados_de_elegibilidade_so_conta_quem_ja_entrou():
+    ctx = contexto()
+    ctx.absence_mode, ctx.absence_percent = "percent", 10
+    linhas = linhas_de(ctx, [r for r in RESPOSTAS if r.student_id != "a-bia"])
+    # Sem saber quem podia entrar, Eva nao e ausente; Bia entrou sem responder: e.
+    assert linhas["g2"]["absent"] == 0
+    assert linhas["g1"]["absent_names"] == ["Bia"]

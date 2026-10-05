@@ -1013,6 +1013,10 @@ class QuizGroupConfigModel(Base):
     discipline_id = Column(String(64), nullable=False, index=True)
     semester      = Column(String(16), nullable=False, default="")
     seed          = Column(String(64), nullable=False)
+    #: Penalidade por ausente: `none`, `zero` (ausente conta zero na media) ou
+    #: `percent` (cada ausente tira `absence_percent` por cento da nota do grupo).
+    absence_mode    = Column(String(8), nullable=False, default="none")
+    absence_percent = Column(Integer, nullable=False, default=0)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -1243,6 +1247,10 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "project_groups": {
             "penalty_points": "FLOAT NOT NULL DEFAULT 0",
+        },
+        "quiz_group_configs": {
+            "absence_mode": "VARCHAR(8) NOT NULL DEFAULT 'none'",
+            "absence_percent": "INTEGER NOT NULL DEFAULT 0",
         },
     }
     for table_name, columns in additions.items():

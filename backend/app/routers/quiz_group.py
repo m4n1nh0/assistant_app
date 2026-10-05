@@ -36,6 +36,10 @@ class GroupConfigBody(BaseModel):
     mode: Literal["media", "representante"] = "media"
     discipline_id: str
     semester: str = ""
+    #: `none`: sem penalidade; `zero`: ausente conta zero na média (só no modo média);
+    #: `percent`: cada ausente tira `absence_percent` por cento da nota do grupo.
+    absence_mode: Literal["none", "zero", "percent"] = "none"
+    absence_percent: int = Field(default=0, ge=0, le=100)
 
 
 class RepresentativeBody(BaseModel):
@@ -133,12 +137,15 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
     ).scalars().all()
     elegiveis_ids = {m.id for lista in elegiveis.values() for m in lista}
 
+    ausencias = groups.absence_summary(answers, ctx)
     saida = []
     for grupo in grupos:
         rep = reps.get(grupo.id)
         saida.append({
             "id": grupo.id,
             "name": grupo.name,
+            "absent": ausencias.get(grupo.id, {}).get("absent", []),
+            "penalty_percent": ausencias.get(grupo.id, {}).get("penalty_percent", 0),
             "representative": None if rep is None else {
                 "member_id": rep.member_id,
                 "name": rep.member_name,
@@ -172,6 +179,8 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
         ),
         "semester": config.semester,
         "seed": config.seed,
+        "absence_mode": config.absence_mode or groups.ABSENCE_NONE,
+        "absence_percent": int(config.absence_percent or 0),
         "algorithm": draw_rule.ALGORITHM,
         "groups": saida,
         "ranking": groups.group_ranking_rows(answers, None, ctx),
@@ -203,15 +212,40 @@ async def set_group_quiz(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Torna o quiz em grupo (ou muda o modo/disciplina enquanto ninguém respondeu)."""
+    """Torna o quiz em grupo (ou muda o modo/disciplina enquanto ninguém respondeu).
+
+    A penalidade por ausente é só uma regra de cálculo, não altera nenhuma resposta
+    gravada: pode ser ajustada a qualquer momento, até com o quiz encerrado. Já o
+    modo e a disciplina mudam quem pode responder, e por isso têm as travas.
+    """
     tutor_id = user["tutor_id"]
     quiz = await _owned_quiz(quiz_id, tutor_id, db)
+
+    if body.absence_mode == groups.ABSENCE_ZERO and body.mode == groups.MODE_REPRESENTATIVE:
+        raise HTTPException(
+            422,
+            "\"Ausente conta zero\" só vale na média do grupo. No modo representante "
+            "use o desconto por ausente.",
+        )
+    if body.absence_mode == groups.ABSENCE_PERCENT and body.absence_percent < 1:
+        raise HTTPException(422, "Informe o desconto por ausente (de 1% a 100%).")
+    percent = body.absence_percent if body.absence_mode == groups.ABSENCE_PERCENT else 0
+
+    atual = await groups.get_config(db, quiz.id)
+    semester = body.semester.strip()
+    if atual is not None and (atual.mode, atual.discipline_id, atual.semester) == (
+        body.mode, body.discipline_id, semester
+    ):
+        atual.absence_mode, atual.absence_percent = body.absence_mode, percent
+        await db.commit()
+        await db.refresh(atual)
+        return await _overview(db, quiz, atual)
+
     _ensure_editable(quiz)
 
     discipline = await db.get(DisciplineModel, body.discipline_id)
     if discipline is None or discipline.tutor_id != tutor_id:
         raise HTTPException(404, "Disciplina não encontrada")
-    semester = body.semester.strip()
     total_grupos = (
         await db.execute(
             select(func.count())
@@ -247,6 +281,8 @@ async def set_group_quiz(
     config.mode = body.mode
     config.discipline_id = body.discipline_id
     config.semester = semester
+    config.absence_mode = body.absence_mode
+    config.absence_percent = percent
     await db.commit()
     await db.refresh(config)
     return await _overview(db, quiz, config)

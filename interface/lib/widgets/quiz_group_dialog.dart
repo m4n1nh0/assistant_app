@@ -58,6 +58,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
   QuizGroupInfo _info = const QuizGroupInfo();
   List<Discipline> _disciplines = const [];
   String _mode = QuizGroupMode.average;
+  String _absence = AbsencePenalty.none;
+  final _percent = TextEditingController(text: '10');
   String? _disciplineId;
   bool _loading = true;
   bool _busy = false;
@@ -68,6 +70,12 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _percent.dispose();
+    super.dispose();
   }
 
   String _errorText(Object error) => error is QuizCenterException
@@ -106,6 +114,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
     if (info.enabled) {
       _mode = info.mode;
       _disciplineId = info.disciplineId;
+      _absence = info.absenceMode;
+      if (info.absencePercent > 0) _percent.text = '${info.absencePercent}';
     }
   }
 
@@ -132,6 +142,16 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
     return null;
   }
 
+  /// Para o texto de apoio, que precisa de um número mesmo com o campo vazio.
+  int get _absencePercentForText =>
+      (int.tryParse(_percent.text.trim()) ?? 0).clamp(0, 100);
+
+  /// Percentual digitado; 0 quando o campo está vazio ou inválido.
+  int get _absencePercent =>
+      _absence == AbsencePenalty.percent
+          ? (int.tryParse(_percent.text.trim()) ?? 0).clamp(0, 100)
+          : 0;
+
   Future<void> _save() async {
     final discipline = _discipline;
     if (discipline == null) {
@@ -144,6 +164,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
         mode: _mode,
         disciplineId: discipline.id,
         semester: discipline.semester,
+        absenceMode: _absence,
+        absencePercent: _absencePercent,
       ),
       done: _info.enabled
           ? 'Quiz em grupo atualizado.'
@@ -263,12 +285,77 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
             ),
           ],
           selected: {_mode},
-          onSelectionChanged:
-              _busy ? null : (value) => setState(() => _mode = value.first),
+          onSelectionChanged: _busy
+              ? null
+              : (value) => setState(() {
+                    _mode = value.first;
+                    // "Ausente conta zero" só existe na média do grupo.
+                    if (_mode == QuizGroupMode.representative &&
+                        _absence == AbsencePenalty.zero) {
+                      _absence = AbsencePenalty.none;
+                    }
+                  }),
         ),
         const SizedBox(height: 6),
         Text(
           QuizGroupMode.explanation(_mode),
+          style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'Penalidade por ausente',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SegmentedButton<String>(
+              segments: [
+                const ButtonSegment(
+                  value: AbsencePenalty.none,
+                  label: Text('Sem penalidade'),
+                ),
+                ButtonSegment(
+                  value: AbsencePenalty.zero,
+                  label: const Text('Ausente conta zero'),
+                  // Com representante a nota já é só a dele: não há média a diluir.
+                  enabled: _mode == QuizGroupMode.average,
+                ),
+                const ButtonSegment(
+                  value: AbsencePenalty.percent,
+                  label: Text('Desconto por ausente'),
+                ),
+              ],
+              selected: {_absence},
+              showSelectedIcon: false,
+              onSelectionChanged: _busy
+                  ? null
+                  : (value) => setState(() => _absence = value.first),
+            ),
+            if (_absence == AbsencePenalty.percent)
+              SizedBox(
+                width: 110,
+                child: TextField(
+                  controller: _percent,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Por ausente',
+                    suffixText: '%',
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${AbsencePenalty.explanation(_absence, _absencePercentForText)} '
+          'Ausente é quem não entrou ou entrou e não respondeu nada; quem não '
+          'tem matrícula vinculada não é penalizado.',
           style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
         ),
         const SizedBox(height: 12),
@@ -414,6 +501,15 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
                 'Nenhum integrante tem matrícula vinculada, então ninguém deste '
                 'grupo consegue entrar. Vincule os nomes em Grupos de projeto.',
                 style: TextStyle(fontSize: 11, color: AssistantTheme.danger),
+              ),
+            ),
+          if (_info.penalizes && _info.anyoneJoined && team.absent.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Ausentes: ${team.absent.join(", ")}'
+                '${team.penaltyPercent > 0 ? " · desconto de ${team.penaltyPercent}% na nota" : _info.absenceMode == AbsencePenalty.zero ? " · contam zero na média" : ""}',
+                style: const TextStyle(fontSize: 11, color: AssistantTheme.c4),
               ),
             ),
           const SizedBox(height: 6),

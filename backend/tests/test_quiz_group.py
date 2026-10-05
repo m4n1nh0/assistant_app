@@ -473,3 +473,139 @@ def test_apagar_o_quiz_leva_a_configuracao_de_grupo(api):
 
     for model in (QuizGroupConfigModel, QuizGroupLinkModel, QuizGroupRepresentativeModel):
         assert consultar(api, lambda db, m=model: _contar(db, m)) == 0
+
+
+# --- penalidade por ausente -------------------------------------------------------------
+
+
+def configurar(api, mode="media", absence="none", percent=0, discipline="d1"):
+    return api.put(
+        "/education/quiz/quiz1/group",
+        json={
+            "mode": mode, "discipline_id": discipline, "semester": "2026.2",
+            "absence_mode": absence, "absence_percent": percent,
+        },
+    )
+
+
+@pytest.mark.integration
+def test_configuracao_devolve_a_penalidade_e_os_ausentes_por_grupo(api):
+    encerrar_pergunta(api)
+
+    painel = configurar(api, "media", "percent", 10).json()
+
+    assert painel["absence_mode"] == "percent" and painel["absence_percent"] == 10
+    grupos = {g["name"]: g for g in painel["groups"]}
+    # Ninguem entrou: so quem podia entrar e nao entrou e ausente (o Caio nao podia).
+    assert grupos["Grupo 1"]["absent"] == ["Ana Souza", "Bia Lima"]
+    assert grupos["Grupo 1"]["penalty_percent"] == 20
+    assert grupos["Grupo 2"]["absent"] == ["Davi Alves", "Eva Costa"]
+
+
+@pytest.mark.integration
+def test_validacoes_da_penalidade(api):
+    encerrar_pergunta(api)
+
+    zero_no_representante = configurar(api, "representante", "zero")
+    assert zero_no_representante.status_code == 422
+    assert "só vale na média" in zero_no_representante.json()["detail"]
+    assert configurar(api, "media", "percent", 0).status_code == 422
+    assert configurar(api, "media", "percent", 101).status_code == 422
+    assert configurar(api, "media", "outra").status_code == 422
+    # Percentual solto com o modo desligado e ignorado, nao e erro.
+    painel = configurar(api, "media", "none", 30).json()
+    assert painel["absence_mode"] == "none" and painel["absence_percent"] == 0
+
+
+@pytest.mark.integration
+def test_ranking_com_desconto_por_ausente(api):
+    encerrar_pergunta(api)
+    configurar(api, "media", "percent", 10)
+    consultar(api, _abrir_pergunta)
+    ana, davi = novo_aparelho(api), novo_aparelho(api)
+    entrar(ana, ANA)
+    entrar(davi, DAVI)
+    responder(ana, "A")
+    responder(davi, "A")
+
+    pontos = {a.student_name: a.pontuacao for a in respostas(api)}
+    painel = api.get("/education/quiz/quiz1/group").json()
+    g1, g2 = linha(painel, "g1"), linha(painel, "g2")
+
+    # G1: Bia podia entrar e faltou; o Caio nao podia e nao conta.
+    assert g1["absent_names"] == ["Bia Lima"] and g1["penalty_percent"] == 10
+    assert g1["score_before_penalty"] == pontos["Ana Souza"]
+    assert g1["score"] == round(pontos["Ana Souza"] * 0.9)
+    assert g2["absent_names"] == ["Eva Costa"]
+    assert g2["score"] == round(pontos["Davi Alves"] * 0.9)
+
+
+async def _abrir_pergunta(db):
+    quiz = await db.get(QuizModel, "quiz1")
+    quiz.live_phase = "question"
+    await db.commit()
+
+
+@pytest.mark.integration
+def test_ausente_conta_zero_divide_pela_turma_que_podia_entrar(api):
+    encerrar_pergunta(api)
+    configurar(api, "media", "zero")
+    consultar(api, _abrir_pergunta)
+    ana = novo_aparelho(api)
+    entrar(ana, ANA)
+    responder(ana, "A")
+
+    pontos = {a.student_name: a.pontuacao for a in respostas(api)}
+    g1 = linha(api.get("/education/quiz/quiz1/group").json(), "g1")
+
+    # Ana respondeu, Bia podia e nao veio: media sobre os dois.
+    assert g1["score"] == round(pontos["Ana Souza"] / 2)
+    assert g1["absent_names"] == ["Bia Lima"]
+
+
+@pytest.mark.integration
+def test_penalidade_pode_mudar_depois_que_a_turma_respondeu_e_com_o_quiz_encerrado(api):
+    encerrar_pergunta(api)
+    configurar(api, "media", "none")
+    consultar(api, _abrir_pergunta)
+    ana = novo_aparelho(api)
+    entrar(ana, ANA)
+    responder(ana, "A")
+    encerrar_pergunta(api)
+
+    # So a penalidade muda: a configuracao estrutural e a mesma.
+    assert configurar(api, "media", "percent", 20).status_code == 200
+    # Mudar o modo continua travado depois das respostas.
+    assert configurar(api, "representante", "none").status_code == 409
+
+    async def encerrar(db):
+        quiz = await db.get(QuizModel, "quiz1")
+        quiz.status = "closed"
+        await db.commit()
+
+    consultar(api, encerrar)
+    corrigido = configurar(api, "media", "zero")
+    assert corrigido.status_code == 200 and corrigido.json()["absence_mode"] == "zero"
+    # Estrutura diferente num quiz encerrado segue recusada.
+    assert configurar(api, "representante", "none").status_code == 409
+
+
+@pytest.mark.integration
+def test_ranking_do_aluno_ja_traz_a_nota_com_o_desconto(api):
+    encerrar_pergunta(api)
+    configurar(api, "media", "percent", 50)
+    consultar(api, _abrir_pergunta)
+    ana = novo_aparelho(api)
+    entrar(ana, ANA)
+    responder(ana, "A")
+    pontos = {a.student_name: a.pontuacao for a in respostas(api)}
+
+    async def mostrar_ranking(db):
+        quiz = await db.get(QuizModel, "quiz1")
+        quiz.live_phase = "results"
+        await db.commit()
+
+    consultar(api, mostrar_ranking)
+    pagina = ana.get("/education/quiz/quiz1/play").text
+
+    assert f"{round(pontos['Ana Souza'] * 0.5)} pontos" in pagina

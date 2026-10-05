@@ -515,6 +515,8 @@ class QuizCenterService {
     required String mode,
     required String disciplineId,
     String semester = '',
+    String absenceMode = AbsencePenalty.none,
+    int absencePercent = 0,
   }) async =>
       QuizGroupInfo.fromJson(await _ok(api.put(
         '/education/quiz/$quizId/group',
@@ -522,6 +524,8 @@ class QuizCenterService {
           'mode': mode,
           'discipline_id': disciplineId,
           'semester': semester,
+          'absence_mode': absenceMode,
+          'absence_percent': absencePercent,
         },
       )));
 

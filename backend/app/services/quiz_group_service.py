@@ -130,6 +130,12 @@ class GroupContext:
     representatives: dict[str, str] = field(default_factory=dict)
     #: grupo -> quantos integrantes tem no total
     group_sizes: dict[str, int] = field(default_factory=dict)
+    #: grupo -> integrantes que conseguem entrar (aluno vinculado com matricula).
+    #: Sem esta informacao, so quem ja entrou pode ser contado como ausente.
+    eligible: dict[str, set[str]] = field(default_factory=dict)
+    #: Penalidade por ausente (`none`, `zero` ou `percent`) e o percentual de cada um.
+    absence_mode: str = "none"
+    absence_percent: int = 0
 
     def group_of_attempt(self, attempt_id: str) -> Optional[str]:
         member = self.member_of_attempt.get(attempt_id)
@@ -181,6 +187,57 @@ def _member_totals(
     return totais
 
 
+ABSENCE_NONE = "none"
+ABSENCE_ZERO = "zero"
+ABSENCE_PERCENT = "percent"
+ABSENCE_MODES = (ABSENCE_NONE, ABSENCE_ZERO, ABSENCE_PERCENT)
+
+
+def absent_members(
+    group_id: str,
+    totais: dict[str, dict],
+    ctx: GroupContext,
+    *,
+    judge_answers: bool = True,
+) -> list[str]:
+    """Integrantes do grupo que faltaram: nao entraram, ou entraram e nao responderam.
+
+    So conta quem consegue entrar. Integrante sem matricula vinculada nao tem como
+    ler o QR Code e se identificar; penaliza-lo seria punir uma falha de cadastro, e
+    o professor ja e avisado dela na tela do grupo.
+
+    No modo representante so ele responde, entao "entrou e nao respondeu" vale so
+    para ele: os outros estao presentes se entraram.
+
+    `judge_answers=False` (quiz sem nenhuma resposta ainda) so olha quem nao entrou:
+    antes da primeira pergunta ninguem respondeu, e nao e ausencia.
+    """
+    ligados = {
+        member for member, grupo in ctx.member_group.items()
+        if grupo == group_id and member in totais
+    }
+    elegiveis = ctx.eligible.get(group_id)
+    base = ligados | set(elegiveis) if elegiveis is not None else set(ligados)
+    rep = ctx.representatives.get(group_id)
+
+    ausentes = []
+    for member in base:
+        if member not in totais:
+            ausentes.append(member)
+            continue
+        responde = ctx.mode != MODE_REPRESENTATIVE or member == rep
+        if judge_answers and responde and totais[member]["answers"] == 0:
+            ausentes.append(member)
+    return sorted(ausentes, key=lambda member: (ctx.member_names.get(member, ""), member))
+
+
+def penalty_factor(ctx: GroupContext, absent: int) -> float:
+    """Quanto da nota do grupo sobra. Nunca passa de 100% de desconto."""
+    if ctx.absence_mode != ABSENCE_PERCENT or not ctx.absence_percent or not absent:
+        return 1.0
+    return max(0.0, 1.0 - ctx.absence_percent * absent / 100)
+
+
 def group_ranking_rows(
     answers: Iterable[StudentAnswerModel],
     current_question_id: Optional[str],
@@ -197,6 +254,8 @@ def group_ranking_rows(
 
     linhas: list[dict] = []
     for grupo, membros in membros_por_grupo.items():
+        ausentes = absent_members(grupo, totais, ctx)
+
         if ctx.mode == MODE_REPRESENTATIVE:
             rep = ctx.representatives.get(grupo)
             contam = [rep] if rep in totais else []
@@ -206,11 +265,21 @@ def group_ranking_rows(
         if contam:
             soma = sum(totais[m]["score"] for m in contam)
             rodada = sum(totais[m]["round_score"] for m in contam)
-            score = int(round(soma / len(contam)))
-            round_score = int(round(rodada / len(contam)))
+            # "Ausente conta zero": a media passa a ser dividida por todos os que
+            # podiam entrar, e quem faltou entra na conta valendo zero.
+            if ctx.mode != MODE_REPRESENTATIVE and ctx.absence_mode == ABSENCE_ZERO:
+                divisor = max(len(set(ctx.eligible.get(grupo, ())) | set(contam)), 1)
+            else:
+                divisor = len(contam)
+            base = soma / divisor
+            base_rodada = rodada / divisor
         else:
             # Representante que ainda nao entrou: o grupo aparece, valendo zero.
-            score = round_score = 0
+            base = base_rodada = 0
+
+        fator = penalty_factor(ctx, len(ausentes))
+        score = int(round(base * fator))
+        round_score = int(round(base_rodada * fator))
         correct = sum(totais[m]["correct"] for m in contam)
         round_correct = None
         if ctx.mode == MODE_REPRESENTATIVE and contam:
@@ -230,12 +299,37 @@ def group_ranking_rows(
             "members_total": ctx.group_sizes.get(grupo, len(membros)),
             "representative": ctx.member_names.get(rep_id, "") if rep_id else "",
             "mode": ctx.mode,
+            "absent": len(ausentes),
+            "absence_mode": ctx.absence_mode,
+            "absent_names": [ctx.member_names.get(m, "") for m in ausentes],
+            "penalty_percent": int(round((1 - fator) * 100)),
+            "score_before_penalty": int(round(base)),
         })
 
     linhas.sort(key=lambda item: (-item["score"], -item["correct"], item["student_name"]))
     for posicao, linha in enumerate(linhas, start=1):
         linha["position"] = posicao
     return linhas
+
+
+def absence_summary(
+    answers: Iterable[StudentAnswerModel], ctx: GroupContext
+) -> dict[str, dict]:
+    """Ausentes e desconto de cada grupo, inclusive os em que ninguem entrou.
+
+    O ranking so lista grupo em que alguem entrou; o professor precisa ver tambem
+    o grupo que ficou inteiro de fora.
+    """
+    respostas = list(answers)
+    totais = _member_totals(respostas, ctx, None)
+    resumo = {}
+    for grupo in ctx.group_names:
+        ausentes = absent_members(grupo, totais, ctx, judge_answers=bool(respostas))
+        resumo[grupo] = {
+            "absent": [ctx.member_names.get(m, "") for m in ausentes],
+            "penalty_percent": int(round((1 - penalty_factor(ctx, len(ausentes))) * 100)),
+        }
+    return resumo
 
 
 def member_rows(
@@ -392,11 +486,17 @@ async def load_context(
     for member in members:
         sizes[member.group_id] = sizes.get(member.group_id, 0) + 1
 
+    elegiveis = await eligible_members(db, config)
     ctx = GroupContext(
         mode=config.mode,
         group_names={group.id: group.name for group in groups},
         group_sizes=sizes,
         representatives={rep.group_id: rep.member_id for rep in reps},
+        eligible={
+            grupo: {member.id for member in lista} for grupo, lista in elegiveis.items()
+        },
+        absence_mode=config.absence_mode or ABSENCE_NONE,
+        absence_percent=int(config.absence_percent or 0),
     )
     ctx.member_names.update(nomes)
     for rep in reps:

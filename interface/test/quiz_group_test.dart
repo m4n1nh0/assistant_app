@@ -21,10 +21,16 @@ Map<String, dynamic> _info({
   String mode = 'representante',
   Map<String, dynamic>? repG1,
   List<Map<String, dynamic>> ranking = const [],
+  String absence = 'none',
+  int percent = 0,
+  List<String> absentG1 = const [],
+  int penaltyG1 = 0,
 }) =>
     {
       'enabled': true,
       'mode': mode,
+      'absence_mode': absence,
+      'absence_percent': percent,
       'discipline_id': 'd1',
       'discipline': 'ARA0040 - BANCO DE DADOS',
       'semester': '2026.2',
@@ -35,6 +41,8 @@ Map<String, dynamic> _info({
           'id': 'g1',
           'name': 'Grupo 1',
           'representative': repG1,
+          'absent': absentG1,
+          'penalty_percent': penaltyG1,
           'members': [
             _member('m-ana', 'Ana Souza', joined: true),
             _member('m-bia', 'Bia Lima'),
@@ -81,9 +89,13 @@ class _FakeCenter extends QuizCenterService {
   Future<QuizGroupInfo> setGroup(String quizId,
           {required String mode,
           required String disciplineId,
-          String semester = ''}) =>
-      _answer('set:$mode:$disciplineId:$semester',
-          QuizGroupInfo.fromJson(_info(mode: mode)));
+          String semester = '',
+          String absenceMode = 'none',
+          int absencePercent = 0}) =>
+      _answer(
+          'set:$mode:$disciplineId:$semester:$absenceMode:$absencePercent',
+          QuizGroupInfo.fromJson(_info(
+              mode: mode, absence: absenceMode, percent: absencePercent)));
 
   @override
   Future<void> unsetGroup(String quizId) async {
@@ -183,6 +195,82 @@ void main() {
     });
   });
 
+  group('penalidade por ausente', () {
+    test('lê o modo, o percentual e os ausentes de cada grupo', () {
+      final info = QuizGroupInfo.fromJson(_info(
+        mode: 'media',
+        absence: 'percent',
+        percent: 10,
+        absentG1: ['Bia Lima'],
+        penaltyG1: 10,
+      ));
+
+      expect(info.absenceMode, AbsencePenalty.percent);
+      expect(info.absencePercent, 10);
+      expect(info.penalizes, isTrue);
+      expect(info.groups.first.absent, ['Bia Lima']);
+      expect(info.groups.first.penaltyPercent, 10);
+    });
+
+    test('sem penalidade o padrão é desligado', () {
+      final info = QuizGroupInfo.fromJson({'enabled': true, 'groups': []});
+      expect(info.absenceMode, AbsencePenalty.none);
+      expect(info.penalizes, isFalse);
+    });
+
+    test('só se fala em ausente depois que alguém entrou', () {
+      expect(QuizGroupInfo.fromJson(_info()).anyoneJoined, isTrue); // Ana entrou
+      expect(
+        QuizGroupInfo.fromJson({'enabled': true, 'groups': []}).anyoneJoined,
+        isFalse,
+      );
+    });
+
+    test('o texto do ranking descreve a regra de cada modo', () {
+      expect(
+        groupRankingDetail({
+          'mode': 'media',
+          'members': 1,
+          'members_total': 2,
+          'absent': 1,
+          'absence_mode': 'percent',
+          'penalty_percent': 10,
+        }, showRound: false),
+        '1 de 2 integrantes · 1 ausente (−10%)',
+      );
+      expect(
+        groupRankingDetail({
+          'mode': 'media',
+          'members': 1,
+          'members_total': 3,
+          'absent': 2,
+          'absence_mode': 'zero',
+        }, showRound: false),
+        '1 de 3 integrantes · 2 ausentes (contam zero)',
+      );
+    });
+
+    test('sem penalidade ou sem ausente o texto não muda', () {
+      const base = {'mode': 'media', 'members': 2, 'members_total': 2};
+      expect(
+        groupRankingDetail({...base, 'absent': 1, 'absence_mode': 'none'},
+            showRound: false),
+        '2 de 2 integrantes',
+      );
+      expect(
+        groupRankingDetail({...base, 'absent': 0, 'absence_mode': 'percent'},
+            showRound: false),
+        '2 de 2 integrantes',
+      );
+    });
+
+    test('o texto de apoio explica cada regra', () {
+      expect(AbsencePenalty.explanation('percent', 15), contains('15%'));
+      expect(AbsencePenalty.explanation('zero', 0), contains('conta zero'));
+      expect(AbsencePenalty.explanation('none', 0), contains('não muda'));
+    });
+  });
+
   group('groupRankingDetail', () {
     test('média mostra quantos integrantes entraram', () {
       expect(
@@ -228,7 +316,7 @@ void main() {
       await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
       await tester.pumpAndSettle();
 
-      expect(center.calls, ['set:representante:d1:2026.2']);
+      expect(center.calls, ['set:representante:d1:2026.2:none:0']);
       expect(find.textContaining('A turma entra com a matrícula'),
           findsOneWidget);
       expect(find.text('Grupo 1'), findsOneWidget);
@@ -288,6 +376,76 @@ void main() {
 
       expect(center.calls, ['set-rep:g1:m-bia']);
       expect(find.textContaining('(escolhido por você)'), findsOneWidget);
+    });
+
+    testWidgets('manda a penalidade por desconto com o percentual digitado',
+        (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center);
+
+      await tester.tap(find.text('Desconto por ausente'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '10'), '15');
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+
+      expect(center.calls, ['set:media:d1:2026.2:percent:15']);
+    });
+
+    testWidgets('ausente conta zero vai para a média', (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center);
+
+      await tester.tap(find.text('Ausente conta zero'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+
+      expect(center.calls, ['set:media:d1:2026.2:zero:0']);
+    });
+
+    testWidgets('trocar para representante desliga o "conta zero"',
+        (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center);
+
+      await tester.tap(find.text('Ausente conta zero'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Só o representante'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+
+      expect(center.calls, ['set:representante:d1:2026.2:none:0']);
+    });
+
+    testWidgets('mostra quem faltou e o desconto no grupo', (tester) async {
+      await _open(
+        tester,
+        _FakeCenter(QuizGroupInfo.fromJson(_info(
+          mode: 'media',
+          absence: 'percent',
+          percent: 10,
+          absentG1: ['Bia Lima'],
+          penaltyG1: 10,
+        ))),
+      );
+
+      expect(find.textContaining('Ausentes: Bia Lima · desconto de 10% na nota'),
+          findsOneWidget);
+    });
+
+    testWidgets('sem penalidade ligada a lista de ausentes não aparece',
+        (tester) async {
+      await _open(
+        tester,
+        _FakeCenter(QuizGroupInfo.fromJson(_info(
+          mode: 'media',
+          absentG1: ['Bia Lima'],
+        ))),
+      );
+
+      expect(find.textContaining('Ausentes:'), findsNothing);
     });
 
     testWidgets('mostra a recusa do servidor', (tester) async {

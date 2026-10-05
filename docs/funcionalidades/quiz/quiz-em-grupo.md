@@ -31,6 +31,36 @@ cadastro, então não há nome digitado errado nem dois alunos com o mesmo nome.
   confiança de uma sala de aula; o servidor garante só que a matrícula vale apenas dentro
   da disciplina do quiz.
 
+## Penalidade por ausente
+
+O professor escolhe, por quiz, o que acontece com quem falta:
+
+| Opção | O que faz |
+|---|---|
+| **Sem penalidade** | O ausente aparece na lista, mas a nota do grupo não muda. |
+| **Ausente conta zero** (só na média) | A média é dividida por todos que **podiam entrar**; quem faltou entra na conta valendo zero. |
+| **Desconto por ausente** | Cada ausente tira uma porcentagem da nota do grupo (ex.: 10%). Os descontos somam, e o desconto nunca passa de 100%. Vale nos dois modos. |
+
+**Quem é ausente:** o integrante que **não entrou** no quiz, ou que **entrou e não respondeu
+nada**. Pular uma pergunta conta como ter respondido. No modo representante só ele
+responde, então "entrou e não respondeu" vale só para ele; os outros estão presentes se
+entraram.
+
+**Quem nunca é penalizado:** integrante sem matrícula vinculada. Ele não tem como ler o
+QR Code e se identificar, e punir isso seria punir uma falha de cadastro. A janela do
+grupo já marca esses integrantes para o professor corrigir.
+
+**"Ausente conta zero" no modo representante** não existe: a nota do grupo já é só a do
+representante, não há média a diluir. Use o desconto por ausente.
+
+Antes da primeira resposta, só quem **não entrou** aparece como ausente: ninguém respondeu
+ainda, e isso não é ausência.
+
+A penalidade é só uma regra de cálculo e não altera nenhuma resposta gravada. Por isso
+pode ser ajustada a qualquer momento, até com o quiz encerrado, e o ranking é recalculado.
+O ranking do professor mostra "1 ausente (−10%)" em cada grupo, com a nota antes do
+desconto disponível na API (`score_before_penalty`).
+
 ## Representantes
 
 No modo representante, a janela oferece:
@@ -54,7 +84,7 @@ professor, para ver quem puxou o grupo.
 ## Travas
 
 - Só se liga, muda de modo ou se volta a individual **sem pergunta aberta** e com o quiz
-  **não encerrado**.
+  **não encerrado**. A penalidade por ausente é a exceção: muda sempre.
 - Depois que a turma respondeu, não dá para trocar o modo nem a disciplina, nem voltar a
   individual: as respostas já foram gravadas de um jeito.
 - Respostas de aparelhos sem vínculo não entram no ranking de grupo.
@@ -78,7 +108,7 @@ Sob `/education/quiz/{id}/group` (professor dono do quiz):
 | Método | Rota | Para quê |
 |---|---|---|
 | `GET` | `/` | Situação (`enabled: false` se for individual), grupos, representantes e ranking |
-| `PUT` | `/` | Liga ou ajusta (`mode`, `discipline_id`, `semester`) |
+| `PUT` | `/` | Liga ou ajusta (`mode`, `discipline_id`, `semester`, `absence_mode`: `none`, `zero` ou `percent`, e `absence_percent`) |
 | `DELETE` | `/` | Volta a individual |
 | `POST` | `/representatives/draw` | Sorteia os que faltam (`redraw: true` refaz todos) |
 | `POST` | `/representatives/{grupo}/redraw` | Sorteia outro para um grupo |
