@@ -66,9 +66,10 @@ const _quinta = '3002 Semipresencial · quinta';
 
 class _Backend {
   final List<Map<String, dynamic>> groups;
+  final List<Map<String, dynamic>>? classes;
   final requests = <http.Request>[];
 
-  _Backend(this.groups);
+  _Backend(this.groups, {this.classes});
 
   http.Response handle(http.Request request) {
     requests.add(request);
@@ -77,10 +78,11 @@ class _Backend {
 
     if (path.endsWith('/education/disciplines')) return json([_discipline()]);
     if (path.endsWith('/education/classes')) {
-      return json([
-        _class('c-qui', '3002', 'Semipresencial', 3),
-        _class('c-seg', '3001', 'Presencial', 0),
-      ]);
+      return json(classes ??
+          [
+            _class('c-qui', '3002', 'Semipresencial', 3),
+            _class('c-seg', '3001', 'Presencial', 0),
+          ]);
     }
     if (path.endsWith('/education/students')) return json([]);
     if (path.endsWith('/education/lessons')) return json([]);
@@ -137,12 +139,20 @@ class _Backend {
       as Map<String, dynamic>;
 }
 
+/// Dias usados nos testes: 05/10/2026 e segunda; 07/10 e quarta (nenhuma turma tem
+/// aula); 08/10 e quinta. A turma "de hoje" depende do dia, entao ele e fixado.
+final _segundaFeira = DateTime(2026, 10, 5, 10);
+final _quartaFeira = DateTime(2026, 10, 7, 10);
+final _quintaFeira = DateTime(2026, 10, 8, 10);
+
 Future<void> _open(
   WidgetTester tester,
   _Backend backend, {
   String initialText = '',
+  DateTime? now,
   required Future<void> Function() body,
 }) async {
+  final today = now ?? _quartaFeira;
   tester.view.physicalSize = const Size(1700, 1300);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -153,6 +163,7 @@ Future<void> _open(
         body: ProjectGroupsTab(
           initialText: initialText,
           initialDisciplineCode: 'ARA0040',
+          clock: () => today,
         ),
       ),
     ));
@@ -177,25 +188,72 @@ void main() {
       _group('g3', 'GRUPO 7'),
     ];
 
-    testWidgets('mostra cada turma com o dia e a quantidade de grupos',
+    testWidgets('mostra cada turma com o dia, os alunos e a quantidade de grupos',
         (tester) async {
       await _open(tester, _Backend(groups), body: () async {
         expect(find.text('3 grupos cadastrados'), findsOneWidget);
 
-        await tester.tap(find.text('Todas as turmas (3)'));
+        expect(find.text('Todas as turmas (3)'), findsOneWidget);
+        expect(find.text('Sem turma (1)'), findsOneWidget);
+        expect(find.text('$_segunda  ·  12 alunos  ·  1 grupos'), findsOneWidget);
+        expect(find.text('$_quinta  ·  12 alunos  ·  1 grupos'), findsOneWidget);
+      });
+    });
+
+    testWidgets('num dia sem aula as turmas ficam todas juntas, sem "hoje"',
+        (tester) async {
+      await _open(tester, _Backend(groups), now: _quartaFeira, body: () async {
+        expect(find.textContaining('HOJE,'), findsNothing);
+        expect(find.text('TURMAS'), findsOneWidget);
+        expect(find.text('OUTRAS TURMAS'), findsNothing);
+        // Nada marcado: aparecem todos os grupos.
+        expect(find.text('3 grupos cadastrados'), findsOneWidget);
+      });
+    });
+
+    testWidgets('na segunda a turma da segunda vem marcada e separada em "hoje"',
+        (tester) async {
+      await _open(tester, _Backend(groups), now: _segundaFeira, body: () async {
+        expect(find.text('HOJE, SEGUNDA-FEIRA'), findsOneWidget);
+        expect(find.text('OUTRAS TURMAS'), findsOneWidget);
+
+        final hoje = tester.widget<ChoiceChip>(find.byKey(const ValueKey('turma-c-seg')));
+        final outra = tester.widget<ChoiceChip>(find.byKey(const ValueKey('turma-c-qui')));
+        expect(hoje.selected, isTrue);
+        expect(outra.selected, isFalse);
+
+        // Só os grupos da segunda, e a tela diz que há mais na disciplina.
+        expect(find.text('1 grupos cadastrados (de 3 na disciplina)'), findsOneWidget);
+        expect(find.textContaining('GRUPO 1 • $_segunda'), findsOneWidget);
+        expect(find.textContaining('GRUPO 1 • $_quinta'), findsNothing);
+      });
+    });
+
+    testWidgets('as turmas de hoje aparecem acima das outras', (tester) async {
+      await _open(tester, _Backend(groups), now: _quintaFeira, body: () async {
+        expect(find.text('HOJE, QUINTA-FEIRA'), findsOneWidget);
+        final hoje = tester.getTopLeft(find.byKey(const ValueKey('turma-c-qui'))).dy;
+        final outras = tester.getTopLeft(find.byKey(const ValueKey('turma-c-seg'))).dy;
+        final rotulo = tester.getTopLeft(find.text('OUTRAS TURMAS')).dy;
+
+        expect(hoje < rotulo && rotulo < outras, isTrue);
+      });
+    });
+
+    testWidgets('o professor pode ampliar para todas as turmas', (tester) async {
+      await _open(tester, _Backend(groups), now: _segundaFeira, body: () async {
+        await tester.tap(find.byKey(const ValueKey('turma-todas')));
         await tester.pumpAndSettle();
 
-        expect(find.text('$_segunda (1)'), findsOneWidget);
-        expect(find.text('$_quinta (1)'), findsOneWidget);
-        expect(find.text('Sem turma (1)'), findsOneWidget);
+        expect(find.text('3 grupos cadastrados'), findsOneWidget);
+        expect(tester.widget<ChoiceChip>(find.byKey(const ValueKey('turma-todas'))).selected,
+            isTrue);
       });
     });
 
     testWidgets('escolher a quinta deixa só os grupos dela', (tester) async {
       await _open(tester, _Backend(groups), body: () async {
-        await tester.tap(find.text('Todas as turmas (3)'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('$_quinta (1)').last);
+        await tester.tap(find.byKey(const ValueKey('turma-c-qui')));
         await tester.pumpAndSettle();
 
         expect(find.text('1 grupos cadastrados (de 3 na disciplina)'),
@@ -203,6 +261,33 @@ void main() {
         expect(find.textContaining('GRUPO 1 • $_quinta'), findsOneWidget);
         expect(find.textContaining('GRUPO 1 • $_segunda'), findsNothing);
         expect(find.textContaining('GRUPO 7'), findsNothing);
+      });
+    });
+
+    testWidgets('"sem turma" mostra os grupos antigos', (tester) async {
+      await _open(tester, _Backend(groups), body: () async {
+        await tester.tap(find.byKey(const ValueKey('turma-sem')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('GRUPO 7 • 2026.2'), findsOneWidget);
+        expect(find.text('1 grupos cadastrados (de 3 na disciplina)'), findsOneWidget);
+      });
+    });
+
+    testWidgets('duas turmas no mesmo dia: as duas em "hoje" e nenhuma marcada',
+        (tester) async {
+      final backend = _Backend(groups, classes: [
+        _class('c-seg', '3001', 'Presencial', 0),
+        _class('c-noite', '3003', 'Noite', 0),
+      ]);
+      await _open(tester, backend, now: _segundaFeira, body: () async {
+        expect(find.text('HOJE, SEGUNDA-FEIRA'), findsOneWidget);
+        expect(find.byKey(const ValueKey('turma-c-seg')), findsOneWidget);
+        expect(find.byKey(const ValueKey('turma-c-noite')), findsOneWidget);
+        expect(find.text('OUTRAS TURMAS'), findsNothing);
+        // Sem como escolher pelo dia, fica "todas".
+        expect(tester.widget<ChoiceChip>(find.byKey(const ValueKey('turma-todas'))).selected,
+            isTrue);
       });
     });
 
@@ -316,6 +401,23 @@ void main() {
         await tester.tap(find.text('Continuar'));
         await _pumpFrames(tester);
         expect(backend.bodyOf('/project-groups/preview')['class_id'], 'c-qui');
+      });
+    });
+
+    testWidgets('a turma do dia, marcada na tela, vem sugerida na importação',
+        (tester) async {
+      final backend = _Backend([]);
+      await _open(tester, backend,
+          now: _segundaFeira,
+          initialText: 'GRUPO 1\n- Kaic Vinicius\n', body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+
+        final segunda = tester.widget<RadioListTile<String>>(
+            find.widgetWithText(RadioListTile<String>, _segunda));
+        expect(segunda.groupValue, 'c-seg');
+        // A sugestão veio da tela, não do título da lista: o texto não diz isso.
+        expect(find.textContaining('O título da lista indica'), findsNothing);
       });
     });
 

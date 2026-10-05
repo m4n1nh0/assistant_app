@@ -126,3 +126,39 @@ List<Map<String, dynamic>> filterGroupsByClass(
     return filter == noClassFilter ? classId.isEmpty : classId == filter;
   }).toList();
 }
+
+const _weekdayFullNames = [
+  'segunda-feira',
+  'terça-feira',
+  'quarta-feira',
+  'quinta-feira',
+  'sexta-feira',
+  'sábado',
+  'domingo',
+];
+
+/// Nome do dia a partir do `DateTime.weekday` (segunda = 1).
+String weekdayLabel(int dartWeekday) =>
+    _weekdayFullNames[(dartWeekday - 1).clamp(0, 6)];
+
+/// As turmas separadas em "de hoje" e "outras", como a aba Gravar faz.
+///
+/// Uma turma é "de hoje" quando tem aula no dia da semana (`DateTime.weekday`,
+/// segunda = 1). Cada lista mantém a ordem recebida.
+({List<ClassGroup> today, List<ClassGroup> others}) splitClassesByDay(
+  List<ClassGroup> classes,
+  int dartWeekday,
+) =>
+    (
+      today: classes.where((item) => item.meetsOn(dartWeekday)).toList(),
+      others: classes.where((item) => !item.meetsOn(dartWeekday)).toList(),
+    );
+
+/// A turma que já vem marcada ao abrir uma disciplina: a única que tem aula hoje.
+///
+/// Com duas turmas no mesmo dia, ou nenhuma, não há como escolher por ele; fica
+/// "todas" (`null`) e o professor decide.
+String? defaultClassFilter(List<ClassGroup> classes, int dartWeekday) {
+  final today = splitClassesByDay(classes, dartWeekday).today;
+  return today.length == 1 ? today.single.id : null;
+}

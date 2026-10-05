@@ -36,8 +36,13 @@ nada é alterado.
 
 ## Ver, sortear, jogar e imprimir por turma
 
-- **Filtro:** o seletor **Turma (dia de aula)** mostra cada turma com o dia e a
-  quantidade de grupos, mais "Sem turma". Cada grupo mostra a turma no título.
+- **Filtro (turmas do dia):** o bloco **Turma (dia de aula)** segue a aba Gravar. As
+  turmas da disciplina aparecem em botões, as que têm aula **hoje** em **HOJE, SEGUNDA-FEIRA**
+  e as demais em **OUTRAS TURMAS**; cada botão mostra o dia, os alunos e quantos grupos a
+  turma tem, e há também "Todas as turmas" e "Sem turma". A turma que tem aula hoje já vem
+  marcada, e só ela, então a tela abre mostrando os grupos do dia. Com duas turmas no mesmo
+  dia, ou nenhuma, não há como escolher pelo dia e fica "Todas". Cada grupo mostra a turma
+  no título.
 - **Sorteio de apresentação:** a janela do sorteio tem o seletor de turma; só os grupos
   dela entram, e o título do sorteio leva o nome da turma. O filtro da aba já vem marcado.
 - **Quiz em grupo:** ao ativar, escolha a turma. Só entram os alunos dos grupos dela; a

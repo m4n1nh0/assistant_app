@@ -8,6 +8,7 @@ import '../services/education_service.dart';
 import '../services/group_pdf_service.dart';
 import '../services/quiz_report.dart' show quizFilename;
 import 'group_draw_dialog.dart';
+import '../utils/theme.dart';
 import 'pdf_output.dart';
 
 String projectGroupDisciplineCode(Discipline item) =>
@@ -37,8 +38,13 @@ class ProjectGroupsTab extends StatefulWidget {
   final String initialDisciplineCode;
   final String initialDisciplineHint;
 
+  /// Dia em que a tela esta sendo usada; define quais turmas sao "de hoje". Os
+  /// testes fixam o dia para nao variarem com a semana.
+  final DateTime Function() clock;
+
   const ProjectGroupsTab({super.key, this.initialText = '',
-    this.initialDisciplineCode = '', this.initialDisciplineHint = ''});
+    this.initialDisciplineCode = '', this.initialDisciplineHint = '',
+    this.clock = DateTime.now});
 
   @override
   State<ProjectGroupsTab> createState() => _ProjectGroupsTabState();
@@ -108,6 +114,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
         selectedId = matching.length == 1 ? matching.single.id
           : byHint.length == 1 ? byHint.single.id : fromText?.id;
       }
+      classFilter ??= defaultClassFilter(turmas, widget.clock().weekday);
       await loadGroups();
     } catch (error) {
       message = 'Não consegui carregar os grupos: $error';
@@ -218,33 +225,82 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     return chosen;
   }
 
-  /// Filtro por turma (dia de aula) ao lado do seletor de disciplina.
-  Widget turmaFilter() {
-    const all = 'all';
-    int count(bool Function(Map<String, dynamic>) test) =>
+  /// Um chip de turma: nome, dia, alunos e quantos grupos ela tem.
+  Widget turmaChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    Key? key,
+  }) {
+    return ChoiceChip(
+      key: key,
+      selected: selected,
+      onSelected: (_) => onTap(),
+      label: Text(label, style: const TextStyle(fontSize: 11)),
+      side: const BorderSide(color: AssistantTheme.border),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+    );
+  }
+
+  void selectClassFilter(String? value) => setState(() {
+    classFilter = value;
+    groups = filterGroupsByClass(allGroups, classFilter);
+  });
+
+  /// Turmas da disciplina como na aba Gravar: as de hoje primeiro, depois as outras.
+  ///
+  /// O filtro mostra os grupos de uma turma de cada vez, porque o "GRUPO 1" da segunda
+  /// e o da quinta sao grupos diferentes. A turma que tem aula hoje ja vem marcada.
+  Widget turmaSection() {
+    int groupsOf(bool Function(Map<String, dynamic>) test) =>
       allGroups.where(test).length;
-    final semTurma = count((group) => '${group['class_id'] ?? ''}'.isEmpty);
-    return SizedBox(width: 340, child: DropdownButtonFormField<String>(
-      value: classFilter ?? all,
-      isExpanded: true,
-      decoration: const InputDecoration(labelText: 'Turma (dia de aula)'),
-      items: [
-        DropdownMenuItem(value: all,
-          child: Text('Todas as turmas (${allGroups.length})')),
-        for (final turma in turmas)
-          DropdownMenuItem(value: turma.id, child: Text(
-            '${classDisplay(turma)} '
-            '(${count((group) => group['class_id'] == turma.id)})',
-            overflow: TextOverflow.ellipsis)),
-        if (semTurma > 0)
-          DropdownMenuItem(value: noClassFilter,
-            child: Text('Sem turma ($semTurma)')),
-      ],
-      onChanged: (value) => setState(() {
-        classFilter = value == all ? null : value;
-        groups = filterGroupsByClass(allGroups, classFilter);
-      }),
-    ));
+    final hoje = widget.clock().weekday;
+    final split = splitClassesByDay(turmas, hoje);
+    final semTurma = groupsOf((group) => '${group['class_id'] ?? ''}'.isEmpty);
+
+    Widget chips(List<ClassGroup> list) => Wrap(spacing: 8, runSpacing: 8,
+      children: [for (final turma in list)
+        turmaChip(
+          key: ValueKey('turma-${turma.id}'),
+          label: '${classDisplay(turma)}  ·  ${turma.studentCount} alunos  ·  '
+            '${groupsOf((group) => group['class_id'] == turma.id)} grupos',
+          selected: classFilter == turma.id,
+          onTap: () => selectClassFilter(turma.id))]);
+
+    const heading = TextStyle(fontSize: 9, letterSpacing: 1.5,
+      color: AssistantTheme.textMuted);
+
+    return Padding(padding: const EdgeInsets.only(top: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('TURMA (DIA DE AULA)', style: heading),
+        const SizedBox(height: 6),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          turmaChip(
+            key: const ValueKey('turma-todas'),
+            label: 'Todas as turmas (${allGroups.length})',
+            selected: classFilter == null,
+            onTap: () => selectClassFilter(null)),
+          if (semTurma > 0)
+            turmaChip(
+              key: const ValueKey('turma-sem'),
+              label: 'Sem turma ($semTurma)',
+              selected: classFilter == noClassFilter,
+              onTap: () => selectClassFilter(noClassFilter)),
+        ]),
+        if (split.today.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('HOJE, ${weekdayLabel(hoje).toUpperCase()}',
+            style: heading.copyWith(color: AssistantTheme.c3)),
+          const SizedBox(height: 6),
+          chips(split.today),
+        ],
+        if (split.others.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(split.today.isEmpty ? 'TURMAS' : 'OUTRAS TURMAS', style: heading),
+          const SizedBox(height: 6),
+          chips(split.others),
+        ],
+      ]));
   }
 
   /// Pergunta de qual turma e a lista que vai ser cadastrada.
@@ -832,12 +888,12 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             onChanged: (value) async {
               setState(() {
                 selectedId = value;
-                classFilter = null;
+                classFilter = defaultClassFilter(
+                  classesOfDiscipline(classes, value), widget.clock().weekday);
               });
               await loadGroups();
             },
           )),
-          if (turmas.isNotEmpty) turmaFilter(),
           OutlinedButton.icon(onPressed: busy ? null : pickText,
             icon: const Icon(Icons.upload_file), label: const Text('Carregar TXT')),
           ElevatedButton.icon(onPressed: busy || selectedId == null ? null : previewAndImport,
@@ -870,6 +926,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             '${groups.length} grupos cadastrados'
             '${classFilter != null && groups.length != allGroups.length ? " (de ${allGroups.length} na disciplina)" : ""}'),
         ]),
+      if (turmas.isNotEmpty) turmaSection(),
       const SizedBox(height: 10),
       TextField(controller: textController, minLines: 2, maxLines: 5,
         decoration: const InputDecoration(

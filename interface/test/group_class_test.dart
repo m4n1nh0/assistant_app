@@ -139,4 +139,64 @@ void main() {
           ['GRUPO 7', 'GRUPO 8']);
     });
   });
+  group('turmas de hoje', () {
+    // 05/10/2026 é segunda; 08/10 é quinta; 07/10 é quarta.
+    const segunda = 1, quarta = 3, quinta = 4;
+
+    test('nome do dia por extenso, a partir do weekday do Dart', () {
+      expect(weekdayLabel(1), 'segunda-feira');
+      expect(weekdayLabel(4), 'quinta-feira');
+      expect(weekdayLabel(6), 'sábado');
+      expect(weekdayLabel(7), 'domingo');
+    });
+
+    test('separa as turmas que têm aula hoje das outras', () {
+      final split = splitClassesByDay([_segunda, _quinta], segunda);
+
+      expect(split.today.map((item) => item.id), ['c-seg']);
+      expect(split.others.map((item) => item.id), ['c-qui']);
+    });
+
+    test('num dia sem aula, todas ficam em "outras"', () {
+      final split = splitClassesByDay([_segunda, _quinta], quarta);
+
+      expect(split.today, isEmpty);
+      expect(split.others, hasLength(2));
+    });
+
+    test('turma com dois dias de aula conta nos dois', () {
+      final dupla = _class('dupla', '3004', 'Dupla', [0, 3]);
+
+      expect(splitClassesByDay([dupla], segunda).today, hasLength(1));
+      expect(splitClassesByDay([dupla], quinta).today, hasLength(1));
+      expect(splitClassesByDay([dupla], quarta).today, isEmpty);
+    });
+
+    test('mantém a ordem em que as turmas chegaram', () {
+      final a = _class('a', '1', 'A', [0]);
+      final b = _class('b', '2', 'B', [0]);
+
+      expect(splitClassesByDay([b, a], segunda).today.map((item) => item.id), ['b', 'a']);
+    });
+
+    test('a única turma de hoje já vem escolhida', () {
+      expect(defaultClassFilter([_segunda, _quinta], segunda), 'c-seg');
+      expect(defaultClassFilter([_segunda, _quinta], quinta), 'c-qui');
+    });
+
+    test('sem turma hoje, ou com mais de uma, não escolhe por ninguém', () {
+      expect(defaultClassFilter([_segunda, _quinta], quarta), isNull);
+      expect(
+        defaultClassFilter([_segunda, _class('c2', '3003', 'Noite', [0])], segunda),
+        isNull,
+      );
+      expect(defaultClassFilter(const [], segunda), isNull);
+    });
+
+    test('turma sem horário cadastrado nunca é "de hoje"', () {
+      final sem = _class('sem', '9', 'Sem horário', []);
+      expect(splitClassesByDay([sem], segunda).today, isEmpty);
+      expect(defaultClassFilter([sem], segunda), isNull);
+    });
+  });
 }
