@@ -146,6 +146,17 @@ class QuizGroupTeam {
       );
 }
 
+/// `class_ids` quando o servidor manda; sem ele (servidor antigo), a turma `class_id`.
+List<String> _classIdsOf(Map<String, dynamic> json) {
+  final listed = [
+    for (final item in (json['class_ids'] as List?) ?? const [])
+      if ('$item'.isNotEmpty) '$item',
+  ];
+  if (listed.isNotEmpty) return listed;
+  final single = json['class_id']?.toString() ?? '';
+  return single.isEmpty ? const [] : [single];
+}
+
 class QuizGroupInfo {
   final bool enabled;
   final String mode;
@@ -154,7 +165,10 @@ class QuizGroupInfo {
   final String semester;
 
   /// Turma (dia de aula) cujos grupos jogam; vazio vale para a disciplina toda.
+  /// Na aula reunida são várias (3002 e 3030, na segunda): [classIds] as lista e
+  /// [classId] é só a primeira.
   final String classId;
+  final List<String> classIds;
   final String classLabel;
   final String seed;
   final List<QuizGroupTeam> groups;
@@ -171,6 +185,7 @@ class QuizGroupInfo {
     this.discipline = '',
     this.semester = '',
     this.classId = '',
+    this.classIds = const [],
     this.classLabel = '',
     this.seed = '',
     this.groups = const [],
@@ -200,6 +215,7 @@ class QuizGroupInfo {
       discipline: json['discipline']?.toString() ?? '',
       semester: json['semester']?.toString() ?? '',
       classId: json['class_id']?.toString() ?? '',
+      classIds: _classIdsOf(json),
       classLabel: json['class_label']?.toString() ?? '',
       seed: json['seed']?.toString() ?? '',
       groups: ((json['groups'] as List?) ?? const [])

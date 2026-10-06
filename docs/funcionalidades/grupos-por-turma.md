@@ -78,8 +78,12 @@ nomes que já existem em grupo de turmas que se cruzam.
   dela entram, e o título do sorteio leva o nome da turma. O filtro da aba já vem marcado.
   Com **duas ou mais turmas marcadas** na tela, a primeira opção do seletor é "as turmas
   marcadas (N grupos)": o sorteio leva exatamente os grupos que estão listados.
-- **Quiz em grupo:** ao ativar, escolha a turma. Só entram os alunos dos grupos dela; a
-  matrícula de quem é de outra turma recebe "não está em nenhum grupo deste quiz".
+- **Quiz em grupo:** ao ativar, escolha as turmas nos mesmos botões da tela de grupos
+  (HOJE e OUTRAS TURMAS; as turmas que têm aula hoje já vêm marcadas, e "Todas as turmas
+  da disciplina" é nenhuma marcada). Pode marcar mais de uma, para a aula reunida. Só
+  entram os alunos dos grupos de qualquer uma das turmas marcadas; a matrícula de quem é
+  de outra turma recebe "não está em nenhum grupo deste quiz". Depois que a turma
+  respondeu, as turmas não mudam (como o modo e a disciplina).
 - **Impressão:** a relação de grupos e a ordem de apresentação trazem a turma no
   cabeçalho. A relação sai com o recorte que está na tela.
 
@@ -102,5 +106,9 @@ nomes que já existem em grupo de turmas que se cruzam.
   liga ou solta (`{"group_ids": [...], "class_ids": [...]}`; lista vazia solta).
   `POST /education/project-groups/infer-classes` (`{"discipline_id": "...",
   "group_ids": []}`) deduz as turmas dos grupos sem turma pelos alunos vinculados e
-  devolve `assigned`, `without_linked_members` e `conflicting`. O sorteio (`POST /education/group-draws`) e o quiz em grupo
+  devolve `assigned`, `without_linked_members` e `conflicting`. O quiz em grupo
+  (`PUT /education/quiz/{id}/group`) aceita `class_ids` (e ainda `class_id`) e devolve
+  `class_ids` e `class_label` com as turmas juntas; o servidor guarda a lista em
+  `quiz_group_configs.class_ids` (texto separado por vírgula), e quiz antigo, sem a lista,
+  vale a turma `class_id`. O sorteio (`POST /education/group-draws`) e o quiz em grupo
   (`PUT /education/quiz/{id}/group`) aceitam `class_id`.

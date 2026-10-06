@@ -1035,8 +1035,11 @@ class QuizGroupConfigModel(Base):
     tutor_id      = Column(String(64), nullable=False, index=True)
     mode          = Column(String(16), nullable=False, default="media")
     discipline_id = Column(String(64), nullable=False, index=True)
-    # Turma do quiz em grupo; nulo vale para os grupos da disciplina inteira.
+    # Turma do quiz em grupo; nulo vale para os grupos da disciplina inteira. Com mais
+    # de uma turma (aula reunida) `class_id` e a primeira e `class_ids` guarda todas,
+    # separadas por virgula.
     class_id      = Column(String(64), nullable=True, index=True)
+    class_ids     = Column(Text, nullable=False, default="")
     semester      = Column(String(16), nullable=False, default="")
     seed          = Column(String(64), nullable=False)
     #: Penalidade por ausente: `none`, `zero` (ausente conta zero na media) ou
@@ -1321,6 +1324,7 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "quiz_group_configs": {
             "class_id": "VARCHAR(64) NULL",
+            "class_ids": "TEXT NULL",
             "absence_mode": "VARCHAR(8) NOT NULL DEFAULT 'none'",
             "absence_percent": "INTEGER NOT NULL DEFAULT 0",
         },

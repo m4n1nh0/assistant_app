@@ -44,6 +44,9 @@ class QuizGroupPanel extends StatefulWidget {
   final Future<List<ClassGroup>> Function()? loadClasses;
   final VoidCallback? onChanged;
 
+  /// Dia em que o painel é usado; define quais turmas são "de hoje". Os testes o fixam.
+  final DateTime Function() clock;
+
   const QuizGroupPanel({
     super.key,
     required this.quizId,
@@ -51,6 +54,7 @@ class QuizGroupPanel extends StatefulWidget {
     this.loadDisciplines,
     this.loadClasses,
     this.onChanged,
+    this.clock = DateTime.now,
   });
 
   @override
@@ -63,8 +67,9 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
   QuizGroupInfo _info = const QuizGroupInfo();
   List<Discipline> _disciplines = const [];
   List<ClassGroup> _classes = const [];
-  /// Turma dos grupos do quiz; `null` vale para a disciplina toda.
-  String? _classId;
+  /// Turmas dos grupos do quiz; vazio vale para a disciplina toda. Mais de uma é a
+  /// aula reunida (duas turmas no mesmo dia, com grupos que misturam os alunos).
+  Set<String> _classIds = {};
   String _mode = QuizGroupMode.average;
   String _absence = AbsencePenalty.none;
   final _percent = TextEditingController(text: '10');
@@ -111,6 +116,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
         _classes = classes;
         _apply(info);
         _disciplineId ??= disciplines.isEmpty ? null : disciplines.first.id;
+        // Quiz novo: as turmas que têm aula hoje já vêm marcadas, como na aba Grupos.
+        if (!info.enabled) _classIds = _todayClassIds();
         _loading = false;
       });
     } catch (e) {
@@ -125,7 +132,7 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
     if (info.enabled) {
       _mode = info.mode;
       _disciplineId = info.disciplineId;
-      _classId = info.classId.isEmpty ? null : info.classId;
+      _classIds = info.classIds.toSet();
       _absence = info.absenceMode;
       if (info.absencePercent > 0) _percent.text = '${info.absencePercent}';
     }
@@ -148,6 +155,88 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
   }
 
   List<ClassGroup> get _turmas => classesOfDiscipline(_classes, _disciplineId);
+
+  Set<String> _todayClassIds() =>
+      defaultClassFilter(_turmas, widget.clock().weekday);
+
+  void _toggleClass(String? id) => setState(() {
+    if (id == null) {
+      _classIds = {};
+    } else {
+      _classIds = {..._classIds};
+      _classIds.contains(id) ? _classIds.remove(id) : _classIds.add(id);
+    }
+  });
+
+  /// Turmas da disciplina como na aba Grupos: as de hoje primeiro, depois as outras.
+  /// Os botões se marcam juntos (aula reunida); nenhum marcado é a disciplina toda.
+  Widget _turmaSection() {
+    final hoje = widget.clock().weekday;
+    final split = splitClassesByDay(_turmas, hoje);
+    const heading = TextStyle(
+        fontSize: 9, letterSpacing: 1.5, color: AssistantTheme.textMuted);
+
+    Widget chip({
+      required Key key,
+      required String label,
+      required bool selected,
+      required VoidCallback onTap,
+    }) =>
+        ChoiceChip(
+          key: key,
+          selected: selected,
+          onSelected: _busy ? null : (_) => onTap(),
+          label: Text(label, style: const TextStyle(fontSize: 11)),
+          side: const BorderSide(color: AssistantTheme.border),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+        );
+
+    Widget chips(List<ClassGroup> list) => Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final turma in list)
+              chip(
+                key: ValueKey('quiz-turma-${turma.id}'),
+                label: classDisplay(turma),
+                selected: _classIds.contains(turma.id),
+                onTap: () => _toggleClass(turma.id),
+              ),
+          ],
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Turma (dia de aula)', style: heading),
+        const SizedBox(height: 2),
+        const Text(
+          'Marque mais de uma turma quando os grupos misturam alunos delas.',
+          style: TextStyle(fontSize: 10, color: AssistantTheme.textMuted),
+        ),
+        const SizedBox(height: 6),
+        chip(
+          key: const ValueKey('quiz-turma-todas'),
+          label: 'Todas as turmas da disciplina',
+          selected: _classIds.isEmpty,
+          onTap: () => _toggleClass(null),
+        ),
+        if (split.today.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('HOJE, ${weekdayLabel(hoje).toUpperCase()}',
+              style: heading.copyWith(color: AssistantTheme.c3)),
+          const SizedBox(height: 6),
+          chips(split.today),
+        ],
+        if (split.others.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(split.today.isEmpty ? 'TURMAS' : 'OUTRAS TURMAS', style: heading),
+          const SizedBox(height: 6),
+          chips(split.others),
+        ],
+      ],
+    );
+  }
 
   Discipline? get _discipline {
     for (final item in _disciplines) {
@@ -178,7 +267,7 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
         mode: _mode,
         disciplineId: discipline.id,
         semester: discipline.semester,
-        classId: _classId,
+        classIds: (_classIds.toList()..sort()),
         absenceMode: _absence,
         absencePercent: _absencePercent,
       ),
@@ -375,31 +464,14 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
         ),
         const SizedBox(height: 12),
         if (_turmas.isNotEmpty) ...[
-          DropdownButtonFormField<String>(
-            value: _turmas.any((item) => item.id == _classId)
-                ? _classId
-                : 'all',
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Turma (dia de aula)'),
-            items: [
-              const DropdownMenuItem(
-                  value: 'all', child: Text('Todas as turmas da disciplina')),
-              for (final turma in _turmas)
-                DropdownMenuItem(
-                  value: turma.id,
-                  child: Text(classDisplay(turma), overflow: TextOverflow.ellipsis),
-                ),
-            ],
-            onChanged: _busy
-                ? null
-                : (value) =>
-                    setState(() => _classId = value == 'all' ? null : value),
-          ),
+          _turmaSection(),
           const SizedBox(height: 4),
           Text(
-            _classId == null
+            _classIds.isEmpty
                 ? 'Entram os alunos de todos os grupos da disciplina.'
-                : 'Só entram os alunos dos grupos desta turma; a matrícula de quem é de outra turma não vale neste quiz.',
+                : _classIds.length == 1
+                    ? 'Só entram os alunos dos grupos desta turma; a matrícula de quem é de outra turma não vale neste quiz.'
+                    : 'Entram os alunos dos grupos de qualquer uma das turmas marcadas; a matrícula de quem é de outra turma não vale neste quiz.',
             style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
           ),
           const SizedBox(height: 12),
@@ -429,7 +501,8 @@ class _QuizGroupPanelState extends State<QuizGroupPanel> {
                     ? null
                     : (value) => setState(() {
                         _disciplineId = value;
-                        _classId = null; // a turma pertence a uma disciplina
+                        // a turma pertence a uma disciplina
+                        _classIds = _todayClassIds();
                       }),
               ),
             ),

@@ -515,7 +515,7 @@ class QuizCenterService {
     required String mode,
     required String disciplineId,
     String semester = '',
-    String? classId,
+    List<String> classIds = const [],
     String absenceMode = AbsencePenalty.none,
     int absencePercent = 0,
   }) async =>
@@ -525,7 +525,7 @@ class QuizCenterService {
           'mode': mode,
           'discipline_id': disciplineId,
           'semester': semester,
-          'class_id': classId,
+          'class_ids': classIds,
           'absence_mode': absenceMode,
           'absence_percent': absencePercent,
         },

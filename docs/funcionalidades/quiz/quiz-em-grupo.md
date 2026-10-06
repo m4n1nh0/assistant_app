@@ -16,6 +16,14 @@ Na média, quem não apareceu não entra na conta (a tela mostra "2 de 3 integra
 o professor julgar). No modo representante, a resposta dos outros integrantes não é
 gravada, e a tela deles diz quem responde pelo grupo.
 
+## Quais grupos jogam (turmas)
+
+Por padrão entram os grupos da disciplina toda. Para jogar só com as turmas de um dia,
+marque-as na janela do quiz em grupo; as turmas que têm aula hoje já vêm marcadas. Duas
+turmas na mesma aula (3002 e 3030, na segunda) marcam-se juntas, e entram os grupos de
+qualquer uma delas, inclusive os que misturam alunos das duas. Veja
+[Grupos por turma](../grupos-por-turma.md).
+
 ## Como o aluno entra
 
 A página de entrada pede a **matrícula**, não o nome. O servidor procura a matrícula nos
@@ -85,8 +93,8 @@ professor, para ver quem puxou o grupo.
 
 - Só se liga, muda de modo ou se volta a individual **sem pergunta aberta** e com o quiz
   **não encerrado**. A penalidade por ausente é a exceção: muda sempre.
-- Depois que a turma respondeu, não dá para trocar o modo nem a disciplina, nem voltar a
-  individual: as respostas já foram gravadas de um jeito.
+- Depois que a turma respondeu, não dá para trocar o modo, a disciplina nem as turmas, nem
+  voltar a individual: as respostas já foram gravadas de um jeito.
 - Respostas de aparelhos sem vínculo não entram no ranking de grupo.
 - O mesmo aluno em dois aparelhos conta a **primeira** resposta de cada pergunta.
 

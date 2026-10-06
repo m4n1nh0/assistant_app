@@ -369,6 +369,14 @@ async def get_config(db: AsyncSession, quiz_id: str) -> Optional[QuizGroupConfig
     ).scalar_one_or_none()
 
 
+def config_class_ids(config: QuizGroupConfigModel) -> list[str]:
+    """Turmas do quiz em grupo. Quiz antigo, sem a lista, vale a turma `class_id`."""
+    listed = project_groups.as_class_list((config.class_ids or "").split(","))
+    if listed:
+        return listed
+    return project_groups.as_class_list(config.class_id)
+
+
 async def _groups_of(db: AsyncSession, config: QuizGroupConfigModel) -> list[ProjectGroupModel]:
     query = select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == config.tutor_id,
@@ -376,8 +384,9 @@ async def _groups_of(db: AsyncSession, config: QuizGroupConfigModel) -> list[Pro
     )
     if config.semester:
         query = query.where(ProjectGroupModel.semester == config.semester)
-    if config.class_id:
-        query = query.where(project_groups.group_in_class_clause(config.class_id))
+    turmas = config_class_ids(config)
+    if turmas:
+        query = query.where(project_groups.group_in_any_class_clause(turmas))
     return list((await db.execute(query)).scalars().all())
 
 

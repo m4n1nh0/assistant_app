@@ -73,8 +73,8 @@ class _FakeCenter extends QuizCenterService {
 
   QuizGroupInfo current;
   final List<String> calls = [];
-  /// Turma enviada em cada ativacao, na ordem.
-  final List<String?> classIds = [];
+  /// Turmas enviadas em cada ativacao, na ordem.
+  final List<List<String>> classIds = [];
   Object? error;
 
   Future<QuizGroupInfo> _answer(String call, QuizGroupInfo next) async {
@@ -92,10 +92,10 @@ class _FakeCenter extends QuizCenterService {
           {required String mode,
           required String disciplineId,
           String semester = '',
-          String? classId,
+          List<String> classIds = const [],
           String absenceMode = 'none',
           int absencePercent = 0}) {
-    classIds.add(classId);
+    this.classIds.add(classIds);
     return _answer(
           'set:$mode:$disciplineId:$semester:$absenceMode:$absencePercent',
           QuizGroupInfo.fromJson(_info(
@@ -148,8 +148,13 @@ class _FakeCenter extends QuizCenterService {
       );
 }
 
+/// 05/10/2026 é segunda, 07/10 é quarta (nenhuma turma tem aula) e 08/10 é quinta.
+final _segunda = DateTime(2026, 10, 5, 10);
+final _quarta = DateTime(2026, 10, 7, 10);
+
 Future<void> _open(WidgetTester tester, _FakeCenter center,
-    {List<ClassGroup> classes = const []}) async {
+    {List<ClassGroup> classes = const [], DateTime? now}) async {
+  final today = now ?? _quarta;
   tester.view.physicalSize = const Size(1400, 1200);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -160,6 +165,7 @@ Future<void> _open(WidgetTester tester, _FakeCenter center,
         service: center,
         loadDisciplines: () async => const [_discipline],
         loadClasses: () async => classes,
+        clock: () => today,
       ),
     ),
   ));
@@ -306,15 +312,13 @@ void main() {
 
       expect(find.text('Entram os alunos de todos os grupos da disciplina.'),
           findsOneWidget);
-      await tester.tap(find.text('Todas as turmas da disciplina'));
-      await tester.pumpAndSettle();
-      // Ordenadas pelo primeiro dia de aula: segunda antes de quinta.
-      expect(
-        tester.getTopLeft(find.text('3001 Segunda · segunda').last).dy <
-            tester.getTopLeft(find.text('3002 Quinta · quinta').last).dy,
-        isTrue,
-      );
-      await tester.tap(find.text('3002 Quinta · quinta').last);
+      // Num dia sem aula, as turmas ficam juntas, ordenadas pelo primeiro dia de aula.
+      expect(find.textContaining('HOJE,'), findsNothing);
+      final segunda = tester.getTopLeft(find.text('3001 Segunda · segunda'));
+      final quinta = tester.getTopLeft(find.text('3002 Quinta · quinta'));
+      expect(segunda.dy < quinta.dy || (segunda.dy == quinta.dy && segunda.dx < quinta.dx),
+          isTrue);
+      await tester.tap(find.byKey(const ValueKey('quiz-turma-c-qui')));
       await tester.pumpAndSettle();
       expect(find.textContaining('Só entram os alunos dos grupos desta turma'),
           findsOneWidget);
@@ -322,7 +326,9 @@ void main() {
       await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
       await tester.pumpAndSettle();
 
-      expect(center.classIds, ['c-qui']);
+      expect(center.classIds, [
+        ['c-qui']
+      ]);
     });
 
     testWidgets('por padrão vale a disciplina toda (sem turma)', (tester) async {
@@ -332,7 +338,66 @@ void main() {
       await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
       await tester.pumpAndSettle();
 
-      expect(center.classIds, [null]);
+      expect(center.classIds, [<String>[]]);
+    });
+
+    testWidgets('as turmas de hoje já vêm marcadas, separadas das outras',
+        (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center, classes: turmas, now: _segunda);
+
+      expect(find.text('HOJE, SEGUNDA-FEIRA'), findsOneWidget);
+      expect(find.text('OUTRAS TURMAS'), findsOneWidget);
+      bool marcada(String id) => tester
+          .widget<ChoiceChip>(find.byKey(ValueKey('quiz-turma-$id')))
+          .selected;
+      expect(marcada('c-seg'), isTrue);
+      expect(marcada('c-qui'), isFalse);
+      expect(marcada('todas'), isFalse);
+
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+      expect(center.classIds, [
+        ['c-seg']
+      ]);
+    });
+
+    testWidgets('aula reunida: as duas turmas do dia vêm marcadas e vão juntas',
+        (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      final reunidas = [
+        turma('c-3002', '3002', 'A', 0),
+        turma('c-3030', '3030', 'B', 0),
+        turma('c-qui', '3001', 'Quinta', 3),
+      ];
+      await _open(tester, center, classes: reunidas, now: _segunda);
+
+      expect(find.textContaining('qualquer uma das turmas marcadas'),
+          findsOneWidget);
+
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+      expect(center.classIds, [
+        ['c-3002', 'c-3030']
+      ]);
+    });
+
+    testWidgets('tocar numa turma marcada tira; "todas" limpa', (tester) async {
+      final center = _FakeCenter(const QuizGroupInfo());
+      await _open(tester, center, classes: turmas, now: _segunda);
+
+      await tester.tap(find.byKey(const ValueKey('quiz-turma-c-qui')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('quiz-turma-c-seg')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ATIVAR QUIZ EM GRUPO'));
+      await tester.pumpAndSettle();
+      expect(center.classIds.last, ['c-qui']);
+
+      await tester.tap(find.byKey(const ValueKey('quiz-turma-todas')));
+      await tester.pumpAndSettle();
+      expect(find.text('Entram os alunos de todos os grupos da disciplina.'),
+          findsOneWidget);
     });
 
     testWidgets('quiz já ligado numa turma abre com ela marcada', (tester) async {
@@ -342,13 +407,48 @@ void main() {
         'class_label': '3001 Segunda · segunda',
       });
       expect(info.classId, 'c-seg');
+      expect(info.classIds, ['c-seg']);
       expect(info.classLabel, '3001 Segunda · segunda');
 
+      // Num dia sem aula: a marcação vem do quiz, não do dia.
       await _open(tester, _FakeCenter(info), classes: turmas);
 
-      expect(find.text('3001 Segunda · segunda'), findsWidgets);
+      expect(
+          tester
+              .widget<ChoiceChip>(find.byKey(const ValueKey('quiz-turma-c-seg')))
+              .selected,
+          isTrue);
       expect(find.textContaining('2 grupos · ARA0040 - BANCO DE DADOS · 3001 Segunda'),
           findsOneWidget);
+    });
+
+    testWidgets('quiz ligado em duas turmas abre com as duas marcadas',
+        (tester) async {
+      final info = QuizGroupInfo.fromJson({
+        ..._info(mode: 'media'),
+        'class_id': 'c-qui',
+        'class_ids': ['c-qui', 'c-seg'],
+        'class_label': '3001 Segunda · segunda + 3002 Quinta · quinta',
+      });
+      expect(info.classIds, ['c-qui', 'c-seg']);
+
+      await _open(tester, _FakeCenter(info), classes: turmas, now: _segunda);
+
+      bool marcada(String id) => tester
+          .widget<ChoiceChip>(find.byKey(ValueKey('quiz-turma-$id')))
+          .selected;
+      // O que o quiz guarda vale mais que "as turmas de hoje".
+      expect(marcada('c-seg'), isTrue);
+      expect(marcada('c-qui'), isTrue);
+    });
+
+    test('servidor antigo, sem class_ids, vale a turma principal', () {
+      final info = QuizGroupInfo.fromJson({
+        ..._info(mode: 'media'),
+        'class_id': 'c-seg',
+      });
+      expect(info.classIds, ['c-seg']);
+      expect(QuizGroupInfo.fromJson(_info(mode: 'media')).classIds, isEmpty);
     });
   });
 

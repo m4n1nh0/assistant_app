@@ -503,6 +503,11 @@ def preview_member_match(name: str, roster: list[StudentModel],
                 candidates=suggested_student_matches(name, roster, index))
 
 
+def group_in_any_class_clause(class_ids):
+    """Condicao SQL: o grupo e de qualquer uma destas turmas (aula reunida inclusa)."""
+    return or_(*(group_in_class_clause(item) for item in as_class_list(class_ids)))
+
+
 def group_in_class_clause(class_id: str):
     """Condicao SQL: o grupo e desta turma (principal ou uma das turmas da aula reunida)."""
     return or_(
