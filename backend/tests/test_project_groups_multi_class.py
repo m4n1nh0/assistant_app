@@ -204,19 +204,112 @@ def test_lista_de_uma_turma_so_nao_mexe_nos_grupos_da_aula_reunida(api):
     assert {m["name"] for m in reunido["members"]} == {"Kaic Vinicius", "Marta Souza"}
 
 
-def test_turmas_que_se_cruzam_com_o_mesmo_nome_sao_recusadas(api):
-    """GRUPO 1 de 3002+3030 e GRUPO 1 so da 3002 seriam ambiguos para a 3002."""
+def test_lista_so_de_uma_das_turmas_atualiza_o_grupo_misto_sem_encolher_as_turmas(api):
+    """GRUPO 1 de 3002+3030 e uma lista so da 3002: e o mesmo grupo, nao um novo."""
     importar(api, LISTA_SEGUNDA, ["c-3002", "c-3030"])
-    dados = corpo("GRUPO 1\n- Igor Alan\n", ["c-3002"])
+    dados = corpo("GRUPO 1\n- Kaic Vinicius\n- Igor Alan\n", ["c-3002"])
+
+    previa = api.post("/education/project-groups/preview", json=dados).json()
+    assert previa["conflicting_names"] == []
+    assert previa["updated_groups"] == 1 and previa["new_groups"] == 0
+    assert previa["adjusted_groups"] == []
+
+    resposta = api.post("/education/project-groups/import", json={
+        **dados, "preview_sha256": previa["preview_sha256"]})
+    assert resposta.status_code == 200, resposta.text
+    todos = grupos(api)
+    assert len(todos) == 2
+    grupo1 = por_nome(todos)["GRUPO 1"]
+    assert grupo1["class_ids"] == ["c-3002", "c-3030"]
+    assert {m["name"] for m in grupo1["members"]} == {"Kaic Vinicius", "Igor Alan"}
+
+
+def test_lista_de_mais_turmas_atualiza_o_grupo_e_amplia_as_turmas(api):
+    """GRUPO 1 so da 3002 que agora tem gente da 3030: a lista e das duas turmas."""
+    importar(api, "GRUPO 1\n- Kaic Vinicius\n", ["c-3002"])
+    antes = por_nome(grupos(api))["GRUPO 1"]
+    assert antes["class_ids"] == ["c-3002"]
+
+    previa, resultado = importar(api, LISTA_SEGUNDA, ["c-3002", "c-3030"])
+
+    assert previa["conflicting_names"] == []
+    assert previa["updated_groups"] == 1 and previa["new_groups"] == 1  # GRUPO 2 e novo
+    ajuste = previa["adjusted_groups"]
+    assert [item["name"] for item in ajuste] == ["GRUPO 1"]
+    assert ajuste[0]["class_ids_before"] == ["c-3002"]
+    assert ajuste[0]["class_ids_after"] == ["c-3002", "c-3030"]
+    assert "3002" in ajuste[0]["before_label"]
+    assert "3002" in ajuste[0]["after_label"] and "3030" in ajuste[0]["after_label"]
+    assert resultado["created"] == 1 and resultado["updated"] == 1
+
+    todos = grupos(api)
+    assert len(todos) == 2
+    grupo1 = por_nome(todos)["GRUPO 1"]
+    assert grupo1["id"] == antes["id"]
+    assert grupo1["class_ids"] == ["c-3002", "c-3030"]
+    assert {m["name"] for m in grupo1["members"]} == {"Kaic Vinicius", "Marta Souza"}
+    # Passa a aparecer tambem no filtro da 3030.
+    assert {g["name"] for g in grupos(api, class_id="c-3030")} == {"GRUPO 1", "GRUPO 2"}
+
+
+def test_ampliar_as_turmas_mantem_os_vinculos_e_o_banco_nao_reclama(api):
+    importar(api, "GRUPO 1\n- Kaic Vinicius\n", ["c-3002"])
+    importar(api, LISTA_SEGUNDA, ["c-3002", "c-3030"])
+    importar(api, LISTA_SEGUNDA, ["c-3002", "c-3030"])  # e de novo: atualiza igual
+
+    grupo1 = por_nome(grupos(api))["GRUPO 1"]
+    ligados = {m["name"]: m["student_id"] for m in grupo1["members"]}
+    assert ligados == {"Kaic Vinicius": "s-kaic", "Marta Souza": "s-marta"}
+    assert len(grupos(api)) == 2
+
+
+def test_turmas_que_se_cruzam_so_em_parte_continuam_ambiguas(api):
+    """3002+3030 existe; a lista e 3030+quinta: nao da para saber se e o mesmo grupo."""
+    importar(api, LISTA_SEGUNDA, ["c-3002", "c-3030"])
+    dados = corpo("GRUPO 1\n- Bruno Teixeira\n", ["c-3030", "c-3001"])
 
     previa = api.post("/education/project-groups/preview", json=dados).json()
     assert previa["conflicting_names"] == ["GRUPO 1"]
+    assert previa["new_groups"] == 0 and previa["updated_groups"] == 0
 
     resposta = api.post("/education/project-groups/import", json={
         **dados, "preview_sha256": previa["preview_sha256"]})
     assert resposta.status_code == 422
     assert "GRUPO 1" in resposta.json()["detail"]
     assert len(grupos(api)) == 2
+
+
+def test_dois_grupos_com_o_mesmo_nome_nas_turmas_da_lista_sao_ambiguos(api):
+    async def semear():
+        async with api.sessions() as db:
+            for id_, turma in (("gx1", "c-3002"), ("gx2", "c-3030")):
+                db.add(ProjectGroupModel(id=id_, tutor_id="t1", discipline_id="d1",
+                                         semester="2026.2", name="GRUPO 9", class_id=turma))
+            await db.commit()
+    asyncio.run(semear())
+
+    previa = api.post("/education/project-groups/preview", json=corpo(
+        "GRUPO 9\n- Kaic Vinicius\n", ["c-3002", "c-3030"])).json()
+
+    assert previa["conflicting_names"] == ["GRUPO 9"]
+
+
+def test_lista_sem_turma_nao_casa_com_grupo_de_turma(api):
+    importar(api, LISTA_SEGUNDA, ["c-3002", "c-3030"])
+
+    previa, _ = importar(api, "GRUPO 1\n- Kaic Vinicius\n", [])
+
+    assert previa["updated_groups"] == 0 and previa["new_groups"] == 1
+    assert len(grupos(api)) == 3
+
+
+def test_ajuste_so_acontece_ao_confirmar(api):
+    """A previa mostra o ajuste, mas as turmas do grupo so mudam no cadastro."""
+    importar(api, "GRUPO 1\n- Kaic Vinicius\n", ["c-3002"])
+
+    api.post("/education/project-groups/preview", json=corpo(LISTA_SEGUNDA, ["c-3002", "c-3030"]))
+
+    assert por_nome(grupos(api))["GRUPO 1"]["class_ids"] == ["c-3002"]
 
 
 def test_atribuir_varias_turmas_a_grupos_sem_turma(api):

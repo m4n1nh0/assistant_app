@@ -35,10 +35,27 @@ procurados entre os alunos das duas turmas juntas, e o grupo passa a pertencer �
 Ao abrir a disciplina, **todas** as turmas que têm aula hoje já vêm marcadas juntas (na
 segunda, as duas turmas da segunda).
 
-O nome do grupo é único dentro de cada turma. Por isso o cadastro é **bloqueado** quando
-o nome já existe num grupo de turmas que se cruzam com as da lista sem ser as mesmas (por
-exemplo o `GRUPO 1` de 3002+3030 já existe e a lista nova é só da 3002): use as mesmas
-turmas do grupo existente ou renomeie. A prévia avisa antes de gravar.
+### Atualizar um grupo que já existe
+
+O nome do grupo é único dentro de cada turma, então importar um nome que já existe nas
+turmas da lista **atualiza aquele grupo** em vez de criar outro, e a prévia diz o que vai
+acontecer:
+
+- **Mesmas turmas:** atualiza os integrantes, como sempre.
+- **A lista tem mais turmas do que o grupo tinha** (o `GRUPO 3` era só da 3001 e agora a
+  lista é da 3001 + 3008, porque entrou gente da 3008): atualiza os integrantes e **amplia as
+  turmas** do grupo para as da lista. A prévia mostra
+  `GRUPO 3: de 3001 · terça para 3001 · terça + 3008 · terça`, e nada muda antes de você
+  confirmar. Os vínculos com os alunos e as notas do grupo ficam.
+- **A lista tem só parte das turmas do grupo** (o grupo é 3001 + 3008 e você importou só a
+  3001): atualiza os integrantes e **mantém as turmas** dele; o grupo não encolhe.
+- **Ambíguo:** as turmas se cruzam só em parte (o grupo é 3001 + 3008 e a lista é 3008 +
+  3030), ou há mais de um grupo com aquele nome nas turmas da lista. Não dá para saber qual é
+  o grupo, e o cadastro fica **bloqueado** com o aviso: marque as mesmas turmas do grupo que
+  já existe ou renomeie.
+
+Como a atualização troca a lista de integrantes, a prévia conta quantos integrantes
+antigos vão sair. Uma lista sem turma só atualiza grupo sem turma.
 
 ### Formato aceito da lista
 

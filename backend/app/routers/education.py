@@ -216,7 +216,18 @@ async def preview_project_group_text(
         raise HTTPException(422, str(exc)) from exc
     summary = await preview_project_groups(
         db, user["tutor_id"], discipline.id, parsed, class_ids)
-    labels = await class_labels(db, user["tutor_id"], class_ids)
+    adjusted = summary.get("adjusted_groups", [])
+    labels = await class_labels(
+        db, user["tutor_id"],
+        [*class_ids, *(item for row in adjusted for item in (
+            *row["class_ids_before"], *row["class_ids_after"]))])
+
+    def joined(ids: list[str]) -> str:
+        return " + ".join(labels[item]["display"] for item in ids if item in labels)
+
+    for row in adjusted:
+        row["before_label"] = joined(row["class_ids_before"])
+        row["after_label"] = joined(row["class_ids_after"])
     return {**summary, "preview_sha256": source_sha256(body.text),
             "discipline_code": discipline.code,
             "discipline_name": discipline.name,

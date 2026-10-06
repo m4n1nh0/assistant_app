@@ -8,6 +8,7 @@ import math
 import re
 import unicodedata
 from collections import Counter
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import lru_cache
 
@@ -597,6 +598,71 @@ async def groups_in_classes(db, tutor_id: str, discipline_id: str,
     return [group for group in groups if sets[group.id] == wanted]
 
 
+@dataclass(frozen=True)
+class ExistingMatch:
+    """Grupo que ja existe e que a lista vai atualizar, e com que turmas ele fica."""
+
+    group: ProjectGroupModel
+    before: tuple[str, ...]
+    after: tuple[str, ...]
+
+    @property
+    def adjusted(self) -> bool:
+        return self.before != self.after
+
+
+async def match_existing_groups(db, tutor_id: str, discipline_id: str, class_ids,
+                                names) -> tuple[dict[str, ExistingMatch], set[str]]:
+    """Que grupo ja cadastrado cada nome da lista atualiza, e o que e ambiguo.
+
+    Mesmas turmas: e o mesmo grupo, atualiza. Turmas que se cruzam, com o nome igual:
+
+    - o grupo existente tem **so algumas** das turmas da lista (era so da 3001 e a lista
+      e da 3001 + 3008): e o mesmo grupo, que cresceu. Atualiza e passa a ter as turmas
+      da lista;
+    - a lista tem **so parte** das turmas do grupo existente: tambem e ele. Atualiza os
+      integrantes e mantem as turmas dele, sem encolher;
+    - as turmas se cruzam so em parte, ou ha mais de um grupo com o nome: nao da para
+      saber qual e, e o nome volta como conflito para o professor decidir.
+
+    Sem turma na lista, so se casa com grupo sem turma.
+    """
+    wanted = tuple(as_class_list(class_ids))
+    wanted_set = set(wanted)
+    names = list(dict.fromkeys(names))
+    groups = list((await db.execute(select(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == tutor_id,
+        ProjectGroupModel.discipline_id == discipline_id,
+        ProjectGroupModel.name.in_(names or [""]),
+    ))).scalars().all())
+    sets = await class_ids_of_groups(db, groups)
+
+    matches: dict[str, ExistingMatch] = {}
+    conflicts: set[str] = set()
+    for name in names:
+        same = [group for group in groups if group.name == name]
+        exact = [group for group in same if set(sets[group.id]) == wanted_set]
+        if exact:
+            group = exact[0]
+            matches[name] = ExistingMatch(group, wanted, wanted)
+            continue
+        overlapping = [group for group in same if wanted_set & set(sets[group.id])]
+        if not overlapping:
+            continue
+        if len(overlapping) > 1:
+            conflicts.add(name)
+            continue
+        group = overlapping[0]
+        current = tuple(sets[group.id])
+        if set(current) <= wanted_set:
+            matches[name] = ExistingMatch(group, current, wanted)
+        elif wanted_set <= set(current):
+            matches[name] = ExistingMatch(group, current, current)
+        else:
+            conflicts.add(name)
+    return matches, conflicts
+
+
 async def clashing_group_names(db, tutor_id: str, discipline_id: str, class_ids,
                                names, ignore_ids=()) -> set[str]:
     """Nomes que ja existem em grupo de turmas que se cruzam com estas, sem ser a mesma.
@@ -686,34 +752,37 @@ async def preview_project_groups(db, tutor_id: str, discipline_id: str,
     roster = await roster_for_discipline(db, tutor_id, discipline_id, class_id)
     learned = await learned_name_resolutions(db, tutor_id, discipline_id, roster)
     index = NameSimilarityIndex(roster)
-    existing = await groups_in_classes(db, tutor_id, discipline_id, class_id)
-    existing_names = {group.name for group in existing}
-    conflicts = await clashing_group_names(
-        db, tutor_id, discipline_id, class_id,
-        [row["name"] for row in parsed], ignore_ids=[group.id for group in existing])
+    matches, conflicts = await match_existing_groups(
+        db, tutor_id, discipline_id, class_id, [row["name"] for row in parsed])
+    existing_names = set(matches)
     existing_members = (await db.execute(select(ProjectGroupMemberModel).where(
-        ProjectGroupMemberModel.group_id.in_([group.id for group in existing] or [""])
+        ProjectGroupMemberModel.group_id.in_(
+            [match.group.id for match in matches.values()] or [""])
     ))).scalars().all()
     by_group_id: dict[str, set[str]] = {}
     for member in existing_members:
         by_group_id.setdefault(member.group_id, set()).add(normalize_person(member.name))
-    existing_by_name = {group.name: group for group in existing}
     removed_members = 0
     for row in parsed:
-        prior = existing_by_name.get(row["name"])
+        prior = matches.get(row["name"])
         if prior:
             incoming = {normalize_person(member["name"]) for member in row["members"]}
-            removed_members += len(by_group_id.get(prior.id, set()) - incoming)
+            removed_members += len(by_group_id.get(prior.group.id, set()) - incoming)
     matched = sum(bool(unique_student_match(member["name"], roster, learned))
                   for group in parsed for member in group["members"])
     member_count = sum(len(group["members"]) for group in parsed)
     return dict(groups=len(parsed), members=member_count, linked=matched,
                 roster_count=len({_student_identity(student) for student in roster}),
                 names_without_unique_match=member_count - matched,
-                new_groups=sum(group["name"] not in existing_names for group in parsed),
+                new_groups=sum(group["name"] not in existing_names
+                               and group["name"] not in conflicts for group in parsed),
                 updated_groups=sum(group["name"] in existing_names for group in parsed),
                 members_removed_on_update=removed_members,
                 conflicting_names=sorted(conflicts),
+                adjusted_groups=[
+                    dict(name=name, class_ids_before=list(match.before),
+                         class_ids_after=list(match.after))
+                    for name, match in matches.items() if match.adjusted],
                 group_names=[dict(name=group["name"], members=len(group["members"]),
                                   source_note=group["note"],
                                   names=[preview_member_match(member["name"], roster, index, learned)
@@ -749,19 +818,20 @@ async def import_project_groups(db, tutor_id: str, discipline, parsed: list[dict
     roster = await roster_for_discipline(db, tutor_id, discipline.id, wanted)
     learned = await learned_name_resolutions(db, tutor_id, discipline.id, roster)
     choices = validate_import_member_links(parsed, member_links or [], roster)
-    existing = await groups_in_classes(db, tutor_id, discipline.id, wanted)
-    conflicts = await clashing_group_names(
-        db, tutor_id, discipline.id, wanted, [row["name"] for row in parsed],
-        ignore_ids=[group.id for group in existing])
+    matches, conflicts = await match_existing_groups(
+        db, tutor_id, discipline.id, wanted, [row["name"] for row in parsed])
     if conflicts:
         raise ValueError(
-            "Já existe grupo com este nome em turma que faz parte desta lista: "
-            f"{', '.join(sorted(conflicts))}. Use as mesmas turmas do grupo existente "
-            "ou renomeie.")
-    by_name = {group.name: group for group in existing}
+            "Não sei qual é o grupo existente de nome igual, porque as turmas só se "
+            f"cruzam em parte ou há mais de um: {', '.join(sorted(conflicts))}. "
+            "Marque as mesmas turmas do grupo que já existe ou renomeie.")
     created = updated = linked = 0
     for row in parsed:
-        group = by_name.get(row["name"])
+        match = matches.get(row["name"])
+        group = match.group if match else None
+        if match is not None and match.adjusted:
+            # O grupo cresceu: a lista agora e de mais turmas do que ele tinha.
+            await set_group_classes(db, group, list(match.after))
         if group is None:
             group = ProjectGroupModel(tutor_id=tutor_id,
                 discipline_id=discipline.id, semester=discipline.semester,

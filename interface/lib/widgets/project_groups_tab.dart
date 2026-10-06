@@ -497,6 +497,11 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       final conflicts = [
         for (final name in (preview['conflicting_names'] as List? ?? const [])) '$name',
       ];
+      // Grupo que já existe e cresceu (ou foi reunido): atualiza e ajusta as turmas.
+      final adjusted = [
+        for (final item in (preview['adjusted_groups'] as List? ?? const []))
+          Map<String, dynamic>.from(item as Map),
+      ];
       bool lowMatch() => (preview['roster_count'] as num).toInt() > 0 &&
         linkedAfterReview() * 4 < (preview['members'] as num).toInt();
       final confirmed = await showDialog<bool>(context: context,
@@ -515,11 +520,22 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                   style: Theme.of(context).textTheme.titleSmall),
               if (conflicts.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text('Já existe grupo com este nome em turma que faz parte desta lista: '
-                  '${conflicts.join(', ')}. Use as mesmas turmas do grupo existente ou '
-                  'renomeie; enquanto isso o cadastro fica bloqueado.',
+                Text('Não sei qual é o grupo que já existe com este nome (as turmas só se '
+                  'cruzam em parte, ou há mais de um): ${conflicts.join(', ')}. Marque as '
+                  'mesmas turmas do grupo que já existe ou renomeie; enquanto isso o '
+                  'cadastro fica bloqueado.',
                   key: const ValueKey('aviso-nome-em-conflito'),
                   style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ],
+              if (adjusted.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Estes grupos já existem e serão atualizados, com as turmas '
+                  'ajustadas:\n${[
+                    for (final item in adjusted)
+                      '• ${item['name']}: de ${item['before_label']} '
+                      'para ${item['after_label']}',
+                  ].join('\n')}',
+                  key: const ValueKey('aviso-turmas-ajustadas')),
               ],
               const SizedBox(height: 10),
               Text('${preview['groups']} grupos e ${preview['members']} nomes.'),

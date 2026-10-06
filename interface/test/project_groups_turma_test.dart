@@ -73,9 +73,11 @@ class _Backend {
   final List<Map<String, dynamic>> groups;
   final List<Map<String, dynamic>>? classes;
   final List<String> conflicts;
+  final List<Map<String, dynamic>> adjusted;
   final requests = <http.Request>[];
 
-  _Backend(this.groups, {this.classes, this.conflicts = const []});
+  _Backend(this.groups,
+      {this.classes, this.conflicts = const [], this.adjusted = const []});
 
   http.Response handle(http.Request request) {
     requests.add(request);
@@ -119,6 +121,7 @@ class _Backend {
         'updated_groups': 0,
         'members_removed_on_update': 0,
         'conflicting_names': conflicts,
+        'adjusted_groups': adjusted,
         'group_names': [
           {
             'name': 'GRUPO 1',
@@ -647,6 +650,45 @@ void main() {
         final confirmar = tester.widget<ElevatedButton>(
             find.widgetWithText(ElevatedButton, 'Confirmar cadastro'));
         expect(confirmar.onPressed, isNull);
+      });
+    });
+
+    testWidgets('grupo que já existe é atualizado e a prévia mostra o ajuste das turmas',
+        (tester) async {
+      final backend = _Backend([], classes: turmas, adjusted: [
+        {
+          'name': 'GRUPO 3',
+          'class_ids_before': ['c-3002'],
+          'class_ids_after': ['c-3002', 'c-3030'],
+          'before_label': '3002 A · segunda',
+          'after_label': '3002 A · segunda + 3030 B · segunda',
+        },
+      ]);
+      await _open(tester, backend, initialText: lista, body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+
+        final aviso = tester.widget<Text>(
+            find.byKey(const ValueKey('aviso-turmas-ajustadas')));
+        expect(aviso.data, contains('GRUPO 3: de 3002 A · segunda para 3002 A · segunda + 3030 B · segunda'));
+        expect(find.byKey(const ValueKey('aviso-nome-em-conflito')), findsNothing);
+        final confirmar = tester.widget<ElevatedButton>(
+            find.widgetWithText(ElevatedButton, 'Confirmar cadastro'));
+        expect(confirmar.onPressed, isNotNull);
+      });
+    });
+
+    testWidgets('sem ajuste de turmas o aviso não aparece', (tester) async {
+      final backend = _Backend([], classes: turmas);
+      await _open(tester, backend, initialText: lista, body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+
+        expect(find.byKey(const ValueKey('aviso-turmas-ajustadas')), findsNothing);
       });
     });
 
