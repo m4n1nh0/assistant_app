@@ -933,6 +933,37 @@ class MaterialModel(Base):
         Text().with_variant(MEDIUMTEXT(), "mysql", "mariadb"), nullable=False
     )
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    # Material enviado por um grupo pelo link de envio (slides da apresentacao).
+    # Nulos no material do professor. `uploader_name` e copia do nome, para a lista
+    # dizer quem enviou mesmo se o cadastro do aluno mudar depois.
+    group_id      = Column(String(64), nullable=True, index=True)
+    student_id    = Column(String(64), nullable=True)
+    uploader_name = Column(String(180), nullable=True)
+    link_id       = Column(String(64), nullable=True, index=True)
+
+
+class MaterialSubmissionLinkModel(Base):
+    """Link publico para os alunos enviarem o material das apresentacoes.
+
+    Um link por disciplina (e, se quiser, por turmas): o aluno digita a matricula, o
+    sistema acha o grupo dele e o arquivo vira um `MaterialModel` ligado ao grupo. O
+    token e o que vai na URL; fechar o link (ou o prazo passar) nao apaga o que ja
+    foi enviado.
+    """
+
+    __tablename__ = "material_submission_links"
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id      = Column(String(64), nullable=False, index=True)
+    discipline_id = Column(String(64), nullable=False, index=True)
+    token         = Column(String(64), nullable=False, unique=True, index=True)
+    title         = Column(String(255), nullable=False, default="")
+    semester      = Column(String(16), nullable=False, default="")
+    # Turmas cujos grupos podem enviar, separadas por virgula; vazio vale a disciplina.
+    class_ids     = Column(Text, nullable=False, default="")
+    active        = Column(Boolean, nullable=False, default=True)
+    closes_at     = Column(DateTime, nullable=True)
+    max_files_per_group = Column(Integer, nullable=False, default=5)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class QuestionModel(Base):
@@ -1044,6 +1075,9 @@ class QuizGroupConfigModel(Base):
     seed          = Column(String(64), nullable=False)
     #: Penalidade por ausente: `none`, `zero` (ausente conta zero na media) ou
     #: `percent` (cada ausente tira `absence_percent` por cento da nota do grupo).
+    # Grupos que nao jogam este quiz (ids separados por virgula): o que acabou de
+    # apresentar nao responde ao quiz feito sobre a propria apresentacao.
+    excluded_group_ids = Column(Text, nullable=False, default="")
     absence_mode    = Column(String(8), nullable=False, default="none")
     absence_percent = Column(Integer, nullable=False, default=0)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -1322,9 +1356,16 @@ def _add_compatibility_columns(sync_conn) -> None:
             "penalty_points": "FLOAT NOT NULL DEFAULT 0",
             "class_id": "VARCHAR(64) NULL",
         },
+        "materials": {
+            "group_id": "VARCHAR(64) NULL",
+            "student_id": "VARCHAR(64) NULL",
+            "uploader_name": "VARCHAR(180) NULL",
+            "link_id": "VARCHAR(64) NULL",
+        },
         "quiz_group_configs": {
             "class_id": "VARCHAR(64) NULL",
             "class_ids": "TEXT NULL",
+            "excluded_group_ids": "TEXT NULL",
             "absence_mode": "VARCHAR(8) NOT NULL DEFAULT 'none'",
             "absence_percent": "INTEGER NOT NULL DEFAULT 0",
         },

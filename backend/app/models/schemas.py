@@ -1582,6 +1582,39 @@ class MaterialResponse(BaseModel):
     char_count: int
     truncated: bool
     created_at: datetime
+    # Material enviado por um grupo pelo link de envio: de qual grupo e quem enviou.
+    group_id: Optional[str] = None
+    uploader_name: str = ""
+    from_link: bool = False
+
+
+class MaterialLinkCreate(BaseModel):
+    """Link para os alunos enviarem o material das apresentacoes."""
+    discipline_id: str = Field(min_length=1)
+    title: str = Field(default="", max_length=255)
+    # Turmas cujos grupos podem enviar (varias na aula reunida). Vazio: a disciplina.
+    class_ids: list[str] = Field(default_factory=list, max_length=20)
+    closes_at: Optional[datetime] = None
+    max_files_per_group: int = Field(default=5, ge=1, le=20)
+
+
+class MaterialLinkUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=255)
+    active: Optional[bool] = None
+    closes_at: Optional[datetime] = None
+    #: `closes_at` ausente deixa como esta; para tirar o prazo, `clear_deadline`.
+    clear_deadline: bool = False
+    max_files_per_group: Optional[int] = Field(default=None, ge=1, le=20)
+
+
+class MaterialGroupAssign(BaseModel):
+    """Liga um material a um grupo de projeto (ou solta, com `group_id` nulo)."""
+    group_id: Optional[str] = None
+
+
+class LessonPresentationGroup(BaseModel):
+    """Liga uma gravacao a um grupo, para ela valer como a apresentacao dele."""
+    group_id: Optional[str] = None
 
 
 class MaterialRenameRequest(BaseModel):
@@ -1597,6 +1630,16 @@ def _quiz_source_ids(values: List[Optional[str]]) -> List[str]:
         if item and item not in resultado:
             resultado.append(item)
     return resultado
+
+
+class QuizGroupSetup(BaseModel):
+    """Como o quiz gerado ja deve ficar configurado como quiz em grupo."""
+    mode: Literal["media", "representante"] = "media"
+    discipline_id: str = Field(min_length=1)
+    class_ids: List[str] = Field(default_factory=list, max_length=20)
+    exclude_group_ids: List[str] = Field(default_factory=list, max_length=50)
+    absence_mode: Literal["none", "zero", "percent"] = "none"
+    absence_percent: int = Field(default=0, ge=0, le=100)
 
 
 class QuizCreateRequest(BaseModel):
@@ -1621,6 +1664,11 @@ class QuizCreateRequest(BaseModel):
     ] = Field(default_factory=lambda: ["multipla_escolha"])
     dificuldade: Literal["mista", "facil", "medio", "dificil"] = "mista"
     llm: Optional[str] = None
+    #: Nome do quiz; vazio usa o que sai das fontes ("Quiz: <primeira fonte>").
+    titulo: Optional[str] = Field(default=None, max_length=255)
+    #: Quiz que ja nasce em grupo, para o quiz rapido da apresentacao: quando o job
+    #: termina, o quiz esta ligado as turmas e sem o grupo que apresentou.
+    group_setup: Optional["QuizGroupSetup"] = None
 
     def lesson_sources(self) -> List[str]:
         """Aulas escolhidas, do atalho singular e da lista, sem repetir."""

@@ -35,6 +35,7 @@ from ..core.database import (
     ProjectGroupNameResolutionModel,
     ProjectGroupMemberModel,
     ProjectGroupClassModel,
+    MaterialSubmissionLinkModel,
     DisciplineModel,
     QuizModel,
     QuizParticipantModel,
@@ -88,6 +89,10 @@ from ..models.schemas import (
     ProjectGroupCommitRequest,
     ProjectGroupAssignClass,
     ProjectGroupInferClasses,
+    MaterialLinkCreate,
+    MaterialLinkUpdate,
+    MaterialGroupAssign,
+    LessonPresentationGroup,
     ProjectGroupUpdate,
     ProjectGroupMemberLink,
     ProjectGroupSuggestedLinksCommit,
@@ -3143,6 +3148,7 @@ async def upload_material(
 async def list_materials(
     discipline_id: Optional[str] = None,
     discipline: Optional[str] = None,
+    group_id: Optional[str] = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3159,6 +3165,8 @@ async def list_materials(
     )
     if discipline_id:
         query = query.where(MaterialModel.discipline_id == discipline_id)
+    if group_id:
+        query = query.where(MaterialModel.group_id == group_id)
     rows = (
         await db.execute(query.order_by(MaterialModel.created_at.desc()))
     ).scalars().all()
@@ -3243,6 +3251,217 @@ async def _resolve_discipline(
     return None, texto
 
 
+def _link_path(link: MaterialSubmissionLinkModel) -> str:
+    """Caminho publico do link; o cliente junta com o endereco do servidor."""
+    return f"/education/material-submit/{link.token}"
+
+
+async def _material_link_out(
+    link: MaterialSubmissionLinkModel, db: AsyncSession
+) -> Dict[str, Any]:
+    """O link com o que ele ja recebeu: arquivos e quantos grupos ja mandaram."""
+    from ..services import material_submission_service as submissions
+    from ..services.project_group_service import class_labels, group_in_any_class_clause
+
+    turmas = submissions.link_class_ids(link)
+    labels = await class_labels(db, link.tutor_id, turmas)
+    received = (await db.execute(select(MaterialModel.group_id).where(
+        MaterialModel.link_id == link.id))).scalars().all()
+    group_query = select(func.count()).select_from(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == link.tutor_id,
+        ProjectGroupModel.discipline_id == link.discipline_id,
+    )
+    if turmas:
+        group_query = group_query.where(group_in_any_class_clause(turmas))
+    total_groups = (await db.execute(group_query)).scalar_one()
+    discipline = await db.get(DisciplineModel, link.discipline_id)
+    return dict(
+        id=link.id, token=link.token, path=_link_path(link),
+        title=link.title or "", discipline_id=link.discipline_id,
+        discipline=_discipline_label(discipline) if discipline else "",
+        class_ids=turmas,
+        class_label=" + ".join(labels[item]["display"] for item in turmas if item in labels),
+        state=submissions.link_state(link), active=bool(link.active),
+        closes_at=link.closes_at, max_files_per_group=link.max_files_per_group,
+        files_received=len(received),
+        groups_sent=len({item for item in received if item}),
+        groups_total=int(total_groups), created_at=link.created_at,
+    )
+
+
+async def _owned_material_link(link_id: str, tutor_id: str,
+                               db: AsyncSession) -> MaterialSubmissionLinkModel:
+    link = await db.get(MaterialSubmissionLinkModel, link_id)
+    if link is None or link.tutor_id != tutor_id:
+        raise HTTPException(404, "Link não encontrado")
+    return link
+
+
+@router.post("/material-links")
+async def create_material_link(
+    body: MaterialLinkCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cria o link publico em que os alunos enviam o material da apresentação.
+
+    Um link por disciplina (ou por turmas, para a aula reunida). O aluno digita a
+    matrícula, o sistema acha o grupo dele e o arquivo vira material ligado ao grupo.
+    """
+    from ..services import material_submission_service as submissions
+
+    discipline = await _owned_project_discipline(body.discipline_id, user["tutor_id"], db)
+    class_ids = await _classes_of_discipline(None, body.class_ids, discipline,
+                                             user["tutor_id"], db)
+    link = MaterialSubmissionLinkModel(
+        tutor_id=user["tutor_id"], discipline_id=discipline.id,
+        token=submissions.new_token(), title=" ".join(body.title.split()),
+        semester=discipline.semester or "", class_ids=",".join(class_ids),
+        closes_at=submissions._naive(body.closes_at),
+        max_files_per_group=body.max_files_per_group,
+    )
+    db.add(link)
+    await db.commit()
+    await db.refresh(link)
+    return await _material_link_out(link, db)
+
+
+@router.get("/material-links")
+async def list_material_links(
+    discipline_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(MaterialSubmissionLinkModel).where(
+        MaterialSubmissionLinkModel.tutor_id == user["tutor_id"])
+    if discipline_id:
+        query = query.where(MaterialSubmissionLinkModel.discipline_id == discipline_id)
+    rows = (await db.execute(query.order_by(
+        MaterialSubmissionLinkModel.created_at.desc()))).scalars().all()
+    return [await _material_link_out(item, db) for item in rows]
+
+
+@router.patch("/material-links/{link_id}")
+async def update_material_link(
+    link_id: str,
+    body: MaterialLinkUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fecha ou reabre o link, muda o título, o prazo ou o limite de arquivos."""
+    from ..services import material_submission_service as submissions
+
+    link = await _owned_material_link(link_id, user["tutor_id"], db)
+    if body.title is not None:
+        link.title = " ".join(body.title.split())
+    if body.active is not None:
+        link.active = body.active
+    if body.clear_deadline:
+        link.closes_at = None
+    elif body.closes_at is not None:
+        link.closes_at = submissions._naive(body.closes_at)
+    if body.max_files_per_group is not None:
+        link.max_files_per_group = body.max_files_per_group
+    await db.commit()
+    await db.refresh(link)
+    return await _material_link_out(link, db)
+
+
+@router.delete("/material-links/{link_id}")
+async def delete_material_link(
+    link_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apaga o link (a URL deixa de funcionar). O que já foi enviado continua nos materiais."""
+    link = await _owned_material_link(link_id, user["tutor_id"], db)
+    await db.delete(link)
+    await db.commit()
+    return {"deleted": link_id}
+
+
+@router.get("/presentations")
+async def list_presentations(
+    discipline_id: str,
+    class_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cada grupo com o material enviado e a gravação da apresentação dele.
+
+    Mostra de relance quem já mandou os slides e quem já apresentou, e o que falta
+    para o quiz rápido de cada grupo (`gaps`: `material` e/ou `gravação`).
+    """
+    from ..services import material_submission_service as submissions
+
+    await _owned_project_discipline(discipline_id, user["tutor_id"], db)
+    rows = await submissions.presentations_overview(
+        db, user["tutor_id"], discipline_id, class_id or None)
+    for row in rows:
+        row["gaps"] = submissions.quiz_source_gaps(row)
+    return rows
+
+
+@router.put("/materials/{material_id}/group")
+async def assign_material_group(
+    material_id: str,
+    body: MaterialGroupAssign,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liga um material já guardado a um grupo (ou solta).
+
+    Para os slides que chegaram por outro caminho (e-mail, chat): entram na tela de
+    Material e aqui passam a valer como o material da apresentação do grupo.
+    """
+    from ..services import material_submission_service as submissions
+
+    material = await db.get(MaterialModel, material_id)
+    if not material or material.tutor_id != user["tutor_id"]:
+        raise HTTPException(404, "Material nao encontrado")
+    group = None
+    if body.group_id:
+        group = await _owned_project_group(body.group_id, user["tutor_id"], db)
+    try:
+        await submissions.attach_material_to_group(db, material, group)
+    except submissions.SubmissionError as exc:
+        raise HTTPException(exc.status, exc.message) from exc
+    await db.refresh(material)
+    return _material_response(material)
+
+
+@router.put("/lessons/{lesson_id}/presentation-group")
+async def assign_lesson_presentation_group(
+    lesson_id: str,
+    body: LessonPresentationGroup,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liga uma gravação ao grupo, para valer como a apresentação dele.
+
+    Serve para a apresentação que foi gravada como palestra. A gravação passa a ser
+    do tipo apresentação (e o resumo fala dela assim); ao soltar, volta a palestra.
+    Aula não entra: ela pertence às turmas, não a um grupo.
+    """
+    lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
+    if lesson.kind == "aula":
+        raise HTTPException(422, "Aula pertence às turmas e não a um grupo de projeto.")
+    if body.group_id:
+        group = await _owned_project_group(body.group_id, user["tutor_id"], db)
+        owner = await db.get(DisciplineModel, group.discipline_id)
+        lesson.group_id = group.id
+        lesson.kind = "apresentacao"
+        if owner is not None and owner.tutor_id == user["tutor_id"]:
+            lesson.discipline = _discipline_label(owner)
+        lesson.semester = group.semester or lesson.semester
+    else:
+        lesson.group_id = None
+        lesson.kind = "palestra"
+    await db.commit()
+    await db.refresh(lesson)
+    return _lesson_response(lesson, group_name=group.name if body.group_id else "")
+
+
 def _material_response(material: MaterialModel) -> MaterialResponse:
     return MaterialResponse(
         id=material.id,
@@ -3255,6 +3474,9 @@ def _material_response(material: MaterialModel) -> MaterialResponse:
         char_count=material.char_count or 0,
         truncated=bool(material.truncated),
         created_at=material.created_at,
+        group_id=material.group_id,
+        uploader_name=material.uploader_name or "",
+        from_link=bool(material.link_id),
     )
 
 
@@ -3401,7 +3623,7 @@ async def _quiz_generation_context(
         "resumo": "\n\n".join(blocos),
         "disciplina": ", ".join(dict.fromkeys(disciplinas)) or "Geral",
         "titulo_aula": rotulos[0],
-        "titulo": titulo,
+        "titulo": " ".join((request.titulo or "").split()) or titulo,
         "fontes": fontes,
         "ignoradas": sem_texto,
         # Quiz pode nao ter aula nenhuma, e a coluna e NOT NULL: fica a primeira
@@ -3595,15 +3817,61 @@ async def _run_quiz_job(job, progress) -> Dict[str, Any]:
             )
     finally:
         reset_user_llms(token)
+    message = response.message
+    if request.group_setup is not None:
+        # Quiz rapido da apresentacao: o quiz ja sai ligado as turmas e sem o grupo que
+        # apresentou. Se isso falhar, o quiz continua valendo - so fica individual - e
+        # o aviso diz por que.
+        from .quiz_group import apply_group_setup
+
+        try:
+            async with AsyncSessionLocal() as session:
+                await apply_group_setup(
+                    session, response.quiz_id, job.tutor_id, request.group_setup)
+        except HTTPException as exc:
+            logger.warning(f"Quiz {response.quiz_id} gerado, sem ligar aos grupos: {exc.detail}")
+            message = (
+                f"{message or ''} Não consegui ligar o quiz aos grupos: {exc.detail}"
+            ).strip()
     return {
         "quiz_id": response.quiz_id,
         "prontas": len(response.questoes),
-        "message": response.message,
+        "message": message,
         "attempts": response.attempts,
     }
 
 
 quiz_job_service.queue.configure(runner=_run_quiz_job, notifier=_notify_quiz_job)
+
+
+async def _validate_group_setup(setup, tutor_id: str, db: AsyncSession) -> None:
+    """Confere já no pedido o que o job só descobriria minutos depois.
+
+    Disciplina, turmas e grupos a deixar de fora precisam ser do professor, e algum
+    grupo precisa sobrar para jogar.
+    """
+    from ..services.project_group_service import as_class_list, group_in_any_class_clause
+
+    discipline = await _owned_project_discipline(setup.discipline_id, tutor_id, db)
+    class_ids = await _classes_of_discipline(None, setup.class_ids, discipline, tutor_id, db)
+    excluded = as_class_list(setup.exclude_group_ids)
+    query = select(ProjectGroupModel.id).where(
+        ProjectGroupModel.tutor_id == tutor_id,
+        ProjectGroupModel.discipline_id == discipline.id,
+    )
+    if class_ids:
+        query = query.where(group_in_any_class_clause(class_ids))
+    ids = set((await db.execute(query)).scalars().all())
+    if not ids - set(excluded):
+        raise HTTPException(
+            422, "Não sobra nenhum grupo para responder ao quiz depois de deixar este de fora.")
+    if set(excluded) - {
+        item for item in (await db.execute(select(ProjectGroupModel.id).where(
+            ProjectGroupModel.tutor_id == tutor_id,
+            ProjectGroupModel.discipline_id == discipline.id,
+            ProjectGroupModel.id.in_(excluded or [""])))).scalars().all()
+    }:
+        raise HTTPException(404, "Grupo a deixar de fora não encontrado nesta disciplina")
 
 
 @router.post("/quiz/generate/async", status_code=202)
@@ -3621,6 +3889,8 @@ async def generate_quiz_in_background(
 
     tutor_id = user["tutor_id"]
     context = await _quiz_generation_context(request, tutor_id, db)
+    if request.group_setup is not None:
+        await _validate_group_setup(request.group_setup, tutor_id, db)
     return await quiz_job_service.queue.enqueue(
         tutor_id=tutor_id,
         user_id=str(user.get("uid") or ""),

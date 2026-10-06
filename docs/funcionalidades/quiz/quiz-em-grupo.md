@@ -24,6 +24,13 @@ turmas na mesma aula (3002 e 3030, na segunda) marcam-se juntas, e entram os gru
 qualquer uma delas, inclusive os que misturam alunos das duas. Veja
 [Grupos por turma](../grupos-por-turma.md).
 
+### Grupos que ficam de fora
+
+O quiz rápido de uma apresentação deixa de fora o grupo que apresentou: ele não joga, não
+conta como ausente e não entra no ranking. O integrante desse grupo que tentar entrar vê
+que o grupo dele apresentou o trabalho. Veja
+[Material das apresentações](../material-das-apresentacoes.md).
+
 ## Como o aluno entra
 
 A página de entrada pede a **matrícula**, não o nome. O servidor procura a matrícula nos

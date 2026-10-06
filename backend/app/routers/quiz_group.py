@@ -45,6 +45,8 @@ class GroupConfigBody(BaseModel):
     #: clientes antigos.
     class_id: Optional[str] = None
     class_ids: list[str] = Field(default_factory=list, max_length=20)
+    #: Grupos que não jogam este quiz (o que acabou de apresentar, por exemplo).
+    exclude_group_ids: list[str] = Field(default_factory=list, max_length=50)
     #: `none`: sem penalidade; `zero`: ausente conta zero na média (só no modo média);
     #: `percent`: cada ausente tira `absence_percent` por cento da nota do grupo.
     absence_mode: Literal["none", "zero", "percent"] = "none"
@@ -111,6 +113,7 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
     discipline = await db.get(DisciplineModel, config.discipline_id)
     turma_ids = groups.config_class_ids(config)
     turmas = await class_labels(db, config.tutor_id, turma_ids)
+    excluidos = groups.config_excluded_ids(config)
 
     grupos = (
         await db.execute(
@@ -120,6 +123,7 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
                 ProjectGroupModel.discipline_id == config.discipline_id,
                 *([ProjectGroupModel.semester == config.semester] if config.semester else []),
                 *([group_in_any_class_clause(turma_ids)] if turma_ids else []),
+                *([ProjectGroupModel.id.not_in(excluidos)] if excluidos else []),
             )
             .order_by(ProjectGroupModel.name)
         )
@@ -194,6 +198,14 @@ async def _overview(db: AsyncSession, quiz: QuizModel, config: QuizGroupConfigMo
         "class_ids": turma_ids,
         "class_label": " + ".join(
             turmas[item]["display"] for item in turma_ids if item in turmas),
+        "excluded_group_ids": excluidos,
+        "excluded_groups": [
+            nome for nome in (await db.execute(
+                select(ProjectGroupModel.name)
+                .where(ProjectGroupModel.id.in_(excluidos or [""]))
+                .order_by(ProjectGroupModel.name)
+            )).scalars().all()
+        ],
         "seed": config.seed,
         "absence_mode": config.absence_mode or groups.ABSENCE_NONE,
         "absence_percent": int(config.absence_percent or 0),
@@ -221,6 +233,142 @@ async def get_group_quiz(
     return await _overview(db, quiz, config)
 
 
+async def configure_group(
+    db: AsyncSession, quiz: QuizModel, tutor_id: str, body: GroupConfigBody
+) -> QuizGroupConfigModel:
+    """Liga (ou ajusta) o modo em grupo do quiz, com todas as validações.
+
+    Serve à rota do professor e ao quiz rápido da apresentação, que nasce já em grupo.
+    """
+    if body.absence_mode == groups.ABSENCE_ZERO and body.mode == groups.MODE_REPRESENTATIVE:
+        raise HTTPException(
+            422,
+            "\"Ausente conta zero\" só vale na média do grupo. No modo representante "
+            "use o desconto por ausente.",
+        )
+    if body.absence_mode == groups.ABSENCE_PERCENT and body.absence_percent < 1:
+        raise HTTPException(422, "Informe o desconto por ausente (de 1% a 100%).")
+    percent = body.absence_percent if body.absence_mode == groups.ABSENCE_PERCENT else 0
+
+    atual = await groups.get_config(db, quiz.id)
+    semester = body.semester.strip()
+    class_ids = as_class_list([*body.class_ids, body.class_id or ""])
+    class_id = class_ids[0] if class_ids else None
+    excluded = as_class_list(body.exclude_group_ids)
+    if atual is not None and (
+        atual.mode, atual.discipline_id, atual.semester, groups.config_class_ids(atual),
+        groups.config_excluded_ids(atual),
+    ) == (body.mode, body.discipline_id, semester, class_ids, excluded):
+        atual.absence_mode, atual.absence_percent = body.absence_mode, percent
+        await db.commit()
+        await db.refresh(atual)
+        return atual
+
+    _ensure_editable(quiz)
+
+    discipline = await db.get(DisciplineModel, body.discipline_id)
+    if discipline is None or discipline.tutor_id != tutor_id:
+        raise HTTPException(404, "Disciplina não encontrada")
+    for item in class_ids:
+        turma = await db.get(ClassGroupModel, item)
+        if turma is None or turma.tutor_id != tutor_id:
+            raise HTTPException(404, "Turma não encontrada")
+        if turma.discipline_id != body.discipline_id:
+            raise HTTPException(422, "Essa turma não é desta disciplina")
+    if excluded:
+        found = (await db.execute(
+            select(ProjectGroupModel.id).where(
+                ProjectGroupModel.tutor_id == tutor_id,
+                ProjectGroupModel.discipline_id == body.discipline_id,
+                ProjectGroupModel.id.in_(excluded),
+            )
+        )).scalars().all()
+        if len(found) != len(excluded):
+            raise HTTPException(404, "Grupo a deixar de fora não encontrado nesta disciplina")
+    total_grupos = (
+        await db.execute(
+            select(func.count())
+            .select_from(ProjectGroupModel)
+            .where(
+                ProjectGroupModel.tutor_id == tutor_id,
+                ProjectGroupModel.discipline_id == body.discipline_id,
+                *([ProjectGroupModel.semester == semester] if semester else []),
+                *([group_in_any_class_clause(class_ids)] if class_ids else []),
+                *([ProjectGroupModel.id.not_in(excluded)] if excluded else []),
+            )
+        )
+    ).scalar_one()
+    if not total_grupos:
+        raise HTTPException(
+            422,
+            "Não sobra nenhum grupo para jogar: o grupo deixado de fora era o único."
+            if excluded else
+            "Essa turma não tem grupos de projeto cadastrados."
+            if class_ids else "Essa disciplina não tem grupos de projeto cadastrados.",
+        )
+
+    config = await groups.get_config(db, quiz.id)
+    mudou_grupos = False
+    if config is None:
+        config = QuizGroupConfigModel(
+            quiz_id=quiz.id, tutor_id=tutor_id, seed=draw_rule.new_seed()
+        )
+        db.add(config)
+    else:
+        mudou_grupos = (
+            config.discipline_id, groups.config_class_ids(config),
+            groups.config_excluded_ids(config),
+        ) != (body.discipline_id, class_ids, excluded)
+        if (config.mode, config.discipline_id, config.semester,
+                groups.config_class_ids(config), groups.config_excluded_ids(config)) != (
+            body.mode, body.discipline_id, semester, class_ids, excluded
+        ) and await _answer_count(db, quiz.id):
+            raise HTTPException(
+                409,
+                "A turma já respondeu: não dá para mudar o modo, a disciplina, as turmas "
+                "nem os grupos que ficam de fora.",
+            )
+    if mudou_grupos:
+        await db.execute(sql_delete(QuizGroupRepresentativeModel).where(
+            QuizGroupRepresentativeModel.quiz_id == quiz.id))
+        await db.execute(sql_delete(QuizGroupLinkModel).where(
+            QuizGroupLinkModel.quiz_id == quiz.id))
+
+    config.mode = body.mode
+    config.discipline_id = body.discipline_id
+    config.semester = semester
+    config.class_id = class_id
+    config.class_ids = ",".join(class_ids)
+    config.excluded_group_ids = ",".join(excluded)
+    config.absence_mode = body.absence_mode
+    config.absence_percent = percent
+    await db.commit()
+    await db.refresh(config)
+    return config
+
+
+async def apply_group_setup(
+    db: AsyncSession, quiz_id: str, tutor_id: str, setup
+) -> QuizGroupConfigModel:
+    """Deixa o quiz recém-gerado em grupo, como pediu o quiz rápido da apresentação."""
+    quiz = await db.get(QuizModel, quiz_id)
+    if quiz is None or quiz.tutor_id != tutor_id:
+        raise HTTPException(404, "Quiz não encontrado")
+    discipline = await db.get(DisciplineModel, setup.discipline_id)
+    return await configure_group(
+        db, quiz, tutor_id,
+        GroupConfigBody(
+            mode=setup.mode,
+            discipline_id=setup.discipline_id,
+            semester=(discipline.semester or "") if discipline else "",
+            class_ids=list(setup.class_ids),
+            exclude_group_ids=list(setup.exclude_group_ids),
+            absence_mode=setup.absence_mode,
+            absence_percent=setup.absence_percent,
+        ),
+    )
+
+
 @router.put("")
 async def set_group_quiz(
     quiz_id: str,
@@ -236,89 +384,7 @@ async def set_group_quiz(
     """
     tutor_id = user["tutor_id"]
     quiz = await _owned_quiz(quiz_id, tutor_id, db)
-
-    if body.absence_mode == groups.ABSENCE_ZERO and body.mode == groups.MODE_REPRESENTATIVE:
-        raise HTTPException(
-            422,
-            "\"Ausente conta zero\" só vale na média do grupo. No modo representante "
-            "use o desconto por ausente.",
-        )
-    if body.absence_mode == groups.ABSENCE_PERCENT and body.absence_percent < 1:
-        raise HTTPException(422, "Informe o desconto por ausente (de 1% a 100%).")
-    percent = body.absence_percent if body.absence_mode == groups.ABSENCE_PERCENT else 0
-
-    atual = await groups.get_config(db, quiz.id)
-    semester = body.semester.strip()
-    class_ids = as_class_list([*body.class_ids, body.class_id or ""])
-    class_id = class_ids[0] if class_ids else None
-    if atual is not None and (
-        atual.mode, atual.discipline_id, atual.semester, groups.config_class_ids(atual)
-    ) == (body.mode, body.discipline_id, semester, class_ids):
-        atual.absence_mode, atual.absence_percent = body.absence_mode, percent
-        await db.commit()
-        await db.refresh(atual)
-        return await _overview(db, quiz, atual)
-
-    _ensure_editable(quiz)
-
-    discipline = await db.get(DisciplineModel, body.discipline_id)
-    if discipline is None or discipline.tutor_id != tutor_id:
-        raise HTTPException(404, "Disciplina não encontrada")
-    for item in class_ids:
-        turma = await db.get(ClassGroupModel, item)
-        if turma is None or turma.tutor_id != tutor_id:
-            raise HTTPException(404, "Turma não encontrada")
-        if turma.discipline_id != body.discipline_id:
-            raise HTTPException(422, "Essa turma não é desta disciplina")
-    total_grupos = (
-        await db.execute(
-            select(func.count())
-            .select_from(ProjectGroupModel)
-            .where(
-                ProjectGroupModel.tutor_id == tutor_id,
-                ProjectGroupModel.discipline_id == body.discipline_id,
-                *([ProjectGroupModel.semester == semester] if semester else []),
-                *([group_in_any_class_clause(class_ids)] if class_ids else []),
-            )
-        )
-    ).scalar_one()
-    if not total_grupos:
-        raise HTTPException(
-            422,
-            "Essa turma não tem grupos de projeto cadastrados."
-            if class_ids else "Essa disciplina não tem grupos de projeto cadastrados.",
-        )
-
-    config = await groups.get_config(db, quiz.id)
-    if config is None:
-        config = QuizGroupConfigModel(
-            quiz_id=quiz.id, tutor_id=tutor_id, seed=draw_rule.new_seed()
-        )
-        db.add(config)
-    elif (config.mode, config.discipline_id, config.semester,
-          groups.config_class_ids(config)) != (
-        body.mode, body.discipline_id, semester, class_ids
-    ) and await _answer_count(db, quiz.id):
-        raise HTTPException(
-            409, "A turma já respondeu: não dá para mudar o modo, a disciplina nem a turma do grupo."
-        )
-    elif (config.discipline_id, groups.config_class_ids(config)) != (
-        body.discipline_id, class_ids
-    ):
-        await db.execute(sql_delete(QuizGroupRepresentativeModel).where(
-            QuizGroupRepresentativeModel.quiz_id == quiz.id))
-        await db.execute(sql_delete(QuizGroupLinkModel).where(
-            QuizGroupLinkModel.quiz_id == quiz.id))
-
-    config.mode = body.mode
-    config.discipline_id = body.discipline_id
-    config.semester = semester
-    config.class_id = class_id
-    config.class_ids = ",".join(class_ids)
-    config.absence_mode = body.absence_mode
-    config.absence_percent = percent
-    await db.commit()
-    await db.refresh(config)
+    config = await configure_group(db, quiz, tutor_id, body)
     return await _overview(db, quiz, config)
 
 

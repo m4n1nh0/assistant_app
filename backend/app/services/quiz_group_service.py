@@ -377,6 +377,11 @@ def config_class_ids(config: QuizGroupConfigModel) -> list[str]:
     return project_groups.as_class_list(config.class_id)
 
 
+def config_excluded_ids(config: QuizGroupConfigModel) -> list[str]:
+    """Grupos que ficam de fora do quiz (por exemplo, o que esta apresentando)."""
+    return project_groups.as_class_list((config.excluded_group_ids or "").split(","))
+
+
 async def _groups_of(db: AsyncSession, config: QuizGroupConfigModel) -> list[ProjectGroupModel]:
     query = select(ProjectGroupModel).where(
         ProjectGroupModel.tutor_id == config.tutor_id,
@@ -387,6 +392,9 @@ async def _groups_of(db: AsyncSession, config: QuizGroupConfigModel) -> list[Pro
     turmas = config_class_ids(config)
     if turmas:
         query = query.where(project_groups.group_in_any_class_clause(turmas))
+    excluded = config_excluded_ids(config)
+    if excluded:
+        query = query.where(ProjectGroupModel.id.not_in(excluded))
     return list((await db.execute(query)).scalars().all())
 
 
@@ -421,10 +429,30 @@ async def _students_of(
     )
 
 
+async def _is_excluded_member(
+    db: AsyncSession, config: QuizGroupConfigModel, enrollment: str
+) -> bool:
+    """A matricula e de integrante de um grupo que nao joga este quiz?
+
+    Quem apresentou nao responde ao quiz da propria apresentacao, e a tela precisa
+    dizer isso em vez de "matricula nao esta em nenhum grupo".
+    """
+    excluded = config_excluded_ids(config)
+    alvo = normalize_enrollment(enrollment)
+    if not excluded or not alvo:
+        return False
+    members = await _members_of(db, excluded)
+    students = await _students_of(db, config.tutor_id, members)
+    ids = {s.id for s in students if normalize_enrollment(s.external_id) == alvo}
+    return any(member.student_id in ids for member in members)
+
+
 async def resolve_enrollment(
     db: AsyncSession, config: QuizGroupConfigModel, enrollment: str
 ) -> Resolved:
     """Matricula -> integrante e grupo, dentro da disciplina do quiz."""
+    if await _is_excluded_member(db, config, enrollment):
+        raise EnrollmentError("presenter")
     groups = await _groups_of(db, config)
     members = await _members_of(db, [group.id for group in groups])
     students = await _students_of(db, config.tutor_id, members)

@@ -18,6 +18,7 @@ from app.core.database import (
     ClassGroupModel,
     ClassScheduleModel,
     DisciplineModel,
+    MaterialModel,
     ProjectGroupClassModel,
     ProjectGroupMemberModel,
     ProjectGroupModel,
@@ -44,7 +45,7 @@ TABELAS = (
     ProjectGroupClassModel, ProjectGroupMemberModel, StudentModel, QuizModel,
     QuestionModel, QuizParticipantModel, StudentAnswerModel, QuestionTranslationModel,
     QuizGroupConfigModel, QuizGroupLinkModel, QuizGroupRepresentativeModel,
-    QuizJobModel, QuizSourceModel,
+    QuizJobModel, QuizSourceModel, MaterialModel,
 )
 
 
@@ -234,3 +235,193 @@ def test_matricula_da_quinta_nao_entra_no_quiz_da_segunda(api):
     with pytest.raises(quiz_groups.EnrollmentError) as erro:
         asyncio.run(_resolver(api.sessions, ["c-3002", "c-3030"], "20240004"))
     assert erro.value.code == "no_group"
+
+
+# --- grupo que apresentou fica de fora (quiz rapido da apresentacao) -----------------
+
+
+def test_grupo_de_fora_some_do_quiz_e_vem_nomeado_no_painel(api):
+    painel = ligar(api, class_ids=["c-3002", "c-3030"], exclude_group_ids=["g1"]).json()
+
+    assert nomes_dos_grupos(painel) == ["GRUPO 2"]
+    assert painel["excluded_group_ids"] == ["g1"]
+    assert painel["excluded_groups"] == ["GRUPO 1"]
+
+
+def test_sem_exclusao_o_painel_nao_lista_ninguem_de_fora(api):
+    painel = ligar(api, class_ids=["c-3002", "c-3030"]).json()
+
+    assert painel["excluded_group_ids"] == [] and painel["excluded_groups"] == []
+
+
+def test_grupo_de_fora_inexistente_ou_de_outra_disciplina_e_recusado(api):
+    async def semear():
+        async with api.sessions() as db:
+            db.add(ProjectGroupModel(id="g-outra", tutor_id="t1", discipline_id="d2",
+                                     semester="2026.2", name="GRUPO X"))
+            await db.commit()
+    asyncio.run(semear())
+
+    assert ligar(api, exclude_group_ids=["nao-existe"]).status_code == 404
+    assert ligar(api, exclude_group_ids=["g-outra"]).status_code == 404
+
+
+def test_nao_deixa_de_fora_o_unico_grupo_que_sobraria(api):
+    resposta = ligar(api, class_ids=["c-qui"], exclude_group_ids=["g3"])
+
+    assert resposta.status_code == 422
+    assert "Não sobra nenhum grupo" in resposta.json()["detail"]
+
+
+def test_integrante_do_grupo_de_fora_recebe_o_aviso_proprio(api):
+    from sqlalchemy import select
+
+    ligar(api, class_ids=["c-3002", "c-3030"], exclude_group_ids=["g1"])
+
+    async def resolver(matricula):
+        async with api.sessions() as db:
+            config = (await db.execute(select(QuizGroupConfigModel))).scalars().one()
+            return await quiz_groups.resolve_enrollment(db, config, matricula)
+
+    # Ana (3002) e Bia (3030) sao do GRUPO 1, que apresentou.
+    for matricula in ("20240001", "2024-0002"):
+        with pytest.raises(quiz_groups.EnrollmentError) as erro:
+            asyncio.run(resolver(matricula))
+        assert erro.value.code == "presenter"
+    # Caio, do GRUPO 2, joga normalmente.
+    assert asyncio.run(resolver("20240003")).group_name == "GRUPO 2"
+
+
+def test_o_aviso_de_quem_apresentou_existe_nos_tres_idiomas():
+    from app.routers import quiz_play
+
+    for idioma in ("pt", "es", "en"):
+        assert quiz_play._PUBLIC_TEXT[idioma]["enrollment_presenter"]
+
+
+def test_mudar_o_grupo_de_fora_limpa_representantes_e_vinculos(api):
+    ligar(api, class_ids=["c-3002", "c-3030"])
+    api.put("/education/quiz/quiz1/group/representatives/g2", json={"member_id": "m-caio"})
+
+    painel = ligar(api, class_ids=["c-3002", "c-3030"], exclude_group_ids=["g1"]).json()
+
+    grupo2 = next(item for item in painel["groups"] if item["name"] == "GRUPO 2")
+    assert grupo2["representative"] is None
+
+
+def test_depois_que_a_turma_respondeu_nao_muda_o_grupo_de_fora(api, monkeypatch):
+    from app.routers import quiz_group as router
+
+    ligar(api, class_ids=["c-3002", "c-3030"])
+
+    async def ja_respondeu(db, quiz_id):
+        return 3
+
+    monkeypatch.setattr(router, "_answer_count", ja_respondeu)
+
+    resposta = ligar(api, class_ids=["c-3002", "c-3030"], exclude_group_ids=["g1"])
+
+    assert resposta.status_code == 409
+    assert "grupos que ficam de fora" in resposta.json()["detail"]
+
+
+def test_regravar_so_a_penalidade_continua_valendo_com_grupo_de_fora(api):
+    ligar(api, class_ids=["c-3002", "c-3030"], exclude_group_ids=["g1"])
+
+    painel = ligar(api, class_ids=["c-3002", "c-3030"], exclude_group_ids=["g1"],
+                   absence_mode="percent", absence_percent=10).json()
+
+    assert painel["absence_mode"] == "percent" and painel["excluded_group_ids"] == ["g1"]
+
+
+# --- pedido de quiz ja em grupo --------------------------------------------------------
+
+
+def test_pedido_com_group_setup_sobrevive_ao_json_da_fila():
+    from app.models.schemas import QuizCreateRequest, QuizGroupSetup
+
+    pedido = QuizCreateRequest(
+        material_ids=["m1"], lesson_ids=["l1"], titulo="Quiz rapido: GRUPO 1",
+        group_setup=QuizGroupSetup(discipline_id="d1", class_ids=["c-3002", "c-3030"],
+                                   exclude_group_ids=["g1"]),
+    )
+
+    de_volta = QuizCreateRequest.model_validate(pedido.model_dump(mode="json"))
+
+    assert de_volta.group_setup.exclude_group_ids == ["g1"]
+    assert de_volta.group_setup.class_ids == ["c-3002", "c-3030"]
+    assert de_volta.titulo == "Quiz rapido: GRUPO 1"
+
+
+def test_pedido_antigo_sem_group_setup_continua_valido():
+    from app.models.schemas import QuizCreateRequest
+
+    pedido = QuizCreateRequest.model_validate({"material_ids": ["m1"]})
+
+    assert pedido.group_setup is None and pedido.titulo is None
+
+
+def test_valida_o_group_setup_ainda_no_pedido(api):
+    from fastapi import HTTPException
+
+    from app.models.schemas import QuizGroupSetup
+    from app.routers import education
+
+    async def validar(setup):
+        async with api.sessions() as db:
+            await education._validate_group_setup(setup, "t1", db)
+
+    asyncio.run(validar(QuizGroupSetup(discipline_id="d1", exclude_group_ids=["g1"])))
+
+    with pytest.raises(HTTPException) as unico:
+        asyncio.run(validar(QuizGroupSetup(
+            discipline_id="d1", class_ids=["c-qui"], exclude_group_ids=["g3"])))
+    assert unico.value.status_code == 422
+    with pytest.raises(HTTPException) as inexistente:
+        asyncio.run(validar(QuizGroupSetup(discipline_id="d1", exclude_group_ids=["xx"])))
+    assert inexistente.value.status_code == 404
+    with pytest.raises(HTTPException) as alheia:
+        asyncio.run(validar(QuizGroupSetup(discipline_id="nao-existe")))
+    assert alheia.value.status_code == 404
+
+
+def test_quiz_gerado_sai_em_grupo_sem_o_grupo_que_apresentou(api):
+    from app.models.schemas import QuizGroupSetup
+    from app.routers import quiz_group as router
+
+    async def aplicar():
+        async with api.sessions() as db:
+            return await router.apply_group_setup(
+                db, "quiz1", "t1",
+                QuizGroupSetup(discipline_id="d1", class_ids=["c-3002", "c-3030"],
+                               exclude_group_ids=["g1"], mode="media"))
+
+    config = asyncio.run(aplicar())
+
+    assert config.mode == "media" and config.semester == "2026.2"
+    assert quiz_groups.config_class_ids(config) == ["c-3002", "c-3030"]
+    assert quiz_groups.config_excluded_ids(config) == ["g1"]
+    painel = api.get("/education/quiz/quiz1/group").json()
+    assert nomes_dos_grupos(painel) == ["GRUPO 2"]
+
+
+def test_titulo_do_quiz_rapido_vem_do_pedido(api):
+    from app.models.schemas import QuizCreateRequest
+    from app.routers import education
+
+    async def montar(titulo):
+        async with api.sessions() as db:
+            if not await db.get(MaterialModel, "mat1"):
+                db.add(MaterialModel(id="mat1", tutor_id="t1", discipline_id="d1",
+                                     discipline="BD", title="Slides do G1", filename="g1.pdf",
+                                     source_type="pdf", content="texto do slide " * 40,
+                                     group_id="g1"))
+                await db.commit()
+            return await education._quiz_generation_context(
+                QuizCreateRequest(material_ids=["mat1"], titulo=titulo), "t1", db)
+
+    com_titulo = asyncio.run(montar("Quiz rapido: GRUPO 1"))
+    sem_titulo = asyncio.run(montar(None))
+
+    assert com_titulo["titulo"] == "Quiz rapido: GRUPO 1"
+    assert sem_titulo["titulo"].startswith("Quiz: ")

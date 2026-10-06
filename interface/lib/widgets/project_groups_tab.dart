@@ -8,6 +8,7 @@ import '../services/education_service.dart';
 import '../services/group_pdf_service.dart';
 import '../services/quiz_report.dart' show quizFilename;
 import 'group_draw_dialog.dart';
+import 'presentation_material_dialog.dart';
 import '../utils/theme.dart';
 import 'pdf_output.dart';
 
@@ -931,6 +932,18 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     );
   }
 
+  /// Abre o material das apresentações: link dos alunos, o que chegou e o quiz rápido.
+  Future<void> openPresentationMaterial() async {
+    final discipline = disciplines.where((item) => item.id == selectedId);
+    if (discipline.isEmpty) return;
+    await showPresentationMaterialDialog(
+      context,
+      discipline: discipline.first,
+      classes: turmas,
+      classFilter: classFilter,
+    );
+  }
+
   /// Abre o sorteio da ordem de apresentação da disciplina escolhida.
   Future<void> openDraw() async {
     final discipline = disciplines.where((item) => item.id == selectedId);
@@ -999,6 +1012,11 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             onPressed: busy || groups.isEmpty ? null : openDraw,
             icon: const Icon(Icons.casino_outlined),
             label: const Text('Sortear apresentação')),
+          OutlinedButton.icon(
+            key: const ValueKey('material-apresentacoes'),
+            onPressed: busy || selectedId == null ? null : openPresentationMaterial,
+            icon: const Icon(Icons.slideshow_outlined),
+            label: const Text('Material das apresentações')),
           OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : reviewSuggestedLinks,
             icon: const Icon(Icons.person_search_outlined),
             label: const Text('Sugerir nomes e matrículas')),

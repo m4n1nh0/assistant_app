@@ -41,6 +41,7 @@ _PUBLIC_TEXT = {
         "enrollment_invalid": "Digite a sua matrícula.",
         "enrollment_unknown": "Não encontrei essa matrícula. Confira o número e tente de novo.",
         "enrollment_no_group": "Essa matrícula não está em nenhum grupo deste quiz. Fale com o professor.",
+        "enrollment_presenter": "Seu grupo apresentou este trabalho e não responde este quiz. Aproveite para acompanhar a turma.",
         "group": "Grupo",
         "rep_only_title": "Quem responde é o representante",
         "rep_only_message": "O representante do {group} é {name}. Acompanhe e ajude o grupo a decidir.",
@@ -99,6 +100,7 @@ _PUBLIC_TEXT = {
         "enrollment_invalid": "Escribe tu matrícula.",
         "enrollment_unknown": "No encontré esa matrícula. Revisa el número e inténtalo de nuevo.",
         "enrollment_no_group": "Esa matrícula no está en ningún grupo de este quiz. Habla con el profesor.",
+        "enrollment_presenter": "Tu grupo presentó este trabajo y no responde este cuestionario. Aprovecha para seguir a la clase.",
         "group": "Grupo",
         "rep_only_title": "Responde el representante",
         "rep_only_message": "El representante de {group} es {name}. Acompaña y ayuda al grupo a decidir.",
@@ -157,6 +159,7 @@ _PUBLIC_TEXT = {
         "enrollment_invalid": "Enter your student ID.",
         "enrollment_unknown": "I could not find that student ID. Check the number and try again.",
         "enrollment_no_group": "That student ID is not in any group of this quiz. Talk to the teacher.",
+        "enrollment_presenter": "Your group gave this presentation and does not answer this quiz. Enjoy following the class.",
         "group": "Group",
         "rep_only_title": "The representative answers",
         "rep_only_message": "The representative of {group} is {name}. Follow along and help the group decide.",
@@ -1663,6 +1666,7 @@ async def quiz_submit_answer(
                 key = {
                     "invalid": "enrollment_invalid",
                     "no_group": "enrollment_no_group",
+                    "presenter": "enrollment_presenter",
                 }.get(exc.code, "enrollment_unknown")
                 return _attach_attempt_cookie(
                     _generate_join_page(

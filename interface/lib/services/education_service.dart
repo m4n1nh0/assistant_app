@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/group_draw.dart';
+import '../models/presentation_material.dart';
 import 'api_service.dart';
 import 'student_csv_parser.dart';
 
@@ -33,6 +34,9 @@ class EducationService {
   EducationService(this._api);
 
   String get _baseUrl => _api.baseUrl;
+
+  /// Endereço do servidor que o aluno abre nos links públicos (envio de material).
+  String get publicBaseUrl => _api.baseUrl;
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
@@ -106,6 +110,119 @@ class EducationService {
       body: jsonEncode({'discipline_id': disciplineId, 'group_ids': groupIds}),
     );
     return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
+  // --- Material das apresentações (link de envio dos alunos) ---------------
+
+  /// Cria o link público em que os alunos enviam o material da apresentação.
+  Future<MaterialLink> createMaterialLink({
+    required String disciplineId,
+    String title = '',
+    List<String> classIds = const [],
+    DateTime? closesAt,
+    int maxFilesPerGroup = 5,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/material-links'),
+      headers: _headers,
+      body: jsonEncode({
+        'discipline_id': disciplineId,
+        'title': title,
+        'class_ids': classIds,
+        if (closesAt != null) 'closes_at': closesAt.toUtc().toIso8601String(),
+        'max_files_per_group': maxFilesPerGroup,
+      }),
+    );
+    return MaterialLink.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<List<MaterialLink>> listMaterialLinks({String? disciplineId}) async {
+    final uri = Uri.parse('$_baseUrl/education/material-links').replace(
+      queryParameters: {
+        if (disciplineId != null && disciplineId.isNotEmpty)
+          'discipline_id': disciplineId,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    return [
+      for (final item in _decode(response) as List)
+        MaterialLink.fromJson(Map<String, dynamic>.from(item as Map)),
+    ];
+  }
+
+  /// Fecha ou reabre o link, e muda título, prazo ou limite de arquivos.
+  Future<MaterialLink> updateMaterialLink(
+    String id, {
+    String? title,
+    bool? active,
+    DateTime? closesAt,
+    bool clearDeadline = false,
+    int? maxFilesPerGroup,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/material-links/$id'),
+      headers: _headers,
+      body: jsonEncode({
+        if (title != null) 'title': title,
+        if (active != null) 'active': active,
+        if (closesAt != null) 'closes_at': closesAt.toUtc().toIso8601String(),
+        if (clearDeadline) 'clear_deadline': true,
+        if (maxFilesPerGroup != null) 'max_files_per_group': maxFilesPerGroup,
+      }),
+    );
+    return MaterialLink.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> deleteMaterialLink(String id) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/material-links/$id'),
+      headers: _headers,
+    );
+    _decode(response);
+  }
+
+  /// Cada grupo com o material enviado e a gravação da apresentação.
+  Future<List<PresentationRow>> listPresentations(
+    String disciplineId, {
+    String? classId,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/presentations').replace(
+      queryParameters: {
+        'discipline_id': disciplineId,
+        if (classId != null && classId.isNotEmpty) 'class_id': classId,
+      },
+    );
+    final response = await http.get(uri, headers: _headers);
+    return [
+      for (final item in _decode(response) as List)
+        PresentationRow.fromJson(Map<String, dynamic>.from(item as Map)),
+    ];
+  }
+
+  /// Liga um material já guardado a um grupo (ou solta, com `groupId` nulo).
+  Future<CourseMaterial> assignMaterialToGroup(
+    String materialId,
+    String? groupId,
+  ) async {
+    final response = await http.put(
+      Uri.parse('$_baseUrl/education/materials/$materialId/group'),
+      headers: _headers,
+      body: jsonEncode({'group_id': groupId}),
+    );
+    return CourseMaterial.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// Liga uma gravação (palestra ou apresentação) ao grupo, como a apresentação dele.
+  Future<void> assignLessonToGroup(String lessonId, String? groupId) async {
+    final response = await http.put(
+      Uri.parse('$_baseUrl/education/lessons/$lessonId/presentation-group'),
+      headers: _headers,
+      body: jsonEncode({'group_id': groupId}),
+    );
+    _decode(response);
   }
 
   Future<void> updateProjectGroup(String id, Map<String, dynamic> fields) async {
@@ -2142,6 +2259,12 @@ class CourseMaterial {
   final bool truncated;
   final DateTime? createdAt;
 
+  /// Material de um grupo (slides da apresentação), enviado pelo link dos alunos
+  /// ou ligado a ele pelo professor. Vazio no material comum da disciplina.
+  final String groupId;
+  final String uploaderName;
+  final bool fromLink;
+
   const CourseMaterial({
     required this.id,
     this.disciplineId,
@@ -2153,6 +2276,9 @@ class CourseMaterial {
     this.charCount = 0,
     this.truncated = false,
     this.createdAt,
+    this.groupId = '',
+    this.uploaderName = '',
+    this.fromLink = false,
   });
 
   factory CourseMaterial.fromJson(Map<String, dynamic> json) => CourseMaterial(
@@ -2166,6 +2292,9 @@ class CourseMaterial {
         charCount: (json['char_count'] as num?)?.toInt() ?? 0,
         truncated: json['truncated'] == true,
         createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+        groupId: json['group_id']?.toString() ?? '',
+        uploaderName: json['uploader_name']?.toString() ?? '',
+        fromLink: json['from_link'] == true,
       );
 
   /// Como chamar a unidade contada em [pageCount], conforme o formato.
