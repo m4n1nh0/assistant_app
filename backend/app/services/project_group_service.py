@@ -28,6 +28,38 @@ _MEMBER_MARK = re.compile(r"\s+v\s*$", re.I)
 _BULLET = re.compile(r"^\s*(?:[-–—•*·▪●◦]+|\d{1,3}[.)])\s+")
 
 
+# Espacos "especiais" (sem quebra, de largura fixa, ideografico) viram espaco comum; marcas
+# invisiveis (largura zero, direcao do texto, hifen opcional, BOM) somem. Lista colada do
+# WhatsApp, do Word ou de e-mail traz isso entre as palavras, e o nome "Felipe Figueiredo"
+# parecia certo na tela mas era recusado por ter um espaco que nao era espaco.
+_ODD_SPACES = re.compile(r"[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]")
+_INVISIBLE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+_APOSTROPHES = re.compile(r"[\u2018\u2019\u02bc\u00b4`]")
+_NAME_OK = re.compile(r"[\wÀ-ÿ][\wÀ-ÿ .'-]{1,178}")
+_NAME_FIRST = re.compile(r"[\wÀ-ÿ]")
+_NAME_REST = re.compile(r"[\wÀ-ÿ .'-]")
+
+
+def clean_list_line(raw: str) -> str:
+    """Linha da lista sem os caracteres que so parecem normais."""
+    text = unicodedata.normalize("NFC", raw)
+    text = _INVISIBLE.sub("", _ODD_SPACES.sub(" ", text))
+    text = _APOSTROPHES.sub("'", text)
+    return " ".join(text.split())
+
+
+def describe_bad_character(name: str) -> str:
+    """Diz qual caractere do nome nao e aceito, para o professor achar e apagar."""
+    for index, char in enumerate(name):
+        if not (_NAME_FIRST if index == 0 else _NAME_REST).fullmatch(char):
+            return f" Caractere não aceito: {char!r} (U+{ord(char):04X})."
+    if len(name) > 179:
+        return " O nome tem mais de 179 letras."
+    if len(name) < 2:
+        return " O nome precisa ter pelo menos 2 caracteres."
+    return ""
+
+
 def normalize_person(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.casefold())
     return " ".join("".join(char for char in normalized
@@ -43,7 +75,7 @@ def parse_project_group_text(text: str) -> tuple[list[dict], str]:
     current: dict | None = None
     seen_names: set[str] = set()
     for line_number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
+        line = clean_list_line(raw)
         if not line:
             continue
         header = _GROUP.match(line)
@@ -67,8 +99,11 @@ def parse_project_group_text(text: str) -> tuple[list[dict], str]:
         line = _BULLET.sub("", line)
         marker = bool(_MEMBER_MARK.search(line))
         name = _MEMBER_MARK.sub("", line).strip()
-        if not name or not re.fullmatch(r"[\wÀ-ÿ][\wÀ-ÿ .'-]{1,178}", name):
-            raise ValueError(f"Linha {line_number}: nome não reconhecido: {line}")
+        if not name or not _NAME_OK.fullmatch(name):
+            raise ValueError(
+                f"Linha {line_number}: nome não reconhecido: {line}."
+                f"{describe_bad_character(name)}"
+            )
         if any(normalize_person(member["name"]) == normalize_person(name)
                for member in current["members"]):
             raise ValueError(f"Linha {line_number}: nome repetido em {current['name']}")

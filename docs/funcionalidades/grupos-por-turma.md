@@ -47,6 +47,13 @@ O nome pode vir com marcador de lista, como no chat: `- Nome`, `• Nome`, `* No
 marca `v` no fim do nome continua sendo lida como anotação, e um hífen dentro do nome
 (`Ana-Maria`) é preservado.
 
+Lista colada do WhatsApp, do Word ou de e-mail costuma trazer caracteres que parecem
+normais mas não são: espaço sem quebra entre o nome e o sobrenome, marcas invisíveis de
+direção do texto, apóstrofo curvo (`D’Arc`). O cadastro os trata como espaço comum ou os
+descarta antes de ler, então o nome não é mais recusado por isso. Quando um nome é recusado
+de verdade, a mensagem diz a linha e **qual caractere** atrapalhou (por exemplo
+`'@' (U+0040)`), para você apagá-lo na lista.
+
 ## Grupos que já estavam cadastrados (sem turma)
 
 Grupos criados antes da separação ficam **sem turma**. O botão **Ligar grupos sem
