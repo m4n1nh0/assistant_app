@@ -2726,6 +2726,7 @@ async def lesson_summary_prompt(
         segments=segments,
         focus=focus,
         style=style,
+        kind=getattr(lesson, "kind", "aula"),
     )
     return LessonSummaryPromptResponse(lesson_id=lesson.id, **built)
 
@@ -2794,6 +2795,7 @@ async def summarize_lesson(
         llm=body.llm,
         focus=body.focus,
         style=style,
+        kind=getattr(lesson, "kind", "aula"),
     )
     if not outcome["summary"]:
         raise HTTPException(

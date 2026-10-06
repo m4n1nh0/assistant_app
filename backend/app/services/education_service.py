@@ -11,7 +11,7 @@ import json
 import re
 import unicodedata
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional, Sequence, TypedDict
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from loguru import logger
@@ -375,15 +375,145 @@ def is_duplicate_point(
 # --- Resumo da aula --------------------------------------------------------
 
 
-_SUMMARY_SYSTEM_PROMPT = (
-    "Voce resume aulas a partir da transcricao do audio. Escreva em portugues "
+_SUMMARY_SYSTEM_TEMPLATE = (
+    "Voce resume {noun} a partir da transcricao do audio. Escreva em portugues "
     "brasileiro, de forma objetiva e fiel ao que foi dito. Corrija "
     "silenciosamente erros evidentes de reconhecimento de fala quando a "
     "disciplina, o tema e o restante da frase tornarem a correcao inequivoca. "
     "Nunca invente conteudo para completar um trecho sem sentido; quando nao "
     "for possivel recuperar o significado com seguranca, omita o detalhe ou "
-    "marque-o como incerto."
+    "marque-o como incerto.{rule}"
 )
+
+# O resumo segue o tipo da gravacao. Resumir uma palestra como aula inventava um
+# "professor" e uma "turma" que nao existiam; e uma apresentacao de grupo nao tem
+# "aula" nenhuma. A aula mantem o texto de sempre.
+LESSON_KIND = "aula"
+LECTURE_KIND = "palestra"
+PRESENTATION_KIND = "apresentacao"
+RECORDING_KINDS = (LESSON_KIND, LECTURE_KIND, PRESENTATION_KIND)
+
+
+def normalize_recording_kind(value: Optional[str]) -> str:
+    """Aceita so os tipos conhecidos; qualquer outro vira aula."""
+    kind = (value or "").strip().lower()
+    return kind if kind in RECORDING_KINDS else LESSON_KIND
+
+
+_LECTURE_STANDARD_STRUCTURE = (
+    "## Resumo\n(2 a 4 paragrafos com o fio condutor da palestra)\n"
+    "## Principais ideias\n(lista com as mensagens centrais do palestrante)\n"
+    "## Conceitos, exemplos e casos\n(o que foi definido ou ilustrado; omita a "
+    "secao se nao houver)\n"
+    "## Ferramentas, referencias e recomendacoes\n(livros, tecnologias, "
+    "pessoas, links ou praticas citadas; omita se nao houver)\n"
+    "## Perguntas do publico\n(perguntas e as respostas; omita se nao houver)\n"
+)
+
+_LECTURE_DETAILED_STRUCTURE = (
+    "## Resumo geral\n(4 a 6 paragrafos com o fio condutor da palestra)\n"
+    "## Desenvolvimento da palestra\n(os assuntos na ordem em que foram "
+    "tratados; para cada um, o raciocinio que o palestrante construiu, e nao "
+    "apenas o titulo)\n"
+    "## Conceitos e definicoes\n(cada conceito com a definicao dada e a "
+    "explicacao que a acompanhou)\n"
+    "## Exemplos, casos e historias\n(o que foi contado para ilustrar, com o "
+    "resultado ou a licao; omita a secao se nao houver)\n"
+    "## Ferramentas, referencias e recomendacoes\n(livros, tecnologias, "
+    "pessoas, links ou praticas citadas; omita se nao houver)\n"
+    "## Perguntas do publico\n(pergunta e a resposta dada; omita se nao "
+    "houver)\n"
+    "## Pontos de atencao\n(o que o palestrante destacou como importante; omita "
+    "se nao houver)\n"
+)
+
+_PRESENTATION_STANDARD_STRUCTURE = (
+    "## Resumo\n(2 a 4 paragrafos: o que o grupo apresentou e como)\n"
+    "## O projeto\n(problema, proposta e tecnologias, como o grupo as descreveu)\n"
+    "## Resultados e demonstracao\n(o que foi mostrado funcionando e o que o "
+    "grupo disse ter feito; omita se nao houver)\n"
+    "## Perguntas e respostas\n(perguntas feitas ao grupo e o que ele "
+    "respondeu; omita se nao houver)\n"
+    "## Pontos a esclarecer\n(o que ficou vago, sem resposta ou em aberto na "
+    "apresentacao; omita se nao houver)\n"
+)
+
+_PRESENTATION_DETAILED_STRUCTURE = (
+    "## Resumo geral\n(4 a 6 paragrafos: o que o grupo apresentou e como)\n"
+    "## O projeto\n(problema, proposta, publico e tecnologias, como o grupo as "
+    "descreveu)\n"
+    "## Desenvolvimento da apresentacao\n(os assuntos na ordem em que foram "
+    "tratados, e quem do grupo falou de cada um quando a transcricao disser)\n"
+    "## Decisoes tecnicas e justificativas\n(escolhas que o grupo explicou e "
+    "o motivo; omita a secao se nao houver)\n"
+    "## Resultados e demonstracao\n(o que foi mostrado funcionando e o que o "
+    "grupo disse ter feito; omita se nao houver)\n"
+    "## Perguntas e respostas\n(pergunta feita ao grupo e a resposta dada; "
+    "omita se nao houver)\n"
+    "## Pontos a esclarecer\n(o que ficou vago, sem resposta ou em aberto; "
+    "omita se nao houver)\n"
+)
+
+
+class _KindProfile(NamedTuple):
+    """Como o resumo fala de cada tipo de gravacao."""
+    label: str  # rotulo do titulo no cabecalho do prompt
+    noun: str  # "aulas", usado no papel do modelo
+    the: str  # "a aula"
+    of: str  # "da aula"
+    a_long: str  # "uma aula longa"
+    absent: str  # quem nao viu a gravacao
+    rule: str  # regra extra no papel do modelo
+    standard: str
+    detailed: str
+    show_empty_discipline: bool
+
+
+_PROFILES = {
+    LESSON_KIND: _KindProfile(
+        label="Aula", noun="aulas", the="a aula", of="da aula",
+        a_long="uma aula longa", absent="quem faltou", rule="",
+        standard="", detailed="", show_empty_discipline=True,
+    ),
+    LECTURE_KIND: _KindProfile(
+        label="Palestra", noun="palestras", the="a palestra", of="da palestra",
+        a_long="uma palestra longa", absent="quem nao assistiu",
+        rule=(
+            " Trate quem fala como palestrante ou convidado e quem ouve como "
+            "publico: nao os chame de professor, aluno ou turma, e nao "
+            "suponha disciplina, prova ou sala de aula que a transcricao nao "
+            "cite."
+        ),
+        standard=_LECTURE_STANDARD_STRUCTURE,
+        detailed=_LECTURE_DETAILED_STRUCTURE, show_empty_discipline=False,
+    ),
+    PRESENTATION_KIND: _KindProfile(
+        label="Apresentacao", noun="apresentacoes de trabalhos de grupo",
+        the="a apresentacao", of="da apresentacao",
+        a_long="uma apresentacao longa", absent="quem nao assistiu",
+        rule=(
+            " Quem fala e o grupo que apresenta o proprio trabalho, e quem "
+            "pergunta e quem avalia ou assiste: nao trate como aula. Descreva "
+            "o que foi dito e mostrado; nao atribua nota, nem julgue a "
+            "qualidade do trabalho alem do que a transcricao registra."
+        ),
+        standard=_PRESENTATION_STANDARD_STRUCTURE,
+        detailed=_PRESENTATION_DETAILED_STRUCTURE, show_empty_discipline=False,
+    ),
+}
+
+
+def _profile(kind: Optional[str]) -> _KindProfile:
+    return _PROFILES[normalize_recording_kind(kind)]
+
+
+def summary_system_prompt(kind: Optional[str] = LESSON_KIND) -> str:
+    profile = _profile(kind)
+    return _SUMMARY_SYSTEM_TEMPLATE.format(noun=profile.noun, rule=profile.rule)
+
+
+# Texto de sempre, para a aula e para quem importa a constante.
+_SUMMARY_SYSTEM_PROMPT = summary_system_prompt(LESSON_KIND)
 
 
 # Dois formatos de resumo: o comum cabe em uma tela e serve para revisar
@@ -441,10 +571,19 @@ def _summary_prompt(
     partial: bool = False,
     style: str = STANDARD_SUMMARY_STYLE,
     partial_lines: int = 8,
+    kind: str = LESSON_KIND,
 ) -> str:
-    header = f"Disciplina: {discipline}"
+    profile = _profile(kind)
+    header = (
+        f"Disciplina: {discipline}"
+        if discipline.strip() or profile.show_empty_discipline
+        else ""
+    )
     if title:
-        header += f"\nAula: {title}"
+        # O titulo da apresentacao ja nasce como "Apresentacao: GRUPO 1".
+        has_label = title.lower().startswith(f"{profile.label.lower()}:")
+        line = title if has_label else f"{profile.label}: {title}"
+        header = f"{header}\n{line}" if header else line
     extra = f"\nDe atencao especial a: {focus}" if focus.strip() else ""
     detailed = style == DETAILED_SUMMARY_STYLE
 
@@ -463,7 +602,7 @@ def _summary_prompt(
         )
         return (
             f"{header}{extra}\n\n"
-            f"Este e um trecho de uma aula longa. Resuma o trecho preservando "
+            f"Este e um trecho de {profile.a_long}. Resuma o trecho preservando "
             f"{keep}. Normalize frases quebradas e corrija palavras claramente "
             "transcritas de forma errada usando o contexto da disciplina, sem "
             "criar fatos nem completar passagens ambiguas. Nao escreva "
@@ -475,7 +614,7 @@ def _summary_prompt(
     # O tamanho do resumo e decidido aqui, no prompt, e nao por um corte de
     # tokens: cada formato diz explicitamente ate onde deve ir.
     depth = (
-        "Escreva um resumo detalhado: percorra a aula inteira, mantenha a "
+        f"Escreva um resumo detalhado: percorra {profile.the} inteira, mantenha a "
         "ordem em que os assuntos apareceram e preserve as definicoes, os "
         "numeros e os passos como foram ditos. Prefira o detalhe a brevidade, "
         "mas nao repita a mesma informacao em secoes diferentes.\n\n"
@@ -483,19 +622,23 @@ def _summary_prompt(
         else ""
     )
     extent = (
-        "Escreva cada secao ate o conteudo da aula sobre ela acabar; nao "
-        "encurte para economizar espaco. Este resumo substitui a aula para "
-        "quem faltou, entao ele e naturalmente longo."
+        f"Escreva cada secao ate o conteudo {profile.of} sobre ela acabar; nao "
+        f"encurte para economizar espaco. Este resumo substitui {profile.the} para "
+        f"{profile.absent}, entao ele e naturalmente longo."
         if detailed
-        else "Mantenha o resumo enxuto: ele e para revisar depois da aula e "
+        else f"Mantenha o resumo enxuto: ele e para revisar depois {profile.of} e "
         "precisa caber em uma tela."
     )
-    structure = _DETAILED_STRUCTURE if detailed else _STANDARD_STRUCTURE
+    structure = (
+        (_DETAILED_STRUCTURE if detailed else _STANDARD_STRUCTURE)
+        if normalize_recording_kind(kind) == LESSON_KIND
+        else (profile.detailed if detailed else profile.standard)
+    )
 
     return (
         f"{header}{extra}\n\n"
         f"{depth}"
-        "Monte o resumo da aula a partir da transcricao, nesta estrutura:\n"
+        f"Monte o resumo {profile.of} a partir da transcricao, nesta estrutura:\n"
         f"{structure}\n"
         f"{extent}\n\n"
         "Antes de redigir, ajuste mentalmente frases quebradas e erros evidentes "
@@ -684,6 +827,7 @@ async def _dispatch_summary(
     prompt: str,
     *,
     max_tokens: int,
+    kind: str = LESSON_KIND,
 ):
     """Chama o modelo com opcoes adequadas a uma tarefa de resumo.
 
@@ -695,7 +839,7 @@ async def _dispatch_summary(
         provider,
         prompt,
         [],
-        _SUMMARY_SYSTEM_PROMPT,
+        summary_system_prompt(kind),
         max_tokens=max_tokens,
         reasoning_effort="none" if provider == "localai" else None,
     )
@@ -711,8 +855,9 @@ async def _summarise_within(
     budget: int,
     style: str = STANDARD_SUMMARY_STYLE,
     answer_tokens: Optional[int] = None,
+    kind: str = LESSON_KIND,
 ) -> Dict[str, Any]:
-    """Condensa a aula em rodadas ate ela caber em uma unica chamada."""
+    """Condensa a gravacao em rodadas ate ela caber em uma unica chamada."""
     chunks = _windows(texts, budget)
     error = ""
     truncated = False
@@ -742,8 +887,10 @@ async def _summarise_within(
                     partial=True,
                     style=style,
                     partial_lines=lines,
+                    kind=kind,
                 ),
                 max_tokens=partial_tokens,
+                kind=kind,
             )
             if response.is_error:
                 error = response.content
@@ -804,8 +951,10 @@ async def _summarise_within(
             transcript=chunks[0],
             focus=focus,
             style=style,
+            kind=kind,
         ),
         max_tokens=answer_tokens,
+        kind=kind,
     )
     if response.is_error:
         logger.warning(f"Resumo falhou ({provider}): {response.content}")
@@ -843,6 +992,7 @@ async def _summarise_provider(
     texts: Sequence[str],
     focus: str,
     style: str = STANDARD_SUMMARY_STYLE,
+    kind: str = LESSON_KIND,
 ) -> Dict[str, Any]:
     """Executa um provedor e adapta uma vez a janela informada por ele."""
     budget = summary_budget_chars(provider)
@@ -854,6 +1004,7 @@ async def _summarise_provider(
         focus=focus,
         budget=budget,
         style=style,
+        kind=kind,
     )
     if outcome["summary"]:
         return outcome
@@ -879,6 +1030,7 @@ async def _summarise_provider(
         focus=focus,
         budget=corrected,
         style=style,
+        kind=kind,
         # A janela real e menor que a configurada: o teto de saida tem de
         # encolher junto, senao a proxima chamada estoura pelo mesmo motivo.
         answer_tokens=_answer_tokens_for_window(limit),
@@ -921,6 +1073,7 @@ class SummaryGraphState(TypedDict, total=False):
     texts: List[str]
     focus: str
     style: str
+    kind: str
     requested_llm: Optional[str]
     providers: List[str]
     provider_index: int
@@ -956,6 +1109,7 @@ async def _summary_run_node(state: SummaryGraphState) -> Dict[str, Any]:
                 texts=state["texts"],
                 focus=state["focus"],
                 style=style,
+                kind=state.get("kind", LESSON_KIND),
             ),
             timeout=timeout,
         )
@@ -1033,6 +1187,7 @@ def build_summary_prompt(
     segments: Sequence[str],
     focus: str = "",
     style: str = STANDARD_SUMMARY_STYLE,
+    kind: str = LESSON_KIND,
 ) -> Dict[str, Any]:
     """Monta o prompt do resumo para quem tem janela para a aula inteira.
 
@@ -1043,17 +1198,19 @@ def build_summary_prompt(
     cliente, para os dois caminhos pedirem a mesma coisa.
     """
     style = normalize_summary_style(style)
+    kind = normalize_recording_kind(kind)
     texts = [text for text in segments if text and text.strip()]
     transcript = "\n".join(texts)
     return {
         "style": style,
-        "system_prompt": _SUMMARY_SYSTEM_PROMPT,
+        "system_prompt": summary_system_prompt(kind),
         "prompt": _summary_prompt(
             discipline=discipline,
             title=title,
             transcript=transcript,
             focus=focus,
             style=style,
+            kind=kind,
         ),
         "used_segments": len(texts),
         "transcript_chars": len(transcript),
@@ -1068,9 +1225,14 @@ async def generate_summary(
     llm: Optional[str] = None,
     focus: str = "",
     style: str = STANDARD_SUMMARY_STYLE,
+    kind: str = LESSON_KIND,
 ) -> Dict[str, Any]:
-    """Resume a aula com LangGraph, janela adaptativa e fallback free-first."""
+    """Resume a gravacao com LangGraph, janela adaptativa e fallback free-first.
+
+    `kind` (aula, palestra ou apresentacao) decide como o resumo fala dela.
+    """
     style = normalize_summary_style(style)
+    kind = normalize_recording_kind(kind)
     texts = [text for text in segments if text and text.strip()]
     if not texts:
         return {"summary": "", "llm": "", "used_segments": 0, "style": style}
@@ -1081,6 +1243,7 @@ async def generate_summary(
         "texts": texts,
         "focus": focus,
         "style": style,
+        "kind": kind,
         "requested_llm": llm,
     })
     outcome = dict(result["outcome"])

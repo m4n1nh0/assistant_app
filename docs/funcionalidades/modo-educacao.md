@@ -153,6 +153,25 @@ O formato usado fica gravado na aula: ao reabrir uma aula no histórico, o
 seletor já vem marcado com o formato do resumo existente, e o título do painel
 mostra se o que está na tela é `COMUM` ou `DETALHADO`.
 
+### O resumo segue o tipo da gravação
+
+O resumo é escrito conforme o tipo escolhido ao gravar, nos dois formatos e também
+quando a gravação é grande e o servidor a resume em blocos:
+
+| Tipo | Como o resumo fala | Seções |
+|---|---|---|
+| **Aula** | professor e turma | Resumo, Principais tópicos, Definições e fórmulas, Tarefas e avisos, Dúvidas levantadas |
+| **Palestra** | palestrante e público; não inventa professor, aluno, turma nem prova | Resumo, Principais ideias, Conceitos/exemplos/casos, Ferramentas e referências citadas, Perguntas do público |
+| **Apresentação** | o grupo apresentando o próprio trabalho; descreve o que foi dito e mostrado, sem dar nota | Resumo, O projeto, Resultados e demonstração, Perguntas e respostas, Pontos a esclarecer |
+
+No formato detalhado cada tipo ganha as suas seções de desenvolvimento (por exemplo
+"Desenvolvimento da palestra" e "Decisões técnicas e justificativas"). A aula mantém
+exatamente o texto de antes. Palestra sem disciplina não imprime "Disciplina:" vazia. O
+agente conectado (Codex, Claude) recebe o mesmo prompt do tipo.
+
+Um resumo que já foi gerado não muda sozinho: para uma palestra gravada antes, use
+**Refazer resumo**.
+
 ## Quem gera o resumo
 
 Ao lado do formato há um seletor de IA, com três tipos de opção:
