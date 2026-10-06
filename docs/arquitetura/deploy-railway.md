@@ -477,6 +477,15 @@ CHECKPOINT_MAX_THREADS="200"
 > o áudio e reenvia sozinho. Para conferir nos logs: `Loading Whisper model` e `Whisper
 > loaded` na subida; `Whisper nao carregou (...)` mostra o motivo técnico de uma falha.
 > Mudar `WHISPER_MODEL` exige novo build da imagem para o modelo novo ser embutido.
+>
+> **`av` fica abaixo da 19.** O faster-whisper lê o áudio pelo PyAV (`av`) e aceita
+> qualquer versão a partir da 11, mas o `av` 19 (29/09/2026) quebrou essa leitura: toda
+> transcrição falha com `open() got an unexpected keyword argument 'metadata_errors'`.
+> Uma imagem refeita com ele não transcreve nada, e por isso o `requirements.txt` limita
+> `av>=14,<19`. Quando o erro acontece, o bloco volta com a mensagem "O reconhecimento de
+> voz falhou ao processar este bloco (TypeError)", fica guardado na máquina e é reenviado;
+> nos logs aparece `Whisper transcription error (...)` com o traceback. Para conferir a
+> versão que subiu: `pip list | grep -i "^av "` dentro do contêiner.
 
 > **`TOOL_TRANSPORT` e `MCP_TRANSPORT` aparecem aqui e no
 > `agent-orchestrator`, e as duas cópias fazem coisas diferentes.** São

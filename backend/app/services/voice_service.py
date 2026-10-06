@@ -237,8 +237,15 @@ def _sync_transcribe(
             language=info.language or whisper_language or "",
         )
     except Exception as e:
-        logger.error(f"Whisper transcription error: {e}")
-        return STTResponse(transcript="", confidence=0.0)
+        # Erro do reconhecimento (biblioteca de audio incompativel, arquivo ilegivel,
+        # memoria) nao e silencio: devolver vazio fazia o app marcar o bloco como
+        # "nenhuma fala reconhecida" e apagar a gravacao, escondendo o defeito.
+        logger.exception(f"Whisper transcription error ({type(e).__name__}): {e}")
+        raise STTUnavailable(
+            "O reconhecimento de voz falhou ao processar este bloco "
+            f"({type(e).__name__}). O audio fica guardado na maquina e e reenviado; "
+            "se continuar, avise o suporte."
+        ) from e
     finally:
         os.unlink(tmp_path)
 

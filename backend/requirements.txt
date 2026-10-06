@@ -65,6 +65,11 @@ qdrant-client==1.18.0
 fastembed==0.8.0
 
 faster-whisper==1.2.1
+# O faster-whisper 1.2.1 le o audio pelo PyAV e aceita qualquer `av>=11`, mas o av 19
+# (29/09/2026) tirou o argumento `metadata_errors` de `av.open`: com ele toda
+# transcricao falha com "open() got an unexpected keyword argument". Sem este teto, a
+# imagem refeita depois dessa data passa a nao transcrever nada.
+av>=14,<19
 # Necessarias so quando WHISPER_DEVICE=cuda. O CTranslate2 procura essas DLLs
 # no PATH e nao dentro do site-packages, entao voice_service as registra no
 # carregamento do modelo.

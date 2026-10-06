@@ -54,6 +54,51 @@ def test_falha_no_download_vira_aviso_legivel_e_nao_erro_generico(monkeypatch):
 
 
 @pytest.mark.unit
+def test_erro_do_reconhecimento_nao_vira_silencio(monkeypatch):
+    """Falha real: o av 19 quebrava `transcribe`, e o erro engolido virava "sem fala"."""
+    class ModeloQuebrado:
+        def transcribe(self, *args, **kwargs):
+            raise TypeError("open() got an unexpected keyword argument 'metadata_errors'")
+
+    monkeypatch.setattr(voice, "_load_whisper", lambda: ModeloQuebrado())
+    monkeypatch.setattr(voice.settings, "stt_provider", "local")
+
+    with pytest.raises(voice.STTUnavailable) as erro:
+        voice._sync_transcribe(b"RIFF....", "pt")
+
+    assert "falhou ao processar este bloco" in str(erro.value)
+    assert "TypeError" in str(erro.value)
+
+
+@pytest.mark.unit
+def test_fala_nao_reconhecida_continua_sendo_resposta_vazia(monkeypatch):
+    """O que e mesmo silencio nao e erro: volta vazio, e o app marca o bloco."""
+    class ModeloMudo:
+        def transcribe(self, *args, **kwargs):
+            return iter(()), SimpleNamespace(language="pt")
+
+    monkeypatch.setattr(voice, "_load_whisper", lambda: ModeloMudo())
+    monkeypatch.setattr(voice.settings, "stt_provider", "local")
+
+    resposta = voice._sync_transcribe(b"RIFF....", "pt")
+
+    assert resposta.transcript == ""
+
+
+@pytest.mark.unit
+def test_requirements_limita_o_av_abaixo_da_19():
+    """O av 19 quebra o faster-whisper 1.2.1; o teto precisa continuar no arquivo."""
+    from pathlib import Path
+
+    texto = (Path(__file__).resolve().parent.parent / "requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    linhas = [linha.strip() for linha in texto.splitlines()]
+
+    assert any(linha.startswith("av") and "<19" in linha for linha in linhas)
+
+
+@pytest.mark.unit
 def test_falha_fica_guardada_e_nao_dispara_novo_download(monkeypatch):
     tentativas = []
 
