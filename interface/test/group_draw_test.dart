@@ -142,6 +142,8 @@ void main() {
       WidgetTester tester, {
       String? initialClassId,
       String? escolher,
+      List<String> scopeGroupIds = const [],
+      String scopeLabel = '',
     }) async {
       tester.view.physicalSize = const Size(1400, 1000);
       tester.view.devicePixelRatio = 1;
@@ -166,6 +168,8 @@ void main() {
               discipline: _discipline,
               classes: turmas,
               initialClassId: initialClassId,
+              scopeGroupIds: scopeGroupIds,
+              scopeLabel: scopeLabel,
             ),
           ),
         ));
@@ -198,6 +202,57 @@ void main() {
     testWidgets('a turma do filtro da aba já vem marcada', (tester) async {
       final body = await criar(tester, initialClassId: 'c-seg');
       expect(body['class_id'], 'c-seg');
+    });
+
+    testWidgets('duas turmas na tela: o sorteio leva só os grupos listados',
+        (tester) async {
+      final body = await criar(
+        tester,
+        scopeGroupIds: ['g1', 'g2'],
+        scopeLabel: '3001 Segunda · segunda + 3003 Noite · segunda',
+      );
+
+      expect(body['group_ids'], ['g1', 'g2']);
+      expect(body.containsKey('class_id'), isFalse);
+      expect(body['title'], contains('3001 Segunda · segunda + 3003 Noite'));
+    });
+
+    testWidgets('com escopo, o professor ainda pode voltar para todas as turmas',
+        (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      Map<String, dynamic>? enviado;
+      final client = MockClient((request) async {
+        if (request.method == 'GET') return http.Response('[]', 200);
+        enviado = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+            jsonEncode(_draw([_entry('a', 'Grupo 1', position: 1, day: 1)])), 200);
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: GroupDrawPanel(
+              discipline: _discipline,
+              classes: turmas,
+              scopeGroupIds: const ['g1', 'g2'],
+              scopeLabel: 'duas turmas',
+            ),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        expect(find.text('Só os grupos das turmas marcadas na tela entram no sorteio.'),
+            findsOneWidget);
+        await tester.tap(find.text('duas turmas (2 grupos)'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Todas as turmas').last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('SORTEAR'));
+        await tester.pumpAndSettle();
+      }, () => client);
+
+      expect(enviado!.containsKey('group_ids'), isFalse);
+      expect(enviado!.containsKey('class_id'), isFalse);
     });
 
     testWidgets('sem turmas cadastradas o seletor não aparece', (tester) async {

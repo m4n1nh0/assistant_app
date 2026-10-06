@@ -926,6 +926,12 @@ class ProjectGroupAssignClass(BaseModel):
     class_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
+class ProjectGroupInferClasses(BaseModel):
+    """Deduz a turma dos grupos sem turma pelos alunos ja vinculados aos integrantes."""
+    discipline_id: str = Field(min_length=1)
+    group_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
 class ProjectGroupUpdate(BaseModel):
     project_title: Optional[str] = Field(default=None, max_length=255)
     project_description: Optional[str] = None

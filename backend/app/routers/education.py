@@ -87,6 +87,7 @@ from ..models.schemas import (
     ProjectGroupTextRequest,
     ProjectGroupCommitRequest,
     ProjectGroupAssignClass,
+    ProjectGroupInferClasses,
     ProjectGroupUpdate,
     ProjectGroupMemberLink,
     ProjectGroupSuggestedLinksCommit,
@@ -382,6 +383,25 @@ async def assign_project_groups_to_class(
     return {"assigned": len(groups),
             "class_id": class_ids[0] if class_ids else None,
             "class_ids": class_ids}
+
+
+@router.post("/project-groups/infer-classes")
+async def infer_project_group_classes(
+    body: ProjectGroupInferClasses,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liga os grupos sem turma as turmas dos alunos já vinculados aos integrantes.
+
+    Um grupo só de alunos da turma A fica na A; o que mistura A e B fica nas duas
+    (aula reunida). Grupo sem integrante vinculado não tem como ser decidido e fica
+    como estava; a resposta lista esses nomes.
+    """
+    from ..services.project_group_service import infer_classes_from_members
+
+    await _owned_project_discipline(body.discipline_id, user["tutor_id"], db)
+    return await infer_classes_from_members(
+        db, user["tutor_id"], body.discipline_id, body.group_ids)
 
 
 @router.patch("/project-groups/{group_id}")

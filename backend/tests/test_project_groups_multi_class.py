@@ -351,3 +351,84 @@ def test_helpers_de_turma_aceitam_um_varios_ou_nenhum():
     assert pgs.as_class_list(None) == []
     assert pgs.as_class_list("b") == ["b"]
     assert pgs.as_class_list(["b", "", "a", "b", None]) == ["a", "b"]
+
+
+def _semear_grupos_soltos(api):
+    """GRUPO 1 mistura 3002 e 3030, GRUPO 2 so 3002, GRUPO 3 so 3001, GRUPO 4 sem vinculo."""
+    async def semear():
+        async with api.sessions() as db:
+            for id_, nome in (("g1", "GRUPO 1"), ("g2", "GRUPO 2"),
+                              ("g3", "GRUPO 3"), ("g4", "GRUPO 4")):
+                db.add(ProjectGroupModel(id=id_, tutor_id="t1", discipline_id="d1",
+                                         semester="2026.2", name=nome))
+            await db.flush()
+            db.add_all([
+                ProjectGroupMemberModel(group_id="g1", name="Kaic", student_id="s-kaic", position=0),
+                ProjectGroupMemberModel(group_id="g1", name="Marta", student_id="s-marta", position=1),
+                ProjectGroupMemberModel(group_id="g2", name="Igor", student_id="s-igor", position=0),
+                ProjectGroupMemberModel(group_id="g3", name="Bruno", student_id="s-bruno", position=0),
+                ProjectGroupMemberModel(group_id="g4", name="Sem vinculo", position=0),
+            ])
+            await db.commit()
+    asyncio.run(semear())
+
+
+def test_deduz_a_turma_dos_grupos_pelos_alunos_vinculados(api):
+    _semear_grupos_soltos(api)
+
+    resposta = api.post("/education/project-groups/infer-classes",
+                        json={"discipline_id": "d1"})
+
+    assert resposta.status_code == 200, resposta.text
+    corpo_ = resposta.json()
+    assert corpo_["assigned"] == 3
+    assert corpo_["without_linked_members"] == ["GRUPO 4"]
+    por = por_nome(grupos(api))
+    assert por["GRUPO 1"]["class_ids"] == ["c-3002", "c-3030"]
+    assert por["GRUPO 2"]["class_ids"] == ["c-3002"]
+    assert por["GRUPO 3"]["class_ids"] == ["c-3001"]
+    assert por["GRUPO 4"]["class_ids"] == []
+    # Passa a aparecer no filtro de cada turma do grupo.
+    assert {g["name"] for g in grupos(api, class_id="c-3030")} == {"GRUPO 1"}
+
+
+def test_deduzir_nao_mexe_em_grupo_que_ja_tem_turma(api):
+    _semear_grupos_soltos(api)
+    api.post("/education/project-groups/assign-class",
+             json={"group_ids": ["g2"], "class_ids": ["c-3030"]})
+
+    api.post("/education/project-groups/infer-classes", json={"discipline_id": "d1"})
+
+    assert por_nome(grupos(api))["GRUPO 2"]["class_ids"] == ["c-3030"]
+
+
+def test_deduzir_respeita_a_lista_de_grupos_pedida(api):
+    _semear_grupos_soltos(api)
+
+    resposta = api.post("/education/project-groups/infer-classes",
+                        json={"discipline_id": "d1", "group_ids": ["g3"]})
+
+    assert resposta.json()["assigned"] == 1
+    por = por_nome(grupos(api))
+    assert por["GRUPO 3"]["class_ids"] == ["c-3001"]
+    assert por["GRUPO 1"]["class_ids"] == []
+
+
+def test_deduzir_deixa_de_fora_nome_que_cruza_com_grupo_existente(api):
+    _semear_grupos_soltos(api)
+    # Ja existe um GRUPO 2 da 3002 (importado), que cruza com o GRUPO 2 solto.
+    importar(api, "GRUPO 2\n- Igor Alan\n", ["c-3002"])
+
+    resposta = api.post("/education/project-groups/infer-classes",
+                        json={"discipline_id": "d1"})
+
+    assert resposta.json()["conflicting"] == ["GRUPO 2"]
+    soltos = [g for g in grupos(api) if g["name"] == "GRUPO 2" and not g["class_ids"]]
+    assert len(soltos) == 1
+
+
+def test_deduzir_valida_a_disciplina(api):
+    resposta = api.post("/education/project-groups/infer-classes",
+                        json={"discipline_id": "inexistente"})
+
+    assert resposta.status_code == 404

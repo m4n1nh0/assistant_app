@@ -21,13 +21,19 @@ segunda, mesmo com os mesmos nomes.
 
 ### Aula reunida: grupos que misturam duas turmas
 
-Quando duas turmas têm a mesma aula (por exemplo 3002 e 3030, na segunda) e os grupos
-misturam alunos das duas, marque **as duas turmas** ao cadastrar. Os nomes da lista são
+O grupo é do **dia**. Disciplina com quatro turmas (duas na segunda e duas na quinta, por
+exemplo) tem grupos da segunda que misturam alunos das duas turmas da segunda, e o mesmo
+na quinta. Marque **as turmas do dia** nos botões de turma da tela (tocar de novo
+desmarca) e clique em **Conferir e cadastrar grupos**: a janela já abre com as turmas
+marcadas, e basta confirmar. Também dá para marcá-las na própria janela. Os nomes da lista são
 procurados entre os alunos das duas turmas juntas, e o grupo passa a pertencer às duas:
 
 - ele aparece no filtro de **cada** turma (e conta nos botões das duas);
 - o sorteio e o quiz em grupo de qualquer uma das duas turmas incluem o grupo;
 - reimportar a mesma lista com as mesmas turmas atualiza os grupos, sem duplicar.
+
+Ao abrir a disciplina, **todas** as turmas que têm aula hoje já vêm marcadas juntas (na
+segunda, as duas turmas da segunda).
 
 O nome do grupo é único dentro de cada turma. Por isso o cadastro é **bloqueado** quando
 o nome já existe num grupo de turmas que se cruzam com as da lista sem ser as mesmas (por
@@ -50,17 +56,28 @@ pertencer a ela. Integrantes, vínculos e notas não mudam.
 Dá para ligar a **mais de uma turma** de uma vez (aula reunida). A ligação é recusada se
 alguma turma de destino já tiver um grupo com o mesmo nome; nesse caso nada é alterado.
 
+### Deduzir as turmas pelos alunos (grupos já cadastrados)
+
+Para a disciplina que já tem os grupos cadastrados e vinculados aos alunos (sem turma), o
+botão **Deduzir turmas pelos alunos** liga cada grupo às turmas dos seus integrantes: o
+grupo só de alunos de uma turma fica nela; o que mistura duas fica nas duas. Só mexe em
+grupo sem turma. Ficam de fora, e a mensagem lista os nomes: grupos sem nenhum integrante
+vinculado a aluno (vincule os nomes e tente de novo, ou use **Ligar grupos sem turma**) e
+nomes que já existem em grupo de turmas que se cruzam.
+
 ## Ver, sortear, jogar e imprimir por turma
 
 - **Filtro (turmas do dia):** o bloco **Turma (dia de aula)** segue a aba Gravar. As
   turmas da disciplina aparecem em botões, as que têm aula **hoje** em **HOJE, SEGUNDA-FEIRA**
   e as demais em **OUTRAS TURMAS**; cada botão mostra o dia, os alunos e quantos grupos a
-  turma tem, e há também "Todas as turmas" e "Sem turma". A turma que tem aula hoje já vem
-  marcada, e só ela, então a tela abre mostrando os grupos do dia. Com duas turmas no mesmo
-  dia, ou nenhuma, não há como escolher pelo dia e fica "Todas". Cada grupo mostra a turma
-  no título.
+  turma tem, e há também "Todas as turmas" e "Sem turma". Os botões podem ser marcados
+  juntos: aparecem os grupos de qualquer uma das turmas marcadas. As turmas que têm aula
+  hoje já vêm marcadas, então a tela abre mostrando os grupos do dia (as duas da segunda,
+  por exemplo). Sem aula hoje, fica "Todas". Cada grupo mostra as suas turmas no título.
 - **Sorteio de apresentação:** a janela do sorteio tem o seletor de turma; só os grupos
   dela entram, e o título do sorteio leva o nome da turma. O filtro da aba já vem marcado.
+  Com **duas ou mais turmas marcadas** na tela, a primeira opção do seletor é "as turmas
+  marcadas (N grupos)": o sorteio leva exatamente os grupos que estão listados.
 - **Quiz em grupo:** ao ativar, escolha a turma. Só entram os alunos dos grupos dela; a
   matrícula de quem é de outra turma recebe "não está em nenhum grupo deste quiz".
 - **Impressão:** a relação de grupos e a ordem de apresentação trazem a turma no
@@ -82,5 +99,8 @@ alguma turma de destino já tiver um grupo com o mesmo nome; nesse caso nada é 
   turmas juntas (`3002 A + 3030 B`) e `conflicting_names`. `GET /education/project-groups`
   devolve `class_ids` e filtra por `?class_id=...` (o grupo de aula reunida aparece nas
   suas turmas; `none` traz os sem turma). `POST /education/project-groups/assign-class`
-  liga ou solta (`{"group_ids": [...], "class_ids": [...]}`; lista vazia solta). O sorteio (`POST /education/group-draws`) e o quiz em grupo
+  liga ou solta (`{"group_ids": [...], "class_ids": [...]}`; lista vazia solta).
+  `POST /education/project-groups/infer-classes` (`{"discipline_id": "...",
+  "group_ids": []}`) deduz as turmas dos grupos sem turma pelos alunos vinculados e
+  devolve `assigned`, `without_linked_members` e `conflicting`. O sorteio (`POST /education/group-draws`) e o quiz em grupo
   (`PUT /education/quiz/{id}/group`) aceitam `class_id`.

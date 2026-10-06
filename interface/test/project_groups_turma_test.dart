@@ -95,6 +95,14 @@ class _Backend {
     if (request.method == 'GET' && path.endsWith('/education/project-groups')) {
       return json(groups);
     }
+    if (path.endsWith('/project-groups/infer-classes')) {
+      return json({
+        'assigned': 1,
+        'without_linked_members': ['GRUPO 2'],
+        'conflicting': [],
+        'groups': {},
+      });
+    }
     if (path.endsWith('/project-groups/assign-class')) {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       return json({'assigned': (body['group_ids'] as List).length});
@@ -283,7 +291,7 @@ void main() {
       });
     });
 
-    testWidgets('duas turmas no mesmo dia: as duas em "hoje" e nenhuma marcada',
+    testWidgets('duas turmas no mesmo dia: as duas em "hoje" e as duas marcadas',
         (tester) async {
       final backend = _Backend(groups, classes: [
         _class('c-seg', '3001', 'Presencial', 0),
@@ -294,9 +302,62 @@ void main() {
         expect(find.byKey(const ValueKey('turma-c-seg')), findsOneWidget);
         expect(find.byKey(const ValueKey('turma-c-noite')), findsOneWidget);
         expect(find.text('OUTRAS TURMAS'), findsNothing);
-        // Sem como escolher pelo dia, fica "todas".
-        expect(tester.widget<ChoiceChip>(find.byKey(const ValueKey('turma-todas'))).selected,
-            isTrue);
+        // O grupo é do dia: as duas turmas dele vêm marcadas, e "todas" não.
+        ChoiceChip chip(String key) =>
+            tester.widget<ChoiceChip>(find.byKey(ValueKey(key)));
+        expect(chip('turma-c-seg').selected, isTrue);
+        expect(chip('turma-c-noite').selected, isTrue);
+        expect(chip('turma-todas').selected, isFalse);
+      });
+    });
+
+    testWidgets('tocar em outra turma junta ao filtro; tocar de novo tira',
+        (tester) async {
+      final backend = _Backend([
+        _group('g1', 'GRUPO 1', classIds: ['c-seg']),
+        _group('g2', 'GRUPO 2', classIds: ['c-noite']),
+        _group('g3', 'GRUPO 3', classIds: ['c-qui']),
+      ], classes: [
+        _class('c-seg', '3001', 'Presencial', 0),
+        _class('c-noite', '3003', 'Noite', 0),
+        _class('c-qui', '3002', 'Quinta', 3),
+      ]);
+      await _open(tester, backend, now: _segundaFeira, body: () async {
+        expect(find.text('2 grupos cadastrados (de 3 na disciplina)'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('turma-c-qui')));
+        await tester.pumpAndSettle();
+        expect(find.text('3 grupos cadastrados'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('turma-c-seg')));
+        await tester.pumpAndSettle();
+        expect(find.text('2 grupos cadastrados (de 3 na disciplina)'), findsOneWidget);
+        expect(find.text('GRUPO 1 • 2026.2'), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('turma-todas')));
+        await tester.pumpAndSettle();
+        expect(find.text('3 grupos cadastrados'), findsOneWidget);
+      });
+    });
+
+    testWidgets('as duas turmas marcadas vão sugeridas na importação',
+        (tester) async {
+      final backend = _Backend([], classes: [
+        _class('c-seg', '3001', 'Presencial', 0),
+        _class('c-noite', '3003', 'Noite', 0),
+      ]);
+      await _open(tester, backend,
+          now: _segundaFeira,
+          initialText: 'GRUPO 1\n- Kaic Vinicius\n', body: () async {
+        await tester.tap(find.text('Conferir e cadastrar grupos'));
+        await tester.pumpAndSettle();
+
+        expect(_marcada(tester, 'c-seg'), isTrue);
+        expect(_marcada(tester, 'c-noite'), isTrue);
+        await tester.tap(find.text('Continuar'));
+        await _pumpFrames(tester);
+        expect(backend.bodyOf('/project-groups/preview')['class_ids'],
+            ['c-noite', 'c-seg']);
       });
     });
 
@@ -454,6 +515,36 @@ void main() {
         expect(backend.requests.any((r) => r.url.path.endsWith('/preview')),
             isFalse);
       });
+    });
+  });
+
+  group('deduzir as turmas pelos alunos', () {
+    testWidgets('o botão manda a disciplina e conta o que ficou de fora',
+        (tester) async {
+      final backend = _Backend([
+        _group('g1', 'GRUPO 1'),
+        _group('g2', 'GRUPO 2'),
+      ]);
+      await _open(tester, backend, body: () async {
+        await tester.tap(find.text('Deduzir turmas pelos alunos'));
+        await tester.pumpAndSettle();
+
+        expect(backend.bodyOf('/project-groups/infer-classes')['discipline_id'], 'd1');
+        expect(find.textContaining('1 grupos ligados às turmas dos seus alunos.'),
+            findsOneWidget);
+        expect(find.textContaining('Sem aluno vinculado, ficaram sem turma: GRUPO 2'),
+            findsOneWidget);
+      });
+    });
+
+    testWidgets('sem grupo solto o botão não aparece', (tester) async {
+      await _open(
+        tester,
+        _Backend([_group('g1', 'GRUPO 1', classIds: ['c-seg'])]),
+        body: () async {
+          expect(find.text('Deduzir turmas pelos alunos'), findsNothing);
+        },
+      );
     });
   });
 

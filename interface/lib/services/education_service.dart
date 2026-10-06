@@ -96,6 +96,18 @@ class EducationService {
         .toInt();
   }
 
+  /// Liga os grupos sem turma as turmas dos alunos já vinculados aos integrantes.
+  /// Devolve o resumo do servidor (`assigned`, `without_linked_members`, `conflicting`).
+  Future<Map<String, dynamic>> inferProjectGroupClasses(String disciplineId,
+      {List<String> groupIds = const []}) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/project-groups/infer-classes'),
+      headers: _headers,
+      body: jsonEncode({'discipline_id': disciplineId, 'group_ids': groupIds}),
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
   Future<void> updateProjectGroup(String id, Map<String, dynamic> fields) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/education/project-groups/$id'),

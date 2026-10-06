@@ -578,6 +578,68 @@ async def clashing_group_names(db, tutor_id: str, discipline_id: str, class_ids,
             and wanted & set(sets[group.id])}
 
 
+async def infer_classes_from_members(db, tutor_id: str, discipline_id: str,
+                                     group_ids=None) -> dict:
+    """Liga cada grupo sem turma as turmas dos alunos ja vinculados aos integrantes.
+
+    Serve para a disciplina que ja tinha os grupos cadastrados antes de ser separada por
+    turma: o grupo fica nas turmas dos seus alunos (uma so, ou as duas se mistura). So
+    mexe em grupo sem turma, e deixa de fora o que nao da para decidir: grupo sem
+    nenhum integrante vinculado, ou nome que ja existe em grupo de turmas que se cruzam.
+    """
+    query = select(ProjectGroupModel).where(
+        ProjectGroupModel.tutor_id == tutor_id,
+        ProjectGroupModel.discipline_id == discipline_id,
+    )
+    if group_ids:
+        query = query.where(ProjectGroupModel.id.in_(list(group_ids)))
+    candidates = list((await db.execute(query)).scalars().all())
+    sets = await class_ids_of_groups(db, candidates)
+    loose = [group for group in candidates if not sets[group.id]]
+    if not loose:
+        return dict(assigned=0, without_linked_members=[], conflicting=[], groups={})
+
+    members = (await db.execute(select(ProjectGroupMemberModel).where(
+        ProjectGroupMemberModel.group_id.in_([group.id for group in loose]),
+        ProjectGroupMemberModel.student_id.is_not(None),
+    ))).scalars().all()
+    student_classes = {
+        student.id: student.class_id
+        for student in (await db.execute(select(StudentModel).where(
+            StudentModel.tutor_id == tutor_id,
+            StudentModel.id.in_({member.student_id for member in members} or {""}),
+        ))).scalars().all()
+    }
+    valid_classes = {
+        item.id for item in (await db.execute(select(ClassGroupModel).where(
+            ClassGroupModel.tutor_id == tutor_id,
+            ClassGroupModel.discipline_id == discipline_id,
+        ))).scalars().all()
+    }
+    found: dict[str, set[str]] = {}
+    for member in members:
+        turma = student_classes.get(member.student_id)
+        if turma in valid_classes:
+            found.setdefault(member.group_id, set()).add(turma)
+
+    assigned: dict[str, list[str]] = {}
+    without, conflicting = [], []
+    for group in sorted(loose, key=lambda item: item.name):
+        wanted = sorted(found.get(group.id, ()))
+        if not wanted:
+            without.append(group.name)
+            continue
+        if await clashing_group_names(db, tutor_id, discipline_id, wanted,
+                                      [group.name], ignore_ids=[group.id]):
+            conflicting.append(group.name)
+            continue
+        await set_group_classes(db, group, wanted)
+        assigned[group.id] = wanted
+    await db.commit()
+    return dict(assigned=len(assigned), without_linked_members=without,
+                conflicting=conflicting, groups=assigned)
+
+
 async def preview_project_groups(db, tutor_id: str, discipline_id: str,
                                  parsed: list[dict],
                                  class_id: str | list[str] | None = None) -> dict:

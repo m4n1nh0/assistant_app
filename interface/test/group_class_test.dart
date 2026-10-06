@@ -144,15 +144,30 @@ void main() {
     });
 
     test('por turma, com o grupo de aula reunida em cada uma das suas turmas', () {
-      expect(filterGroupsByClass(groups, 'c-qui').map((g) => g['name']),
+      expect(filterGroupsByClass(groups, {'c-qui'}).map((g) => g['name']),
           ['GRUPO 1', 'GRUPO 3']);
-      expect(filterGroupsByClass(groups, 'c-seg').map((g) => g['name']),
+      expect(filterGroupsByClass(groups, {'c-seg'}).map((g) => g['name']),
           ['GRUPO 1', 'GRUPO 3']);
     });
 
     test('"sem turma" pega nulo e ausente', () {
-      expect(filterGroupsByClass(groups, noClassFilter).map((g) => g['name']),
+      expect(filterGroupsByClass(groups, {noClassFilter}).map((g) => g['name']),
           ['GRUPO 7', 'GRUPO 8']);
+    });
+
+    test('varias turmas juntas: grupos de qualquer uma, sem repetir', () {
+      expect(filterGroupsByClass(groups, {'c-seg', 'c-qui'}).map((g) => g['name']),
+          ['GRUPO 1', 'GRUPO 1', 'GRUPO 3']);
+    });
+
+    test('turma e "sem turma" juntas', () {
+      expect(
+          filterGroupsByClass(groups, {'c-qui', noClassFilter}).map((g) => g['name']),
+          ['GRUPO 1', 'GRUPO 3', 'GRUPO 7', 'GRUPO 8']);
+    });
+
+    test('conjunto vazio é "todas"', () {
+      expect(filterGroupsByClass(groups, <String>{}), hasLength(5));
     });
   });
 
@@ -196,24 +211,28 @@ void main() {
       expect(splitClassesByDay([b, a], segunda).today.map((item) => item.id), ['b', 'a']);
     });
 
-    test('a única turma de hoje já vem escolhida', () {
-      expect(defaultClassFilter([_segunda, _quinta], segunda), 'c-seg');
-      expect(defaultClassFilter([_segunda, _quinta], quinta), 'c-qui');
+    test('a turma de hoje já vem escolhida', () {
+      expect(defaultClassFilter([_segunda, _quinta], segunda), {'c-seg'});
+      expect(defaultClassFilter([_segunda, _quinta], quinta), {'c-qui'});
     });
 
-    test('sem turma hoje, ou com mais de uma, não escolhe por ninguém', () {
-      expect(defaultClassFilter([_segunda, _quinta], quarta), isNull);
+    test('duas turmas no mesmo dia vêm escolhidas juntas (o grupo é do dia)', () {
       expect(
-        defaultClassFilter([_segunda, _class('c2', '3003', 'Noite', [0])], segunda),
-        isNull,
+        defaultClassFilter(
+            [_segunda, _class('c2', '3003', 'Noite', [0]), _quinta], segunda),
+        {'c-seg', 'c2'},
       );
-      expect(defaultClassFilter(const [], segunda), isNull);
+    });
+
+    test('sem turma hoje, ou sem turmas, fica "todas" (vazio)', () {
+      expect(defaultClassFilter([_segunda, _quinta], quarta), isEmpty);
+      expect(defaultClassFilter(const [], segunda), isEmpty);
     });
 
     test('turma sem horário cadastrado nunca é "de hoje"', () {
       final sem = _class('sem', '9', 'Sem horário', []);
       expect(splitClassesByDay([sem], segunda).today, isEmpty);
-      expect(defaultClassFilter([sem], segunda), isNull);
+      expect(defaultClassFilter([sem], segunda), isEmpty);
     });
   });
 }

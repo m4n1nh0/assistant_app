@@ -23,6 +23,8 @@ Future<void> showGroupDrawDialog(
   required Discipline discipline,
   List<ClassGroup> classes = const [],
   String? initialClassId,
+  List<String> scopeGroupIds = const [],
+  String scopeLabel = '',
 }) {
   return showDialog<void>(
     context: context,
@@ -33,6 +35,8 @@ Future<void> showGroupDrawDialog(
         discipline: discipline,
         classes: classes,
         initialClassId: initialClassId,
+        scopeGroupIds: scopeGroupIds,
+        scopeLabel: scopeLabel,
       ),
     ),
   );
@@ -70,6 +74,11 @@ class GroupDrawPanel extends StatefulWidget {
   /// Turma que ja vem marcada ao criar um sorteio novo.
   final String? initialClassId;
 
+  /// Grupos de varias turmas escolhidas na tela (aula reunida): o sorteio pode levar
+  /// so eles. [scopeLabel] diz quais turmas sao ("3002 A + 3030 B").
+  final List<String> scopeGroupIds;
+  final String scopeLabel;
+
   /// Troca o servico nos testes.
   final EducationService? service;
 
@@ -78,6 +87,8 @@ class GroupDrawPanel extends StatefulWidget {
     required this.discipline,
     this.classes = const [],
     this.initialClassId,
+    this.scopeGroupIds = const [],
+    this.scopeLabel = '',
     this.service,
   });
 
@@ -97,6 +108,8 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
   String _mode = GroupDraw.modeQueue;
   /// Turma do proximo sorteio; `null` sorteia os grupos de todas as turmas.
   String? _classId;
+  /// Sorteio so dos grupos das turmas escolhidas na tela (aula reunida).
+  bool _useScope = false;
   bool _loading = true;
   bool _busy = false;
   bool _creating = false;
@@ -114,6 +127,7 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
     _classId = widget.classes.any((item) => item.id == widget.initialClassId)
         ? widget.initialClassId
         : null;
+    _useScope = widget.scopeGroupIds.isNotEmpty;
     _load();
   }
 
@@ -183,10 +197,13 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
     await _run(() => _service.createGroupDraw(
           disciplineId: widget.discipline.id,
           semester: widget.discipline.semester,
-          title: _title.text.trim(),
+          title: _title.text.trim().isEmpty && _useScope
+              ? 'Apresentações · ${widget.scopeLabel}'
+              : _title.text.trim(),
           mode: _mode,
           perDay: perDay != null && perDay > 0 ? perDay : null,
-          classId: _classId,
+          groupIds: _useScope ? widget.scopeGroupIds : const [],
+          classId: _useScope ? null : _classId,
         ));
     if (_draw != null && mounted) await _refreshHistory();
   }
@@ -406,10 +423,16 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
           ),
           if (widget.classes.isNotEmpty) ...[
             DropdownButtonFormField<String>(
-              value: _classId ?? 'all',
+              value: _useScope ? 'scope' : _classId ?? 'all',
               isExpanded: true,
               decoration: const InputDecoration(labelText: 'Turma (dia de aula)'),
               items: [
+                if (widget.scopeGroupIds.isNotEmpty)
+                  DropdownMenuItem(
+                      value: 'scope',
+                      child: Text(
+                          '${widget.scopeLabel} (${widget.scopeGroupIds.length} grupos)',
+                          overflow: TextOverflow.ellipsis)),
                 const DropdownMenuItem(
                     value: 'all', child: Text('Todas as turmas')),
                 for (final turma in widget.classes)
@@ -421,14 +444,18 @@ class _GroupDrawPanelState extends State<GroupDrawPanel> {
               ],
               onChanged: _busy
                   ? null
-                  : (value) =>
-                      setState(() => _classId = value == 'all' ? null : value),
+                  : (value) => setState(() {
+                      _useScope = value == 'scope';
+                      _classId = value == 'all' || _useScope ? null : value;
+                    }),
             ),
             const SizedBox(height: 4),
             Text(
-              _classId == null
-                  ? 'Sorteia os grupos de todas as turmas juntos.'
-                  : 'Só os grupos desta turma entram no sorteio.',
+              _useScope
+                  ? 'Só os grupos das turmas marcadas na tela entram no sorteio.'
+                  : _classId == null
+                      ? 'Sorteia os grupos de todas as turmas juntos.'
+                      : 'Só os grupos desta turma entram no sorteio.',
               style: const TextStyle(
                   fontSize: 11, color: AssistantTheme.textMuted),
             ),

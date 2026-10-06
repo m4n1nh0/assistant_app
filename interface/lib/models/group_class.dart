@@ -132,17 +132,20 @@ List<String> groupClassIds(Map<String, dynamic> group) {
   return single.isEmpty ? const [] : [single];
 }
 
-/// Grupos de uma turma; `null` é "todas" e [noClassFilter] são os sem turma.
+/// Grupos das turmas escolhidas; vazio (ou `null`) é "todas".
 ///
-/// O grupo de aula reunida aparece em cada uma das suas turmas.
+/// Com várias turmas entram os grupos de qualquer uma delas, e [noClassFilter] junta
+/// os grupos sem turma. O grupo de aula reunida aparece em cada uma das suas turmas.
 List<Map<String, dynamic>> filterGroupsByClass(
   List<Map<String, dynamic>> groups,
-  String? filter,
+  Iterable<String>? filter,
 ) {
-  if (filter == null) return groups;
+  final wanted = filter?.toSet() ?? const <String>{};
+  if (wanted.isEmpty) return groups;
   return groups.where((group) {
     final ids = groupClassIds(group);
-    return filter == noClassFilter ? ids.isEmpty : ids.contains(filter);
+    if (ids.isEmpty) return wanted.contains(noClassFilter);
+    return ids.any(wanted.contains);
   }).toList();
 }
 
@@ -173,11 +176,9 @@ String weekdayLabel(int dartWeekday) =>
       others: classes.where((item) => !item.meetsOn(dartWeekday)).toList(),
     );
 
-/// A turma que já vem marcada ao abrir uma disciplina: a única que tem aula hoje.
+/// As turmas que já vêm marcadas ao abrir uma disciplina: todas as que têm aula hoje.
 ///
-/// Com duas turmas no mesmo dia, ou nenhuma, não há como escolher por ele; fica
-/// "todas" (`null`) e o professor decide.
-String? defaultClassFilter(List<ClassGroup> classes, int dartWeekday) {
-  final today = splitClassesByDay(classes, dartWeekday).today;
-  return today.length == 1 ? today.single.id : null;
-}
+/// O grupo é do dia, e as turmas do mesmo dia (3002 e 3030, na segunda) dividem os
+/// grupos, então as duas vêm marcadas juntas. Sem aula hoje, vazio: "todas".
+Set<String> defaultClassFilter(List<ClassGroup> classes, int dartWeekday) =>
+    splitClassesByDay(classes, dartWeekday).today.map((item) => item.id).toSet();
