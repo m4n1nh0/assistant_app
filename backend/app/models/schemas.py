@@ -961,6 +961,14 @@ class ProjectGroupPointUpdate(BaseModel):
         return self
 
 
+class CombinedSummaryRequest(BaseModel):
+    """Resumo conjunto de várias gravações escolhidas no histórico."""
+    lesson_ids: List[str] = Field(min_length=2, max_length=30)
+    style: str = "standard"
+    focus: str = Field(default="", max_length=500)
+    llm: Optional[str] = None
+
+
 class ProjectGroupUpdate(BaseModel):
     project_title: Optional[str] = Field(default=None, max_length=255)
     project_description: Optional[str] = None

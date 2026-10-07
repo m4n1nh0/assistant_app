@@ -90,6 +90,7 @@ from ..models.schemas import (
     ProjectGroupCommitRequest,
     ProjectGroupAssignClass,
     ProjectGroupInferClasses,
+    CombinedSummaryRequest,
     MaterialLinkCreate,
     ProjectGroupPointCreate,
     ProjectGroupPointUpdate,
@@ -2953,6 +2954,25 @@ async def store_external_summary(
         used_segments=len(await _lesson_transcript(lesson_id, db)),
         db=db,
     )
+
+
+@router.post("/combined-summary")
+async def combined_summary(
+    body: CombinedSummaryRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
+):
+    """Resumo conjunto de várias gravações do histórico (um dia de apresentações, por
+    exemplo), com uma seção por gravação. Não fica gravado: é gerado sob demanda."""
+    from ..services import combined_summary_service as combined
+
+    try:
+        return await combined.build_combined_summary(
+            db, user["tutor_id"], body.lesson_ids, style=body.style,
+            focus=body.focus, llm=body.llm)
+    except combined.CombinedSummaryError as exc:
+        raise HTTPException(exc.status, exc.message) from exc
 
 
 @router.post("/lessons/{lesson_id}/summary", response_model=LessonSummaryResponse)

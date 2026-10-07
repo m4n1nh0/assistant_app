@@ -32,6 +32,7 @@ import '../providers/app_provider.dart';
 import '../branding/intarq_brand.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
+import 'combined_summary_dialog.dart';
 import 'education_dashboard.dart';
 import 'lesson_recovery_banner.dart';
 import 'recording_monitor.dart';
@@ -4427,6 +4428,9 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
   var _summaryEngine = '';
   var _status = '';
 
+  /// Gravações marcadas para o resumo conjunto (um dia de apresentações, por exemplo).
+  final _selected = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -4460,7 +4464,10 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         limit: 200,
       );
       if (!mounted) return;
-      setState(() => _lessons = lessons);
+      setState(() {
+        _lessons = lessons;
+        _selected.retainAll({for (final lesson in lessons) lesson.id});
+      });
       final wanted = keepId ?? _detail?.id;
       if (wanted != null && lessons.any((item) => item.id == wanted)) {
         await _open(wanted);
@@ -4950,6 +4957,23 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
     );
   }
 
+  /// Marcar gravações e resumir juntas: o dia de apresentações de grupo, por exemplo.
+  Widget _selectionBar() => LessonSelectionBar(
+        count: _selected.length,
+        total: _lessons.length,
+        onToggleAll: () => setState(() {
+          if (_selected.length == _lessons.length) {
+            _selected.clear();
+          } else {
+            _selected.addAll(_lessons.map((lesson) => lesson.id));
+          }
+        }),
+        onSummarise: () => showCombinedSummaryDialog(context, lessons: [
+          for (final lesson in _lessons)
+            if (_selected.contains(lesson.id)) lesson,
+        ]),
+      );
+
   Widget _buildList() {
     return _Panel(
       title: 'AULAS',
@@ -4958,7 +4982,9 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
               icon: Icons.history,
               text: 'Nenhuma aula no periodo.',
             )
-          : ListView.separated(
+          : Column(children: [
+              _selectionBar(),
+              Expanded(child: ListView.separated(
               itemCount: _lessons.length,
               separatorBuilder: (_, __) =>
                   const Divider(height: 12, color: AssistantTheme.border),
@@ -4977,6 +5003,17 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
                       children: [
+                        SizedBox(
+                          width: 28,
+                          child: Checkbox(
+                            key: ValueKey('selecionar-${lesson.id}'),
+                            value: _selected.contains(lesson.id),
+                            visualDensity: VisualDensity.compact,
+                            onChanged: (on) => setState(() => on == true
+                                ? _selected.add(lesson.id)
+                                : _selected.remove(lesson.id)),
+                          ),
+                        ),
                         Icon(
                           lesson.isClosed
                               ? Icons.check_circle_outline
@@ -5051,7 +5088,8 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
                   ),
                 );
               },
-            ),
+            )),
+            ]),
     );
   }
 

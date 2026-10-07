@@ -394,11 +394,81 @@ PRESENTATION_KIND = "apresentacao"
 MEETING_KIND = "reuniao"
 RECORDING_KINDS = (LESSON_KIND, LECTURE_KIND, PRESENTATION_KIND, MEETING_KIND)
 
+# Resumo de varias gravacoes juntas: nao e um tipo que se grava, so um jeito de resumir.
+# A variante das apresentacoes fala por grupo.
+SELECTION_KIND = "selecao"
+SELECTION_PRESENTATIONS_KIND = "selecao-apresentacao"
+SUMMARY_KINDS = (*RECORDING_KINDS, SELECTION_KIND, SELECTION_PRESENTATIONS_KIND)
+
 
 def normalize_recording_kind(value: Optional[str]) -> str:
     """Aceita so os tipos conhecidos; qualquer outro vira aula."""
     kind = (value or "").strip().lower()
     return kind if kind in RECORDING_KINDS else LESSON_KIND
+
+
+def normalize_summary_kind(value: Optional[str]) -> str:
+    """Tipo de gravacao ou de selecao; qualquer outro vira aula."""
+    kind = (value or "").strip().lower()
+    return kind if kind in SUMMARY_KINDS else LESSON_KIND
+
+
+_SELECTION_SYSTEM = (
+    "Voce faz o resumo conjunto de varias gravacoes (aulas, apresentacoes, palestras "
+    "ou reunioes) a partir do resumo ou da transcricao de cada uma, que vem sob um "
+    "titulo proprio. Escreva em portugues brasileiro, de forma objetiva e fiel ao que "
+    "foi dito. Mantenha cada gravacao identificada pelo titulo dela e nunca atribua a "
+    "uma gravacao o que foi dito em outra. Nunca invente conteudo para completar uma "
+    "fonte; quando algo nao estiver nas fontes, omita ou marque como incerto.{rule}"
+)
+
+_SELECTION_STANDARD_STRUCTURE = (
+    "## Visao geral\n(2 a 4 paragrafos: o que o conjunto das gravacoes cobre)\n"
+    "## Por gravacao\n(uma subsecao ### para cada gravacao, na ordem recebida, com "
+    "o titulo dela e os pontos principais)\n"
+    "## Pontos em comum e diferencas\n(o que se repete entre elas e onde divergem; "
+    "omita a secao se nao houver)\n"
+    "## Pendencias e duvidas em aberto\n(o que ficou sem resposta; omita se nao "
+    "houver)\n"
+)
+
+_SELECTION_DETAILED_STRUCTURE = (
+    "## Visao geral\n(4 a 6 paragrafos: o que o conjunto das gravacoes cobre)\n"
+    "## Por gravacao\n(uma subsecao ### para cada gravacao, na ordem recebida, com "
+    "o titulo dela, os assuntos na ordem em que foram tratados e o raciocinio por "
+    "tras de cada um)\n"
+    "## Conceitos e definicoes\n(o que foi definido, dizendo em qual gravacao; omita "
+    "se nao houver)\n"
+    "## Pontos em comum e diferencas\n(o que se repete entre elas e onde divergem; "
+    "omita a secao se nao houver)\n"
+    "## Perguntas e respostas\n(perguntas feitas e as respostas, com a gravacao de "
+    "origem; omita se nao houver)\n"
+    "## Pendencias e duvidas em aberto\n(o que ficou sem resposta; omita se nao "
+    "houver)\n"
+)
+
+_SELECTION_PRESENTATIONS_STANDARD_STRUCTURE = (
+    "## Visao geral\n(2 a 4 paragrafos: o que o conjunto das apresentacoes cobre)\n"
+    "## Por grupo\n(uma subsecao ### para cada grupo, na ordem recebida, com o nome "
+    "dele, o projeto e as tecnologias, o que foi mostrado e as perguntas e respostas)\n"
+    "## Comparacao entre as apresentacoes\n(semelhancas e diferencas de abordagem, "
+    "tecnologias e resultados; omita a secao se nao houver)\n"
+    "## Perguntas recorrentes e pontos a esclarecer\n(o que ficou vago ou sem "
+    "resposta; omita se nao houver)\n"
+)
+
+_SELECTION_PRESENTATIONS_DETAILED_STRUCTURE = (
+    "## Visao geral\n(4 a 6 paragrafos: o que o conjunto das apresentacoes cobre)\n"
+    "## Por grupo\n(uma subsecao ### para cada grupo, na ordem recebida, com o nome "
+    "dele, o problema, a proposta, as tecnologias e as decisoes tecnicas que ele "
+    "explicou, o que foi mostrado funcionando e as perguntas e respostas)\n"
+    "## Comparacao entre as apresentacoes\n(semelhancas e diferencas de abordagem, "
+    "tecnologias, resultados e maturidade; omita a secao se nao houver)\n"
+    "## Perguntas recorrentes\n(perguntas que apareceram em mais de um grupo; omita "
+    "se nao houver)\n"
+    "## Pontos a esclarecer\n(o que ficou vago, sem resposta ou em aberto, por "
+    "grupo; omita se nao houver)\n"
+)
 
 
 _LECTURE_STANDARD_STRUCTURE = (
@@ -498,6 +568,9 @@ class _KindProfile(NamedTuple):
     standard: str
     detailed: str
     show_empty_discipline: bool
+    #: Papel do modelo por extenso, quando o modelo padrao ("Voce resume {noun}...")
+    #: nao serve - e o caso do resumo de varias gravacoes.
+    system: str = ""
 
 
 _PROFILES = {
@@ -517,6 +590,27 @@ _PROFILES = {
         ),
         standard=_LECTURE_STANDARD_STRUCTURE,
         detailed=_LECTURE_DETAILED_STRUCTURE, show_empty_discipline=False,
+    ),
+    SELECTION_KIND: _KindProfile(
+        label="Selecao", noun="selecoes de gravacoes", the="a selecao",
+        of="da selecao", a_long="uma selecao longa",
+        absent="quem nao viu as gravacoes", rule="",
+        standard=_SELECTION_STANDARD_STRUCTURE,
+        detailed=_SELECTION_DETAILED_STRUCTURE, show_empty_discipline=False,
+        system=_SELECTION_SYSTEM,
+    ),
+    SELECTION_PRESENTATIONS_KIND: _KindProfile(
+        label="Selecao", noun="selecoes de apresentacoes",
+        the="a selecao", of="da selecao", a_long="uma selecao longa",
+        absent="quem nao viu as apresentacoes",
+        rule=(
+            " Cada gravacao e a apresentacao de um grupo que mostra o proprio "
+            "trabalho: descreva o que foi dito e mostrado, sem atribuir nota nem "
+            "julgar a qualidade alem do que as fontes registram."
+        ),
+        standard=_SELECTION_PRESENTATIONS_STANDARD_STRUCTURE,
+        detailed=_SELECTION_PRESENTATIONS_DETAILED_STRUCTURE,
+        show_empty_discipline=False, system=_SELECTION_SYSTEM,
     ),
     MEETING_KIND: _KindProfile(
         label="Reuniao", noun="reunioes", the="a reuniao", of="da reuniao",
@@ -548,12 +642,13 @@ _PROFILES = {
 
 
 def _profile(kind: Optional[str]) -> _KindProfile:
-    return _PROFILES[normalize_recording_kind(kind)]
+    return _PROFILES[normalize_summary_kind(kind)]
 
 
 def summary_system_prompt(kind: Optional[str] = LESSON_KIND) -> str:
     profile = _profile(kind)
-    return _SUMMARY_SYSTEM_TEMPLATE.format(noun=profile.noun, rule=profile.rule)
+    template = profile.system or _SUMMARY_SYSTEM_TEMPLATE
+    return template.format(noun=profile.noun, rule=profile.rule)
 
 
 # Texto de sempre, para a aula e para quem importa a constante.
@@ -675,7 +770,7 @@ def _summary_prompt(
     )
     structure = (
         (_DETAILED_STRUCTURE if detailed else _STANDARD_STRUCTURE)
-        if normalize_recording_kind(kind) == LESSON_KIND
+        if normalize_summary_kind(kind) == LESSON_KIND
         else (profile.detailed if detailed else profile.standard)
     )
 
@@ -1242,7 +1337,7 @@ def build_summary_prompt(
     cliente, para os dois caminhos pedirem a mesma coisa.
     """
     style = normalize_summary_style(style)
-    kind = normalize_recording_kind(kind)
+    kind = normalize_summary_kind(kind)
     texts = [text for text in segments if text and text.strip()]
     transcript = "\n".join(texts)
     return {
@@ -1276,7 +1371,7 @@ async def generate_summary(
     `kind` (aula, palestra ou apresentacao) decide como o resumo fala dela.
     """
     style = normalize_summary_style(style)
-    kind = normalize_recording_kind(kind)
+    kind = normalize_summary_kind(kind)
     texts = [text for text in segments if text and text.strip()]
     if not texts:
         return {"summary": "", "llm": "", "used_segments": 0, "style": style}

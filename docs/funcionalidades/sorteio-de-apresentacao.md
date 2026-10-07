@@ -41,7 +41,7 @@ antes do resultado).
 
 ## Imprimir
 
-Há dois PDFs, com o mesmo padrão dos outros documentos do app, e cada um pergunta se vai para a impressora ou para um arquivo:
+Há dois PDFs, com o mesmo padrão dos outros documentos do app. Cada um mostra primeiro a **pré-visualização** (o documento como vai sair) e só depois deixa **imprimir** ou **salvar**; fechar a prévia não imprime nem grava nada:
 
 - **Relação de grupos** - aba **Grupos de projeto** → **Imprimir relação**. Lista cada grupo da disciplina com o título do projeto, os integrantes (na ordem da lista) e a matrícula de cada um. Integrante cujo nome ainda não foi ligado a um aluno cadastrado sai com "—" na matrícula. Os grupos saem em ordem numérica ("Grupo 2" antes de "Grupo 10").
 - **Ordem de apresentação** - janela do sorteio → ícone da impressora. Traz a posição, o grupo, o representante e a situação, dividido por dia quando houver mais de um, e a lista dos grupos ainda não sorteados. No rodapé vão a semente e a regra do sorteio, para quem quiser conferir.

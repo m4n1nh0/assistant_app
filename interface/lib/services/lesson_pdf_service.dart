@@ -8,6 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../branding/intarq_brand.dart';
+import '../models/combined_summary.dart';
 import 'education_service.dart';
 
 /// Gera o PDF do resumo da aula com a identidade visual do aplicativo.
@@ -29,7 +30,7 @@ const _header = PdfColor.fromInt(0xFFF4F8FC);
 const _headerBadge = PdfColor.fromInt(0xFFFFFFFF);
 
 /// Tipo de bloco do resumo na montagem do PDF.
-enum SummaryBlockKind { heading, bullet, paragraph }
+enum SummaryBlockKind { heading, subheading, bullet, paragraph }
 
 /// Um bloco do resumo ja classificado para a diagramacao do PDF.
 class SummaryBlock {
@@ -74,7 +75,13 @@ List<SummaryBlock> parseSummary(String summary) {
       flush();
       final title = line.replaceFirst(RegExp(r'^#+\s*'), '').trim();
       if (title.isNotEmpty) {
-        blocks.add(SummaryBlock(SummaryBlockKind.heading, title));
+        // "###" é a subseção (um grupo, uma gravação dentro do resumo conjunto).
+        blocks.add(SummaryBlock(
+          line.startsWith('###')
+              ? SummaryBlockKind.subheading
+              : SummaryBlockKind.heading,
+          title,
+        ));
       }
       continue;
     }
@@ -152,8 +159,9 @@ class SummaryHeader {
   final String heading;
   final String subtitle;
 
-  /// Integrantes do grupo (só na apresentação).
+  /// Integrantes do grupo (só na apresentação); no resumo conjunto, as gravações.
   final List<String> members;
+  final String membersLabel;
   final String meta;
 
   /// Linha das páginas seguintes.
@@ -164,6 +172,7 @@ class SummaryHeader {
     required this.heading,
     this.subtitle = '',
     this.members = const [],
+    this.membersLabel = 'Integrantes',
     this.meta = '',
     this.running = '',
   });
@@ -299,7 +308,7 @@ Future<Uint8List> buildLessonSummaryPdf({
         theme: await _pdfTheme(),
       ),
       header: (context) => context.pageNumber == 1
-          ? _buildBanner(lesson, header, brandMark, style)
+          ? _buildBanner(lesson.semester, header, brandMark, style)
           : _buildRunningHeader(header, brandMark, style),
       footer: (context) => _buildFooter(context),
       build: (context) => [
@@ -318,7 +327,7 @@ String _styleTitle(String style) =>
     style == summaryStyleDetailed ? 'Resumo detalhado' : 'Resumo comum';
 
 pw.Widget _buildBanner(
-  Lesson lesson,
+  String semester,
   SummaryHeader header,
   pw.MemoryImage? brandMark,
   String style,
@@ -372,7 +381,7 @@ pw.Widget _buildBanner(
               if (header.members.isNotEmpty) ...[
                 pw.SizedBox(height: 6),
                 pw.Text(
-                  'Integrantes: ${header.members.join(', ')}',
+                  '${header.membersLabel}: ${header.members.join(', ')}',
                   style: const pw.TextStyle(fontSize: 10, color: _ink),
                 ),
               ],
@@ -389,7 +398,7 @@ pw.Widget _buildBanner(
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
             IntarqBrand.pdfSignature(brandMark, width: 132, height: 51),
-            if (lesson.semester.isNotEmpty) ...[
+            if (semester.isNotEmpty) ...[
               pw.SizedBox(height: 7),
               pw.Container(
                 padding:
@@ -401,7 +410,7 @@ pw.Widget _buildBanner(
                       const pw.BorderRadius.all(pw.Radius.circular(4)),
                 ),
                 child: pw.Text(
-                  lesson.semester,
+                  semester,
                   style: pw.TextStyle(
                     fontSize: 9,
                     color: _accentDark,
@@ -484,6 +493,18 @@ List<pw.Widget> _buildBody(List<SummaryBlock> blocks) {
               pw.SizedBox(height: 4),
               pw.Container(height: 1.4, width: 46, color: _accent),
             ],
+          ),
+        ));
+      case SummaryBlockKind.subheading:
+        widgets.add(pw.Padding(
+          padding: const pw.EdgeInsets.only(top: 10, bottom: 4),
+          child: pw.Text(
+            block.text,
+            style: pw.TextStyle(
+              fontSize: 11.5,
+              color: _accentDark,
+              fontWeight: pw.FontWeight.bold,
+            ),
           ),
         ));
       case SummaryBlockKind.bullet:
@@ -577,5 +598,114 @@ List<pw.Widget> _buildPoints(List<LessonPoint> points) {
         ],
       ),
     ),
+  ];
+}
+
+// --- Resumo conjunto de várias gravações ---------------------------------------------
+
+/// O cabeçalho do PDF do resumo conjunto: o que é, de quê e de quando, e as gravações.
+SummaryHeader combinedSummaryHeader(
+  CombinedSummary combined, {
+  DateTime? generatedAt,
+}) {
+  final when = generatedAt == null ? '' : 'gerado em ${_formatDate(generatedAt)}';
+  return SummaryHeader(
+    kindLabel: combined.heading,
+    heading: combined.title.isEmpty ? 'Gravações selecionadas' : combined.title,
+    subtitle: combined.subtitle,
+    members: [for (final item in combined.items) item.label],
+    membersLabel: combined.commonKind == 'apresentacao' ? 'Grupos' : 'Gravações',
+    meta: [
+      '${combined.items.length} gravações incluídas',
+      if (combined.skipped.isNotEmpty) '${combined.skipped.length} ficaram de fora',
+      if (when.isNotEmpty) when,
+    ].join('   |   '),
+    running: [
+      if (combined.title.isNotEmpty) combined.title,
+      if (combined.subtitle.isNotEmpty) combined.subtitle.split('  -  ').first,
+    ].join('   |   '),
+  );
+}
+
+/// Nome sugerido: o título e o que o subtítulo diz (disciplina, período), sem acentos.
+String combinedPdfFilename(CombinedSummary combined) {
+  final parts = [
+    combined.title,
+    combined.subtitle.replaceAll(RegExp(r'\d+ gravações'), ''),
+    if (summaryStyleOrStandard(combined.style) == summaryStyleDetailed)
+      'detalhado',
+  ].where((part) => part.trim().isNotEmpty);
+  var slug = _foldAscii(parts.join('-'))
+      .replaceAll(RegExp(r'[^a-z0-9\-]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-|-$'), '');
+  if (slug.length > 110) slug = slug.substring(0, 110).replaceAll(RegExp(r'-$'), '');
+  return '${slug.isEmpty ? "resumo-das-gravacoes" : slug}.pdf';
+}
+
+/// PDF do resumo conjunto, com a lista das gravações que entraram (e de onde veio o
+/// texto de cada uma) e das que ficaram de fora.
+Future<Uint8List> buildCombinedSummaryPdf({
+  required CombinedSummary combined,
+  DateTime? generatedAt,
+}) async {
+  final style = summaryStyleOrStandard(combined.style);
+  final header = combinedSummaryHeader(combined, generatedAt: generatedAt);
+  final document = pw.Document(
+    title: '${_styleTitle(style)} - ${header.heading}',
+    author: 'INTARQ',
+  );
+  final blocks = parseSummary(combined.summary);
+  final brandMark = await IntarqBrand.loadPdfMark();
+
+  document.addPage(
+    pw.MultiPage(
+      pageTheme: pw.PageTheme(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(36, 0, 36, 40),
+        theme: await _pdfTheme(),
+      ),
+      header: (context) => context.pageNumber == 1
+          ? _buildBanner('', header, brandMark, style)
+          : _buildRunningHeader(header, brandMark, style),
+      footer: (context) => _buildFooter(context),
+      build: (context) => [
+        pw.SizedBox(height: 18),
+        ..._buildBody(blocks),
+        ..._buildCombinedSources(combined),
+      ],
+    ),
+  );
+  return document.save();
+}
+
+List<pw.Widget> _buildCombinedSources(CombinedSummary combined) {
+  if (combined.items.isEmpty && combined.skipped.isEmpty) return const [];
+  pw.Widget line(String text, {PdfColor color = _inkSoft}) => pw.Padding(
+        padding: const pw.EdgeInsets.only(bottom: 3),
+        child: pw.Text(text, style: pw.TextStyle(fontSize: 9, color: color)),
+      );
+  return [
+    pw.SizedBox(height: 18),
+    pw.Container(height: 1, color: _rule),
+    pw.SizedBox(height: 8),
+    pw.Text(
+      'GRAVAÇÕES INCLUÍDAS',
+      style: pw.TextStyle(
+        fontSize: 9,
+        letterSpacing: 1.6,
+        color: _inkSoft,
+        fontWeight: pw.FontWeight.bold,
+      ),
+    ),
+    pw.SizedBox(height: 6),
+    for (final item in combined.items)
+      line('${item.label}  -  ${item.sourceLabel}'),
+    if (combined.skipped.isNotEmpty) ...[
+      pw.SizedBox(height: 6),
+      for (final item in combined.skipped)
+        line('Ficou de fora: ${item.label}  -  ${item.reason}',
+            color: _accentSoft),
+    ],
   ];
 }

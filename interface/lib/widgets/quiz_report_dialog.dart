@@ -18,6 +18,7 @@ import '../services/quiz_executive_summary.dart';
 import '../services/quiz_report.dart';
 import '../services/quiz_report_pdf_service.dart';
 import '../utils/theme.dart';
+import 'pdf_preview_dialog.dart';
 import 'quiz_export.dart' show ExportAction;
 
 /// Qual PDF exportar: o relatorio completo (com nomes) ou o resumo executivo
@@ -112,30 +113,27 @@ class _QuizReportViewState extends State<QuizReportView> {
     setState(() => _exporting = true);
     try {
       final executive = choice.kind == ReportKind.executive;
-      final bytes = executive
-          ? await buildQuizExecutiveReportPdf(report, generatedAt: DateTime.now())
-          : await buildQuizReportPdf(
-              report,
-              options: ReportPdfOptions(studentSheets: choice.sheets),
-              generatedAt: DateTime.now(),
-            );
-      final fileName = quizFilename(
-        report.titulo,
-        suffix: executive ? 'resumo-executivo' : 'relatorio',
+      await previewAndDeliverPdf(
+        context,
+        build: () => executive
+            ? buildQuizExecutiveReportPdf(report, generatedAt: DateTime.now())
+            : buildQuizReportPdf(
+                report,
+                options: ReportPdfOptions(studentSheets: choice.sheets),
+                generatedAt: DateTime.now(),
+              ),
+        fileName: quizFilename(
+          report.titulo,
+          suffix: executive ? 'resumo-executivo' : 'relatorio',
+        ),
+        saveDialogTitle: 'Salvar relatório do quiz',
+        title: executive
+            ? 'PRÉ-VISUALIZAÇÃO · RESUMO EXECUTIVO'
+            : 'PRÉ-VISUALIZAÇÃO · RELATÓRIO DO QUIZ',
+        preferred: choice.action == ExportAction.print
+            ? PdfDestination.print
+            : PdfDestination.save,
       );
-      if (choice.action == ExportAction.print) {
-        await printPdf(bytes, name: fileName);
-        return;
-      }
-      final file = await saveBytes(
-        bytes: bytes,
-        fileName: fileName,
-        dialogTitle: 'Salvar relatório do quiz',
-        extension: 'pdf',
-      );
-      if (file != null && mounted) _snack('PDF salvo em ${file.path}');
-    } catch (error) {
-      if (mounted) _snack('Falha ao gerar o PDF: $error', error: true);
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
@@ -146,7 +144,10 @@ class _QuizReportViewState extends State<QuizReportView> {
     if (report == null || _exporting) return;
     setState(() => _exporting = true);
     try {
-      final bytes = Uint8List.fromList(utf8.encode(quizReportCsv(report)));
+      final csv = quizReportCsv(report);
+      final confirmed = await showCsvPreviewDialog(context, csv: csv);
+      if (!confirmed || !mounted) return;
+      final bytes = Uint8List.fromList(utf8.encode(csv));
       final file = await saveBytes(
         bytes: bytes,
         fileName: quizFilename(report.titulo, suffix: 'resultados', extension: 'csv'),

@@ -6,11 +6,11 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../services/pdf_common.dart';
 import '../services/quiz_center_service.dart';
 import '../services/quiz_exercises_pdf_service.dart';
 import '../services/quiz_report.dart';
 import '../utils/theme.dart';
+import 'pdf_preview_dialog.dart';
 
 /// Como o professor quer o PDF dos exercicios, e o que fazer com ele.
 enum ExportAction { save, print }
@@ -178,29 +178,20 @@ Future<void> exportQuizExercises(
   );
   if (choice == null || !context.mounted) return;
 
-  try {
-    final bytes = await buildQuizExercisesPdf(
+  await previewAndDeliverPdf(
+    context,
+    build: () => buildQuizExercisesPdf(
       title: quizTitle,
       discipline: discipline,
       questions: questions,
       options: choice.options,
       generatedAt: DateTime.now(),
-    );
-    final fileName = quizFilename(quizTitle, suffix: 'exercicios');
-    if (choice.action == ExportAction.print) {
-      await printPdf(bytes, name: fileName);
-      return;
-    }
-    final file = await saveBytes(
-      bytes: bytes,
-      fileName: fileName,
-      dialogTitle: 'Salvar exercícios do quiz',
-      extension: 'pdf',
-    );
-    if (file != null && context.mounted) {
-      _snack(context, 'PDF salvo em ${file.path}');
-    }
-  } catch (error) {
-    if (context.mounted) _snack(context, 'Falha ao gerar o PDF: $error', error: true);
-  }
+    ),
+    fileName: quizFilename(quizTitle, suffix: 'exercicios'),
+    saveDialogTitle: 'Salvar exercícios do quiz',
+    title: 'PRÉ-VISUALIZAÇÃO · EXERCÍCIOS DO QUIZ',
+    preferred: choice.action == ExportAction.print
+        ? PdfDestination.print
+        : PdfDestination.save,
+  );
 }

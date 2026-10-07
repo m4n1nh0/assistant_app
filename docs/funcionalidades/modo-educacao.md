@@ -128,6 +128,47 @@ Para PDFs, **Gerar relatório** permite escolher independentemente:
 A escolha abre a pré-visualização correspondente e cada documento possui nome
 de arquivo próprio.
 
+## Pré-visualização de todos os relatórios
+
+Nenhum relatório sai direto para a impressora ou para um arquivo: o documento é gerado
+(com um aviso de "Gerando o relatório...") e abre numa **pré-visualização**, onde se
+confere como ficou antes de **imprimir** ou **salvar**. Vale para o resumo da aula e da
+seleção, o relatório acadêmico, a relação de grupos, a ordem de apresentação, os
+exercícios do quiz e os relatórios do quiz (completo e resumo executivo). A planilha CSV
+do quiz tem a mesma etapa, com as linhas em texto e o botão **Salvar planilha**. Fechar a
+prévia (botão **Fechar** ou o X) não imprime nem grava nada, e uma falha ao gerar mostra o
+erro sem abrir a prévia.
+
+## Resumo de várias gravações (a seleção do histórico)
+
+Em **3. Histórico**, cada gravação tem uma caixa de seleção. Marque duas ou mais (ou use
+**Selecionar todas**) e clique em **Resumo da seleção**. A janela mostra o que será
+resumido (`2 apresentações`, `1 apresentação, 2 aulas e 1 palestra`), pede o formato
+(comum ou detalhado) e um foco opcional, e gera **um resumo só**:
+
+- **Apresentações de grupo** (todas as marcadas são apresentações): visão geral, uma seção
+  **por grupo** (projeto, tecnologias, o que foi mostrado, perguntas e respostas), a
+  **comparação entre as apresentações** e as perguntas recorrentes e pontos a esclarecer. O
+  resumo descreve o que foi dito e mostrado e não dá nota.
+- **Aulas, palestras, reuniões ou uma mistura**: visão geral, uma seção **por gravação**,
+  pontos em comum e diferenças, e pendências. O formato detalhado acrescenta conceitos e
+  perguntas e respostas.
+
+Como entra cada gravação: com o **resumo que ela já tem**; sem resumo, é **resumida na
+hora** (só para este documento: a gravação não é alterada) e, se isso falhar, entra pela
+**transcrição cortada**. Gravação sem resumo e sem transcrição **fica de fora** e a janela
+diz qual. Cada texto vai sob o título da gravação (grupo e hora, por exemplo), e o modelo é
+instruído a não atribuir a uma gravação o que foi dito em outra. Pelo menos 2 e no
+máximo 30 gravações por vez; o espaço de cada uma é dividido conforme a janela do
+modelo, para não cair na condensação em blocos, que perderia os títulos.
+
+O resultado fica na janela, com **Copiar** e **PDF com prévia**. O PDF leva a etiqueta do
+tipo (`RESUMO DAS APRESENTAÇÕES`, `RESUMO DAS AULAS`, `RESUMO DAS GRAVAÇÕES`), o título, a
+disciplina e o período, os grupos ou gravações incluídos, e no fim a lista do que entrou
+(e de onde veio o texto de cada uma) e do que ficou de fora. O resumo conjunto **não fica
+guardado**: gere de novo quando precisar. A API é `POST /education/combined-summary`
+(`{"lesson_ids": [...], "style": "standard", "focus": ""}`).
+
 ## Formato do resumo
 
 O resumo da aula tem dois formatos, escolhidos no seletor **Formato do resumo**

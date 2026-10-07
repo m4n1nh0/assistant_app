@@ -51,11 +51,14 @@ escolhe o que sai no papel:
 - **Gabarito em página separada**, no fim do arquivo (opcional), com aviso de que é
   para o professor. Imprima só as primeiras páginas para a turma. Com
   "justificativas", vira gabarito comentado, com a alternativa correta por extenso.
-- Salvar o PDF ou **imprimir** direto pelo diálogo do sistema.
+- Depois de escolher as opções, o documento abre numa **pré-visualização**; dali dá para
+  **salvar** o PDF ou **imprimir** pelo diálogo do sistema (o botão que você já tinha
+  escolhido vem em destaque). Fechar a prévia não gera arquivo.
 
 **Relatório de desempenho** (ícone de gráfico na lista e na revisão de quiz liberado
 ou encerrado, e "Ver Relatório" no painel ao vivo). `GET /education/quiz/{id}/report`.
-Mostra, e exporta em **PDF** e **planilha CSV**, os mesmos números:
+Mostra, e exporta em **PDF** e **planilha CSV** (os dois com pré-visualização antes de
+salvar ou imprimir), os mesmos números:
 
 - **Por aluno**: posição, pontos, acertos, erros, em branco, % de acerto, tempo médio
   e o que respondeu em cada pergunta. O PDF pode ter **uma folha por aluno**, com o

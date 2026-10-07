@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:assistant_app/models/group_draw.dart';
 import 'package:assistant_app/services/education_service.dart';
 import 'package:assistant_app/services/group_pdf_service.dart';
 import 'package:assistant_app/widgets/group_draw_dialog.dart';
+import 'package:assistant_app/widgets/pdf_preview_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -30,7 +32,12 @@ Map<String, dynamic> _member(String name, int position, {String? studentId}) => 
 bool _isPdf(List<int> bytes) =>
     bytes.length > 1000 && utf8.decode(bytes.sublist(0, 5)) == '%PDF-';
 
+Widget _fakePages(Uint8List bytes, String name) => Text('páginas ${bytes.length}');
+
 void main() {
+  setUp(() => pdfPagesBuilder = _fakePages);
+  tearDown(() => pdfPagesBuilder = defaultPdfPages);
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('compareNatural', () {
@@ -229,7 +236,7 @@ void main() {
   });
 
   group('botão de imprimir na janela do sorteio', () {
-    testWidgets('abre a escolha entre imprimir e salvar, e cancelar não faz nada',
+    testWidgets('abre a pré-visualização, e fechar não imprime nem salva nada',
         (tester) async {
       tester.view.physicalSize = const Size(1400, 1000);
       tester.view.devicePixelRatio = 1;
@@ -288,14 +295,16 @@ void main() {
         await tester.tap(find.byTooltip('Imprimir a ordem de apresentação'));
         await tester.pumpAndSettle();
 
-        expect(find.text('Ordem de apresentação'), findsOneWidget);
+        // O PDF é gerado e aparece primeiro numa prévia; imprimir e salvar vêm depois.
+        expect(find.text('PRÉ-VISUALIZAÇÃO · ORDEM DE APRESENTAÇÃO'), findsOneWidget);
         expect(find.textContaining('1 de 1 grupos sorteados'), findsOneWidget);
         expect(find.text('IMPRIMIR'), findsOneWidget);
         expect(find.text('SALVAR PDF'), findsOneWidget);
 
-        await tester.tap(find.text('CANCELAR'));
+        await tester.tap(find.text('FECHAR'));
         await tester.pumpAndSettle();
         expect(find.text('IMPRIMIR'), findsNothing);
+        expect(find.text('PRÉ-VISUALIZAÇÃO · ORDEM DE APRESENTAÇÃO'), findsNothing);
       }, () => client);
     });
   });

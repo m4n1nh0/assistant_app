@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/combined_summary.dart';
 import '../models/group_draw.dart';
 import '../models/group_points.dart';
 import '../models/presentation_material.dart';
@@ -86,6 +87,28 @@ class EducationService {
     final response = await http.get(uri, headers: _headers);
     return (_decode(response) as List)
         .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  /// Resumo conjunto de várias gravações do histórico (um dia de apresentações, por
+  /// exemplo). O servidor resume agora o que ainda não tem resumo, sem gravar nada.
+  Future<CombinedSummary> combinedSummary(
+    List<String> lessonIds, {
+    String style = summaryStyleStandard,
+    String focus = '',
+    String? llm,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/combined-summary'),
+      headers: _headers,
+      body: jsonEncode({
+        'lesson_ids': lessonIds,
+        'style': style,
+        'focus': focus,
+        if (llm != null && llm.isNotEmpty) 'llm': llm,
+      }),
+    );
+    return CombinedSummary.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
   }
 
   // --- Pontos do grupo -----------------------------------------------------
