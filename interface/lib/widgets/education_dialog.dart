@@ -33,6 +33,7 @@ import '../branding/intarq_brand.dart';
 import '../utils/theme.dart';
 import 'attendance_tab.dart';
 import 'combined_summary_dialog.dart';
+import 'meetings_tab.dart';
 import 'education_dashboard.dart';
 import 'lesson_recovery_banner.dart';
 import 'recording_monitor.dart';
@@ -154,7 +155,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 10,
+                  length: 11,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -211,6 +212,10 @@ class _EducationDialogState extends State<EducationDialog> {
                                 text: '8. TEMPO DE ESTUDO'),
                             Tab(icon: Icon(Icons.groups_2_outlined, size: tabIconSize),
                                 text: '9. GRUPOS DE PROJETO'),
+                            Tab(
+                                icon: Icon(Icons.video_camera_front_outlined,
+                                    size: tabIconSize),
+                                text: '10. REUNIOES'),
                           ],
                         )),
                         IconButton(
@@ -280,6 +285,7 @@ class _EducationDialogState extends State<EducationDialog> {
                                 initialDisciplineCode: widget.initialDisciplineCode,
                                 initialDisciplineHint: widget.initialDisciplineHint,
                               ),
+                              const MeetingsTab(),
                             ],
                           ),
                         ),

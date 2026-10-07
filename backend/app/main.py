@@ -53,6 +53,8 @@ from .routers.llm_config import router as llm_config_router
 from .routers.quiz_web import router as quiz_web_router
 from .routers.quiz_play import router as quiz_play_router
 from .routers.material_submission import router as material_submission_router
+from .routers.meeting_rooms import public as meeting_public_router
+from .routers.meeting_rooms import router as meeting_rooms_router
 from .routers.quiz_websocket import router as quiz_websocket_router
 from .routers.quiz_qrcode import router as quiz_qrcode_router
 from .routers.quiz_group import router as quiz_group_router
@@ -265,6 +267,8 @@ app.include_router(llm_config_router)
 app.include_router(quiz_web_router)
 app.include_router(quiz_play_router)
 app.include_router(material_submission_router)
+app.include_router(meeting_public_router)
+app.include_router(meeting_rooms_router)
 app.include_router(quiz_websocket_router)
 app.include_router(quiz_qrcode_router)
 app.include_router(quiz_group_router)

@@ -1479,7 +1479,11 @@ async def _ingest_segment(
     duration_ms: int,
     extract_points: bool,
     db: AsyncSession,
+    min_chars: Optional[int] = None,
+    trim_overlap: bool = True,
 ) -> LessonSegmentIngestResponse:
+    """Grava um trecho. `trim_overlap=False` para texto que não vem de janelas de áudio
+    que se sobrepõem (a fala de cada pessoa na sala própria é um pedaço à parte)."""
     clean = " ".join((text or "").split())
     previous = await db.scalar(
         select(LessonSegmentModel)
@@ -1487,9 +1491,10 @@ async def _ingest_segment(
         .order_by(LessonSegmentModel.sequence.desc())
         .limit(1)
     )
-    if previous is not None:
+    if previous is not None and trim_overlap:
         clean = trim_transcript_overlap(previous.text, clean)
-    if len(clean) < settings.education_min_segment_chars:
+    if len(clean) < (settings.education_min_segment_chars if min_chars is None
+                     else min_chars):
         # Bloco de silencio ou ruido: nao vale gastar embedding nem LLM.
         return LessonSegmentIngestResponse(
             lesson=_lesson_response(lesson),

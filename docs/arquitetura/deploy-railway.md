@@ -478,6 +478,12 @@ CHECKPOINT_MAX_THREADS="200"
 > loaded` na subida; `Whisper nao carregou (...)` mostra o motivo técnico de uma falha.
 > Mudar `WHISPER_MODEL` exige novo build da imagem para o modelo novo ser embutido.
 >
+> **Servidor de vídeo das reuniões.** A [reunião online própria](../funcionalidades/reuniao-online-propria.md)
+> usa um LiveKit **fora da Railway**: a mídia em tempo real precisa de portas UDP, que a
+> Railway não expõe. Aponte o serviço para um LiveKit Cloud (ou para um LiveKit seu) com
+> `LIVEKIT_URL`, `LIVEKIT_API_KEY` e `LIVEKIT_API_SECRET`; a Railway só atende a página, o
+> acesso à sala e a transcrição da fala.
+>
 > **`av` fica abaixo da 19.** O faster-whisper lê o áudio pelo PyAV (`av`) e aceita
 > qualquer versão a partir da 11, mas o `av` 19 (29/09/2026) quebrou essa leitura: toda
 > transcrição falha com `open() got an unexpected keyword argument 'metadata_errors'`.

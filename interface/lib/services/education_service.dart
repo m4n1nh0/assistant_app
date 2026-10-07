@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../models/combined_summary.dart';
 import '../models/group_draw.dart';
 import '../models/group_points.dart';
+import '../models/meeting_room.dart';
 import '../models/presentation_material.dart';
 import 'api_service.dart';
 import 'student_csv_parser.dart';
@@ -108,6 +109,88 @@ class EducationService {
       }),
     );
     return CombinedSummary.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  // --- Reunião online própria ----------------------------------------------
+
+  /// Diz se o servidor de vídeo está configurado e o que falta.
+  Future<MeetingConfig> meetingConfig() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/meetings/config'),
+      headers: _headers,
+    );
+    return MeetingConfig.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// Cria a sala (e a gravação, só de texto, onde a transcrição vai entrando).
+  Future<MeetingRoom> createMeeting({
+    required String title,
+    bool guestsAllowed = true,
+    int? maxParticipants,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/meetings'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'guests_allowed': guestsAllowed,
+        if (maxParticipants != null) 'max_participants': maxParticipants,
+      }),
+    );
+    return MeetingRoom.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// As salas do professor: abertas primeiro, depois as mais recentes.
+  Future<List<MeetingRoom>> listMeetings() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/meetings'),
+      headers: _headers,
+    );
+    return [
+      for (final item in _decode(response) as List)
+        MeetingRoom.fromJson(Map<String, dynamic>.from(item as Map)),
+    ];
+  }
+
+  /// A sala, quem está nela e o fim da transcrição.
+  Future<MeetingDetail> getMeeting(String id) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/meetings/$id'),
+      headers: _headers,
+    );
+    return MeetingDetail.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<MeetingRoom> updateMeeting(
+    String id, {
+    String? title,
+    bool? guestsAllowed,
+    int? maxParticipants,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/meetings/$id'),
+      headers: _headers,
+      body: jsonEncode({
+        if (title != null) 'title': title,
+        if (guestsAllowed != null) 'guests_allowed': guestsAllowed,
+        if (maxParticipants != null) 'max_participants': maxParticipants,
+      }),
+    );
+    return MeetingRoom.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// Encerra para todos; a gravação (só texto) fecha e fica no histórico.
+  Future<MeetingRoom> endMeeting(String id) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/meetings/$id/end'),
+      headers: _headers,
+    );
+    return MeetingRoom.fromJson(
         Map<String, dynamic>.from(_decode(response) as Map));
   }
 

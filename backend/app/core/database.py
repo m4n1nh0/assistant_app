@@ -986,6 +986,55 @@ class MaterialSubmissionLinkModel(Base):
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class MeetingRoomModel(Base):
+    """Sala de reuniao online propria (video e audio por WebRTC, sem gravacao).
+
+    So a **fala transcrita** fica guardada: cada participante transcreve o proprio
+    microfone, e o texto entra como trechos da gravacao `lesson_id` (tipo reuniao), com
+    o nome de quem falou. Audio e video nao sao gravados em lugar nenhum.
+
+    `token` esta no link que se divide com os participantes; `host_key` so o professor
+    tem, e e o que da o direito de encerrar a sala para todos.
+    """
+
+    __tablename__ = "meeting_rooms"
+    id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id     = Column(String(64), nullable=False, index=True)
+    lesson_id    = Column(String(64), nullable=True, index=True)
+    title        = Column(String(255), nullable=False, default="")
+    token        = Column(String(64), nullable=False, unique=True, index=True)
+    host_key     = Column(String(64), nullable=False)
+    status       = Column(String(16), nullable=False, default="open", index=True)
+    # Sem matricula entra como convidado; desligado, so entra quem tem matricula valida.
+    guests_allowed = Column(Boolean, nullable=False, default=True)
+    max_participants = Column(Integer, nullable=False, default=30)
+    scheduled_at = Column(DateTime, nullable=True)
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    ended_at     = Column(DateTime, nullable=True)
+
+
+class MeetingParticipantModel(Base):
+    """Quem entrou na sala, e quando: a presenca da reuniao.
+
+    `secret` e do navegador de quem entrou: autoriza o batimento, a saida e o envio da
+    fala para transcrever. `student_id` vem da matricula; sem ela, o participante e um
+    convidado (`student_id` nulo).
+    """
+
+    __tablename__ = "meeting_participants"
+    id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    room_id      = Column(String(64), nullable=False, index=True)
+    name         = Column(String(180), nullable=False)
+    student_id   = Column(String(64), nullable=True, index=True)
+    is_host      = Column(Boolean, nullable=False, default=False)
+    secret       = Column(String(64), nullable=False)
+    consent_at   = Column(DateTime, nullable=True)
+    joined_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    left_at      = Column(DateTime, nullable=True)
+    spoken_chunks = Column(Integer, nullable=False, default=0)
+
+
 class QuestionModel(Base):
     """Questao de um quiz, com alternativas, gabarito e justificativa."""
     __tablename__ = "questions"

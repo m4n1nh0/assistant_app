@@ -357,6 +357,11 @@ recuperação). A aula que está gravando agora nunca é oferecida para recupera
 
 ## Reunião online (Meet, Teams)
 
+> **Reunião no próprio app.** Em vez de usar Meet ou Teams, o app tem uma sala própria, com
+> câmera e microfone para todos, **sem gravar**, e com a fala transcrita **por pessoa**, com
+> o nome de quem falou. Veja [Reunião online própria](reuniao-online-propria.md) (aba
+> **10. Reuniões**). O que segue é para quando a reunião acontece em outra plataforma.
+
 O microfone sozinho não registra uma reunião online: a voz dos outros
 participantes sai pelo fone ou alto-falante e não passa por ele. Há dois
 caminhos em `2. Gravar`, e os dois valem para qualquer tipo de gravação — uma

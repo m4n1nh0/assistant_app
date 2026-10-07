@@ -101,6 +101,16 @@ class Settings(MCPSettings):
     wa_token: str = ""
     wa_sid: str = ""
 
+    # Servidor de midia das reunioes online (LiveKit: nuvem ou proprio). Sem os tres
+    # valores a sala nao abre; o app avisa o que falta em vez de falhar na entrada.
+    livekit_url: str = Field("", validation_alias=AliasChoices("LIVEKIT_URL"))
+    livekit_api_key: str = Field("", validation_alias=AliasChoices("LIVEKIT_API_KEY"))
+    livekit_api_secret: str = Field(
+        "", validation_alias=AliasChoices("LIVEKIT_API_SECRET")
+    )
+    #: Quantas pessoas uma sala aceita por padrao (o professor incluso).
+    meeting_default_max_participants: int = 30
+
     google_oauth_client_id: str = Field(
         "",
         validation_alias=AliasChoices(

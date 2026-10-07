@@ -160,6 +160,10 @@ não pode parar porque uma chave paga venceu.
 | | `float16` | Par usual de `cuda` |
 | | `int8_float16`, `float32` | Aceitos pelo faster-whisper; valor inválido só falha ao carregar o modelo |
 | `WHISPER_MODEL` | `tiny`…`large-v3` (padrão `small`) | Modelo baixado no primeiro uso; maior = mais lento e mais preciso |
+| `LIVEKIT_URL` | `wss://…` | Servidor de mídia da [reunião online própria](../funcionalidades/reuniao-online-propria.md) (LiveKit Cloud ou próprio). Sem as três `LIVEKIT_*` ninguém entra na sala |
+| `LIVEKIT_API_KEY` | texto | Chave da API do LiveKit |
+| `LIVEKIT_API_SECRET` | texto | Segredo da API do LiveKit: assina o acesso de cada pessoa e **nunca** vai para o navegador |
+| `MEETING_DEFAULT_MAX_PARTICIPANTS` | inteiro (padrão `30`) | Pessoas por sala quando a reunião não escolhe um limite |
 | `WHISPER_VAD_FILTER` | booleano (padrão `true`) | Corta silêncio antes de transcrever |
 | `OPENAI_TTS_SPEED` | `0.25`–`4.0` (padrão `0.95`) | Velocidade da fala |
 | | fora da faixa | **Travado** na borda mais próxima, sem aviso: `10` vira `4.0` |
