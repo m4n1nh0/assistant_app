@@ -36,7 +36,9 @@ Map<String, dynamic> _group(String id, String name,
         {String? classId,
         List<String>? classIds,
         String classLabel = '',
-        int members = 1}) =>
+        int members = 1,
+        double pointsTotal = 0,
+        int pointsCount = 0}) =>
     {
       'id': id,
       'discipline_id': 'd1',
@@ -52,6 +54,8 @@ Map<String, dynamic> _group(String id, String name,
       'review_notes': '',
       'score': null,
       'penalty_points': 0,
+      'points_total': pointsTotal,
+      'points_count': pointsCount,
       'source_note': '',
       'members': [
         for (var i = 0; i < members; i++)
@@ -108,6 +112,24 @@ class _Backend {
     if (path.endsWith('/education/lessons')) return json([]);
     if (request.method == 'GET' && path.endsWith('/education/project-groups')) {
       return json(groups);
+    }
+    if (request.method == 'GET' && path.endsWith('/points')) {
+      return json({
+        'group_id': 'g1',
+        'group_name': 'GRUPO 1',
+        'total': 2.5,
+        'entries': [
+          {
+            'id': 'p1',
+            'group_id': 'g1',
+            'points': 2.5,
+            'reason': 'Melhor apresentação',
+            'entry_date': '2026-10-06T21:00:00',
+            'credit_members': false,
+            'credited_count': 0,
+          }
+        ],
+      });
     }
     if (path.contains('/members/') && path.endsWith('/usage')) {
       return json({
@@ -554,6 +576,52 @@ void main() {
 
         expect(backend.requests.any((r) => r.url.path.endsWith('/preview')),
             isFalse);
+      });
+    });
+  });
+
+  group('pontos do grupo no cartão', () {
+    testWidgets('mostra o total e a quantidade de lançamentos', (tester) async {
+      final backend = _Backend([
+        _group('g1', 'GRUPO 1', pointsTotal: 2.5, pointsCount: 2),
+        _group('g2', 'GRUPO 2', pointsTotal: -1, pointsCount: 1),
+        _group('g3', 'GRUPO 3'),
+      ]);
+      await _open(tester, backend, body: () async {
+        expect(find.text('Pontos do grupo: +2,5 (2 lançamentos)'), findsOneWidget);
+        expect(find.text('Pontos do grupo: −1 (1 lançamento)'), findsOneWidget);
+        // Sem lançamento, a linha não aparece.
+        expect(find.byKey(const ValueKey('total-pontos-g3')), findsNothing);
+      });
+    });
+
+    testWidgets('o botão do cartão abre o histórico do grupo', (tester) async {
+      final backend = _Backend([_group('g1', 'GRUPO 1', pointsTotal: 2.5, pointsCount: 1)]);
+      await _open(tester, backend, body: () async {
+        await tester.tap(find.byKey(const ValueKey('pontos-g1')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('PONTOS · GRUPO 1'), findsOneWidget);
+        expect(find.text('Total do grupo: +2,5 (1 lançamento)'), findsOneWidget);
+        expect(find.text('Melhor apresentação'), findsOneWidget);
+      });
+    });
+
+    testWidgets('ao fechar a janela a lista é recarregada', (tester) async {
+      final backend = _Backend([_group('g1', 'GRUPO 1')]);
+      await _open(tester, backend, body: () async {
+        final antes = backend.requests
+            .where((r) => r.method == 'GET' && r.url.path.endsWith('/project-groups'))
+            .length;
+        await tester.tap(find.byKey(const ValueKey('pontos-g1')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.close).last);
+        await tester.pumpAndSettle();
+
+        final depois = backend.requests
+            .where((r) => r.method == 'GET' && r.url.path.endsWith('/project-groups'))
+            .length;
+        expect(depois, greaterThan(antes));
       });
     });
   });

@@ -8,6 +8,8 @@ import '../services/education_service.dart';
 import '../services/group_pdf_service.dart';
 import '../services/quiz_report.dart' show quizFilename;
 import 'group_draw_dialog.dart';
+import 'group_points_dialog.dart';
+import '../models/group_points.dart';
 import 'presentation_material_dialog.dart';
 import '../utils/theme.dart';
 import 'pdf_output.dart';
@@ -1023,6 +1025,13 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     );
   }
 
+  /// Histórico e lançamento de pontos do grupo.
+  Future<void> openGroupPoints(Map<String, dynamic> group) async {
+    await showGroupPointsDialog(context, group: group);
+    // O total do cartão vem da lista: recarrega depois de lançar, corrigir ou apagar.
+    await loadGroups();
+  }
+
   /// Abre o material das apresentações: link dos alunos, o que chegou e o quiz rápido.
   Future<void> openPresentationMaterial() async {
     final discipline = disciplines.where((item) => item.id == selectedId);
@@ -1166,6 +1175,11 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                   style: Theme.of(context).textTheme.titleLarge)),
                 IconButton(icon: const Icon(Icons.edit_note), tooltip: 'Editar projeto e análise',
                   onPressed: () => editProject(group)),
+                IconButton(
+                  key: ValueKey('pontos-${group['id']}'),
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'Registrar pontos do grupo (histórico)',
+                  onPressed: () => openGroupPoints(group)),
                 IconButton(icon: const Icon(Icons.remove_circle_outline),
                   tooltip: 'Registrar subtração de pontos neste grupo',
                   onPressed: () => editPenalty(group)),
@@ -1182,6 +1196,11 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
                 Text('Pontuação registrada: ${group['score']}'),
               if ((group['penalty_points'] as num? ?? 0) > 0)
                 Text('Subtração de pontos: −${group['penalty_points']}'),
+              if ((group['points_count'] as num? ?? 0) > 0)
+                Text(
+                  'Pontos do grupo: ${formatGroupPoints((group['points_total'] as num?) ?? 0)} '
+                  '(${group['points_count']} lançamento${(group['points_count'] as num) == 1 ? '' : 's'})',
+                  key: ValueKey('total-pontos-${group['id']}')),
               if (groupNotes.isNotEmpty)
                 Text('Anotação deste grupo: ${groupNotes.join(' • ')}'),
               if ((presentations['${group['id']}'] ?? const []).isNotEmpty) ...[

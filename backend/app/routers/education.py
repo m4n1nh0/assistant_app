@@ -35,6 +35,7 @@ from ..core.database import (
     ProjectGroupNameResolutionModel,
     ProjectGroupMemberModel,
     ProjectGroupClassModel,
+    ProjectGroupPointModel,
     MaterialSubmissionLinkModel,
     DisciplineModel,
     QuizModel,
@@ -90,6 +91,8 @@ from ..models.schemas import (
     ProjectGroupAssignClass,
     ProjectGroupInferClasses,
     MaterialLinkCreate,
+    ProjectGroupPointCreate,
+    ProjectGroupPointUpdate,
     MaterialLinkUpdate,
     MaterialGroupAssign,
     LessonPresentationGroup,
@@ -117,6 +120,7 @@ from ..models.schemas import (
 )
 from ..services import (
     education_service,
+    group_points_service,
     embedding_service,
     lesson_index_service,
     qdrant_service,
@@ -319,6 +323,8 @@ async def list_project_groups(
         ))).scalars().all()
     }
     group_classes = await class_ids_of_groups(db, groups)
+    point_totals = await group_points_service.totals_for_groups(
+        db, [group.id for group in groups])
     turmas = await class_labels(
         db, user["tutor_id"],
         [item for ids in group_classes.values() for item in ids])
@@ -343,6 +349,8 @@ async def list_project_groups(
                  project_description=group.project_description,
                  review_notes=group.review_notes, score=group.score,
                  penalty_points=group.penalty_points,
+                 points_total=point_totals.get(group.id, {}).get("total", 0.0),
+                 points_count=point_totals.get(group.id, {}).get("count", 0),
                  source_note=group.source_note,
                  members=sorted(by_group_id.get(group.id, []),
                                 key=lambda member: member["position"]))
@@ -557,6 +565,122 @@ async def link_project_group_member(
     return {"success": True}
 
 
+async def _owned_group_point(group_id: str, entry_id: str, tutor_id: str,
+                             db: AsyncSession):
+    group = await _owned_project_group(group_id, tutor_id, db)
+    entry = await db.get(ProjectGroupPointModel, entry_id)
+    if entry is None or entry.group_id != group.id:
+        raise HTTPException(404, "Lançamento não encontrado")
+    return group, entry
+
+
+def _credit_summary_text(summary: dict) -> str:
+    if summary["credited"] == 0 and summary["members"] == 0:
+        return ""
+    pular = summary["without_link"]
+    base = f"Creditado a {summary['credited']} integrante(s)"
+    return f"{base}; {pular} sem aluno vinculado ficaram de fora." if pular else f"{base}."
+
+
+@router.get("/project-groups/{group_id}/points")
+async def list_project_group_points(
+    group_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Histórico de pontos lançados ao grupo, do mais recente para o mais antigo."""
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    rows = (await db.execute(select(ProjectGroupPointModel).where(
+        ProjectGroupPointModel.group_id == group.id
+    ).order_by(ProjectGroupPointModel.entry_date.desc(),
+               ProjectGroupPointModel.created_at.desc()))).scalars().all()
+    return dict(
+        group_id=group.id, group_name=group.name,
+        total=round(sum(item.points for item in rows), 3),
+        entries=[group_points_service.entry_out(item) for item in rows],
+    )
+
+
+@router.post("/project-groups/{group_id}/points")
+async def add_project_group_points(
+    group_id: str,
+    body: ProjectGroupPointCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lança pontos ao grupo (soma ou, com valor negativo, tira), com motivo e data.
+
+    Com `credit_members`, cada integrante ligado a um aluno recebe o mesmo valor como
+    ponto extra, e aparece na aba Pontuações; os sem vínculo ficam de fora e a resposta
+    diz quantos.
+    """
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    entry = ProjectGroupPointModel(
+        tutor_id=user["tutor_id"], group_id=group.id, points=body.points,
+        reason=" ".join(body.reason.split()),
+        entry_date=_as_utc(body.entry_date) if body.entry_date
+        else datetime.now(timezone.utc),
+        credit_members=body.credit_members,
+    )
+    db.add(entry)
+    await db.flush()
+    summary = (await group_points_service.credit_members(db, group, entry)
+               if body.credit_members else dict(credited=0, without_link=0, members=0))
+    await db.commit()
+    await db.refresh(entry)
+    total = (await group_points_service.totals_for_groups(db, [group.id])).get(
+        group.id, {}).get("total", 0.0)
+    return group_points_service.entry_out(
+        entry, group_total=total, credit=summary,
+        message=_credit_summary_text(summary))
+
+
+@router.patch("/project-groups/{group_id}/points/{entry_id}")
+async def update_project_group_points(
+    group_id: str,
+    entry_id: str,
+    body: ProjectGroupPointUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Corrige um lançamento. O que foi creditado aos integrantes é refeito."""
+    group, entry = await _owned_group_point(group_id, entry_id, user["tutor_id"], db)
+    if body.points is not None:
+        entry.points = body.points
+    if body.reason is not None:
+        entry.reason = " ".join(body.reason.split())
+    if body.entry_date is not None:
+        entry.entry_date = _as_utc(body.entry_date)
+    if body.credit_members is not None:
+        entry.credit_members = body.credit_members
+    summary = await group_points_service.refresh_credits(db, group, entry)
+    await db.commit()
+    await db.refresh(entry)
+    total = (await group_points_service.totals_for_groups(db, [group.id])).get(
+        group.id, {}).get("total", 0.0)
+    return group_points_service.entry_out(
+        entry, group_total=total, credit=summary,
+        message=_credit_summary_text(summary))
+
+
+@router.delete("/project-groups/{group_id}/points/{entry_id}")
+async def delete_project_group_points(
+    group_id: str,
+    entry_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apaga o lançamento e o que ele creditou aos integrantes."""
+    group, entry = await _owned_group_point(group_id, entry_id, user["tutor_id"], db)
+    credited = int(entry.credited_count or 0)
+    await group_points_service._remove_credits(db, [entry.id])
+    await db.delete(entry)
+    await db.commit()
+    total = (await group_points_service.totals_for_groups(db, [group.id])).get(
+        group.id, {}).get("total", 0.0)
+    return dict(deleted=entry_id, group_total=total, credits_removed=credited)
+
+
 @router.get("/project-groups/{group_id}/members/{member_id}/usage")
 async def project_group_member_usage(
     group_id: str,
@@ -616,6 +740,7 @@ async def delete_all_project_groups(
             ProjectGroupMemberModel.group_id.in_(groups)))
         await db.execute(sql_delete(ProjectGroupClassModel).where(
             ProjectGroupClassModel.group_id.in_(groups)))
+        await group_points_service.purge_for_groups(db, groups)
         await db.execute(sql_delete(ProjectGroupModel).where(
             ProjectGroupModel.id.in_(groups),
             ProjectGroupModel.tutor_id == user["tutor_id"]))
@@ -639,6 +764,7 @@ async def delete_project_group(
         await db.delete(member)
     await db.execute(sql_delete(ProjectGroupClassModel).where(
         ProjectGroupClassModel.group_id == group.id))
+    await group_points_service.purge_for_groups(db, [group.id])
     await db.delete(group)
     await db.commit()
     return {"success": True}

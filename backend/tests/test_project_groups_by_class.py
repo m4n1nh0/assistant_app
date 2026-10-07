@@ -26,6 +26,7 @@ from app.core.database import (
     GroupDrawEntryModel,
     GroupDrawModel,
     ProjectGroupClassModel,
+    ProjectGroupPointModel,
     ProjectGroupMemberModel,
     ProjectGroupModel,
     ProjectGroupNameResolutionModel,
@@ -43,7 +44,8 @@ from app.services import quiz_group_service as quiz_groups
 USER = {"uid": "u1", "tutor_id": "t1"}
 TABELAS = (
     DisciplineModel, ClassGroupModel, ClassScheduleModel, StudentModel,
-    ProjectGroupModel, ProjectGroupClassModel, ProjectGroupMemberModel,
+    ProjectGroupModel, ProjectGroupClassModel, ProjectGroupPointModel,
+    ProjectGroupMemberModel,
     ProjectGroupNameResolutionModel, GroupDrawModel, GroupDrawEntryModel, QuizGroupConfigModel, QuizGroupLinkModel,
     QuizGroupRepresentativeModel,
 )

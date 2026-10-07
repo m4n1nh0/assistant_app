@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/group_draw.dart';
+import '../models/group_points.dart';
 import '../models/presentation_material.dart';
 import 'api_service.dart';
 import 'student_csv_parser.dart';
@@ -85,6 +86,73 @@ class EducationService {
     final response = await http.get(uri, headers: _headers);
     return (_decode(response) as List)
         .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  // --- Pontos do grupo -----------------------------------------------------
+
+  /// Histórico de pontos lançados ao grupo, do mais recente ao mais antigo.
+  Future<GroupPointsHistory> listProjectGroupPoints(String groupId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/project-groups/$groupId/points'),
+      headers: _headers,
+    );
+    return GroupPointsHistory.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// Lança pontos ao grupo (negativo tira). Com [creditMembers], cada integrante
+  /// ligado a um aluno recebe o mesmo valor como ponto extra. Devolve a resposta do
+  /// servidor: o lançamento, `group_total`, `credit` e uma `message` pronta.
+  Future<Map<String, dynamic>> addProjectGroupPoints(
+    String groupId, {
+    required double points,
+    String reason = '',
+    DateTime? date,
+    bool creditMembers = false,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/project-groups/$groupId/points'),
+      headers: _headers,
+      body: jsonEncode({
+        'points': points,
+        'reason': reason,
+        if (date != null) 'entry_date': date.toUtc().toIso8601String(),
+        'credit_members': creditMembers,
+      }),
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
+  /// Corrige um lançamento; o que foi creditado aos integrantes é refeito.
+  Future<Map<String, dynamic>> updateProjectGroupPoints(
+    String groupId,
+    String entryId, {
+    double? points,
+    String? reason,
+    DateTime? date,
+    bool? creditMembers,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/project-groups/$groupId/points/$entryId'),
+      headers: _headers,
+      body: jsonEncode({
+        if (points != null) 'points': points,
+        if (reason != null) 'reason': reason,
+        if (date != null) 'entry_date': date.toUtc().toIso8601String(),
+        if (creditMembers != null) 'credit_members': creditMembers,
+      }),
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
+  /// Apaga o lançamento e o que ele creditou aos integrantes.
+  Future<Map<String, dynamic>> deleteProjectGroupPoints(
+      String groupId, String entryId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/project-groups/$groupId/points/$entryId'),
+      headers: _headers,
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
   }
 
   /// O que depende do integrante (quizzes, sorteios), para avisar antes de remover.

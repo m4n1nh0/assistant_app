@@ -89,6 +89,36 @@ grupo sem turma. Ficam de fora, e a mensagem lista os nomes: grupos sem nenhum i
 vinculado a aluno (vincule os nomes e tente de novo, ou use **Ligar grupos sem turma**) e
 nomes que já existem em grupo de turmas que se cruzam.
 
+## Pontos do grupo
+
+No cartão do grupo, o botão **+** (_Registrar pontos do grupo_) abre o histórico e o
+lançamento. Cada lançamento soma pontos (ou, com sinal de menos, tira) com **motivo** e
+**data**; o total do grupo é a soma e aparece no cartão (`Pontos do grupo: +2,5 (2
+lançamentos)`).
+
+- **Lançar:** digite os pontos (`1`, `0,5`, `-1`; vírgula ou ponto; até 100, nunca zero) ou
+  use os atalhos `+0,5`, `+1`, `+2`, `−0,5`, `−1`. O motivo é opcional, e a data é hoje, a
+  menos que você escolha outra.
+- **Creditar também a cada integrante:** uma chave em cada lançamento. Desligada, o ponto
+  vale só para o grupo. Ligada, cada integrante **ligado a um aluno cadastrado** recebe o
+  mesmo valor como ponto extra, e aparece na aba **Pontuações** (disciplina do grupo, data
+  do lançamento, motivo `GRUPO 1: melhor apresentação`). Quem ainda não está ligado a um
+  aluno fica de fora, e a janela diz quantos são (`2 de 3`). O ponto **não é dividido**: cada
+  um recebe o valor inteiro. O aluno que aparece em dois integrantes recebe uma vez só.
+- **Corrigir:** o lápis do lançamento leva os valores de volta ao formulário. Ao salvar, o
+  que foi creditado aos integrantes é **refeito** conforme o lançamento ficou (mudar o
+  valor, o motivo ou a data, ou ligar e desligar o crédito).
+- **Apagar:** tira o lançamento do total e, se ele tinha creditado integrantes, tira o
+  ponto deles também; a janela avisa antes.
+- **Quem entra depois:** o crédito vale para quem estava ligado a um aluno **na hora de
+  lançar**. Ligar um integrante depois não o credita de volta; corrija o lançamento (salvar
+  a correção refaz o crédito) se for o caso.
+- **Subtração de pontos:** o botão **−** do cartão continua com o campo único de antes. Um
+  lançamento negativo no histórico faz o mesmo com motivo e data.
+
+Apagar o grupo (ou todos os grupos) apaga os lançamentos e o que eles creditaram aos
+alunos.
+
 ## Remover um integrante do grupo
 
 Para tirar quem foi cadastrado por engano ou saiu do grupo, clique no nome do integrante
@@ -150,7 +180,14 @@ lista for importada de novo com o nome dele, ele volta ao grupo.
   devolve `assigned`, `without_linked_members` e `conflicting`.
   `GET /education/project-groups/{grupo}/members/{integrante}/usage` conta o que depende do
   integrante (`quiz_participations`, `quiz_representations`, `draw_representations`) e
-  `DELETE` no mesmo caminho o remove, devolvendo o que foi desfeito em `cleaned`. O quiz em grupo
+  `DELETE` no mesmo caminho o remove, devolvendo o que foi desfeito em `cleaned`.
+  `GET/POST /education/project-groups/{grupo}/points` listam e lançam pontos
+  (`{"points": 1.5, "reason": "...", "entry_date": null, "credit_members": true}`; devolve o
+  lançamento, `group_total` e `credit` com quantos integrantes receberam), e
+  `PATCH/DELETE .../points/{lançamento}` corrigem e apagam. A lista de grupos traz
+  `points_total` e `points_count`. Os lançamentos ficam em `project_group_points`; o crédito
+  aos integrantes é um `lesson_points` com `source = "group"` e o `lesson_id` no formato
+  `group-points:<id do lançamento>`, que é como se apaga ou refaz junto com ele. O quiz em grupo
   (`PUT /education/quiz/{id}/group`) aceita `class_ids` (e ainda `class_id`) e devolve
   `class_ids` e `class_label` com as turmas juntas; o servidor guarda a lista em
   `quiz_group_configs.class_ids` (texto separado por vírgula), e quiz antigo, sem a lista,

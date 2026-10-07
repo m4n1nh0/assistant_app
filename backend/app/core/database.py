@@ -603,6 +603,26 @@ class ProjectGroupModel(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class ProjectGroupPointModel(Base):
+    """Lançamento de pontos ao grupo de projeto: soma (ou tira, se negativo) com motivo.
+
+    O total do grupo é a soma dos lançamentos. `credit_members` diz se o lançamento
+    também foi creditado a cada integrante ligado a um aluno (como ponto extra), e
+    `credited_count` quantos receberam.
+    """
+
+    __tablename__ = "project_group_points"
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id       = Column(String(64), nullable=False, index=True)
+    group_id       = Column(String(64), nullable=False, index=True)
+    points         = Column(Float, nullable=False, default=0.0)
+    reason         = Column(Text, nullable=False, default="")
+    entry_date     = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    credit_members = Column(Boolean, nullable=False, default=False)
+    credited_count = Column(Integer, nullable=False, default=0)
+    created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class ProjectGroupClassModel(Base):
     """Turmas de um grupo de projeto (aula reunida: o grupo mistura alunos de mais de uma).
 

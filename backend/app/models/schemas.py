@@ -20,7 +20,7 @@ acoes locais, memoria, automacoes, atalhos, alunos e presenca, modo educacao
 (disciplina, turma, aula, resumo, pontos) e quiz.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal, Union
 from datetime import date, datetime
 from enum import Enum
@@ -930,6 +930,35 @@ class ProjectGroupInferClasses(BaseModel):
     """Deduz a turma dos grupos sem turma pelos alunos ja vinculados aos integrantes."""
     discipline_id: str = Field(min_length=1)
     group_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class ProjectGroupPointCreate(BaseModel):
+    """Lançamento de pontos ao grupo: soma (positivo) ou tira (negativo)."""
+    points: float = Field(allow_inf_nan=False, ge=-100, le=100)
+    reason: str = Field(default="", max_length=500)
+    #: Quando valeu; vazio é agora.
+    entry_date: Optional[datetime] = None
+    #: Também credita o ponto a cada integrante ligado a um aluno.
+    credit_members: bool = False
+
+    @model_validator(mode="after")
+    def _not_zero(self):
+        if self.points == 0:
+            raise ValueError("Informe uma quantidade de pontos diferente de zero")
+        return self
+
+
+class ProjectGroupPointUpdate(BaseModel):
+    points: Optional[float] = Field(default=None, allow_inf_nan=False, ge=-100, le=100)
+    reason: Optional[str] = Field(default=None, max_length=500)
+    entry_date: Optional[datetime] = None
+    credit_members: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _not_zero(self):
+        if self.points is not None and self.points == 0:
+            raise ValueError("Informe uma quantidade de pontos diferente de zero")
+        return self
 
 
 class ProjectGroupUpdate(BaseModel):

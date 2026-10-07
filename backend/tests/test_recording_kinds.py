@@ -23,6 +23,7 @@ from app.core.database import (
     LessonModel,
     ProjectGroupMemberModel,
     ProjectGroupClassModel,
+    ProjectGroupPointModel,
     ProjectGroupModel,
     StudentModel,
     get_db,
@@ -44,7 +45,7 @@ def client():
         async with engine.begin() as conn:
             for model in (
                 LessonModel, LessonClassGroupModel, ClassGroupModel,
-                DisciplineModel, ProjectGroupModel, ProjectGroupClassModel,
+                DisciplineModel, ProjectGroupModel, ProjectGroupClassModel, ProjectGroupPointModel,
                 ProjectGroupMemberModel, StudentModel,
             ):
                 await conn.run_sync(model.__table__.create)

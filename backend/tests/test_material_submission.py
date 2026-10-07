@@ -28,6 +28,7 @@ from app.core.database import (
     MaterialModel,
     MaterialSubmissionLinkModel,
     ProjectGroupClassModel,
+    ProjectGroupPointModel,
     ProjectGroupMemberModel,
     ProjectGroupModel,
     StudentModel,
@@ -40,7 +41,8 @@ from app.services import material_submission_service as submissions
 USER = {"uid": "u1", "tutor_id": "t1"}
 TABELAS = (
     DisciplineModel, ClassGroupModel, ClassScheduleModel, StudentModel,
-    ProjectGroupModel, ProjectGroupClassModel, ProjectGroupMemberModel,
+    ProjectGroupModel, ProjectGroupClassModel, ProjectGroupPointModel,
+    ProjectGroupMemberModel,
     MaterialModel, MaterialSubmissionLinkModel, LessonModel, LessonSegmentModel,
 )
 
