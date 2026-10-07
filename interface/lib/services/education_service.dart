@@ -1487,12 +1487,21 @@ class ClassGroup {
 String recordingKindLabel(String kind) => switch (kind) {
       'apresentacao' => 'Apresentação',
       'palestra' => 'Palestra',
+      'reuniao' => 'Reunião',
       _ => 'Aula',
+    };
+
+/// Título do resumo conforme o tipo: "RESUMO DA AULA", "RESUMO DA PALESTRA"...
+String summaryHeading(String kind) => switch (kind) {
+      'apresentacao' => 'RESUMO DA APRESENTAÇÃO',
+      'palestra' => 'RESUMO DA PALESTRA',
+      'reuniao' => 'RESUMO DA REUNIÃO',
+      _ => 'RESUMO DA AULA',
     };
 
 class Lesson {
   final String id;
-  /// `aula`, `apresentacao` ou `palestra`.
+  /// `aula`, `apresentacao`, `palestra` ou `reuniao`.
   final String kind;
   final String groupId;
   final String groupName;

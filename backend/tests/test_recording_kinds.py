@@ -140,3 +140,42 @@ def test_lista_de_grupos_traz_o_nome_da_disciplina(client):
     assert [grupo["name"] for grupo in grupos] == ["Grupo 4"]
     assert grupos[0]["discipline"] == "ARA0040 - BANCO DE DADOS"
     assert grupos[0]["semester"] == "2026.2"
+
+
+def test_reuniao_dispensa_disciplina_e_turma_mas_exige_titulo(client):
+    recusada = criar(client, kind="reuniao")
+    assert recusada.status_code == 422
+    assert "reuniao" in recusada.json()["detail"]
+
+    reuniao = criar(client, kind="reuniao", title="Colegiado de outubro").json()
+
+    assert reuniao["kind"] == "reuniao"
+    assert reuniao["title"] == "Colegiado de outubro"
+    assert reuniao["discipline"] == ""
+    assert reuniao["class_labels"] == []
+    assert reuniao["group_id"] is None
+
+
+def test_reuniao_aparece_no_filtro_por_tipo_e_nao_mistura_com_palestra(client):
+    criar(client, kind="reuniao", title="Colegiado de outubro")
+    criar(client, kind="palestra", title="LGPD na prática")
+
+    reunioes = client.get("/education/lessons", params={"kind": "reuniao"}).json()
+    palestras = client.get("/education/lessons", params={"kind": "palestra"}).json()
+
+    assert [item["title"] for item in reunioes] == ["Colegiado de outubro"]
+    assert [item["title"] for item in palestras] == ["LGPD na prática"]
+
+
+def test_tipo_desconhecido_continua_recusado(client):
+    assert criar(client, kind="webinar", title="x").status_code == 422
+
+
+def test_reuniao_nao_se_liga_a_grupo_de_projeto(client):
+    reuniao = criar(client, kind="reuniao", title="Colegiado").json()
+
+    resposta = client.put(f"/education/lessons/{reuniao['id']}/presentation-group",
+                          json={"group_id": "g1"})
+
+    assert resposta.status_code == 422
+    assert "reunião" in resposta.json()["detail"]

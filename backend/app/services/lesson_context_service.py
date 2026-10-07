@@ -111,7 +111,7 @@ class LessonHit:
     status: str = ""
     segments: int = 0
     summary: str = ""
-    #: `aula`, `apresentacao` ou `palestra`.
+    #: `aula`, `apresentacao`, `palestra` ou `reuniao`.
     kind: str = "aula"
 
     @property
@@ -125,6 +125,8 @@ class LessonHit:
         data = self.day.strftime("%d/%m/%Y")
         if self.kind == "palestra":
             return f'palestra "{self.title or "sem titulo"}", {data}'
+        if self.kind == "reuniao":
+            return f'reunião "{self.title or "sem titulo"}", {data}'
         if self.kind == "apresentacao":
             titulo = self.title or "apresentacao de grupo"
             return f"{titulo}, {data}"

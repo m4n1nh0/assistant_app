@@ -140,14 +140,120 @@ String _formatPoints(double value) {
       : rounded;
 }
 
-/// Nome sugerido no dialogo de salvar: disciplina, turma e data.
+/// O que o cabeçalho do resumo impresso diz, conforme o tipo da gravação.
+///
+/// Aula se identifica pela disciplina e pela turma; palestra e reunião, pelo título
+/// (não têm disciplina nem turma); apresentação, pelo grupo e pelos integrantes.
+class SummaryHeader {
+  /// "RESUMO DA AULA", "RESUMO DA PALESTRA", "RESUMO DA REUNIÃO"...
+  final String kindLabel;
+
+  /// O que se destaca no topo: disciplina, título ou nome do grupo.
+  final String heading;
+  final String subtitle;
+
+  /// Integrantes do grupo (só na apresentação).
+  final List<String> members;
+  final String meta;
+
+  /// Linha das páginas seguintes.
+  final String running;
+
+  const SummaryHeader({
+    required this.kindLabel,
+    required this.heading,
+    this.subtitle = '',
+    this.members = const [],
+    this.meta = '',
+    this.running = '',
+  });
+}
+
+SummaryHeader summaryHeaderFor(
+  Lesson lesson, {
+  List<String> members = const [],
+}) {
+  final kind = lesson.kind;
+  final discipline = lesson.discipline.trim();
+  final title = lesson.title.trim();
+  final turmas = lesson.classLabels.isEmpty
+      ? lesson.classGroup
+      : lesson.classLabels.join(' + ');
+  final date = lesson.startedAt == null ? '' : _formatDate(lesson.startedAt);
+  final segments = '${lesson.segmentCount} trechos gravados';
+
+  late final String heading;
+  late final String subtitle;
+  switch (kind) {
+    case 'apresentacao':
+      heading = lesson.groupName.trim().isNotEmpty
+          ? lesson.groupName.trim()
+          : (title.isNotEmpty ? title : 'Apresentação de grupo');
+      // O título automático ("Apresentacao: GRUPO 3") só repetiria o grupo.
+      final ownTitle = title.isNotEmpty &&
+              !title.toLowerCase().startsWith('apresentacao:') &&
+              title != heading
+          ? title
+          : '';
+      subtitle = [ownTitle, discipline].where((p) => p.isNotEmpty).join('  -  ');
+    case 'palestra' || 'reuniao':
+      heading = title.isNotEmpty ? title : '${recordingKindLabel(kind)} sem título';
+      subtitle = discipline;
+    default:
+      heading = discipline.isNotEmpty ? discipline : (title.isNotEmpty ? title : 'Aula');
+      subtitle = discipline.isNotEmpty ? title : '';
+  }
+
+  final cleanMembers = [
+    for (final name in members)
+      if (name.trim().isNotEmpty) name.trim(),
+  ];
+  return SummaryHeader(
+    kindLabel: summaryHeading(kind),
+    heading: heading,
+    subtitle: subtitle,
+    members: kind == 'apresentacao' ? cleanMembers : const [],
+    meta: [
+      if (kind == 'aula' && turmas.isNotEmpty) 'Turma: $turmas',
+      if (date.isNotEmpty) date,
+      segments,
+    ].join('   |   '),
+    running: [
+      if (lesson.semester.isNotEmpty) lesson.semester,
+      heading,
+      if (date.isNotEmpty) date,
+    ].join('   |   '),
+  );
+}
+
+/// Letras sem acento, para o nome do arquivo.
+String _foldAscii(String text) {
+  const from = 'áàâãäéèêëíìîïóòôõöúùûüçñ';
+  const to = 'aaaaaeeeeiiiiooooouuuucn';
+  final buffer = StringBuffer();
+  for (final char in text.toLowerCase().split('')) {
+    final index = from.indexOf(char);
+    buffer.write(index >= 0 ? to[index] : char);
+  }
+  return buffer.toString();
+}
+
+/// Nome sugerido no dialogo de salvar: disciplina, turma e data; palestra,
+/// reuniao e apresentacao levam o titulo ou o grupo no lugar da disciplina e da turma.
 String lessonPdfFilename(Lesson lesson) {
+  final isLesson = lesson.kind == 'aula';
+  final header = summaryHeaderFor(lesson);
   final parts = [
     lesson.semester,
-    lesson.discipline,
-    lesson.classLabels.isEmpty
-        ? lesson.classGroup
-        : lesson.classLabels.join('-'),
+    if (isLesson) ...[
+      lesson.discipline,
+      lesson.classLabels.isEmpty
+          ? lesson.classGroup
+          : lesson.classLabels.join('-'),
+    ] else ...[
+      if (lesson.kind == 'apresentacao') lesson.discipline,
+      header.heading,
+    ],
     _formatDate(lesson.startedAt).split(' ').first.replaceAll('/', '-'),
     // So o detalhado leva sufixo: assim o nome do resumo comum continua o
     // mesmo de sempre e os dois formatos da mesma aula convivem na pasta.
@@ -155,30 +261,35 @@ String lessonPdfFilename(Lesson lesson) {
       'detalhado',
   ].where((part) => part.trim().isNotEmpty);
 
-  final slug = parts
-      .join('-')
-      .toLowerCase()
+  final slug = _foldAscii(parts.join('-'))
       .replaceAll(RegExp(r'[^a-z0-9\-]+'), '-')
       .replaceAll(RegExp(r'-+'), '-')
       .replaceAll(RegExp(r'^-|-$'), '');
-  return '${slug.isEmpty ? "resumo-da-aula" : slug}.pdf';
+  final fallback = switch (lesson.kind) {
+    'apresentacao' => 'resumo-da-apresentacao',
+    'palestra' => 'resumo-da-palestra',
+    'reuniao' => 'resumo-da-reuniao',
+    _ => 'resumo-da-aula',
+  };
+  return '${slug.isEmpty ? fallback : slug}.pdf';
 }
 
 Future<Uint8List> buildLessonSummaryPdf({
   required Lesson lesson,
   required String summary,
   List<LessonPoint> points = const [],
+
+  /// Nomes dos integrantes do grupo, para a apresentação.
+  List<String> members = const [],
 }) async {
   final style = summaryStyleOrStandard(lesson.summaryStyle);
+  final header = summaryHeaderFor(lesson, members: members);
   final document = pw.Document(
-    title: '${_styleTitle(style)} - ${lesson.discipline}',
+    title: '${_styleTitle(style)} - ${header.heading}',
     author: 'INTARQ',
   );
   final blocks = parseSummary(summary);
   final brandMark = await IntarqBrand.loadPdfMark();
-  final turmas = lesson.classLabels.isEmpty
-      ? lesson.classGroup
-      : lesson.classLabels.join(' + ');
 
   document.addPage(
     pw.MultiPage(
@@ -188,8 +299,8 @@ Future<Uint8List> buildLessonSummaryPdf({
         theme: await _pdfTheme(),
       ),
       header: (context) => context.pageNumber == 1
-          ? _buildBanner(lesson, turmas, brandMark, style)
-          : _buildRunningHeader(lesson, brandMark, style),
+          ? _buildBanner(lesson, header, brandMark, style)
+          : _buildRunningHeader(header, brandMark, style),
       footer: (context) => _buildFooter(context),
       build: (context) => [
         pw.SizedBox(height: 18),
@@ -208,7 +319,7 @@ String _styleTitle(String style) =>
 
 pw.Widget _buildBanner(
   Lesson lesson,
-  String turmas,
+  SummaryHeader header,
   pw.MemoryImage? brandMark,
   String style,
 ) {
@@ -231,7 +342,7 @@ pw.Widget _buildBanner(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text(
-                'RESUMO DA AULA   |   ${summaryStyleLabel(style)}',
+                '${header.kindLabel}   |   ${summaryStyleLabel(style)}',
                 style: pw.TextStyle(
                   fontSize: 9,
                   letterSpacing: 3,
@@ -241,30 +352,33 @@ pw.Widget _buildBanner(
               ),
               pw.SizedBox(height: 8),
               pw.Text(
-                lesson.discipline,
+                header.heading,
                 style: pw.TextStyle(
                   fontSize: 19,
                   color: _ink,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
-              if (lesson.title.isNotEmpty) ...[
+              if (header.subtitle.isNotEmpty) ...[
                 pw.SizedBox(height: 2),
                 pw.Text(
-                  lesson.title,
+                  header.subtitle,
                   style: const pw.TextStyle(
                     fontSize: 12,
                     color: _accentSoft,
                   ),
                 ),
               ],
+              if (header.members.isNotEmpty) ...[
+                pw.SizedBox(height: 6),
+                pw.Text(
+                  'Integrantes: ${header.members.join(', ')}',
+                  style: const pw.TextStyle(fontSize: 10, color: _ink),
+                ),
+              ],
               pw.SizedBox(height: 10),
               pw.Text(
-                [
-                  if (turmas.isNotEmpty) 'Turma: $turmas',
-                  if (lesson.startedAt != null) _formatDate(lesson.startedAt),
-                  '${lesson.segmentCount} trechos gravados',
-                ].join('   |   '),
+                header.meta,
                 style: const pw.TextStyle(fontSize: 9, color: _inkSoft),
               ),
             ],
@@ -304,7 +418,7 @@ pw.Widget _buildBanner(
 }
 
 pw.Widget _buildRunningHeader(
-  Lesson lesson,
+  SummaryHeader header,
   pw.MemoryImage? brandMark,
   String style,
 ) {
@@ -319,9 +433,7 @@ pw.Widget _buildRunningHeader(
       children: [
         pw.Expanded(
           child: pw.Text(
-            '${lesson.semester.isEmpty ? "" : "${lesson.semester}   |   "}'
-            '${lesson.discipline}   |   ${_formatDate(lesson.startedAt)}'
-            '   |   ${_styleTitle(style)}',
+            '${header.running}   |   ${_styleTitle(style)}',
             style: const pw.TextStyle(fontSize: 8, color: _inkSoft),
           ),
         ),

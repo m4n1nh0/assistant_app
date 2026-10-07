@@ -398,7 +398,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
 
   Lesson? _lesson;
 
-  /// O que esta sendo gravado: `aula`, `apresentacao` ou `palestra`. O
+  /// O que esta sendo gravado: `aula`, `apresentacao`, `palestra` ou `reuniao`. O
   /// mecanismo e o mesmo; muda o que precisa estar informado antes de comecar.
   String _kind = 'aula';
   String? _groupId;
@@ -567,7 +567,9 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
         return null;
       }
     } else if (title.isEmpty) {
-      _setStatus('Dê um título à palestra antes de iniciar.');
+      _setStatus(_kind == 'reuniao'
+          ? 'Dê um título à reunião antes de iniciar.'
+          : 'Dê um título à palestra antes de iniciar.');
       return null;
     }
 
@@ -1695,12 +1697,23 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                 value: 'palestra',
                 label: Text('Palestra'),
                 icon: Icon(Icons.campaign_outlined, size: 15)),
+            ButtonSegment(
+                value: 'reuniao',
+                label: Text('Reunião'),
+                icon: Icon(Icons.video_camera_front_outlined, size: 15)),
           ],
           selected: {_kind},
           showSelectedIcon: false,
           onSelectionChanged: (value) {
             final kind = value.first;
-            setState(() => _kind = kind);
+            setState(() {
+              _kind = kind;
+              // Na reuniao online a voz dos outros sai pelo fone e nao passa pelo
+              // microfone: o som do computador ja vem marcado (e pode ser trocado).
+              if (kind == 'reuniao' && SystemAudioRecorder.isSupported) {
+                _audioSource = _sourceMeeting;
+              }
+            });
             if (kind == 'apresentacao' && _groups.isEmpty) _loadGroups();
           },
         ),
@@ -1712,6 +1725,9 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
             'palestra' =>
               'Sem disciplina e sem turma: o título é o que identifica a palestra. '
                   'Ela também vira fonte de quiz e de busca no chat.',
+            'reuniao' =>
+              'Sem disciplina e sem turma: o título identifica a reunião. O resumo '
+                  'sai com decisões, encaminhamentos e pendências.',
             _ => 'Aula da turma, como sempre: transcrição, resumo e quiz.',
           },
           style: const TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
@@ -1833,6 +1849,7 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
                     label: switch (_kind) {
                       'apresentacao' => 'TÍTULO DA APRESENTAÇÃO (OPCIONAL)',
                       'palestra' => 'TÍTULO DA PALESTRA',
+                      'reuniao' => 'TÍTULO DA REUNIÃO',
                       _ => 'TEMA DA AULA',
                     },
                   ),
@@ -2065,7 +2082,8 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   Widget _buildTranscript() {
     if (_summary != null) {
       return _Panel(
-        title: 'RESUMO DA AULA  -  ${summaryStyleLabel(_summaryShownStyle)}',
+        title:
+            '${summaryHeading(_lesson?.kind ?? _kind)}  -  ${summaryStyleLabel(_summaryShownStyle)}',
         trailing: TextButton(
           onPressed: () => setState(() => _summary = null),
           child: const Text('VER TRANSCRICAO', style: TextStyle(fontSize: 10)),
@@ -4711,6 +4729,25 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
     }
   }
 
+  /// Integrantes do grupo da apresentação, para o cabeçalho do PDF. Sem eles (grupo
+  /// apagado, sem rede) o PDF sai só com o nome do grupo.
+  Future<List<String>> _presentationMembers(LessonDetail detail) async {
+    if (detail.kind != 'apresentacao' || detail.groupId.isEmpty) return const [];
+    try {
+      final groups = await education.listProjectGroups();
+      final group = groups.where((item) => '${item['id']}' == detail.groupId);
+      if (group.isEmpty) return const [];
+      final members = [
+        for (final member in (group.first['members'] as List? ?? const []))
+          Map<String, dynamic>.from(member as Map),
+      ]..sort((a, b) => ((a['position'] as num?) ?? 0)
+          .compareTo((b['position'] as num?) ?? 0));
+      return [for (final member in members) '${member['name']}'];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<void> _exportPdf(LessonDetail detail) async {
     final summary = detail.summary;
     if (summary == null || summary.isEmpty) {
@@ -4724,6 +4761,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         lesson: detail,
         summary: summary,
         points: detail.points,
+        members: await _presentationMembers(detail),
       );
       if (!mounted) return;
       final fileName = lessonPdfFilename(detail);
@@ -4740,7 +4778,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         return;
       }
       final path = await FilePicker.saveFile(
-        dialogTitle: 'Salvar resumo da aula',
+        dialogTitle: 'Salvar resumo',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: const ['pdf'],
@@ -6281,10 +6319,10 @@ class _HowItWorks extends StatelessWidget {
   static const _steps = [
     (
       Icons.edit_outlined,
-      'Escolha o que vai gravar: aula, apresentacao de grupo ou palestra.',
+      'Escolha o que vai gravar: aula, apresentacao de grupo, palestra ou reuniao.',
       'Aula pede a turma - e a disciplina nasce igual a dos alunos. '
-          'Apresentacao pede o grupo e herda a disciplina dele. Palestra pede '
-          'so o titulo, que e o que a identifica depois.',
+          'Apresentacao pede o grupo e herda a disciplina dele. Palestra e '
+          'reuniao pedem so o titulo, que e o que as identifica depois.',
     ),
     (
       Icons.mic_none,

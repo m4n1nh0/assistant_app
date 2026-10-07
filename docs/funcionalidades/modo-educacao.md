@@ -163,9 +163,11 @@ quando a gravação é grande e o servidor a resume em blocos:
 | **Aula** | professor e turma | Resumo, Principais tópicos, Definições e fórmulas, Tarefas e avisos, Dúvidas levantadas |
 | **Palestra** | palestrante e público; não inventa professor, aluno, turma nem prova | Resumo, Principais ideias, Conceitos/exemplos/casos, Ferramentas e referências citadas, Perguntas do público |
 | **Apresentação** | o grupo apresentando o próprio trabalho; descreve o que foi dito e mostrado, sem dar nota | Resumo, O projeto, Resultados e demonstração, Perguntas e respostas, Pontos a esclarecer |
+| **Reunião** | participantes; atribui decisões e ações a quem a transcrição disser e nunca inventa responsável nem prazo | Resumo, Assuntos tratados, Decisões, Encaminhamentos, Pendências e dúvidas em aberto |
 
 No formato detalhado cada tipo ganha as suas seções de desenvolvimento (por exemplo
-"Desenvolvimento da palestra" e "Decisões técnicas e justificativas"). A aula mantém
+"Desenvolvimento da palestra", "Decisões técnicas e justificativas" e "Divergências e
+alternativas", na reunião). A aula mantém
 exatamente o texto de antes. Palestra sem disciplina não imprime "Disciplina:" vazia. O
 agente conectado (Codex, Claude) recebe o mesmo prompt do tipo.
 
@@ -199,6 +201,24 @@ no título do documento. O arquivo do resumo detalhado ainda ganha o sufixo
 `-detalhado`, então exportar os dois formatos da mesma aula não sobrescreve
 nada.
 
+#### O cabeçalho do PDF segue o tipo da gravação
+
+A etiqueta e o destaque do topo mudam conforme o tipo (a mesma etiqueta aparece no painel
+do resumo na tela):
+
+| Tipo | Etiqueta | Destaque | Embaixo |
+|---|---|---|---|
+| **Aula** | `RESUMO DA AULA` | a disciplina | o tema, e na linha de dados a turma |
+| **Palestra** | `RESUMO DA PALESTRA` | o título | a disciplina, se houver (sem turma) |
+| **Reunião** | `RESUMO DA REUNIÃO` | o título | a disciplina, se houver (sem turma) |
+| **Apresentação** | `RESUMO DA APRESENTAÇÃO` | o nome do grupo | a disciplina e, se o grupo deu, o título do trabalho; abaixo, `Integrantes: Ana, Bia, Caio` |
+
+A linha de dados traz a data e a quantidade de trechos. Os integrantes vêm do cadastro do
+grupo no momento de exportar; se o grupo foi apagado, o PDF sai só com o nome dele. O
+nome do arquivo também segue o tipo: título (palestra, reunião) ou disciplina e grupo
+(apresentação) no lugar da disciplina e da turma, sem acentos, e `resumo-da-palestra`,
+`resumo-da-reuniao` etc. quando não há nada para nomear.
+
 Corrigir um trecho da transcrição continua invalidando o resumo, qualquer que
 seja o formato — ele precisa ser gerado de novo.
 
@@ -213,6 +233,7 @@ mecanismo. O que muda é a que a gravação pertence, e isso se escolhe em
 | **Aula** | disciplina e turma | — | histórico, quiz, chat |
 | **Apresentação** | o grupo de projeto | disciplina e período do grupo | também no cartão do grupo, em `9. Grupos de Projeto` |
 | **Palestra** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
+| **Reunião** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
 
 Consequências práticas:
 
@@ -298,7 +319,9 @@ recuperação). A aula que está gravando agora nunca é oferecida para recupera
 O microfone sozinho não registra uma reunião online: a voz dos outros
 participantes sai pelo fone ou alto-falante e não passa por ele. Há dois
 caminhos em `2. Gravar`, e os dois valem para qualquer tipo de gravação — uma
-reunião de colegiado entra como **Palestra**, uma aula remota como **Aula**.
+reunião de colegiado entra como **Reunião**, uma aula remota como **Aula**. Ao escolher o
+tipo **Reunião**, a origem do áudio já vem em "Reunião online" (som do computador somado
+ao microfone); dá para trocar.
 
 ### Gravar o som do computador
 

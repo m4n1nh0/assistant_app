@@ -391,7 +391,8 @@ _SUMMARY_SYSTEM_TEMPLATE = (
 LESSON_KIND = "aula"
 LECTURE_KIND = "palestra"
 PRESENTATION_KIND = "apresentacao"
-RECORDING_KINDS = (LESSON_KIND, LECTURE_KIND, PRESENTATION_KIND)
+MEETING_KIND = "reuniao"
+RECORDING_KINDS = (LESSON_KIND, LECTURE_KIND, PRESENTATION_KIND, MEETING_KIND)
 
 
 def normalize_recording_kind(value: Optional[str]) -> str:
@@ -455,6 +456,36 @@ _PRESENTATION_DETAILED_STRUCTURE = (
 )
 
 
+_MEETING_STANDARD_STRUCTURE = (
+    "## Resumo\n(2 a 4 paragrafos: do que a reuniao tratou e a que se chegou)\n"
+    "## Assuntos tratados\n(lista na ordem da pauta, cada um com uma linha do que "
+    "foi dito)\n"
+    "## Decisoes\n(o que ficou decidido, de forma direta; omita a secao se nao "
+    "houver)\n"
+    "## Encaminhamentos\n(acao, responsavel e prazo, quando a transcricao disser; "
+    "omita se nao houver)\n"
+    "## Pendencias e duvidas em aberto\n(o que ficou sem resposta ou para a "
+    "proxima reuniao; omita se nao houver)\n"
+)
+
+_MEETING_DETAILED_STRUCTURE = (
+    "## Resumo geral\n(4 a 6 paragrafos: do que a reuniao tratou e a que se "
+    "chegou)\n"
+    "## Desenvolvimento da reuniao\n(os assuntos na ordem em que foram tratados; "
+    "para cada um, as posicoes apresentadas, quem as defendeu quando a "
+    "transcricao disser, e como terminou)\n"
+    "## Decisoes\n(cada decisao com o motivo dado; omita a secao se nao houver)\n"
+    "## Encaminhamentos\n(acao, responsavel e prazo, quando a transcricao "
+    "disser; omita se nao houver)\n"
+    "## Divergencias e alternativas\n(o que foi proposto e nao adotado, e por "
+    "que; omita se nao houver)\n"
+    "## Pendencias e duvidas em aberto\n(o que ficou sem resposta ou para a "
+    "proxima reuniao; omita se nao houver)\n"
+    "## Pontos de atencao\n(riscos, prazos e dependencias citados; omita se nao "
+    "houver)\n"
+)
+
+
 class _KindProfile(NamedTuple):
     """Como o resumo fala de cada tipo de gravacao."""
     label: str  # rotulo do titulo no cabecalho do prompt
@@ -486,6 +517,19 @@ _PROFILES = {
         ),
         standard=_LECTURE_STANDARD_STRUCTURE,
         detailed=_LECTURE_DETAILED_STRUCTURE, show_empty_discipline=False,
+    ),
+    MEETING_KIND: _KindProfile(
+        label="Reuniao", noun="reunioes", the="a reuniao", of="da reuniao",
+        a_long="uma reuniao longa", absent="quem nao participou",
+        rule=(
+            " Quem fala e participante da reuniao: nao os chame de professor, "
+            "aluno ou turma, e nao suponha disciplina, prova ou sala de aula que "
+            "a transcricao nao cite. Atribua decisoes e acoes a quem a "
+            "transcricao disser; nunca invente responsavel nem prazo - sem "
+            "eles, escreva a acao sem responsavel."
+        ),
+        standard=_MEETING_STANDARD_STRUCTURE,
+        detailed=_MEETING_DETAILED_STRUCTURE, show_empty_discipline=False,
     ),
     PRESENTATION_KIND: _KindProfile(
         label="Apresentacao", noun="apresentacoes de trabalhos de grupo",

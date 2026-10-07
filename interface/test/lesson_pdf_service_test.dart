@@ -123,6 +123,193 @@ void main() {
     });
   });
 
+  group('título do resumo por tipo de gravação', () {
+    Lesson gravacao(
+      String kind, {
+      String title = '',
+      String discipline = '',
+      String groupName = '',
+      String semester = '2026.2',
+      String? style,
+    }) =>
+        Lesson(
+          id: 'x',
+          kind: kind,
+          title: title,
+          discipline: discipline,
+          groupName: groupName,
+          semester: semester,
+          classGroup: '',
+          status: 'closed',
+          startedAt: DateTime(2026, 10, 6, 21, 15),
+          segmentCount: 12,
+          summaryStyle: style,
+        );
+
+    test('os quatro tipos têm o seu título', () {
+      expect(summaryHeading('aula'), 'RESUMO DA AULA');
+      expect(summaryHeading('palestra'), 'RESUMO DA PALESTRA');
+      expect(summaryHeading('reuniao'), 'RESUMO DA REUNIÃO');
+      expect(summaryHeading('apresentacao'), 'RESUMO DA APRESENTAÇÃO');
+      expect(summaryHeading('qualquer-outro'), 'RESUMO DA AULA');
+      expect(recordingKindLabel('reuniao'), 'Reunião');
+    });
+
+    test('aula: disciplina em destaque, tema embaixo e a turma na linha de dados', () {
+      final header = summaryHeaderFor(_lesson());
+
+      expect(header.kindLabel, 'RESUMO DA AULA');
+      expect(header.heading, 'ARA0040 - BANCO DE DADOS');
+      expect(header.subtitle, 'Normalizacao');
+      expect(header.meta, contains('Turma: 3001 Presencial + 3002 Semipresencial'));
+      expect(header.meta, contains('42 trechos gravados'));
+      expect(header.members, isEmpty);
+    });
+
+    test('palestra: o título é o destaque e não há turma', () {
+      final header = summaryHeaderFor(
+          gravacao('palestra', title: 'LGPD na prática'));
+
+      expect(header.kindLabel, 'RESUMO DA PALESTRA');
+      expect(header.heading, 'LGPD na prática');
+      expect(header.subtitle, isEmpty);
+      expect(header.meta, isNot(contains('Turma')));
+      expect(header.meta, contains('06/10/2026'));
+      expect(header.running, '2026.2   |   LGPD na prática   |   06/10/2026 as 21:15');
+    });
+
+    test('palestra sem título ainda tem cabeçalho', () {
+      expect(summaryHeaderFor(gravacao('palestra')).heading, 'Palestra sem título');
+      expect(summaryHeaderFor(gravacao('reuniao')).heading, 'Reunião sem título');
+    });
+
+    test('reunião: título em destaque e a disciplina, se houver, embaixo', () {
+      final header = summaryHeaderFor(gravacao('reuniao',
+          title: 'Colegiado de outubro', discipline: 'ARA0040 - BANCO DE DADOS'));
+
+      expect(header.kindLabel, 'RESUMO DA REUNIÃO');
+      expect(header.heading, 'Colegiado de outubro');
+      expect(header.subtitle, 'ARA0040 - BANCO DE DADOS');
+      expect(header.meta, isNot(contains('Turma')));
+    });
+
+    test('apresentação: o grupo em destaque, com os integrantes', () {
+      final header = summaryHeaderFor(
+        gravacao('apresentacao',
+            title: 'Apresentacao: GRUPO 3',
+            discipline: 'ARA0058 - CLOUD, IOT E INDUSTRIA 4.0',
+            groupName: 'GRUPO 3'),
+        members: ['Ana Souza', '  ', 'Bia Lima', 'Caio Reis'],
+      );
+
+      expect(header.kindLabel, 'RESUMO DA APRESENTAÇÃO');
+      expect(header.heading, 'GRUPO 3');
+      // O título automático só repetiria o grupo; fica a disciplina.
+      expect(header.subtitle, 'ARA0058 - CLOUD, IOT E INDUSTRIA 4.0');
+      expect(header.members, ['Ana Souza', 'Bia Lima', 'Caio Reis']);
+    });
+
+    test('apresentação com título próprio mostra o título e a disciplina', () {
+      final header = summaryHeaderFor(gravacao('apresentacao',
+          title: 'Sensor de umidade', discipline: 'ARA0058', groupName: 'GRUPO 3'));
+
+      expect(header.heading, 'GRUPO 3');
+      expect(header.subtitle, 'Sensor de umidade  -  ARA0058');
+    });
+
+    test('integrantes só entram na apresentação', () {
+      final header = summaryHeaderFor(
+          gravacao('palestra', title: 'X'), members: ['Ana']);
+
+      expect(header.members, isEmpty);
+    });
+
+    test('apresentação sem nome de grupo cai no título', () {
+      expect(summaryHeaderFor(gravacao('apresentacao', title: 'Projeto X')).heading,
+          'Projeto X');
+      expect(summaryHeaderFor(gravacao('apresentacao')).heading,
+          'Apresentação de grupo');
+    });
+
+    test('o nome do arquivo segue o tipo e perde os acentos', () {
+      expect(
+        lessonPdfFilename(gravacao('palestra', title: 'LGPD na prática')),
+        '2026-2-lgpd-na-pratica-06-10-2026.pdf',
+      );
+      expect(
+        lessonPdfFilename(gravacao('reuniao', title: 'Reunião do Colegiado')),
+        '2026-2-reuniao-do-colegiado-06-10-2026.pdf',
+      );
+      expect(
+        lessonPdfFilename(gravacao('apresentacao',
+            groupName: 'GRUPO 3', discipline: 'ARA0058 - CLOUD')),
+        '2026-2-ara0058-cloud-grupo-3-06-10-2026.pdf',
+      );
+    });
+
+    test('sem nada para nomear, o arquivo tem o nome do tipo', () {
+      Lesson vazio(String kind) => Lesson(
+          id: 'x', kind: kind, discipline: '', title: '', classGroup: '', status: 'closed');
+
+      // Palestra e reunião sem título ganham o "sem título" do cabeçalho.
+      expect(lessonPdfFilename(vazio('palestra')), 'palestra-sem-titulo.pdf');
+      expect(lessonPdfFilename(vazio('reuniao')), 'reuniao-sem-titulo.pdf');
+      expect(lessonPdfFilename(vazio('apresentacao')),
+          'apresentacao-de-grupo.pdf');
+      expect(lessonPdfFilename(vazio('aula')), 'resumo-da-aula.pdf');
+    });
+
+    test('o detalhado leva o sufixo em qualquer tipo', () {
+      expect(
+        lessonPdfFilename(gravacao('reuniao',
+            title: 'Colegiado', style: summaryStyleDetailed)),
+        '2026-2-colegiado-06-10-2026-detalhado.pdf',
+      );
+    });
+  });
+
+  group('buildLessonSummaryPdf por tipo', () {
+    for (final kind in const ['aula', 'palestra', 'reuniao', 'apresentacao']) {
+      test('gera o PDF de $kind', () async {
+        final bytes = await buildLessonSummaryPdf(
+          lesson: Lesson(
+            id: 'x',
+            kind: kind,
+            title: 'Título de $kind',
+            discipline: kind == 'aula' ? 'ARA0040 - BANCO DE DADOS' : '',
+            groupName: kind == 'apresentacao' ? 'GRUPO 3' : '',
+            classGroup: '',
+            status: 'closed',
+            startedAt: DateTime(2026, 10, 6, 21, 15),
+          ),
+          summary: '## Resumo\nTexto do resumo com acentuação.',
+          members: kind == 'apresentacao' ? ['Ana Souza', 'Bia Lima'] : const [],
+        );
+
+        expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+        expect(bytes.length, greaterThan(1000));
+      });
+    }
+
+    test('o título do documento usa o destaque do tipo, não a disciplina vazia',
+        () async {
+      final bytes = await buildLessonSummaryPdf(
+        lesson: Lesson(
+          id: 'x',
+          kind: 'palestra',
+          title: 'LGPD na pratica',
+          discipline: '',
+          classGroup: '',
+          status: 'closed',
+        ),
+        summary: '## Resumo\nTexto.',
+      );
+
+      final texto = String.fromCharCodes(bytes);
+      expect(texto.contains('LGPD na pratica'), isTrue);
+    });
+  });
+
   group('buildLessonSummaryPdf', () {
     test('produces a pdf document', () async {
       final bytes = await buildLessonSummaryPdf(

@@ -1164,15 +1164,15 @@ class AttendanceReportResponse(BaseModel):
 
 #: O que esta sendo gravado. O mecanismo e o mesmo; muda a que a gravacao
 #: pertence e o que e obrigatorio informar.
-RecordingKind = Literal["aula", "apresentacao", "palestra"]
+RecordingKind = Literal["aula", "apresentacao", "palestra", "reuniao"]
 
 
 class LessonCreate(BaseModel):
-    """Abertura de uma gravacao: aula, apresentacao de grupo ou palestra.
+    """Abertura de uma gravacao: aula, apresentacao de grupo, palestra ou reuniao.
 
     `aula` exige disciplina (ou turmas de onde deduzi-la), `apresentacao` exige
-    `group_id` e herda disciplina e semestre do grupo, e `palestra` exige so o
-    titulo.
+    `group_id` e herda disciplina e semestre do grupo, e `palestra` e `reuniao`
+    exigem so o titulo.
     """
     kind: RecordingKind = "aula"
     group_id: Optional[str] = None

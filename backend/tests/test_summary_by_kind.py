@@ -51,7 +51,7 @@ def prompt_de(kind, style="standard", **extra):
 def test_tipo_desconhecido_ou_vazio_vira_aula():
     assert service.normalize_recording_kind(None) == "aula"
     assert service.normalize_recording_kind("") == "aula"
-    assert service.normalize_recording_kind("reuniao") == "aula"
+    assert service.normalize_recording_kind("webinar") == "aula"
     assert service.normalize_recording_kind(" Palestra ") == "palestra"
     assert service.normalize_recording_kind("apresentacao") == "apresentacao"
 
@@ -200,3 +200,50 @@ def test_blocos_parciais_de_palestra_tambem_falam_de_palestra(monkeypatch):
         assert "Este e um trecho de uma palestra longa" in chamada["message"]
         assert "uma aula longa" not in chamada["message"]
         assert "Voce resume palestras" in chamada["system"]
+
+
+# --- reuniao ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("style", ["standard", "detailed"])
+def test_reuniao_fala_de_participantes_decisoes_e_encaminhamentos(style):
+    construido = prompt_de("reuniao", style=style, title="Colegiado de outubro")
+    prompt = construido["prompt"]
+
+    assert "Reuniao: Colegiado de outubro" in prompt
+    assert "Monte o resumo da reuniao" in prompt
+    assert "## Decisoes" in prompt and "## Encaminhamentos" in prompt
+    assert "## Pendencias e duvidas em aberto" in prompt
+    assert "Voce resume reunioes" in construido["system_prompt"]
+    assert "nunca invente responsavel nem prazo" in construido["system_prompt"]
+    assert "nao os chame de professor, aluno ou turma" in construido["system_prompt"]
+    # Nada da estrutura de aula ou de palestra vaza para a reuniao.
+    for secao in ("## Tarefas e avisos", "## Duvidas levantadas",
+                  "## Perguntas do publico", "datas de prova", "Aula:"):
+        assert secao not in prompt
+    assert "Disciplina:" not in prompt
+
+
+def test_reuniao_detalhada_tem_desenvolvimento_proprio():
+    prompt = prompt_de("reuniao", style="detailed", title="Colegiado")["prompt"]
+
+    assert "## Desenvolvimento da reuniao" in prompt
+    assert "## Divergencias e alternativas" in prompt
+    assert "substitui a reuniao para quem nao participou" in prompt
+
+
+def test_tipo_reuniao_e_normalizado_e_listado():
+    assert service.normalize_recording_kind(" Reuniao ") == "reuniao"
+    assert "reuniao" in service.RECORDING_KINDS
+
+
+def test_generate_summary_de_reuniao_usa_o_prompt_do_tipo(monkeypatch):
+    calls = fake_llm(monkeypatch)
+
+    run(service.generate_summary(
+        discipline="", title="Colegiado", segments=["decidimos adiar a compra"],
+        kind="reuniao",
+    ))
+
+    assert "Reuniao: Colegiado" in calls[0]["message"]
+    assert "Voce resume reunioes" in calls[0]["system"]

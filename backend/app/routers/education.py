@@ -2281,9 +2281,9 @@ async def create_lesson(
         if owner is not None and owner.tutor_id == tutor_id:
             discipline = _discipline_label(owner)
         title = title or f"Apresentacao: {group.name}"
-    elif kind == "palestra":
+    elif kind in ("palestra", "reuniao"):
         if not title:
-            raise HTTPException(422, "Informe o titulo da palestra")
+            raise HTTPException(422, f"Informe o titulo da {'palestra' if kind == 'palestra' else 'reuniao'}")
         # Palestra nao pertence a disciplina nem a turma: a disciplina pode
         # ficar vazia, e o titulo e o que identifica a gravacao.
         classes = ()
@@ -3500,8 +3500,10 @@ async def assign_lesson_presentation_group(
     Aula não entra: ela pertence às turmas, não a um grupo.
     """
     lesson = await _get_lesson(lesson_id, user["tutor_id"], db)
-    if lesson.kind == "aula":
-        raise HTTPException(422, "Aula pertence às turmas e não a um grupo de projeto.")
+    if lesson.kind not in ("palestra", "apresentacao"):
+        raise HTTPException(
+            422, "Só palestra ou apresentação se liga a um grupo de projeto: aula "
+                 "pertence às turmas e reunião não é de grupo.")
     if body.group_id:
         group = await _owned_project_group(body.group_id, user["tutor_id"], db)
         owner = await db.get(DisciplineModel, group.discipline_id)
