@@ -557,6 +557,51 @@ async def link_project_group_member(
     return {"success": True}
 
 
+@router.get("/project-groups/{group_id}/members/{member_id}/usage")
+async def project_group_member_usage(
+    group_id: str,
+    member_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """O que depende do integrante (quizzes, sorteios), para avisar antes de remover."""
+    from ..services.project_group_service import member_usage
+
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    member = await db.get(ProjectGroupMemberModel, member_id)
+    if member is None or member.group_id != group.id:
+        raise HTTPException(404, "Integrante não encontrado")
+    total = (await db.execute(select(func.count()).select_from(ProjectGroupMemberModel)
+             .where(ProjectGroupMemberModel.group_id == group.id))).scalar_one()
+    return {**await member_usage(db, member), "name": member.name,
+            "members": int(total), "can_remove": int(total) > 1}
+
+
+@router.delete("/project-groups/{group_id}/members/{member_id}")
+async def remove_project_group_member(
+    group_id: str,
+    member_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tira um integrante do grupo (quem saiu, ou foi cadastrado por engano).
+
+    O aluno cadastrado continua existindo e o grupo mantém os outros integrantes. O que
+    apontava para o integrante (aparelho no quiz em grupo, representante sorteado) é
+    desfeito. Reimportar a lista com o nome de volta o recoloca no grupo.
+    """
+    from ..services.project_group_service import MemberRemovalError, remove_member
+
+    group = await _owned_project_group(group_id, user["tutor_id"], db)
+    member = await db.get(ProjectGroupMemberModel, member_id)
+    if member is None or member.group_id != group.id:
+        raise HTTPException(404, "Integrante não encontrado")
+    try:
+        return await remove_member(db, group, member)
+    except MemberRemovalError as exc:
+        raise HTTPException(exc.status, exc.message) from exc
+
+
 @router.delete("/project-groups/all")
 async def delete_all_project_groups(
     user: dict = Depends(get_current_user),

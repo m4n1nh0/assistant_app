@@ -87,6 +87,27 @@ class EducationService {
         .map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
+  /// O que depende do integrante (quizzes, sorteios), para avisar antes de remover.
+  Future<Map<String, dynamic>> projectGroupMemberUsage(
+      String groupId, String memberId) async {
+    final response = await http.get(
+      Uri.parse(
+          '$_baseUrl/education/project-groups/$groupId/members/$memberId/usage'),
+      headers: _headers,
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
+  /// Tira o integrante do grupo. O servidor desfaz o que apontava para ele.
+  Future<Map<String, dynamic>> removeProjectGroupMember(
+      String groupId, String memberId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/project-groups/$groupId/members/$memberId'),
+      headers: _headers,
+    );
+    return Map<String, dynamic>.from(_decode(response) as Map);
+  }
+
   /// Liga grupos que já existem a uma ou mais turmas (ou os solta, com a lista vazia).
   /// O servidor recusa se alguma turma de destino já tem um grupo com o mesmo nome.
   Future<int> assignProjectGroupsToClass(

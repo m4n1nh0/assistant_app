@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import lru_cache
 
-from sqlalchemy import delete as sql_delete, or_, select
+from sqlalchemy import delete as sql_delete, func, or_, select
 
 from ..core.database import (
     AsyncSessionLocal, ClassGroupModel, ClassScheduleModel, DisciplineModel,
+    GroupDrawEntryModel, QuizGroupLinkModel, QuizGroupRepresentativeModel,
     ProjectGroupClassModel, ProjectGroupMemberModel, ProjectGroupModel,
     ProjectGroupNameResolutionModel,
     StudentModel,
@@ -596,6 +597,77 @@ async def groups_in_classes(db, tutor_id: str, discipline_id: str,
     ))).scalars().all())
     sets = await class_ids_of_groups(db, groups)
     return [group for group in groups if sets[group.id] == wanted]
+
+
+class MemberRemovalError(Exception):
+    """A remocao do integrante nao pode ser feita; `message` e para o professor."""
+
+    def __init__(self, message: str, status: int = 409):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+
+async def member_usage(db, member: ProjectGroupMemberModel) -> dict:
+    """O que depende deste integrante fora do cadastro do grupo.
+
+    Serve para a tela avisar antes de remover: quiz em grupo em que ele entrou, quiz
+    em que ele era o representante e sorteio de apresentacao em que ele foi sorteado.
+    """
+    quizzes = (await db.execute(select(QuizGroupLinkModel.quiz_id).where(
+        QuizGroupLinkModel.member_id == member.id))).scalars().all()
+    representing = (await db.execute(select(QuizGroupRepresentativeModel.quiz_id).where(
+        QuizGroupRepresentativeModel.member_id == member.id))).scalars().all()
+    draws = (await db.execute(select(GroupDrawEntryModel.draw_id).where(
+        GroupDrawEntryModel.representative_member_id == member.id))).scalars().all()
+    return dict(
+        quiz_participations=len(set(quizzes)),
+        quiz_representations=len(set(representing)),
+        draw_representations=len(set(draws)),
+    )
+
+
+async def remove_member(db, group: ProjectGroupModel,
+                        member: ProjectGroupMemberModel) -> dict:
+    """Tira o integrante do grupo e desfaz o que apontava para ele.
+
+    - o grupo nao pode ficar sem integrante (apague o grupo, entao);
+    - quiz em grupo: o aparelho dele sai do grupo (e nao responde mais por ele) e, se
+      era o representante, o grupo fica sem representante ate novo sorteio;
+    - sorteio de apresentacao: o representante sorteado e solto, e pode ser sorteado de
+      novo entre os que sobraram;
+    - os que sobraram mantem a ordem, e o aluno cadastrado continua existindo.
+
+    O que ele fez em quiz ja jogado deixa de contar para o grupo, porque o resultado do
+    grupo e recalculado com os integrantes de hoje; por isso a tela pergunta antes.
+    """
+    total = (await db.execute(select(func.count()).select_from(ProjectGroupMemberModel)
+             .where(ProjectGroupMemberModel.group_id == group.id))).scalar_one()
+    if total <= 1:
+        raise MemberRemovalError(
+            "O grupo ficaria sem integrantes. Para tirar o último, apague o grupo.")
+
+    usage = await member_usage(db, member)
+    await db.execute(sql_delete(QuizGroupLinkModel).where(
+        QuizGroupLinkModel.member_id == member.id))
+    await db.execute(sql_delete(QuizGroupRepresentativeModel).where(
+        QuizGroupRepresentativeModel.member_id == member.id))
+    entries = (await db.execute(select(GroupDrawEntryModel).where(
+        GroupDrawEntryModel.representative_member_id == member.id))).scalars().all()
+    for entry in entries:
+        entry.representative_member_id = None
+        entry.representative_name = ""
+    name = member.name
+    await db.delete(member)
+    await db.flush()
+
+    remaining = list((await db.execute(select(ProjectGroupMemberModel).where(
+        ProjectGroupMemberModel.group_id == group.id
+    ).order_by(ProjectGroupMemberModel.position, ProjectGroupMemberModel.id))).scalars())
+    for position, item in enumerate(remaining):
+        item.position = position
+    await db.commit()
+    return dict(removed=name, remaining=len(remaining), cleaned=usage)
 
 
 @dataclass(frozen=True)

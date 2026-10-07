@@ -655,9 +655,70 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
+  /// Valor devolvido pelo diálogo de vínculo quando o professor pede para remover.
+  static const _removeMemberChoice = '\u0000remover';
+
+  /// Tira o integrante do grupo, avisando antes do que depende dele.
+  Future<void> removeMember(Map<String, dynamic> group,
+      Map<String, dynamic> member) async {
+    final name = '${member['name']}';
+    final groupName = '${group['name']}';
+    try {
+      final usage = await education.projectGroupMemberUsage(
+        '${group['id']}', '${member['id']}');
+      if (!mounted) return;
+      int count(String key) => (usage[key] as num?)?.toInt() ?? 0;
+      String times(int n, String one, String many) => n == 1 ? '1 $one' : '$n $many';
+      final impacts = [
+        if (count('quiz_participations') > 0)
+          '$name participou de ${times(count('quiz_participations'), 'quiz', 'quizzes')} '
+            'em grupo: o resultado do grupo nele passa a ser calculado sem '
+            'esse integrante.',
+        if (count('quiz_representations') > 0)
+          '$name era o representante em '
+            '${times(count('quiz_representations'), 'quiz', 'quizzes')}: o grupo '
+            'fica sem representante até novo sorteio.',
+        if (count('draw_representations') > 0)
+          'Foi sorteado como representante na apresentação em '
+            '${times(count('draw_representations'), 'sorteio', 'sorteios')}: esse '
+            'sorteio é desfeito e pode ser refeito.',
+      ];
+      final confirmed = await showDialog<bool>(context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Remover $name do $groupName?'),
+          content: SizedBox(width: 440, child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('O aluno continua cadastrado na turma; só sai deste '
+                'grupo. Reimportar a lista com o nome o coloca de volta.'),
+              for (final impact in impacts) Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(impact, key: const ValueKey('impacto-remocao'))),
+            ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+            ElevatedButton(
+              key: const ValueKey('confirmar-remocao'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(dialogContext).colorScheme.error),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Remover do grupo')),
+          ],
+        ));
+      if (confirmed != true) return;
+      await education.removeProjectGroupMember('${group['id']}', '${member['id']}');
+      await loadGroups();
+      if (mounted) setState(() => message = '$name removido do $groupName.');
+    } catch (error) {
+      if (mounted) setState(() => message = 'Não consegui remover: $error');
+    }
+  }
+
   Future<void> linkMember(Map<String, dynamic> group,
       Map<String, dynamic> member) async {
     String? studentId = member['student_id']?.toString();
+    final onlyMember = ((group['members'] as List?) ?? const []).length <= 1;
     final selected = await showDialog<String?>(context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, update) => AlertDialog(
@@ -673,6 +734,16 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             onChanged: (value) => update(() => studentId = value),
           )),
           actions: [
+            Tooltip(
+              message: onlyMember
+                ? 'Último integrante: para tirá-lo, apague o grupo.' : '',
+              child: TextButton(
+                key: const ValueKey('remover-integrante'),
+                onPressed: onlyMember ? null
+                  : () => Navigator.pop(dialogContext, _removeMemberChoice),
+                child: Text('Remover do grupo',
+                  style: onlyMember ? null : TextStyle(
+                    color: Theme.of(dialogContext).colorScheme.error)))),
             TextButton(onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancelar')),
             ElevatedButton(onPressed: () => Navigator.pop(dialogContext,
@@ -680,6 +751,10 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           ],
         )));
     if (selected == null) return;
+    if (selected == _removeMemberChoice) {
+      await removeMember(group, member);
+      return;
+    }
     await education.linkProjectGroupMember('${group['id']}',
       '${member['id']}', selected.isEmpty ? null : selected);
     await loadGroups();

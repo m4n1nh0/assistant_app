@@ -89,6 +89,23 @@ grupo sem turma. Ficam de fora, e a mensagem lista os nomes: grupos sem nenhum i
 vinculado a aluno (vincule os nomes e tente de novo, ou use **Ligar grupos sem turma**) e
 nomes que já existem em grupo de turmas que se cruzam.
 
+## Remover um integrante do grupo
+
+Para tirar quem foi cadastrado por engano ou saiu do grupo, clique no nome do integrante
+(o mesmo clique do vínculo com o aluno) e em **Remover do grupo**. Antes de remover, o app
+avisa o que depende dele:
+
+- **Quiz em grupo:** em quantos quizzes ele entrou. O aparelho dele sai do grupo e o
+  resultado do grupo nesses quizzes passa a ser calculado **sem ele**.
+- **Representante:** se ele era o representante de algum quiz, o grupo fica sem
+  representante até novo sorteio.
+- **Sorteio de apresentação:** se ele foi sorteado como representante, esse sorteio é
+  desfeito e pode ser refeito entre os que sobraram.
+
+O aluno **continua cadastrado** na turma; só sai deste grupo. Os outros integrantes mantêm
+a ordem. O **último integrante não pode ser removido**: para isso, apague o grupo. Se a
+lista for importada de novo com o nome dele, ele volta ao grupo.
+
 ## Ver, sortear, jogar e imprimir por turma
 
 - **Filtro (turmas do dia):** o bloco **Turma (dia de aula)** segue a aba Gravar. As
@@ -130,7 +147,10 @@ nomes que já existem em grupo de turmas que se cruzam.
   liga ou solta (`{"group_ids": [...], "class_ids": [...]}`; lista vazia solta).
   `POST /education/project-groups/infer-classes` (`{"discipline_id": "...",
   "group_ids": []}`) deduz as turmas dos grupos sem turma pelos alunos vinculados e
-  devolve `assigned`, `without_linked_members` e `conflicting`. O quiz em grupo
+  devolve `assigned`, `without_linked_members` e `conflicting`.
+  `GET /education/project-groups/{grupo}/members/{integrante}/usage` conta o que depende do
+  integrante (`quiz_participations`, `quiz_representations`, `draw_representations`) e
+  `DELETE` no mesmo caminho o remove, devolvendo o que foi desfeito em `cleaned`. O quiz em grupo
   (`PUT /education/quiz/{id}/group`) aceita `class_ids` (e ainda `class_id`) e devolve
   `class_ids` e `class_label` com as turmas juntas; o servidor guarda a lista em
   `quiz_group_configs.class_ids` (texto separado por vírgula), e quiz antigo, sem a lista,

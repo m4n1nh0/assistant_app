@@ -33,7 +33,10 @@ Map<String, dynamic> _class(String id, String code, String name, int weekday) =>
     };
 
 Map<String, dynamic> _group(String id, String name,
-        {String? classId, List<String>? classIds, String classLabel = ''}) =>
+        {String? classId,
+        List<String>? classIds,
+        String classLabel = '',
+        int members = 1}) =>
     {
       'id': id,
       'discipline_id': 'd1',
@@ -51,14 +54,15 @@ Map<String, dynamic> _group(String id, String name,
       'penalty_points': 0,
       'source_note': '',
       'members': [
-        {
-          'id': 'm-$id',
-          'name': 'Aluno $name',
-          'student_id': null,
-          'student_name': null,
-          'source_note': '',
-          'position': 0,
-        }
+        for (var i = 0; i < members; i++)
+          {
+            'id': i == 0 ? 'm-$id' : 'm-$id-$i',
+            'name': i == 0 ? 'Aluno $name' : 'Colega $i $name',
+            'student_id': null,
+            'student_name': null,
+            'source_note': '',
+            'position': i,
+          }
       ],
     };
 
@@ -74,10 +78,18 @@ class _Backend {
   final List<Map<String, dynamic>>? classes;
   final List<String> conflicts;
   final List<Map<String, dynamic>> adjusted;
+
+  /// O que o servidor diz depender do integrante, e a resposta da remoção.
+  final Map<String, dynamic> usage;
+  final int? removeStatus;
   final requests = <http.Request>[];
 
   _Backend(this.groups,
-      {this.classes, this.conflicts = const [], this.adjusted = const []});
+      {this.classes,
+      this.conflicts = const [],
+      this.adjusted = const [],
+      this.usage = const {},
+      this.removeStatus});
 
   http.Response handle(http.Request request) {
     requests.add(request);
@@ -96,6 +108,27 @@ class _Backend {
     if (path.endsWith('/education/lessons')) return json([]);
     if (request.method == 'GET' && path.endsWith('/education/project-groups')) {
       return json(groups);
+    }
+    if (path.contains('/members/') && path.endsWith('/usage')) {
+      return json({
+        'quiz_participations': 0,
+        'quiz_representations': 0,
+        'draw_representations': 0,
+        'name': 'x',
+        'members': 2,
+        'can_remove': true,
+        ...usage,
+      });
+    }
+    if (request.method == 'PATCH' && path.contains('/members/')) {
+      return json({'success': true});
+    }
+    if (request.method == 'DELETE' && path.contains('/members/')) {
+      if (removeStatus != null) {
+        return http.Response(
+            '{"detail":"O grupo ficaria sem integrantes."}', removeStatus!);
+      }
+      return json({'removed': 'x', 'remaining': 1, 'cleaned': {}});
     }
     if (path.endsWith('/project-groups/infer-classes')) {
       return json({
@@ -157,6 +190,10 @@ class _Backend {
   Map<String, dynamic> bodyOf(String suffix) => jsonDecode(
       requests.lastWhere((r) => r.url.path.endsWith(suffix)).body)
       as Map<String, dynamic>;
+
+  /// Alguma chamada com este método e o caminho contendo [part]?
+  bool called(String method, String part) =>
+      requests.any((r) => r.method == method && r.url.path.contains(part));
 }
 
 /// Dias usados nos testes: 05/10/2026 e segunda; 07/10 e quarta (nenhuma turma tem
@@ -517,6 +554,108 @@ void main() {
 
         expect(backend.requests.any((r) => r.url.path.endsWith('/preview')),
             isFalse);
+      });
+    });
+  });
+
+  group('remover integrante do grupo', () {
+    final dois = [_group('g1', 'GRUPO 1', members: 2)];
+
+    Future<void> abrirDialogo(WidgetTester tester) async {
+      await tester.tap(find.text('Aluno GRUPO 1'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('pede confirmação e remove só depois dela', (tester) async {
+      final backend = _Backend(dois);
+      await _open(tester, backend, body: () async {
+        await abrirDialogo(tester);
+        expect(find.text('Vincular Aluno GRUPO 1'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('remover-integrante')));
+        await tester.pumpAndSettle();
+        expect(find.text('Remover Aluno GRUPO 1 do GRUPO 1?'), findsOneWidget);
+        expect(backend.called('DELETE', '/members/m-g1'), isFalse);
+        expect(find.byKey(const ValueKey('impacto-remocao')), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('confirmar-remocao')));
+        await tester.pumpAndSettle();
+
+        expect(backend.called('DELETE', '/project-groups/g1/members/m-g1'), isTrue);
+        expect(find.text('Aluno GRUPO 1 removido do GRUPO 1.'), findsOneWidget);
+      });
+    });
+
+    testWidgets('cancelar a confirmação não remove nada', (tester) async {
+      final backend = _Backend(dois);
+      await _open(tester, backend, body: () async {
+        await abrirDialogo(tester);
+        await tester.tap(find.byKey(const ValueKey('remover-integrante')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Cancelar'));
+        await tester.pumpAndSettle();
+
+        expect(backend.called('DELETE', '/members/m-g1'), isFalse);
+      });
+    });
+
+    testWidgets('avisa dos quizzes, da representação e do sorteio', (tester) async {
+      final backend = _Backend(dois, usage: {
+        'quiz_participations': 2,
+        'quiz_representations': 1,
+        'draw_representations': 1,
+      });
+      await _open(tester, backend, body: () async {
+        await abrirDialogo(tester);
+        await tester.tap(find.byKey(const ValueKey('remover-integrante')));
+        await tester.pumpAndSettle();
+
+        final avisos = tester
+            .widgetList<Text>(find.byKey(const ValueKey('impacto-remocao')))
+            .map((t) => t.data!)
+            .toList();
+        expect(avisos, hasLength(3));
+        expect(avisos[0], contains('participou de 2 quizzes em grupo'));
+        expect(avisos[1], contains('representante em 1 quiz:'));
+        expect(avisos[2], contains('1 sorteio'));
+      });
+    });
+
+    testWidgets('o último integrante não pode ser removido por aqui',
+        (tester) async {
+      final backend = _Backend([_group('g1', 'GRUPO 1')]);
+      await _open(tester, backend, body: () async {
+        await abrirDialogo(tester);
+
+        final botao = tester.widget<TextButton>(
+            find.byKey(const ValueKey('remover-integrante')));
+        expect(botao.onPressed, isNull);
+      });
+    });
+
+    testWidgets('mostra o erro do servidor se a remoção for recusada',
+        (tester) async {
+      final backend = _Backend(dois, removeStatus: 409);
+      await _open(tester, backend, body: () async {
+        await abrirDialogo(tester);
+        await tester.tap(find.byKey(const ValueKey('remover-integrante')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('confirmar-remocao')));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('Não consegui remover'), findsOneWidget);
+        expect(find.textContaining('sem integrantes'), findsOneWidget);
+      });
+    });
+
+    testWidgets('salvar o vínculo continua funcionando como antes', (tester) async {
+      final backend = _Backend(dois);
+      await _open(tester, backend, body: () async {
+        await abrirDialogo(tester);
+        await tester.tap(find.text('Salvar vínculo'));
+        await tester.pumpAndSettle();
+
+        expect(backend.called('DELETE', '/members/m-g1'), isFalse);
       });
     });
   });
