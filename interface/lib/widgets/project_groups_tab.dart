@@ -720,7 +720,20 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
   Future<void> linkMember(Map<String, dynamic> group,
       Map<String, dynamic> member) async {
     String? studentId = member['student_id']?.toString();
+    if (studentId != null && studentId.isEmpty) studentId = null;
     final onlyMember = ((group['members'] as List?) ?? const []).length <= 1;
+    // Aluno ja vinculado pode estar inativo ou em outra turma, fora do roster: sem
+    // ele nos itens o Dropdown quebra por valor sem item correspondente.
+    final options = <Student>[...roster];
+    if (studentId != null && studentId.isNotEmpty &&
+        !options.any((student) => student.id == studentId)) {
+      final linked = students.where((student) => student.id == studentId);
+      if (linked.isNotEmpty) {
+        options.add(linked.first);
+      } else {
+        studentId = null;
+      }
+    }
     final selected = await showDialog<String?>(context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, update) => AlertDialog(
@@ -730,7 +743,7 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
             decoration: const InputDecoration(labelText: 'Aluno cadastrado'),
             items: [const DropdownMenuItem<String?>(value: null,
               child: Text('Sem vínculo')),
-              ...roster.map((student) => DropdownMenuItem<String?>(
+              ...options.map((student) => DropdownMenuItem<String?>(
                 value: student.id, child: Text(student.name,
                   overflow: TextOverflow.ellipsis)))],
             onChanged: (value) => update(() => studentId = value),
@@ -974,6 +987,79 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
     await loadGroups();
   }
 
+  /// Integrantes vinculados a aluno que saiu das turmas do grupo (inativo ou de outra
+  /// turma). Sem vínculo não dá para saber, então ficam. Grupo que perderia todos fica
+  /// intacto: o servidor não deixa grupo vazio.
+  ({List<(Map<String, dynamic>, Map<String, dynamic>)> stale, List<String> whole})
+      staleMembers() {
+    final byId = {for (final student in students) student.id: student};
+    final stale = <(Map<String, dynamic>, Map<String, dynamic>)>[];
+    final whole = <String>[];
+    for (final group in allGroups) {
+      final classIds = groupClassIds(group);
+      if (classIds.isEmpty) continue;
+      final members = ((group['members'] as List?) ?? const [])
+          .cast<Map<String, dynamic>>();
+      final out = [for (final member in members)
+        if (byId['${member['student_id'] ?? ''}'] case final student?
+            when !student.active || !classIds.contains(student.classId))
+          member];
+      if (out.isEmpty) continue;
+      if (out.length >= members.length) {
+        whole.add('${group['name']}');
+        continue;
+      }
+      stale.addAll([for (final member in out) (group, member)]);
+    }
+    return (stale: stale, whole: whole);
+  }
+
+  Future<void> pruneStaleMembers() async {
+    final found = staleMembers();
+    if (found.stale.isEmpty) {
+      setState(() => message = found.whole.isEmpty
+        ? 'Todos os integrantes vinculados ainda são das turmas dos grupos.'
+        : 'Nada a tirar: ${found.whole.join(", ")} só têm integrantes fora das turmas; apague o grupo se for o caso.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Tirar ${found.stale.length} integrantes dos grupos?'),
+        content: SizedBox(width: 460, child: SingleChildScrollView(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Estão vinculados a aluno inativo ou de outra turma. Os alunos '
+              'continuam cadastrados; quizzes e sorteios que dependiam deles são desfeitos.'),
+            const SizedBox(height: 10),
+            for (final (group, member) in found.stale)
+              Text('• ${member['name']} — ${group['name']}'),
+            if (found.whole.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text('Mantidos por ficarem sem integrantes: ${found.whole.join(", ")}.'),
+            ],
+          ]))),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Tirar dos grupos')),
+        ]));
+    if (confirmed != true) return;
+    setState(() => busy = true);
+    var removed = 0;
+    try {
+      for (final (group, member) in found.stale) {
+        await education.removeProjectGroupMember('${group['id']}', '${member['id']}');
+        removed++;
+      }
+      message = '$removed integrantes tirados dos grupos.';
+    } catch (error) {
+      message = 'Tirei $removed e parei: $error';
+    } finally {
+      await loadGroups();
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> deleteAll() async {
     setState(() => busy = true);
     try {
@@ -1063,19 +1149,22 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
 
   @override
   Widget build(BuildContext context) {
+    // Copia fixa: load() troca `disciplines` entre a montagem dos itens e o build do
+    // dropdown, e o selectedItemBuilder (lazy) veria uma lista de outro tamanho.
+    final options = List<Discipline>.of(disciplines);
     return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
       Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           SizedBox(width: 360, child: DropdownButtonFormField<String>(
-            value: selectedId,
+            value: options.any((item) => item.id == selectedId) ? selectedId : null,
             isExpanded: true,
             decoration: const InputDecoration(labelText: 'Disciplina',
               hintText: 'Escolha a matéria da lista'),
-            selectedItemBuilder: (context) => disciplines.map((item) =>
+            selectedItemBuilder: (context) => options.map((item) =>
               Align(alignment: Alignment.centerLeft, child: Text(
                 '${item.code} • ${item.name} (${item.semester})',
                 maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
-            items: disciplines.map((item) => DropdownMenuItem(
+            items: options.map((item) => DropdownMenuItem(
               value: item.id, child: Text('${item.code} • ${item.name} (${item.semester})',
                 overflow: TextOverflow.ellipsis))).toList(),
             onChanged: (value) async {
@@ -1123,6 +1212,11 @@ class _ProjectGroupsTabState extends State<ProjectGroupsTab> {
           OutlinedButton.icon(onPressed: busy || groups.isEmpty ? null : linkUnambiguousNames,
             icon: const Icon(Icons.auto_fix_high_outlined),
             label: const Text('Vincular nomes seguros')),
+          OutlinedButton.icon(
+            key: const ValueKey('tirar-quem-saiu'),
+            onPressed: busy || allGroups.isEmpty ? null : pruneStaleMembers,
+            icon: const Icon(Icons.person_remove_outlined),
+            label: const Text('Tirar quem saiu das turmas')),
           OutlinedButton.icon(onPressed: busy ? null : deleteAll,
             icon: const Icon(Icons.delete_forever_outlined),
             label: const Text('Excluir todos os grupos')),
