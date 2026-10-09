@@ -448,12 +448,12 @@ def _disciplina(id_, code, name, tutor="tutor-1"):
 def test_material_por_texto_encontra_a_disciplina_cadastrada():
     """Texto que casa com o cadastro ganha o vinculo: sem o id, renomear a
     disciplina soltaria o material dela."""
-    from app.routers.education import _resolve_discipline
+    from app.routers.education import _resolve_material_discipline
 
     db = _FakeDisciplineDb([_disciplina("d1", "ARA0040", "BANCO DE DADOS")])
 
     vinculo, rotulo = asyncio.run(
-        _resolve_discipline("", "ARA0040 - BANCO DE DADOS", "tutor-1", db)
+        _resolve_material_discipline("", "ARA0040 - BANCO DE DADOS", "tutor-1", db)
     )
 
     assert vinculo == "d1"
@@ -463,12 +463,12 @@ def test_material_por_texto_encontra_a_disciplina_cadastrada():
 def test_material_de_disciplina_nao_cadastrada_ainda_sobe():
     # Travar o upload obrigaria a cadastrar a disciplina antes; o material vale
     # por si, e o vinculo pode vir depois.
-    from app.routers.education import _resolve_discipline
+    from app.routers.education import _resolve_material_discipline
 
     db = _FakeDisciplineDb([])
 
     vinculo, rotulo = asyncio.run(
-        _resolve_discipline("", "Materia nova", "tutor-1", db)
+        _resolve_material_discipline("", "Materia nova", "tutor-1", db)
     )
 
     assert vinculo is None
@@ -478,12 +478,12 @@ def test_material_de_disciplina_nao_cadastrada_ainda_sobe():
 def test_disciplina_de_outro_professor_e_recusada():
     from fastapi import HTTPException
 
-    from app.routers.education import _resolve_discipline
+    from app.routers.education import _resolve_material_discipline
 
     db = _FakeDisciplineDb([_disciplina("d1", "ARA0040", "BD", tutor="outro")])
 
     with pytest.raises(HTTPException) as erro:
-        asyncio.run(_resolve_discipline("d1", "", "tutor-1", db))
+        asyncio.run(_resolve_material_discipline("d1", "", "tutor-1", db))
 
     assert erro.value.status_code == 404
 

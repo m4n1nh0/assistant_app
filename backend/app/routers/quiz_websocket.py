@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.websockets import WebSocketState
 
 from ..core.database import (
     QuizModel,
@@ -362,10 +363,13 @@ async def quiz_monitor_websocket(
             "data": stats,
         })
     except Exception as e:
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e),
-        })
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e),
+            })
+        except (WebSocketDisconnect, RuntimeError):
+            pass
         manager.disconnect(quiz_id, websocket)
         return
 
@@ -374,15 +378,25 @@ async def quiz_monitor_websocket(
         while True:
             await asyncio.sleep(2)
 
+            if websocket.client_state != WebSocketState.CONNECTED:
+                manager.disconnect(quiz_id, websocket)
+                return
+
             try:
                 stats = await get_quiz_stats(quiz_id, db)
+            except Exception as e:
+                print(f"Erro ao calcular stats: {e}")
+                continue
+
+            try:
                 await websocket.send_json({
                     "type": "stats_update",
                     "data": stats,
                 })
-            except Exception as e:
-                print(f"Erro ao calcular stats: {e}")
-                continue
+            except (WebSocketDisconnect, RuntimeError):
+                # Cliente fechou: sem isso o laco insistia a cada 2s para sempre.
+                manager.disconnect(quiz_id, websocket)
+                return
 
     except WebSocketDisconnect:
         manager.disconnect(quiz_id, websocket)

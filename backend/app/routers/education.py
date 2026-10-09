@@ -3330,7 +3330,7 @@ async def upload_material(
     except material_service.MaterialError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    vinculo, rotulo = await _resolve_discipline(
+    vinculo, rotulo = await _resolve_material_discipline(
         discipline_id.strip(), discipline.strip(), user["tutor_id"], db
     )
     material = MaterialModel(
@@ -3422,7 +3422,7 @@ async def delete_material(
     return {"deleted": material_id}
 
 
-async def _resolve_discipline(
+async def _resolve_material_discipline(
     discipline_id: str,
     texto: str,
     tutor_id: str,
