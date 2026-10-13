@@ -33,6 +33,8 @@ import io
 import re
 import unicodedata
 from collections.abc import Callable, Iterable
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -610,7 +612,40 @@ async def extract(data: bytes, filename: str) -> ExtractedMaterial:
             f"Formato nao suportado ({recebido}). Aceito: {aceitos}."
         )
 
-    return await asyncio.to_thread(extrator, data)
+    return await _run_extractor(extrator, data)
+
+
+#: Acima disto o arquivo vai para outro processo. Os extratores (pypdf, python-docx)
+#: sao Python puro: em thread eles seguram o GIL e o event loop para por segundos,
+#: o que derruba o agendador e atrasa todas as outras requisicoes. Arquivo pequeno
+#: termina em milissegundos e fica na thread, sem o custo de um processo.
+PROCESS_THRESHOLD_BYTES = 1_000_000
+
+_pool: ProcessPoolExecutor | None = None
+
+
+def _process_pool() -> ProcessPoolExecutor:
+    global _pool
+    if _pool is None:
+        _pool = ProcessPoolExecutor(max_workers=1)
+    return _pool
+
+
+async def _run_extractor(
+    extrator: Callable[[bytes], ExtractedMaterial], data: bytes
+) -> ExtractedMaterial:
+    if len(data) < PROCESS_THRESHOLD_BYTES:
+        return await asyncio.to_thread(extrator, data)
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_process_pool(), extrator, data)
+    except (BrokenProcessPool, OSError, RuntimeError) as exc:
+        # Sem processo filho (ambiente restrito) a leitura ainda funciona, so
+        # volta a competir pelo event loop.
+        global _pool
+        _pool = None
+        logger.warning(f"Extracao em processo separado indisponivel ({exc}); usando thread")
+        return await asyncio.to_thread(extrator, data)
 
 
 async def extract_pdf(data: bytes) -> ExtractedMaterial:
@@ -621,4 +656,4 @@ async def extract_pdf(data: bytes) -> ExtractedMaterial:
     """
     if not data:
         raise MaterialError("Arquivo vazio.")
-    return await asyncio.to_thread(extract_pdf_sync, data)
+    return await _run_extractor(extract_pdf_sync, data)

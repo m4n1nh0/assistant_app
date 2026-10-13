@@ -623,3 +623,17 @@ def test_metadado_generico_perde_para_a_capa_do_pdf():
     extraido = ms.from_pages(paginas, title="PDF Content")
 
     assert extraido.title == "Consulta com varias tabelas no PostgreSQL"
+
+
+def test_arquivo_grande_e_lido_em_processo_separado(monkeypatch):
+    """Acima do limiar a leitura sai do processo: nao pode travar o event loop."""
+    import asyncio
+
+    monkeypatch.setattr(ms, "PROCESS_THRESHOLD_BYTES", 0)
+    texto = ("Normalizacao reduz redundancia nas tabelas. " * 40).encode()
+
+    pronto = asyncio.run(ms.extract(texto, "aula.txt"))
+    assert "Normalizacao" in pronto.text
+
+    with pytest.raises(ms.MaterialError):
+        asyncio.run(ms.extract(b"%PDF-1.4 quebrado", "ruim.pdf"))

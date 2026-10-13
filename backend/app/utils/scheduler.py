@@ -24,7 +24,13 @@ from ..services.notification_service import send_notification, build_event_messa
 from ..services.runtime_config_service import load_notif_config
 from ..services.microsoft_identity_service import hydrate_microsoft_account
 
-scheduler = AsyncIOScheduler(timezone="UTC")
+# A tolerancia padrao do APScheduler e de 1 s: um event loop ocupado por uns
+# segundos (leitura de PDF grande, por exemplo) faz o job ser pulado com
+# "Run time ... was missed". Com folga, o job so atrasa e roda em seguida.
+scheduler = AsyncIOScheduler(
+    timezone="UTC",
+    job_defaults={"misfire_grace_time": 120, "coalesce": True, "max_instances": 1},
+)
 
 _notified: set[str] = set()
 
