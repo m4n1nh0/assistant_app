@@ -148,6 +148,31 @@ def test_apresentacao_descreve_o_trabalho_do_grupo_sem_nota(style):
     assert "Voce resume apresentacoes de trabalhos de grupo" in construido["system_prompt"]
 
 
+@pytest.mark.parametrize("style", ["standard", "detailed"])
+def test_apresentacao_com_material_do_grupo_leva_o_texto_e_a_secao(style):
+    construido = prompt_de("apresentacao", style=style,
+                           reference="[slides.pdf]\nArquitetura com MQTT e Node-RED")
+
+    assert "Material enviado pelo grupo" in construido["prompt"]
+    assert "Arquitetura com MQTT e Node-RED" in construido["prompt"]
+    assert "nao atribua ao grupo como dito" in construido["prompt"]
+    assert "## Material do grupo" in construido["prompt"]
+
+
+def test_sem_material_o_prompt_nao_ganha_o_bloco():
+    construido = prompt_de("apresentacao")
+
+    assert "Material enviado pelo grupo" not in construido["prompt"]
+
+
+def test_material_longo_e_cortado_no_teto():
+    texto = "x" * (service.REFERENCE_MAX_CHARS + 500)
+    construido = prompt_de("apresentacao", reference=texto)
+
+    assert "[...material cortado...]" in construido["prompt"]
+    assert "x" * (service.REFERENCE_MAX_CHARS + 1) not in construido["prompt"]
+
+
 def test_titulo_sem_o_rotulo_ganha_o_rotulo_do_tipo():
     construido = prompt_de("apresentacao", title="Projeto de IoT")
 

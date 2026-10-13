@@ -290,6 +290,9 @@ Future<Uint8List> buildLessonSummaryPdf({
 
   /// Nomes dos integrantes do grupo, para a apresentação.
   List<String> members = const [],
+
+  /// Arquivos que o grupo enviou (slides), listados depois do resumo.
+  List<CourseMaterial> materials = const [],
 }) async {
   final style = summaryStyleOrStandard(lesson.summaryStyle);
   final header = summaryHeaderFor(lesson, members: members);
@@ -315,6 +318,7 @@ Future<Uint8List> buildLessonSummaryPdf({
         pw.SizedBox(height: 18),
         ..._buildBody(blocks),
         if (points.isNotEmpty) ..._buildPoints(points),
+        if (materials.isNotEmpty) ..._buildGroupMaterials(materials),
       ],
     ),
   );
@@ -593,6 +597,56 @@ List<pw.Widget> _buildPoints(List<LessonPoint> points) {
                     ),
                   ),
                 ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  ];
+}
+
+/// Arquivos do grupo: o que foi enviado, de que tamanho e por quem.
+List<pw.Widget> _buildGroupMaterials(List<CourseMaterial> materials) {
+  String line(CourseMaterial item) {
+    final name = item.title.isNotEmpty ? item.title : item.filename;
+    final file = item.filename.isNotEmpty && item.filename != name
+        ? ' (${item.filename})'
+        : '';
+    final pages = item.pageCount > 0 ? ' - ${item.pageCount} pág.' : '';
+    final who = item.uploaderName.isNotEmpty
+        ? ' - enviado por ${item.uploaderName}'
+        : '';
+    return '$name$file$pages$who';
+  }
+
+  return [
+    pw.SizedBox(height: 18),
+    pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(14),
+      decoration: pw.BoxDecoration(
+        color: _panel,
+        border: pw.Border.all(color: _rule),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            'MATERIAL DO GRUPO',
+            style: pw.TextStyle(
+              fontSize: 9,
+              letterSpacing: 2,
+              color: _ink,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          for (final item in materials)
+            pw.Padding(
+              padding: const pw.EdgeInsets.only(bottom: 5),
+              child: pw.Text(
+                line(item),
+                style: const pw.TextStyle(fontSize: 10, color: _ink),
               ),
             ),
         ],

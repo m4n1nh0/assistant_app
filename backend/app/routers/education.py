@@ -2852,6 +2852,32 @@ async def _lesson_transcript(lesson_id: str, db: AsyncSession) -> List[str]:
     return [item.text for item in result.scalars().all()]
 
 
+async def _presentation_reference(lesson: LessonModel, db: AsyncSession) -> str:
+    """Texto do material do grupo, para o resumo da apresentacao conferir termos.
+
+    So vale para gravacao de apresentacao ligada a um grupo; as outras seguem sem
+    material. Cada arquivo entra com o titulo e uma fatia do inicio, para o teto do
+    prompt ser dividido entre eles e nao ficar so com o primeiro.
+    """
+    if getattr(lesson, "kind", "aula") != "apresentacao" or not lesson.group_id:
+        return ""
+    rows = (await db.execute(
+        select(MaterialModel)
+        .where(MaterialModel.tutor_id == lesson.tutor_id,
+               MaterialModel.group_id == lesson.group_id)
+        .order_by(MaterialModel.created_at)
+    )).scalars().all()
+    if not rows:
+        return ""
+    share = max(1000, education_service.REFERENCE_MAX_CHARS // len(rows))
+    parts = []
+    for item in rows:
+        body = (item.content or "").strip()[:share]
+        if body:
+            parts.append(f"[{item.title or item.filename}]\n{body}")
+    return "\n\n".join(parts)
+
+
 async def _store_summary(
     lesson: LessonModel,
     *,
@@ -2920,6 +2946,7 @@ async def lesson_summary_prompt(
         focus=focus,
         style=style,
         kind=getattr(lesson, "kind", "aula"),
+        reference=await _presentation_reference(lesson, db),
     )
     return LessonSummaryPromptResponse(lesson_id=lesson.id, **built)
 
@@ -3008,6 +3035,7 @@ async def summarize_lesson(
         focus=body.focus,
         style=style,
         kind=getattr(lesson, "kind", "aula"),
+        reference=await _presentation_reference(lesson, db),
     )
     if not outcome["summary"]:
         raise HTTPException(

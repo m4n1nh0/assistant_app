@@ -1713,12 +1713,20 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
           showSelectedIcon: false,
           onSelectionChanged: (value) {
             final kind = value.first;
+            final previous = _kind;
             setState(() {
               _kind = kind;
               // Na reuniao online a voz dos outros sai pelo fone e nao passa pelo
               // microfone: o som do computador ja vem marcado (e pode ser trocado).
               if (kind == 'reuniao' && SystemAudioRecorder.isSupported) {
                 _audioSource = _sourceMeeting;
+              }
+              // Apresentação de grupo sai detalhada por padrão (o professor pode
+              // trocar); ao sair dela o formato volta ao comum.
+              if (kind == 'apresentacao') {
+                _summaryStyle = summaryStyleDetailed;
+              } else if (previous == 'apresentacao') {
+                _summaryStyle = summaryStyleStandard;
               }
             });
             if (kind == 'apresentacao' && _groups.isEmpty) _loadGroups();
@@ -4494,7 +4502,11 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         setState(() {
           _detail = detail;
           _showTranscript = detail.summary == null || detail.summary!.isEmpty;
-          _summaryStyle = summaryStyleOrStandard(detail.summaryStyle);
+          // Apresentação ainda sem resumo propõe o detalhado.
+          _summaryStyle = detail.summaryStyle == null &&
+                  detail.kind == 'apresentacao'
+              ? summaryStyleDetailed
+              : summaryStyleOrStandard(detail.summaryStyle);
         });
       }
     } catch (e) {
@@ -4761,6 +4773,17 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
     }
   }
 
+  /// Arquivos que o grupo enviou ou que o professor ligou a ele, para o PDF.
+  Future<List<CourseMaterial>> _presentationMaterials(LessonDetail detail) async {
+    if (detail.kind != 'apresentacao' || detail.groupId.isEmpty) return const [];
+    try {
+      final all = await education.listMaterials();
+      return [for (final item in all) if (item.groupId == detail.groupId) item];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<void> _exportPdf(LessonDetail detail) async {
     final summary = detail.summary;
     if (summary == null || summary.isEmpty) {
@@ -4775,6 +4798,7 @@ class _HistoryTabState extends ConsumerState<_HistoryTab> {
         summary: summary,
         points: detail.points,
         members: await _presentationMembers(detail),
+        materials: await _presentationMaterials(detail),
       );
       if (!mounted) return;
       final fileName = lessonPdfFilename(detail);

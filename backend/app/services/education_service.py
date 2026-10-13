@@ -505,6 +505,8 @@ _PRESENTATION_STANDARD_STRUCTURE = (
     "grupo disse ter feito; omita se nao houver)\n"
     "## Perguntas e respostas\n(perguntas feitas ao grupo e o que ele "
     "respondeu; omita se nao houver)\n"
+    "## Material do grupo\n(o que o material enviado traz e o que dele nao foi "
+    "tratado na fala; omita se nao houver material)\n"
     "## Pontos a esclarecer\n(o que ficou vago, sem resposta ou em aberto na "
     "apresentacao; omita se nao houver)\n"
 )
@@ -521,6 +523,9 @@ _PRESENTATION_DETAILED_STRUCTURE = (
     "grupo disse ter feito; omita se nao houver)\n"
     "## Perguntas e respostas\n(pergunta feita ao grupo e a resposta dada; "
     "omita se nao houver)\n"
+    "## Material do grupo\n(o que o material enviado traz, secao a secao, e o "
+    "que ficou de fora da fala ou so foi dito, nao esta nele; omita se nao "
+    "houver material)\n"
     "## Pontos a esclarecer\n(o que ficou vago, sem resposta ou em aberto; "
     "omita se nao houver)\n"
 )
@@ -701,6 +706,30 @@ _DETAILED_STRUCTURE = (
 )
 
 
+#: Teto do material do grupo no prompt: o resto da janela e da transcricao.
+REFERENCE_MAX_CHARS = 8000
+
+
+def _reference_block(reference: str) -> str:
+    """Material que o grupo enviou (slides), para conferir termos e nomes.
+
+    Entra so na chamada final do resumo, nunca nos parciais, e diz ao modelo que isso
+    nao e fala: o que so esta no material nao pode virar "o grupo disse".
+    """
+    text = (reference or "").strip()
+    if not text:
+        return ""
+    if len(text) > REFERENCE_MAX_CHARS:
+        text = text[:REFERENCE_MAX_CHARS].rstrip() + "\n[...material cortado...]"
+    return (
+        "Material enviado pelo grupo (slides ou arquivo). Use-o para escrever "
+        "corretamente nomes, tecnologias e termos e para a secao sobre o "
+        "material; nao e fala da apresentacao, entao nao atribua ao grupo como "
+        "dito o que so aparece aqui.\n"
+        f'"""\n{text}\n"""\n\n'
+    )
+
+
 def _summary_prompt(
     *,
     discipline: str,
@@ -711,6 +740,7 @@ def _summary_prompt(
     style: str = STANDARD_SUMMARY_STYLE,
     partial_lines: int = 8,
     kind: str = LESSON_KIND,
+    reference: str = "",
 ) -> str:
     profile = _profile(kind)
     header = (
@@ -777,6 +807,7 @@ def _summary_prompt(
     return (
         f"{header}{extra}\n\n"
         f"{depth}"
+        f"{_reference_block(reference)}"
         f"Monte o resumo {profile.of} a partir da transcricao, nesta estrutura:\n"
         f"{structure}\n"
         f"{extent}\n\n"
@@ -995,8 +1026,12 @@ async def _summarise_within(
     style: str = STANDARD_SUMMARY_STYLE,
     answer_tokens: Optional[int] = None,
     kind: str = LESSON_KIND,
+    reference: str = "",
 ) -> Dict[str, Any]:
     """Condensa a gravacao em rodadas ate ela caber em uma unica chamada."""
+    if reference.strip():
+        # O material divide a janela com a transcricao.
+        budget = max(budget - min(len(reference), REFERENCE_MAX_CHARS), budget // 2)
     chunks = _windows(texts, budget)
     error = ""
     truncated = False
@@ -1091,6 +1126,7 @@ async def _summarise_within(
             focus=focus,
             style=style,
             kind=kind,
+            reference=reference,
         ),
         max_tokens=answer_tokens,
         kind=kind,
@@ -1132,6 +1168,7 @@ async def _summarise_provider(
     focus: str,
     style: str = STANDARD_SUMMARY_STYLE,
     kind: str = LESSON_KIND,
+    reference: str = "",
 ) -> Dict[str, Any]:
     """Executa um provedor e adapta uma vez a janela informada por ele."""
     budget = summary_budget_chars(provider)
@@ -1144,6 +1181,7 @@ async def _summarise_provider(
         budget=budget,
         style=style,
         kind=kind,
+        reference=reference,
     )
     if outcome["summary"]:
         return outcome
@@ -1170,6 +1208,7 @@ async def _summarise_provider(
         budget=corrected,
         style=style,
         kind=kind,
+        reference=reference,
         # A janela real e menor que a configurada: o teto de saida tem de
         # encolher junto, senao a proxima chamada estoura pelo mesmo motivo.
         answer_tokens=_answer_tokens_for_window(limit),
@@ -1213,6 +1252,7 @@ class SummaryGraphState(TypedDict, total=False):
     focus: str
     style: str
     kind: str
+    reference: str
     requested_llm: Optional[str]
     providers: List[str]
     provider_index: int
@@ -1249,6 +1289,7 @@ async def _summary_run_node(state: SummaryGraphState) -> Dict[str, Any]:
                 focus=state["focus"],
                 style=style,
                 kind=state.get("kind", LESSON_KIND),
+                reference=state.get("reference", ""),
             ),
             timeout=timeout,
         )
@@ -1327,6 +1368,7 @@ def build_summary_prompt(
     focus: str = "",
     style: str = STANDARD_SUMMARY_STYLE,
     kind: str = LESSON_KIND,
+    reference: str = "",
 ) -> Dict[str, Any]:
     """Monta o prompt do resumo para quem tem janela para a aula inteira.
 
@@ -1350,6 +1392,7 @@ def build_summary_prompt(
             focus=focus,
             style=style,
             kind=kind,
+            reference=reference,
         ),
         "used_segments": len(texts),
         "transcript_chars": len(transcript),
@@ -1365,6 +1408,7 @@ async def generate_summary(
     focus: str = "",
     style: str = STANDARD_SUMMARY_STYLE,
     kind: str = LESSON_KIND,
+    reference: str = "",
 ) -> Dict[str, Any]:
     """Resume a gravacao com LangGraph, janela adaptativa e fallback free-first.
 
@@ -1384,6 +1428,7 @@ async def generate_summary(
         "style": style,
         "kind": kind,
         "requested_llm": llm,
+        "reference": reference,
     })
     outcome = dict(result["outcome"])
     outcome["attempts"] = result.get("attempts", [])

@@ -291,6 +291,39 @@ void main() {
       });
     }
 
+    test('a apresentação lista o material do grupo e o PDF fica maior', () async {
+      final lesson = Lesson(
+        id: 'x',
+        kind: 'apresentacao',
+        title: 'Apresentacao: GRUPO 3',
+        discipline: '',
+        groupName: 'GRUPO 3',
+        classGroup: '',
+        status: 'closed',
+        startedAt: DateTime(2026, 10, 6, 21, 15),
+      );
+      const summary = '## Resumo\nO grupo apresentou o projeto.';
+      final sem = await buildLessonSummaryPdf(lesson: lesson, summary: summary);
+      final com = await buildLessonSummaryPdf(
+        lesson: lesson,
+        summary: summary,
+        materials: const [
+          CourseMaterial(
+            id: 'm1',
+            discipline: 'ARA0058',
+            title: 'Slides finais',
+            filename: 'slides.pptx',
+            sourceType: 'pptx',
+            pageCount: 12,
+            uploaderName: 'Ana Souza',
+          ),
+        ],
+      );
+
+      expect(String.fromCharCodes(com.take(4)), '%PDF');
+      expect(com.length, greaterThan(sem.length));
+    });
+
     test('o título do documento usa o destaque do tipo, não a disciplina vazia',
         () async {
       final bytes = await buildLessonSummaryPdf(
