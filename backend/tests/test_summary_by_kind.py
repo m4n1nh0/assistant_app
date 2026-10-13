@@ -166,11 +166,31 @@ def test_sem_material_o_prompt_nao_ganha_o_bloco():
 
 
 def test_material_longo_e_cortado_no_teto():
-    texto = "x" * (service.REFERENCE_MAX_CHARS + 500)
+    teto = service.reference_max_chars("apresentacao")
+    texto = "x" * (teto + 500)
     construido = prompt_de("apresentacao", reference=texto)
 
     assert "[...material cortado...]" in construido["prompt"]
-    assert "x" * (service.REFERENCE_MAX_CHARS + 1) not in construido["prompt"]
+    assert "x" * (teto + 1) not in construido["prompt"]
+
+
+def test_cada_tipo_tem_o_seu_teto_de_transcricao(monkeypatch):
+    monkeypatch.setattr(
+        service, "settings",
+        type("S", (), {
+            "education_summary_max_chars": 24000,
+            "education_summary_max_chars_presentation": 40000,
+            "education_summary_max_chars_meeting": 10000,
+            "education_reference_max_chars_presentation": 5000,
+            "local_llm_context_tokens": 8192,
+        })(),
+    )
+
+    assert service.summary_budget_chars("claude", "apresentacao") == 40000
+    assert service.summary_budget_chars("claude", "reuniao") == 10000
+    assert service.summary_budget_chars("claude", "aula") == 24000
+    assert service.summary_budget_chars("claude") == 24000
+    assert service.reference_max_chars("apresentacao") == 5000
 
 
 def test_titulo_sem_o_rotulo_ganha_o_rotulo_do_tipo():

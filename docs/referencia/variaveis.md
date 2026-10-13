@@ -265,6 +265,9 @@ Sem `WA_NUMBER` o envio nem tenta, seja qual for o provedor.
 |---|---|---|
 | `EDUCATION_SEGMENT_SECONDS` | `60` (padrão) | Tamanho do bloco de áudio transcrito |
 | `EDUCATION_SUMMARY_MAX_CHARS` | `24000` (padrão) | Teto de transcrição por chamada de resumo |
+| `EDUCATION_SUMMARY_MAX_CHARS_PRESENTATION` | `32000` (padrão) | Teto de transcrição por chamada de resumo de apresentação; aula e palestra usam `EDUCATION_SUMMARY_MAX_CHARS` |
+| `EDUCATION_SUMMARY_MAX_CHARS_MEETING` | `24000` (padrão) | O mesmo, para reunião |
+| `EDUCATION_REFERENCE_MAX_CHARS_PRESENTATION` | `20000` (padrão) | Quanto do material do grupo (slides) entra no resumo da apresentação |
 | `EDUCATION_SUMMARY_MAX_PROVIDERS` | `3` (padrão) | Provedores tentados antes de desistir do resumo |
 | `EDUCATION_SUMMARY_ALLOW_PAID_FALLBACK` | `true` (padrão) | Permite cair em provedor pago quando o local falha |
 | | `false` | Sem provedor local disponível, a aula fica **sem resumo** em vez de gerar custo |

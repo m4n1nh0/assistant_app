@@ -2869,7 +2869,7 @@ async def _presentation_reference(lesson: LessonModel, db: AsyncSession) -> str:
     )).scalars().all()
     if not rows:
         return ""
-    share = max(1000, education_service.REFERENCE_MAX_CHARS // len(rows))
+    share = max(1000, education_service.reference_max_chars("apresentacao") // len(rows))
     parts = []
     for item in rows:
         body = (item.content or "").strip()[:share]

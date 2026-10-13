@@ -715,10 +715,23 @@ _DETAILED_STRUCTURE = (
 
 
 #: Teto do material do grupo no prompt: o resto da janela e da transcricao.
-REFERENCE_MAX_CHARS = 8000
+#: Alto de proposito: o resumo serve para os colegas estudarem o trabalho do grupo,
+#: e os slides sao onde estao os nomes, a arquitetura e os numeros.
+#: Cada tipo com material tem a sua variavel em config.py; este e o valor quando a
+#: configuracao nao a traz.
+REFERENCE_MAX_CHARS = 20000
 
 
-def _reference_block(reference: str) -> str:
+def reference_max_chars(kind: Optional[str] = PRESENTATION_KIND) -> int:
+    """Teto do material do grupo no prompt, para o tipo de gravacao."""
+    if normalize_summary_kind(kind) != PRESENTATION_KIND:
+        return REFERENCE_MAX_CHARS
+    return max(1000, int(getattr(
+        settings, "education_reference_max_chars_presentation", REFERENCE_MAX_CHARS
+    )))
+
+
+def _reference_block(reference: str, kind: str = PRESENTATION_KIND) -> str:
     """Material que o grupo enviou (slides), para conferir termos e nomes.
 
     Entra so na chamada final do resumo, nunca nos parciais, e diz ao modelo que isso
@@ -727,8 +740,9 @@ def _reference_block(reference: str) -> str:
     text = (reference or "").strip()
     if not text:
         return ""
-    if len(text) > REFERENCE_MAX_CHARS:
-        text = text[:REFERENCE_MAX_CHARS].rstrip() + "\n[...material cortado...]"
+    limit = reference_max_chars(kind)
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "\n[...material cortado...]"
     return (
         "Material enviado pelo grupo (slides ou arquivo). Use-o para escrever "
         "corretamente nomes, tecnologias e termos e para a secao sobre o "
@@ -821,7 +835,7 @@ def _summary_prompt(
     return (
         f"{header}{extra}\n\n"
         f"{depth}"
-        f"{_reference_block(reference)}"
+        f"{_reference_block(reference, kind)}"
         f"Monte o resumo {profile.of} a partir da transcricao, nesta estrutura:\n"
         f"{structure}\n"
         f"{extent}\n\n"
@@ -885,9 +899,18 @@ def _budget_from_tokens(context_tokens: int) -> int:
     return max(800, int(usable * _CHARS_PER_TOKEN))
 
 
-def summary_budget_chars(provider: str) -> int:
+#: Variavel de config.py que da o teto de transcricao de cada tipo que tem a sua.
+_KIND_CHARS_SETTING = {
+    PRESENTATION_KIND: "education_summary_max_chars_presentation",
+    MEETING_KIND: "education_summary_max_chars_meeting",
+}
+
+
+def summary_budget_chars(provider: str, kind: Optional[str] = LESSON_KIND) -> int:
     """Quantos caracteres de transcricao cabem em uma chamada ao modelo."""
-    ceiling = max(2000, settings.education_summary_max_chars)
+    general = settings.education_summary_max_chars
+    name = _KIND_CHARS_SETTING.get(normalize_summary_kind(kind))
+    ceiling = max(2000, getattr(settings, name, general) if name else general)
     if provider not in _LOCAL_PROVIDERS:
         return ceiling
     return min(ceiling, _budget_from_tokens(settings.local_llm_context_tokens))
@@ -1045,7 +1068,9 @@ async def _summarise_within(
     """Condensa a gravacao em rodadas ate ela caber em uma unica chamada."""
     if reference.strip():
         # O material divide a janela com a transcricao.
-        budget = max(budget - min(len(reference), REFERENCE_MAX_CHARS), budget // 2)
+        budget = max(
+            budget - min(len(reference), reference_max_chars(kind)), budget // 2
+        )
     chunks = _windows(texts, budget)
     error = ""
     truncated = False
@@ -1185,7 +1210,7 @@ async def _summarise_provider(
     reference: str = "",
 ) -> Dict[str, Any]:
     """Executa um provedor e adapta uma vez a janela informada por ele."""
-    budget = summary_budget_chars(provider)
+    budget = summary_budget_chars(provider, kind)
     outcome = await _summarise_within(
         provider=provider,
         discipline=discipline,

@@ -250,6 +250,12 @@ class Settings(MCPSettings):
 
     education_segment_seconds: int = 60
     education_summary_max_chars: int = 24000
+    # Teto de transcricao por chamada de resumo, por tipo de gravacao. Tipo sem
+    # variavel propria (aula, palestra) usa education_summary_max_chars.
+    education_summary_max_chars_presentation: int = 32000
+    education_summary_max_chars_meeting: int = 24000
+    # Material que o grupo enviou (slides) que entra no resumo da apresentacao.
+    education_reference_max_chars_presentation: int = 20000
     education_min_segment_chars: int = 12
     education_summary_provider_timeout_seconds: int = 180
     education_summary_max_providers: int = 3
