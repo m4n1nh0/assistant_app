@@ -53,7 +53,10 @@ const _historyTab = 3;
 const _pointsTab = 4;
 const _attendanceTab = 5;
 const _quizTab = 6;
+const _materialTab = 7;
+const _studyTimeTab = 8;
 const _groupsTab = 9;
+const _meetingsTab = 10;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -251,6 +254,18 @@ class _EducationDialogState extends State<EducationDialog> {
                                 onStartLesson: () =>
                                     DefaultTabController.of(tabContext)
                                         .animateTo(_lessonTab),
+                                onOpenStudyTime: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_studyTimeTab),
+                                onOpenGroups: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_groupsTab),
+                                onOpenMeetings: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_meetingsTab),
+                                onOpenMaterials: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_materialTab),
                                 onOpenAssistant: () =>
                                     showDialog<void>(
                                       context: tabContext,

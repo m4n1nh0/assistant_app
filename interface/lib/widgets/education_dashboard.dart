@@ -6,11 +6,17 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../models/meeting_room.dart';
 import '../services/education_service.dart';
+import '../services/study_time_stats.dart';
 import '../utils/theme.dart';
 
 typedef EducationDisciplinesLoader = Future<List<Discipline>> Function();
 typedef EducationLessonsLoader = Future<List<Lesson>> Function();
+typedef EducationStudyTimesLoader = Future<List<Map<String, dynamic>>> Function();
+typedef EducationGroupsLoader = Future<List<Map<String, dynamic>>> Function();
+typedef EducationMeetingsLoader = Future<List<MeetingRoom>> Function();
+typedef EducationMaterialsLoader = Future<List<CourseMaterial>> Function();
 
 /// Resumo de um semestre no painel do modo educacao.
 class EducationSemesterSummary {
@@ -201,6 +207,17 @@ class EducationDashboard extends StatefulWidget {
   final EducationDisciplinesLoader? loadDisciplines;
   final EducationLessonsLoader? loadLessons;
 
+  /// Atalhos das areas mais novas. Sem o callback o painel mostra o resumo e
+  /// nao oferece o botao de abrir.
+  final VoidCallback? onOpenStudyTime;
+  final VoidCallback? onOpenGroups;
+  final VoidCallback? onOpenMeetings;
+  final VoidCallback? onOpenMaterials;
+  final EducationStudyTimesLoader? loadStudyTimes;
+  final EducationGroupsLoader? loadGroups;
+  final EducationMeetingsLoader? loadMeetings;
+  final EducationMaterialsLoader? loadMaterials;
+
   const EducationDashboard({
     super.key,
     required this.classes,
@@ -212,6 +229,14 @@ class EducationDashboard extends StatefulWidget {
     required this.onOpenAssistant,
     this.loadDisciplines,
     this.loadLessons,
+    this.onOpenStudyTime,
+    this.onOpenGroups,
+    this.onOpenMeetings,
+    this.onOpenMaterials,
+    this.loadStudyTimes,
+    this.loadGroups,
+    this.loadMeetings,
+    this.loadMaterials,
   });
 
   @override
@@ -221,6 +246,12 @@ class EducationDashboard extends StatefulWidget {
 class _EducationDashboardState extends State<EducationDashboard> {
   List<Discipline> _disciplines = const [];
   List<Lesson> _lessons = const [];
+  // Nulo = a fonte nao respondeu; o painel mostra "indisponivel" em vez de um
+  // zero falso.
+  List<Map<String, dynamic>>? _studyTimes;
+  List<Map<String, dynamic>>? _groups;
+  List<MeetingRoom>? _meetings;
+  List<CourseMaterial>? _materials;
   var _loading = true;
   var _error = '';
 
@@ -260,8 +291,28 @@ class _EducationDashboardState extends State<EducationDashboard> {
         }
       }(),
     ]);
+    // As areas novas falham sem alarme: uma fonte fora do ar nao deve acusar
+    // erro no painel inteiro, so deixar o proprio cartao sem numero.
+    Future<T?> optional<T>(Future<T> Function() load) async {
+      try {
+        return await load();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final areas = await Future.wait<Object?>([
+      optional(widget.loadStudyTimes ?? () => education.listStudyTimes()),
+      optional(widget.loadGroups ?? () => education.listProjectGroups()),
+      optional(widget.loadMeetings ?? () => education.listMeetings()),
+      optional(widget.loadMaterials ?? () => education.listMaterials()),
+    ]);
     if (!mounted) return;
     setState(() {
+      _studyTimes = areas[0] as List<Map<String, dynamic>>?;
+      _groups = areas[1] as List<Map<String, dynamic>>?;
+      _meetings = areas[2] as List<MeetingRoom>?;
+      _materials = areas[3] as List<CourseMaterial>?;
       _disciplines = disciplines;
       _lessons = lessons;
       _error = errors.isEmpty
@@ -315,6 +366,21 @@ class _EducationDashboardState extends State<EducationDashboard> {
                             onOpenAttendance: widget.onOpenAttendance,
                             onStartLesson: widget.onStartLesson,
                             onOpenAssistant: widget.onOpenAssistant,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: compact ? 4 * 168.0 + 3 * 10 : 168,
+                          child: _AreasOverview(
+                            compact: compact,
+                            studyTimes: _studyTimes,
+                            groups: _groups,
+                            meetings: _meetings,
+                            materials: _materials,
+                            onOpenStudyTime: widget.onOpenStudyTime,
+                            onOpenGroups: widget.onOpenGroups,
+                            onOpenMeetings: widget.onOpenMeetings,
+                            onOpenMaterials: widget.onOpenMaterials,
                           ),
                         ),
                       ],
@@ -384,6 +450,264 @@ class _EducationDashboardState extends State<EducationDashboard> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Resumo das areas que nasceram depois do painel original: tempo de estudo,
+/// grupos de projeto, reunioes e material. Cada cartao diz o que ha la dentro e
+/// leva para a aba.
+class _AreasOverview extends StatelessWidget {
+  final bool compact;
+  final List<Map<String, dynamic>>? studyTimes;
+  final List<Map<String, dynamic>>? groups;
+  final List<MeetingRoom>? meetings;
+  final List<CourseMaterial>? materials;
+  final VoidCallback? onOpenStudyTime;
+  final VoidCallback? onOpenGroups;
+  final VoidCallback? onOpenMeetings;
+  final VoidCallback? onOpenMaterials;
+
+  const _AreasOverview({
+    required this.compact,
+    required this.studyTimes,
+    required this.groups,
+    required this.meetings,
+    required this.materials,
+    this.onOpenStudyTime,
+    this.onOpenGroups,
+    this.onOpenMeetings,
+    this.onOpenMaterials,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final rooms = meetings;
+    final panels = <Widget>[
+      _StudyTimePanel(records: studyTimes, onOpen: onOpenStudyTime),
+      _CountPanel(
+        title: 'GRUPOS DE PROJETO',
+        icon: Icons.groups_2_outlined,
+        color: AssistantTheme.c3,
+        count: groups?.length,
+        unit: 'grupos',
+        empty: 'Sorteie ou monte os grupos na aba.',
+        onOpen: onOpenGroups,
+      ),
+      _CountPanel(
+        title: 'REUNIOES',
+        icon: Icons.video_camera_front_outlined,
+        color: AssistantTheme.c2,
+        count: rooms?.length,
+        unit: 'salas',
+        detail: rooms == null ? null : _meetingsDetail(rooms),
+        empty: 'Abra uma sala online com video e audio.',
+        onOpen: onOpenMeetings,
+      ),
+      _CountPanel(
+        title: 'MATERIAL',
+        icon: Icons.folder_open_outlined,
+        color: AssistantTheme.c4,
+        count: materials?.length,
+        unit: 'arquivos',
+        empty: 'Envie slides e textos das disciplinas.',
+        onOpen: onOpenMaterials,
+      ),
+    ];
+    if (compact) {
+      return Column(
+        children: [
+          for (var i = 0; i < panels.length; i++) ...[
+            Expanded(child: panels[i]),
+            if (i < panels.length - 1) const SizedBox(height: 10),
+          ],
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(flex: 6, child: panels[0]),
+        const SizedBox(width: 10),
+        Expanded(flex: 3, child: panels[1]),
+        const SizedBox(width: 10),
+        Expanded(flex: 3, child: panels[2]),
+        const SizedBox(width: 10),
+        Expanded(flex: 3, child: panels[3]),
+      ],
+    );
+  }
+
+  static String _meetingsDetail(List<MeetingRoom> rooms) {
+    final open = rooms.where((room) => room.status == 'open').toList();
+    if (open.isEmpty) return 'nenhuma aberta agora';
+    final online = open.fold<int>(0, (total, room) => total + room.online);
+    final label = open.length == 1 ? '1 aberta' : '${open.length} abertas';
+    return '$label  •  $online online';
+  }
+}
+
+String _hours(int minutes) => '${(minutes / 60).toStringAsFixed(1)} h';
+
+class _StudyTimePanel extends StatelessWidget {
+  final List<Map<String, dynamic>>? records;
+  final VoidCallback? onOpen;
+
+  const _StudyTimePanel({required this.records, this.onOpen});
+
+  @override
+  Widget build(BuildContext context) {
+    final data = records;
+    final stats = data == null ? null : StudyTimeStats.fromRecords(data);
+    return _DashboardPanel(
+      title: 'TEMPO DE ESTUDO',
+      icon: Icons.timer_outlined,
+      color: AssistantTheme.c1,
+      actionLabel: onOpen == null ? null : 'ABRIR',
+      onAction: onOpen,
+      child: stats == null
+          ? const _DashboardEmpty('Tempo de estudo indisponivel agora.')
+          : stats.recordCount == 0
+              ? const _DashboardEmpty(
+                  'Importe a planilha de tempo de estudo na aba.')
+              : _StudyTimeBody(stats: stats),
+    );
+  }
+}
+
+class _StudyTimeBody extends StatelessWidget {
+  final StudyTimeStats stats;
+
+  const _StudyTimeBody({required this.stats});
+
+  @override
+  Widget build(BuildContext context) {
+    final topClass = stats.classes.isEmpty ? null : stats.classes.first;
+    final maxBand = stats.bands.fold<int>(
+        1, (top, band) => band.students > top ? band.students : top);
+    return Row(
+      children: [
+        Expanded(
+          flex: 4,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: _Metric(
+                    value: _hours(stats.totalMinutes), label: 'no total'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'mediana ${_hours(stats.medianMinutes)} por aluno\n'
+                '${stats.studentCount} alunos com tempo'
+                '${topClass == null ? '' : '  •  mais tempo: ${topClass.label}'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 10, color: AssistantTheme.textSecondary),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 5,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (final band in stats.bands)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(children: [
+                    SizedBox(
+                      width: 78,
+                      child: Text(band.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 9, color: AssistantTheme.textMuted)),
+                    ),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(
+                          value: band.students / maxBand,
+                          minHeight: 7,
+                          color: AssistantTheme.c1,
+                          backgroundColor: AssistantTheme.c1.withOpacity(.12),
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 26,
+                      child: Text('${band.students}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: AssistantTheme.textPrimary)),
+                    ),
+                  ]),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CountPanel extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final int? count;
+  final String unit;
+  final String? detail;
+  final String empty;
+  final VoidCallback? onOpen;
+
+  const _CountPanel({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.count,
+    required this.unit,
+    required this.empty,
+    this.detail,
+    this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final total = count;
+    return _DashboardPanel(
+      title: title,
+      icon: icon,
+      color: color,
+      actionLabel: onOpen == null ? null : 'ABRIR',
+      onAction: onOpen,
+      child: total == null
+          ? const _DashboardEmpty('Indisponivel agora.')
+          : total == 0
+              ? _DashboardEmpty(empty)
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _Metric(value: '$total', label: unit),
+                    if (detail != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        detail!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 10, color: AssistantTheme.textSecondary),
+                      ),
+                    ],
+                  ],
+                ),
     );
   }
 }

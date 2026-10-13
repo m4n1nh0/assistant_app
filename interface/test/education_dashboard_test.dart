@@ -1,3 +1,4 @@
+import 'package:assistant_app/models/meeting_room.dart';
 import 'package:assistant_app/services/education_service.dart';
 import 'package:assistant_app/widgets/education_dashboard.dart';
 import 'package:flutter/material.dart';
@@ -157,6 +158,7 @@ void main() {
     ]);
     var classesOpened = false;
     var historyOpened = false;
+    var studyTimeOpened = false;
     var assistantOpened = false;
 
     await tester.pumpWidget(
@@ -176,6 +178,17 @@ void main() {
                 ),
               ],
               loadLessons: () async => [_lesson(summary: 'Resumo pronto')],
+              loadStudyTimes: () async => [
+                {'discipline_code': 'ARA0058', 'student_id': 'a1', 'student_name': 'Ana', 'minutes': 120},
+                {'discipline_code': 'ARA0058', 'student_id': 'a2', 'student_name': 'Beto', 'minutes': 240},
+              ],
+              loadGroups: () async => [{'id': 'g1'}, {'id': 'g2'}, {'id': 'g3'}],
+              loadMeetings: () async => [
+                const MeetingRoom(id: 'm1', title: 'Sala', status: 'open', online: 4),
+                const MeetingRoom(id: 'm2', title: 'Antiga', status: 'ended'),
+              ],
+              loadMaterials: () async => [],
+              onOpenStudyTime: () => studyTimeOpened = true,
               onOpenClasses: () => classesOpened = true,
               onOpenPoints: () {},
               onOpenHistory: () => historyOpened = true,
@@ -215,6 +228,19 @@ void main() {
     expect(find.text('ASSISTENTE IA'), findsOneWidget);
     await tester.tap(find.text('CONVERSAR'));
     expect(assistantOpened, isTrue);
+
+    await tester.drag(
+      find.byKey(const Key('education-dashboard-scroll')),
+      const Offset(0, -700),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('TEMPO DE ESTUDO'), findsOneWidget);
+    expect(find.text('6.0 h'), findsOneWidget);
+    expect(find.text('3'), findsWidgets);
+    expect(find.text('1 aberta  •  4 online'), findsOneWidget);
+    expect(find.text('Envie slides e textos das disciplinas.'), findsOneWidget);
+    await tester.tap(find.text('ABRIR').first);
+    expect(studyTimeOpened, isTrue);
 
     classes.dispose();
   });
