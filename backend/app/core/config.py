@@ -274,10 +274,10 @@ class Settings(MCPSettings):
     ocr_enabled: bool = True
     # Teto de paginas por material. Medido nesta maquina, o OCR custa ~1,7s por
     # pagina depois da primeira (que paga a carga do modelo), e o upload fica
-    # esperando o tempo todo: 20 paginas ja significam uns 35 segundos de
+    # esperando o tempo todo: 60 paginas significam uns 100 segundos de
     # espera. Sem teto, uma apostila digitalizada de duzentas paginas seguraria
     # a requisicao por minutos ate o professor desistir.
-    ocr_max_pages: int = 20
+    ocr_max_pages: int =100
     # Resolucao da rasterizacao. Abaixo de 150 o reconhecimento cai junto; muito
     # acima so gasta memoria e tempo sem melhorar o texto.
     ocr_dpi: int = 200

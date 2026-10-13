@@ -273,7 +273,7 @@ Sem `WA_NUMBER` o envio nem tenta, seja qual for o provedor.
 | | `false` | Sem provedor local disponível, a aula fica **sem resumo** em vez de gerar custo |
 | `LOCAL_LLM_CONTEXT_TOKENS` | `8192` (padrão) | Janela dos modelos locais. Menor que o real devolve **erro**, não resumo ruim |
 | `OCR_ENABLED` | `true` (padrão) | OCR local de material digitalizado, sem enviar nada para terceiros |
-| `OCR_MAX_PAGES` | `1`+ (padrão `20`) | Teto por material (~1,7 s/página). Sem teto, uma apostila de 200 páginas seguraria o upload por minutos |
+| `OCR_MAX_PAGES` | `1`+ (padrão `100`) | Teto por material (~1,7 s/página, então 100 páginas levam uns 100 s). Sem teto, uma apostila de 200 páginas seguraria o upload por minutos |
 | | `0` ou negativo | Travado em `1` |
 | `OCR_DPI` | `200` (padrão) | Abaixo de `150` o reconhecimento cai junto; muito acima só gasta tempo |
 | `OCR_MIN_SCORE` | `0.0`–`1.0` (padrão `0.5`) | Linha abaixo disso é descartada. `0` aceita tudo — texto errado é pior que texto faltando |
