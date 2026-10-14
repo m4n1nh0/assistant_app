@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/meeting_room.dart';
+import '../models/mentorship.dart';
 import '../services/education_service.dart';
 import '../services/study_time_stats.dart';
 import '../utils/theme.dart';
@@ -17,6 +18,7 @@ typedef EducationStudyTimesLoader = Future<List<Map<String, dynamic>>> Function(
 typedef EducationGroupsLoader = Future<List<Map<String, dynamic>>> Function();
 typedef EducationMeetingsLoader = Future<List<MeetingRoom>> Function();
 typedef EducationMaterialsLoader = Future<List<CourseMaterial>> Function();
+typedef EducationMentorshipsLoader = Future<List<MentorshipForm>> Function();
 
 /// Resumo de um semestre no painel do modo educacao.
 class EducationSemesterSummary {
@@ -213,6 +215,8 @@ class EducationDashboard extends StatefulWidget {
   final VoidCallback? onOpenGroups;
   final VoidCallback? onOpenMeetings;
   final VoidCallback? onOpenMaterials;
+  final VoidCallback? onOpenMentorships;
+  final EducationMentorshipsLoader? loadMentorships;
   final EducationStudyTimesLoader? loadStudyTimes;
   final EducationGroupsLoader? loadGroups;
   final EducationMeetingsLoader? loadMeetings;
@@ -233,6 +237,8 @@ class EducationDashboard extends StatefulWidget {
     this.onOpenGroups,
     this.onOpenMeetings,
     this.onOpenMaterials,
+    this.onOpenMentorships,
+    this.loadMentorships,
     this.loadStudyTimes,
     this.loadGroups,
     this.loadMeetings,
@@ -252,6 +258,7 @@ class _EducationDashboardState extends State<EducationDashboard> {
   List<Map<String, dynamic>>? _groups;
   List<MeetingRoom>? _meetings;
   List<CourseMaterial>? _materials;
+  List<MentorshipForm>? _mentorships;
   var _loading = true;
   var _error = '';
 
@@ -306,6 +313,7 @@ class _EducationDashboardState extends State<EducationDashboard> {
       optional(widget.loadGroups ?? () => education.listProjectGroups()),
       optional(widget.loadMeetings ?? () => education.listMeetings()),
       optional(widget.loadMaterials ?? () => education.listMaterials()),
+      optional(widget.loadMentorships ?? () => education.listMentorships()),
     ]);
     if (!mounted) return;
     setState(() {
@@ -313,6 +321,7 @@ class _EducationDashboardState extends State<EducationDashboard> {
       _groups = areas[1] as List<Map<String, dynamic>>?;
       _meetings = areas[2] as List<MeetingRoom>?;
       _materials = areas[3] as List<CourseMaterial>?;
+      _mentorships = areas[4] as List<MentorshipForm>?;
       _disciplines = disciplines;
       _lessons = lessons;
       _error = errors.isEmpty
@@ -370,13 +379,15 @@ class _EducationDashboardState extends State<EducationDashboard> {
                         ),
                         const SizedBox(height: 12),
                         SizedBox(
-                          height: compact ? 4 * 168.0 + 3 * 10 : 168,
+                          height: compact ? 5 * 168.0 + 4 * 10 : 168,
                           child: _AreasOverview(
                             compact: compact,
                             studyTimes: _studyTimes,
                             groups: _groups,
                             meetings: _meetings,
                             materials: _materials,
+                            mentorships: _mentorships,
+                            onOpenMentorships: widget.onOpenMentorships,
                             onOpenStudyTime: widget.onOpenStudyTime,
                             onOpenGroups: widget.onOpenGroups,
                             onOpenMeetings: widget.onOpenMeetings,
@@ -463,6 +474,8 @@ class _AreasOverview extends StatelessWidget {
   final List<Map<String, dynamic>>? groups;
   final List<MeetingRoom>? meetings;
   final List<CourseMaterial>? materials;
+  final List<MentorshipForm>? mentorships;
+  final VoidCallback? onOpenMentorships;
   final VoidCallback? onOpenStudyTime;
   final VoidCallback? onOpenGroups;
   final VoidCallback? onOpenMeetings;
@@ -474,6 +487,8 @@ class _AreasOverview extends StatelessWidget {
     required this.groups,
     required this.meetings,
     required this.materials,
+    this.mentorships,
+    this.onOpenMentorships,
     this.onOpenStudyTime,
     this.onOpenGroups,
     this.onOpenMeetings,
@@ -513,6 +528,16 @@ class _AreasOverview extends StatelessWidget {
         empty: 'Envie slides e textos das disciplinas.',
         onOpen: onOpenMaterials,
       ),
+      _CountPanel(
+        title: 'MENTORIAS',
+        icon: Icons.person_add_alt_outlined,
+        color: AssistantTheme.c3,
+        count: mentorships?.length,
+        unit: 'formularios',
+        detail: mentorships == null ? null : _mentorshipsDetail(mentorships!),
+        empty: 'Crie um formulario de inscricao com a IA.',
+        onOpen: onOpenMentorships,
+      ),
     ];
     if (compact) {
       return Column(
@@ -533,8 +558,16 @@ class _AreasOverview extends StatelessWidget {
         Expanded(flex: 3, child: panels[2]),
         const SizedBox(width: 10),
         Expanded(flex: 3, child: panels[3]),
+        const SizedBox(width: 10),
+        Expanded(flex: 3, child: panels[4]),
       ],
     );
+  }
+
+  static String _mentorshipsDetail(List<MentorshipForm> forms) {
+    final pending = forms.fold<int>(0, (total, form) => total + form.pending);
+    final signups = forms.fold<int>(0, (total, form) => total + form.signups);
+    return '$signups inscritos  •  $pending pendentes';
   }
 
   static String _meetingsDetail(List<MeetingRoom> rooms) {
@@ -696,7 +729,10 @@ class _CountPanel extends StatelessWidget {
               : Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _Metric(value: '$total', label: unit),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: _Metric(value: '$total', label: unit),
+                    ),
                     if (detail != null) ...[
                       const SizedBox(height: 8),
                       Text(

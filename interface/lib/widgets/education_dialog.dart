@@ -42,6 +42,7 @@ import 'materials_panel.dart';
 import 'quiz_center.dart';
 import 'sia_attendance_importer.dart';
 import 'study_time_tab.dart';
+import 'mentorships_tab.dart';
 import 'project_groups_tab.dart';
 
 /// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
@@ -57,6 +58,7 @@ const _materialTab = 7;
 const _studyTimeTab = 8;
 const _groupsTab = 9;
 const _meetingsTab = 10;
+const _mentorshipsTab = 11;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -119,6 +121,8 @@ class _EducationDialogState extends State<EducationDialog> {
         _initialTab = _groupsTab;
       } else if (classes != null && classes.isEmpty) {
         _initialTab = _rosterTab;
+      } else if (widget.startAt == 'mentorships') {
+        _initialTab = _mentorshipsTab;
       } else if (widget.startAt == 'attendance') {
         _initialTab = _attendanceTab;
       } else if (widget.startAt == 'quiz') {
@@ -158,7 +162,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 11,
+                  length: 12,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -219,6 +223,10 @@ class _EducationDialogState extends State<EducationDialog> {
                                 icon: Icon(Icons.video_camera_front_outlined,
                                     size: tabIconSize),
                                 text: '10. REUNIOES'),
+                            Tab(
+                                icon: Icon(Icons.person_add_alt_outlined,
+                                    size: tabIconSize),
+                                text: '11. MENTORIAS'),
                           ],
                         )),
                         IconButton(
@@ -266,6 +274,9 @@ class _EducationDialogState extends State<EducationDialog> {
                                 onOpenMaterials: () =>
                                     DefaultTabController.of(tabContext)
                                         .animateTo(_materialTab),
+                                onOpenMentorships: () =>
+                                    DefaultTabController.of(tabContext)
+                                        .animateTo(_mentorshipsTab),
                                 onOpenAssistant: () =>
                                     showDialog<void>(
                                       context: tabContext,
@@ -301,6 +312,7 @@ class _EducationDialogState extends State<EducationDialog> {
                                 initialDisciplineHint: widget.initialDisciplineHint,
                               ),
                               const MeetingsTab(),
+                              const MentorshipsTab(),
                             ],
                           ),
                         ),

@@ -986,6 +986,56 @@ class MaterialSubmissionLinkModel(Base):
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class MentorshipFormModel(Base):
+    """Formulario publico de inscricao em uma mentoria.
+
+    Matricula, nome, e-mail e telefone sao sempre pedidos; `fields` guarda o resto
+    (idade, curso, horarios livres...), montado pela IA a partir da descricao e
+    ajustado pelo professor. `discipline_id` e `class_id` so existem depois do
+    primeiro aceite: a mentoria vira uma disciplina com uma turma, e quem e aceito
+    entra nela como aluno.
+    """
+
+    __tablename__ = "mentorship_forms"
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id      = Column(String(64), nullable=False, index=True)
+    token         = Column(String(64), nullable=False, unique=True, index=True)
+    title         = Column(String(255), nullable=False, default="")
+    description   = Column(Text, nullable=False, default="")
+    semester      = Column(String(16), nullable=False, default="")
+    fields        = Column(JSON, default=list)
+    active        = Column(Boolean, nullable=False, default=True)
+    closes_at     = Column(DateTime, nullable=True)
+    max_slots     = Column(Integer, nullable=True)
+    discipline_id = Column(String(64), nullable=True)
+    class_id      = Column(String(64), nullable=True)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MentorshipSignupModel(Base):
+    """Uma inscricao recebida. A matricula e unica por formulario."""
+
+    __tablename__ = "mentorship_signups"
+    __table_args__ = (
+        UniqueConstraint("form_id", "enrollment_key", name="uq_mentorship_signup_enrollment"),
+    )
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    form_id        = Column(String(64), nullable=False, index=True)
+    tutor_id       = Column(String(64), nullable=False, index=True)
+    enrollment     = Column(String(80), nullable=False, default="")
+    enrollment_key = Column(String(80), nullable=False, default="")
+    name           = Column(String(180), nullable=False, default="")
+    email          = Column(String(255), nullable=False, default="")
+    phone          = Column(String(40), nullable=False, default="")
+    answers        = Column(JSON, default=dict)
+    # Aluno ja cadastrado neste semestre (casado pela matricula no envio).
+    known_student  = Column(Boolean, nullable=False, default=False)
+    # pending, accepted, rejected ou removed.
+    status         = Column(String(16), nullable=False, default="pending", index=True)
+    student_id     = Column(String(64), nullable=True)
+    created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class MeetingRoomModel(Base):
     """Sala de reuniao online propria (video e audio por WebRTC, sem gravacao).
 

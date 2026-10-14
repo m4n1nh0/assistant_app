@@ -11,6 +11,7 @@ import '../models/combined_summary.dart';
 import '../models/group_draw.dart';
 import '../models/group_points.dart';
 import '../models/meeting_room.dart';
+import '../models/mentorship.dart';
 import '../models/presentation_material.dart';
 import 'api_service.dart';
 import 'student_csv_parser.dart';
@@ -153,6 +154,101 @@ class EducationService {
       for (final item in _decode(response) as List)
         MeetingRoom.fromJson(Map<String, dynamic>.from(item as Map)),
     ];
+  }
+
+  // --- mentorias: formulário de inscrição ------------------------------------------
+
+  /// A IA propõe os campos a partir da descrição. Nada é gravado.
+  Future<({List<MentorshipField> fields, bool fromAi})> generateMentorshipFields(
+      String description) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/mentorships/generate-fields'),
+      headers: _headers,
+      body: jsonEncode({'description': description}),
+    );
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (
+      fields: [
+        for (final f in data['fields'] as List)
+          MentorshipField.fromJson(Map<String, dynamic>.from(f as Map)),
+      ],
+      fromAi: data['from_ai'] == true,
+    );
+  }
+
+  Future<List<MentorshipForm>> listMentorships() async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships'), headers: _headers);
+    return [
+      for (final item in _decode(response) as List)
+        MentorshipForm.fromJson(Map<String, dynamic>.from(item as Map)),
+    ];
+  }
+
+  Future<MentorshipForm> createMentorship({
+    required String title,
+    required String description,
+    required List<MentorshipField> fields,
+    DateTime? closesAt,
+    int? maxSlots,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/mentorships'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'description': description,
+        'fields': [for (final f in fields) f.toJson()],
+        if (closesAt != null) 'closes_at': closesAt.toUtc().toIso8601String(),
+        if (maxSlots != null) 'max_slots': maxSlots,
+      }),
+    );
+    return MentorshipForm.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<MentorshipForm> updateMentorship(String id, Map<String, dynamic> changes) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/mentorships/$id'),
+      headers: _headers,
+      body: jsonEncode(changes),
+    );
+    return MentorshipForm.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> deleteMentorship(String id) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/mentorships/$id'), headers: _headers);
+    _decode(response);
+  }
+
+  Future<List<MentorshipSignup>> listMentorshipSignups(String id) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/$id/signups'), headers: _headers);
+    return [
+      for (final item in _decode(response) as List)
+        MentorshipSignup.fromJson(Map<String, dynamic>.from(item as Map)),
+    ];
+  }
+
+  /// Aceita, recusa ou remove inscritos; aceitar põe o aluno na turma da mentoria.
+  Future<MentorshipForm> setMentorshipSignupStatus(
+      String id, List<String> signupIds, String status) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/mentorships/$id/signups/status'),
+      headers: _headers,
+      body: jsonEncode({'ids': signupIds, 'status': status}),
+    );
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return MentorshipForm.fromJson(Map<String, dynamic>.from(data['form'] as Map));
+  }
+
+  /// Inscritos em CSV (ponto e vírgula, abre direto no Excel).
+  Future<String> exportMentorshipSignups(String id) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/$id/export'), headers: _headers);
+    return (Map<String, dynamic>.from(_decode(response) as Map))['csv'] as String;
   }
 
   /// A sala, quem está nela e o fim da transcrição.
