@@ -273,7 +273,7 @@ mecanismo. O que muda é a que a gravação pertence, e isso se escolhe em
 | Tipo | Exige | Herda | Onde aparece |
 |---|---|---|---|
 | **Aula** | disciplina e turma | — | histórico, quiz, chat |
-| **Apresentação** | o grupo de projeto | disciplina e período do grupo | também no cartão do grupo, em `9. Grupos de Projeto` |
+| **Apresentação** | o grupo de projeto | disciplina e período do grupo | também no cartão do grupo, em `3. Grupos de Projeto` |
 | **Palestra** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
 | **Reunião** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
 

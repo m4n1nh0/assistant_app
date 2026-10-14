@@ -4,7 +4,7 @@ Você descreve a mentoria, a **IA monta o formulário**, você ajusta e publica 
 se inscreve aparece numa lista; ao aceitar, a mentoria vira uma **disciplina com uma turma** e
 cada aceito entra nela como aluno.
 
-**Onde:** Modo Educação → **11. Mentorias** (e um cartão na Visão geral).
+**Onde:** Modo Educação → **2. Mentorias** (e um cartão na Visão geral).
 
 ## Fluxo
 

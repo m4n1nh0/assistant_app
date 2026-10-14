@@ -46,20 +46,22 @@ import 'class_agenda_action.dart';
 import 'mentorships_tab.dart';
 import 'project_groups_tab.dart';
 
-/// Ordem das abas: e tambem a ordem de uso. Sem turma cadastrada os nomes
-/// ouvidos na aula nao casam com ninguem, entao a turma vem antes.
+/// Ordem das abas: cadastro (turmas, mentorias, grupos) antes do uso em aula (gravar,
+/// presenca, pontos, historico, quiz) e, por fim, material, tempo de estudo e reunioes.
+/// Sem turma cadastrada os nomes ouvidos na aula nao casam com ninguem, entao a turma
+/// vem antes.
 const _dashboardTab = 0;
 const _rosterTab = 1;
-const _lessonTab = 2;
-const _historyTab = 3;
-const _pointsTab = 4;
+const _mentorshipsTab = 2;
+const _groupsTab = 3;
+const _lessonTab = 4;
 const _attendanceTab = 5;
-const _quizTab = 6;
-const _materialTab = 7;
-const _studyTimeTab = 8;
-const _groupsTab = 9;
-const _meetingsTab = 10;
-const _mentorshipsTab = 11;
+const _pointsTab = 6;
+const _historyTab = 7;
+const _quizTab = 8;
+const _materialTab = 9;
+const _studyTimeTab = 10;
+const _meetingsTab = 11;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -197,37 +199,37 @@ class _EducationDialogState extends State<EducationDialog> {
                                 icon: Icon(Icons.groups_outlined, size: tabIconSize),
                                 text: '1. TURMAS'),
                             Tab(
+                                icon: Icon(Icons.person_add_alt_outlined,
+                                    size: tabIconSize),
+                                text: '2. MENTORIAS'),
+                            Tab(icon: Icon(Icons.groups_2_outlined, size: tabIconSize),
+                                text: '3. GRUPOS DE PROJETO'),
+                            Tab(
                                 icon: Icon(Icons.mic_none, size: tabIconSize),
-                                text: '2. GRAVAR'),
-                            Tab(
-                                icon: Icon(Icons.history, size: tabIconSize),
-                                text: '3. HISTORICO'),
-                            Tab(
-                                icon:
-                                    Icon(Icons.emoji_events_outlined, size: tabIconSize),
-                                text: '4. PONTUACOES'),
+                                text: '4. GRAVAR'),
                             Tab(
                                 icon: Icon(Icons.how_to_reg_outlined, size: tabIconSize),
                                 text: '5. PRESENCA'),
                             Tab(
+                                icon:
+                                    Icon(Icons.emoji_events_outlined, size: tabIconSize),
+                                text: '6. PONTUACOES'),
+                            Tab(
+                                icon: Icon(Icons.history, size: tabIconSize),
+                                text: '7. HISTORICO'),
+                            Tab(
                                 icon: Icon(Icons.quiz_outlined, size: tabIconSize),
-                                text: '6. QUIZ'),
+                                text: '8. QUIZ'),
                             Tab(
                                 icon: Icon(Icons.folder_open_outlined,
                                     size: tabIconSize),
-                                text: '7. MATERIAL'),
+                                text: '9. MATERIAL'),
                             Tab(icon: Icon(Icons.timer_outlined, size: tabIconSize),
-                                text: '8. TEMPO DE ESTUDO'),
-                            Tab(icon: Icon(Icons.groups_2_outlined, size: tabIconSize),
-                                text: '9. GRUPOS DE PROJETO'),
+                                text: '10. TEMPO DE ESTUDO'),
                             Tab(
                                 icon: Icon(Icons.video_camera_front_outlined,
                                     size: tabIconSize),
-                                text: '10. REUNIOES'),
-                            Tab(
-                                icon: Icon(Icons.person_add_alt_outlined,
-                                    size: tabIconSize),
-                                text: '11. MENTORIAS'),
+                                text: '11. REUNIOES'),
                           ],
                         )),
                         IconButton(
@@ -293,6 +295,12 @@ class _EducationDialogState extends State<EducationDialog> {
                                     ),
                               ),
                               _RosterTab(classes: _classes),
+                              const MentorshipsTab(),
+                              ProjectGroupsTab(
+                                initialText: widget.initialGroupText,
+                                initialDisciplineCode: widget.initialDisciplineCode,
+                                initialDisciplineHint: widget.initialDisciplineHint,
+                              ),
                               _LessonTab(
                                 classes: _classes,
                                 onLessonClosedForQuiz: (lesson) {
@@ -301,19 +309,13 @@ class _EducationDialogState extends State<EducationDialog> {
                                       .animateTo(_quizTab);
                                 },
                               ),
-                              _HistoryTab(classes: _classes),
-                              _PointsTab(classes: _classes),
                               AttendanceTab(classes: _classes),
+                              _PointsTab(classes: _classes),
+                              _HistoryTab(classes: _classes),
                               _QuizTab(selectedLessonId: _quizLessonId),
                               const MaterialsPanel(),
                               const StudyTimeTab(),
-                              ProjectGroupsTab(
-                                initialText: widget.initialGroupText,
-                                initialDisciplineCode: widget.initialDisciplineCode,
-                                initialDisciplineHint: widget.initialDisciplineHint,
-                              ),
                               const MeetingsTab(),
-                              const MentorshipsTab(),
                             ],
                           ),
                         ),
