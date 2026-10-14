@@ -27,6 +27,7 @@ from ..core.database import (
 )
 from ..core.security import get_current_user
 from ..services import mentorship_service as svc
+from ..services import web_brand
 
 router = APIRouter(prefix="/education/mentorships", tags=["education-mentorships"])
 public_router = APIRouter(
@@ -247,45 +248,19 @@ async def export_signups(
 # --- pagina publica ------------------------------------------------------------------
 
 
+_EXTRA_CSS = """
+p{white-space:pre-line}
+textarea{min-height:84px;resize:vertical}
+fieldset{border:0;padding:0;margin:0}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 4px;text-align:center;border-top:1px solid #e5e7eb}
+th:first-child,td:first-child{text-align:left}
+td input{width:20px;height:20px}
+"""
+
+
 def _page(title: str, body: str, script: str = "") -> HTMLResponse:
-    return HTMLResponse(
-        f"""<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>{escape(title)}</title>
-<style>
-*{{box-sizing:border-box}}
-body{{margin:0;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#111827;
-font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;padding:20px;
-display:flex;justify-content:center;align-items:flex-start}}
-main{{width:min(560px,100%);background:white;border-radius:14px;padding:30px;
-box-shadow:0 18px 45px #11182740;margin:20px 0}}
-.brand{{font-size:12px;font-weight:900;letter-spacing:2px;color:#4f46e5}}
-h1{{font-size:24px;margin:10px 0 4px}}
-p{{margin:6px 0;color:#4b5563;font-size:14px;white-space:pre-line}}
-label,legend{{display:block;margin:16px 0 6px;font-size:13px;font-weight:700;color:#374151}}
-input[type=text],input[type=email],input[type=tel],input[type=number],select,textarea{{
-width:100%;padding:12px 14px;border:2px solid #d1d5db;border-radius:10px;font:inherit;
-background:white}}
-textarea{{min-height:84px;resize:vertical}}
-fieldset{{border:0;padding:0;margin:0}}
-table{{border-collapse:collapse;width:100%;font-size:13px}}
-th,td{{padding:6px 4px;text-align:center;border-top:1px solid #e5e7eb}}
-th:first-child,td:first-child{{text-align:left}}
-td input{{width:20px;height:20px}}
-button{{width:100%;margin-top:20px;padding:14px;border:0;border-radius:10px;
-background:#4f46e5;color:white;font-weight:900;letter-spacing:.8px;cursor:pointer}}
-button:disabled{{opacity:.55;cursor:default}}
-input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{{
-outline:3px solid #4f46e5;outline-offset:2px}}
-.msg{{margin:14px 0 0;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:600}}
-.err{{background:#fef2f2;color:#b91c1c}}
-.ok{{background:#ecfdf5;color:#047857}}
-.req{{color:#b91c1c}}
-[hidden]{{display:none!important}}
-</style></head><body><main>{body}</main>{script}</body></html>"""
-    )
+    return web_brand.page(title, body, script, _EXTRA_CSS)
 
 
 def _closed_page(message: str) -> HTMLResponse:

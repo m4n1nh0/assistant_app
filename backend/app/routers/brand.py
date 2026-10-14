@@ -22,3 +22,9 @@ async def intarq_icon():
         # Logo nao muda: o cliente de e-mail e o proxy podem guardar por uma semana.
         headers={"Cache-Control": "public, max-age=604800"},
     )
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Os navegadores pedem /favicon.ico sozinhos, mesmo sem a tag nas paginas."""
+    return await intarq_icon()

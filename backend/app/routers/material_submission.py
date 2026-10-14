@@ -25,6 +25,7 @@ from ..core.database import (
     get_db,
 )
 from ..services import material_submission_service as submissions
+from ..services import web_brand
 
 router = APIRouter(prefix="/education/material-submit", tags=["education-material-submit"])
 
@@ -64,44 +65,18 @@ async def _link_or_404(db: AsyncSession, token: str) -> MaterialSubmissionLinkMo
     return link
 
 
+_EXTRA_CSS = """
+.group{margin-top:16px;padding:12px 14px;border-radius:10px;background:#eef6fa}
+.group strong{color:#0A1324}
+ul{margin:8px 0 0;padding:0;list-style:none}
+li{display:flex;justify-content:space-between;align-items:center;gap:8px;
+padding:8px 0;border-top:1px solid #e5e7eb;font-size:14px}
+li small{display:block;color:#6b7280}
+"""
+
+
 def _page(title: str, body: str, script: str = "") -> HTMLResponse:
-    return HTMLResponse(
-        f"""<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>{escape(title)}</title>
-<style>
-*{{box-sizing:border-box}}
-body{{margin:0;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#111827;
-font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;
-place-items:center;padding:20px}}
-main{{width:min(520px,100%);background:white;border-radius:14px;padding:30px;
-box-shadow:0 18px 45px #11182740}}
-.brand{{font-size:12px;font-weight:900;letter-spacing:2px;color:#4f46e5}}
-h1{{font-size:24px;margin:10px 0 4px}}
-p{{margin:6px 0;color:#4b5563;font-size:14px}}
-label{{display:block;margin:16px 0 6px;font-size:13px;font-weight:700;color:#374151}}
-input[type=text],input[type=file]{{width:100%;padding:12px 14px;border:2px solid #d1d5db;
-border-radius:10px;font-size:16px;background:white}}
-button{{width:100%;margin-top:16px;padding:14px;border:0;border-radius:10px;
-background:#4f46e5;color:white;font-weight:900;letter-spacing:.8px;cursor:pointer}}
-button:disabled{{opacity:.55;cursor:default}}
-button.link{{width:auto;margin:0;padding:4px 8px;background:none;color:#b91c1c;
-font-weight:700;letter-spacing:0}}
-input:focus-visible,button:focus-visible{{outline:3px solid #4f46e5;outline-offset:2px}}
-.msg{{margin:14px 0 0;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:600}}
-.err{{background:#fef2f2;color:#b91c1c}}
-.ok{{background:#ecfdf5;color:#047857}}
-.group{{margin-top:16px;padding:12px 14px;border-radius:10px;background:#eef2ff}}
-.group strong{{color:#3730a3}}
-ul{{margin:8px 0 0;padding:0;list-style:none}}
-li{{display:flex;justify-content:space-between;align-items:center;gap:8px;
-padding:8px 0;border-top:1px solid #e5e7eb;font-size:14px}}
-li small{{display:block;color:#6b7280}}
-[hidden]{{display:none!important}}
-</style></head><body><main>{body}</main>{script}</body></html>"""
-    )
+    return web_brand.page(title, body, script, _EXTRA_CSS)
 
 
 def _closed_page(message: str) -> HTMLResponse:

@@ -54,6 +54,7 @@ from .routers.quiz_web import router as quiz_web_router
 from .routers.quiz_play import router as quiz_play_router
 from .routers.material_submission import router as material_submission_router
 from .routers.brand import router as brand_router
+from .services.web_brand import BrandHtmlMiddleware
 from .routers.mentorship import public_router as mentorship_public_router
 from .routers.mentorship_delivery import router as mentorship_delivery_router
 from .routers.mentorship import router as mentorship_router
@@ -210,6 +211,9 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+# Marca INTARQ nas paginas HTML. Fica dentro do GZip (registrado antes dele), senao
+# receberia o corpo ja comprimido.
+app.add_middleware(BrandHtmlMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list + ["*"],

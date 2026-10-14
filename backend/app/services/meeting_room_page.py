@@ -22,7 +22,7 @@ body{margin:0;background:#0b1220;color:#e5ecf6;font:16px system-ui,-apple-system
 .brand{font-size:12px;font-weight:900;letter-spacing:2px;color:#7dd3fc}
 h1{font-size:22px;margin:8px 0 4px}
 p{margin:6px 0;color:#9fb3c8;font-size:14px}
-#join{min-height:100vh;display:grid;place-items:center;padding:20px}
+#join{min-height:calc(100vh - 52px);display:grid;place-items:center;padding:20px}
 .card{width:min(460px,100%);background:#111b2e;border:1px solid #1e3a5f;border-radius:14px;padding:28px}
 label{display:block;margin:14px 0 6px;font-size:13px;font-weight:700;color:#cbd5e1}
 input[type=text]{width:100%;padding:12px 14px;border:2px solid #25456b;border-radius:10px;font-size:16px;background:#0b1220;color:#e5ecf6}
@@ -35,7 +35,7 @@ button{border:0;border-radius:10px;font-weight:800;letter-spacing:.6px;cursor:po
 .err{background:#3b1219;color:#fca5a5}
 .info{background:#0f2a3d;color:#7dd3fc}
 input:focus-visible,button:focus-visible{outline:3px solid #38bdf8;outline-offset:2px}
-#room{display:flex;flex-direction:column;height:100vh}
+#room{display:flex;flex-direction:column;height:calc(100vh - 52px)}
 #bar{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid #1e3a5f;background:#0f1a2d}
 #bar .title{flex:1;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #status{font-size:12px;color:#9fb3c8}
