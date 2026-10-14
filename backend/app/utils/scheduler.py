@@ -178,6 +178,18 @@ async def _sync_user(user_id: str):
         _notified.clear()
 
 
+async def _mentorship_reminders():
+    """Lembra quem ainda nao entregou uma atividade de mentoria que vence em breve."""
+    from ..services import mentorship_service
+
+    try:
+        sent = await mentorship_service.send_due_reminders(AsyncSessionLocal)
+        if sent:
+            logger.info(f"Scheduler: {sent} lembrete(s) de atividade de mentoria")
+    except Exception as exc:
+        logger.error(f"Scheduler: lembretes de mentoria falharam: {exc}")
+
+
 async def _sync_and_notify():
     async with AsyncSessionLocal() as db:
         users = (
@@ -209,6 +221,12 @@ def start_scheduler():
         id="calendar_sync",
         replace_existing=True,
         next_run_time=datetime.now(timezone.utc),
+    )
+    scheduler.add_job(
+        _mentorship_reminders,
+        trigger=IntervalTrigger(minutes=30),
+        id="mentorship_reminders",
+        replace_existing=True,
     )
     from ..core.config import get_settings
     from ..services.health_alert_service import health_alerts

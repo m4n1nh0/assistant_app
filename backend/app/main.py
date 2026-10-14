@@ -55,6 +55,7 @@ from .routers.quiz_play import router as quiz_play_router
 from .routers.material_submission import router as material_submission_router
 from .routers.brand import router as brand_router
 from .routers.mentorship import public_router as mentorship_public_router
+from .routers.mentorship_delivery import router as mentorship_delivery_router
 from .routers.mentorship import router as mentorship_router
 from .routers.meeting_rooms import public as meeting_public_router
 from .routers.meeting_rooms import router as meeting_rooms_router
@@ -272,6 +273,7 @@ app.include_router(quiz_play_router)
 app.include_router(material_submission_router)
 app.include_router(brand_router)
 app.include_router(mentorship_public_router)
+app.include_router(mentorship_delivery_router)
 app.include_router(mentorship_router)
 app.include_router(meeting_public_router)
 app.include_router(meeting_rooms_router)

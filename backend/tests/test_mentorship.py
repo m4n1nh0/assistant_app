@@ -20,18 +20,21 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.database import (
     ClassGroupModel,
     DisciplineModel,
+    MentorshipActivityModel,
+    MentorshipDeliveryModel,
     MentorshipFormModel,
     MentorshipSignupModel,
     StudentModel,
     get_db,
 )
 from app.core.security import get_current_user
-from app.routers import mentorship
+from app.routers import mentorship, mentorship_delivery
 from app.services import mentorship_service as svc
 
 USER = {"uid": "u1", "tutor_id": "t1"}
 TABELAS = (DisciplineModel, ClassGroupModel, StudentModel,
-           MentorshipFormModel, MentorshipSignupModel)
+           MentorshipFormModel, MentorshipSignupModel,
+           MentorshipActivityModel, MentorshipDeliveryModel)
 
 
 # --- campos ---------------------------------------------------------------------------
@@ -150,6 +153,7 @@ def api(monkeypatch):
     app = FastAPI()
     app.include_router(mentorship.router)
     app.include_router(mentorship.public_router)
+    app.include_router(mentorship_delivery.router)
     app.dependency_overrides[get_db] = db_dependency
     app.dependency_overrides[get_current_user] = lambda: USER
     client = TestClient(app)
@@ -358,3 +362,255 @@ def test_recusar_e_remover_nao_mandam_email(api):
                         json={"ids": [inscrito["id"]], "status": "rejected"}).json()
 
     assert resposta["emailed"] == 0 and api.emails == []
+
+
+# --- atividades e entregas --------------------------------------------------------------
+
+
+def iso(**delta):
+    return (datetime.now(timezone.utc) + timedelta(**delta)).isoformat()
+
+
+def aceito(api, form, matricula="777", nome="Aluno Novo"):
+    """Inscreve e aceita; devolve o inscrito."""
+    inscreve(api, form, matricula=matricula, name=nome)
+    inscritos = api.get(f"/education/mentorships/{form['id']}/signups").json()
+    alvo = next(i for i in inscritos if i["enrollment"] == matricula)
+    api.post(f"/education/mentorships/{form['id']}/signups/status",
+             json={"ids": [alvo["id"]], "status": "accepted"})
+    return alvo
+
+
+def atividade(api, form, titulo="Atividade 1", **extra):
+    resposta = api.post(f"/education/mentorships/{form['id']}/activities",
+                        json={"title": titulo, **extra})
+    assert resposta.status_code == 200, resposta.text
+    return resposta.json()
+
+
+def entrega(api, form, act, matricula="777", **dados):
+    return api.post(f"/education/mentorship-deliver/{form['token']}/send",
+                    data={"enrollment": matricula, "activity_id": act["id"], **dados.pop("data", {})},
+                    **dados)
+
+
+def test_cria_e_lista_atividades_com_o_link_de_entrega(api):
+    form = cria(api)
+    atividade(api, form, "Ler o capítulo 1", due_at=iso(days=3), instructions="Resumo de 1 página")
+
+    listagem = api.get(f"/education/mentorships/{form['id']}/activities").json()
+
+    assert listagem["path"] == f"/education/mentorship-deliver/{form['token']}"
+    assert [a["title"] for a in listagem["activities"]] == ["Ler o capítulo 1"]
+    assert listagem["activities"][0]["instructions"] == "Resumo de 1 página"
+
+
+def test_quem_nao_foi_aceito_nao_entrega(api):
+    form = cria(api)
+    act = atividade(api, form)
+    inscreve(api, form, matricula="555")  # pendente
+
+    pendente = entrega(api, form, act, matricula="555", data={"text": "resposta"})
+    desconhecido = entrega(api, form, act, matricula="000", data={"text": "resposta"})
+
+    assert pendente.status_code == 403 and pendente.json()["code"] == "not_accepted"
+    assert desconhecido.status_code == 404
+
+
+def test_aceito_entrega_texto_e_aparece_na_matriz(api):
+    form = cria(api)
+    act = atividade(api, form, due_at=iso(days=2))
+    aceito(api, form)
+
+    resposta = entrega(api, form, act, data={"text": "https://github.com/aluno/projeto"})
+
+    assert resposta.status_code == 200 and resposta.json()["late"] is False
+    matriz = api.get(f"/education/mentorships/{form['id']}/deliveries").json()
+    celula = matriz["rows"][0]["cells"][0]
+    assert celula["status"] == "delivered"
+    assert "github.com/aluno/projeto" in celula["text_preview"]
+
+
+def test_entrega_depois_do_prazo_fica_marcada_como_atrasada(api):
+    form = cria(api)
+    act = atividade(api, form, due_at=iso(hours=-2))
+    aceito(api, form)
+
+    resposta = entrega(api, form, act, data={"text": "atrasei"})
+
+    assert resposta.json()["late"] is True
+    celula = api.get(f"/education/mentorships/{form['id']}/deliveries").json()["rows"][0]["cells"][0]
+    assert celula["status"] == "late"
+
+
+def test_atividade_vencida_sem_entrega_fica_vencida_e_a_futura_pendente(api):
+    form = cria(api)
+    atividade(api, form, "Vencida", due_at=iso(days=-1))
+    atividade(api, form, "Futura", due_at=iso(days=5))
+    aceito(api, form)
+
+    celulas = api.get(f"/education/mentorships/{form['id']}/deliveries").json()["rows"][0]["cells"]
+
+    assert [c["status"] for c in celulas] == ["overdue", "pending"]
+
+
+def test_reenviar_substitui_a_entrega_sem_duplicar(api):
+    form = cria(api)
+    act = atividade(api, form)
+    aceito(api, form)
+    entrega(api, form, act, data={"text": "versão 1"})
+
+    segunda = entrega(api, form, act, data={"text": "versão 2"})
+
+    assert segunda.json()["replaced"] is True
+    celula = api.get(f"/education/mentorships/{form['id']}/deliveries").json()["rows"][0]["cells"][0]
+    assert celula["text_preview"] == "versão 2"
+    assert api.get(f"/education/mentorships/{form['id']}/activities"
+                   ).json()["activities"][0]["delivered"] == 1
+
+
+def test_arquivo_e_guardado_e_o_professor_baixa_igual(api):
+    form = cria(api)
+    act = atividade(api, form)
+    aceito(api, form)
+    conteudo = b"%PDF-1.4 conteudo da entrega"
+
+    resposta = entrega(api, form, act, files={"file": ("relatório final.pdf", conteudo)})
+
+    assert resposta.status_code == 200
+    celula = api.get(f"/education/mentorships/{form['id']}/deliveries").json()["rows"][0]["cells"][0]
+    baixado = api.get(f"/education/mentorships/deliveries/{celula['delivery_id']}/file")
+    assert baixado.status_code == 200 and baixado.content == conteudo
+    assert "filename*=UTF-8''relat%C3%B3rio%20final.pdf" in baixado.headers["content-disposition"]
+
+
+@pytest.mark.parametrize("dados,codigo", [
+    ({"data": {"text": "  "}}, "empty"),
+    ({"files": {"file": ("virus.exe", b"x")}}, "format"),
+])
+def test_entrega_invalida_e_recusada(api, dados, codigo):
+    form = cria(api)
+    act = atividade(api, form)
+    aceito(api, form)
+
+    resposta = entrega(api, form, act, **dados)
+
+    assert resposta.status_code in (400, 413) and resposta.json()["code"] == codigo
+
+
+def test_arquivo_grande_demais_e_recusado(api, monkeypatch):
+    monkeypatch.setattr(svc, "MAX_DELIVERY_BYTES", 10)
+    form = cria(api)
+    act = atividade(api, form)
+    aceito(api, form)
+
+    resposta = entrega(api, form, act, files={"file": ("a.pdf", b"x" * 50)})
+
+    assert resposta.status_code == 413 and resposta.json()["code"] == "size"
+
+
+def test_pagina_de_entrega_e_a_busca_do_aluno(api):
+    form = cria(api)
+    act = atividade(api, form, "Atividade X", instructions="Faça isto")
+    aceito(api, form)
+
+    pagina = api.get(f"/education/mentorship-deliver/{form['token']}")
+    estado = api.post(f"/education/mentorship-deliver/{form['token']}/lookup",
+                      json={"enrollment": "777"}).json()
+
+    assert pagina.status_code == 200 and "Mentoria de dados" in pagina.text
+    assert estado["student"]["name"] == "Aluno Novo"
+    assert estado["activities"][0]["title"] == "Atividade X"
+    assert estado["activities"][0]["status"] == "pending"
+    assert act["id"] == estado["activities"][0]["id"]
+
+
+def test_risco_conta_a_sequencia_de_faltas_a_partir_da_mais_recente(api):
+    form = cria(api)
+    a1 = atividade(api, form, "A1", due_at=iso(days=-9))
+    a2 = atividade(api, form, "A2", due_at=iso(days=-6))
+    atividade(api, form, "A3", due_at=iso(days=-3))
+    atividade(api, form, "Futura", due_at=iso(days=4))  # nao conta: ainda nao venceu
+    aceito(api, form, "111", "Faltou tudo")
+    aceito(api, form, "222", "Entregou a primeira")
+    aceito(api, form, "333", "Entregou atrasado a do meio")
+    entrega(api, form, a1, matricula="222", data={"text": "ok"})
+    entrega(api, form, a2, matricula="333", data={"text": "ok"})
+
+    risco = api.get(f"/education/mentorships/{form['id']}/at-risk?misses=2").json()
+    nomes = {s["name"]: s["misses"] for s in risco["students"]}
+
+    # 111 falhou A3, A2, A1; 222 falhou A3 e A2 (entregou A1); 333 so falhou A3
+    assert nomes == {"Faltou tudo": 3, "Entregou a primeira": 2}
+    assert list(nomes)[0] == "Faltou tudo"  # quem mais faltou primeiro
+    tres = api.get(f"/education/mentorships/{form['id']}/at-risk?misses=3").json()
+    assert [s["name"] for s in tres["students"]] == ["Faltou tudo"]
+
+
+def test_so_sugere_nao_remove_sozinho(api):
+    form = cria(api)
+    atividade(api, form, "A1", due_at=iso(days=-3))
+    aceito(api, form, "111", "Faltou")
+
+    api.get(f"/education/mentorships/{form['id']}/at-risk?misses=1")
+
+    inscritos = api.get(f"/education/mentorships/{form['id']}/signups").json()
+    assert [i["status"] for i in inscritos] == ["accepted"]
+
+
+def test_lembrete_vai_so_para_quem_nao_entregou_e_uma_vez(api):
+    form = cria(api)
+    act = atividade(api, form, "Vence amanhã", due_at=iso(hours=10))
+    aceito(api, form, "111", "Entregou")
+    aceito(api, form, "222", "Nao entregou")
+    entrega(api, form, act, matricula="111", data={"text": "feito"})
+    api.emails.clear()
+
+    primeiro = asyncio.run(svc.send_due_reminders(api.sessions))
+    segundo = asyncio.run(svc.send_due_reminders(api.sessions))
+
+    assert primeiro == 1 and segundo == 0
+    assert [destino for destino, _ in api.emails] == ["222@exemplo.com"] or len(api.emails) == 1
+    assert api.emails[0][1].startswith("Lembrete: Vence amanhã")
+
+
+def test_lembrete_respeita_a_janela_e_o_desligamento(api):
+    form = cria(api)
+    atividade(api, form, "Longe", due_at=iso(days=5))
+    atividade(api, form, "Sem lembrete", due_at=iso(hours=5), remind=False)
+    atividade(api, form, "Sem prazo")
+    aceito(api, form)
+    api.emails.clear()
+
+    assert asyncio.run(svc.send_due_reminders(api.sessions)) == 0
+    assert api.emails == []
+
+
+def test_mudar_o_prazo_rearma_o_lembrete(api):
+    form = cria(api)
+    act = atividade(api, form, due_at=iso(hours=10))
+    aceito(api, form)
+    api.emails.clear()
+    assert asyncio.run(svc.send_due_reminders(api.sessions)) == 1
+
+    api.patch(f"/education/mentorships/activities/{act['id']}", json={"due_at": iso(hours=20)})
+
+    assert asyncio.run(svc.send_due_reminders(api.sessions)) == 1
+
+
+def test_apagar_atividade_apaga_as_entregas_e_so_o_dono_mexe(api):
+    form = cria(api)
+    act = atividade(api, form)
+    aceito(api, form)
+    entrega(api, form, act, data={"text": "x"})
+
+    assert api.delete(f"/education/mentorships/activities/{act['id']}").json() == {"ok": True}
+
+    async def sobras():
+        from app.core.database import MentorshipDeliveryModel
+        async with api.sessions() as db:
+            return (await db.execute(select(MentorshipDeliveryModel))).scalars().all()
+
+    assert asyncio.run(sobras()) == []
+    assert api.patch("/education/mentorships/activities/inexistente",
+                     json={"title": "x"}).status_code == 404

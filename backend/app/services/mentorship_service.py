@@ -15,7 +15,7 @@ import json
 import re
 import secrets
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from loguru import logger
@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import (
     ClassGroupModel,
     DisciplineModel,
+    MentorshipActivityModel,
+    MentorshipDeliveryModel,
     MentorshipFormModel,
     MentorshipSignupModel,
     StudentModel,
@@ -415,8 +417,223 @@ async def notify_decision(form: MentorshipFormModel, signup: MentorshipSignupMod
             text_content=(
                 f"Olá, {signup.name}!\n\n"
                 f"Boas notícias: a sua inscrição na mentoria “{form.title}” foi aceita.\n\n"
-                "Em breve você receberá os detalhes dos encontros.\n"))
+                "Em breve você receberá os detalhes dos encontros.\n"
+                + (f"\nPara entregar as atividades:\n{delivery_url(form)}\n"
+                   if delivery_url(form) else "")))
         return True
     except Exception as exc:
         logger.warning(f"Aviso de aceite da mentoria nao enviado: {exc}")
         return False
+
+
+# --- atividades e entregas ---------------------------------------------------------------
+
+MAX_DELIVERY_BYTES = 8 * 1024 * 1024
+MAX_DELIVERY_TEXT = 10_000
+DELIVERY_EXTENSIONS: tuple[str, ...] = (
+    ".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md", ".zip", ".png", ".jpg", ".jpeg")
+REMINDER_WINDOW_HOURS = 24
+
+
+def delivery_status(activity: MentorshipActivityModel,
+                    delivery: Optional[MentorshipDeliveryModel],
+                    now: Optional[datetime] = None) -> str:
+    """`delivered`, `late` (entregue depois do prazo), `overdue` (prazo passou sem
+    entrega) ou `pending` (ainda no prazo, ou sem prazo)."""
+    if delivery is not None:
+        return "late" if delivery.late else "delivered"
+    deadline = naive(activity.due_at)
+    if deadline is not None and deadline <= (naive(now) or _now()):
+        return "overdue"
+    return "pending"
+
+
+async def get_activity(db: AsyncSession, form: MentorshipFormModel,
+                       activity_id: str) -> MentorshipActivityModel:
+    activity = await db.get(MentorshipActivityModel, activity_id)
+    if activity is None or activity.form_id != form.id:
+        raise MentorshipError("activity", "Atividade não encontrada.", 404)
+    return activity
+
+
+async def list_activities(db: AsyncSession, form_id: str) -> list[MentorshipActivityModel]:
+    return list((await db.execute(select(MentorshipActivityModel).where(
+        MentorshipActivityModel.form_id == form_id
+    ).order_by(MentorshipActivityModel.position, MentorshipActivityModel.created_at))
+    ).scalars().all())
+
+
+async def accepted_signups(db: AsyncSession, form_id: str) -> list[MentorshipSignupModel]:
+    return list((await db.execute(select(MentorshipSignupModel).where(
+        MentorshipSignupModel.form_id == form_id,
+        MentorshipSignupModel.status == "accepted"
+    ).order_by(MentorshipSignupModel.name))).scalars().all())
+
+
+async def accepted_by_enrollment(db: AsyncSession, form: MentorshipFormModel,
+                                 enrollment: str) -> MentorshipSignupModel:
+    """Quem entrega precisa estar aceito na mentoria; a matricula e a credencial."""
+    key = normalize_enrollment(enrollment)
+    if not key:
+        raise MentorshipError("enrollment", "Digite a sua matrícula.")
+    signup = (await db.execute(select(MentorshipSignupModel).where(
+        MentorshipSignupModel.form_id == form.id,
+        MentorshipSignupModel.enrollment_key == key))).scalar_one_or_none()
+    if signup is None:
+        raise MentorshipError("unknown", "Não encontrei esta matrícula nesta mentoria.", 404)
+    if signup.status != "accepted":
+        raise MentorshipError(
+            "not_accepted",
+            "A sua inscrição ainda não foi aceita. Quando for, você receberá um e-mail.", 403)
+    return signup
+
+
+async def deliveries_of(db: AsyncSession, form_id: str) -> list[MentorshipDeliveryModel]:
+    return list((await db.execute(select(MentorshipDeliveryModel).where(
+        MentorshipDeliveryModel.form_id == form_id))).scalars().all())
+
+
+async def deliver(
+    db: AsyncSession, form: MentorshipFormModel, activity: MentorshipActivityModel,
+    signup: MentorshipSignupModel, *, text: str = "", filename: str = "",
+    data: bytes = b"",
+) -> tuple[MentorshipDeliveryModel, bool]:
+    """Registra (ou substitui) a entrega. Devolve a entrega e se substituiu outra."""
+    text = (text or "").strip()
+    filename = " ".join((filename or "").split())[:255]
+    if not text and not data:
+        raise MentorshipError("empty", "Escreva a resposta ou envie um arquivo.")
+    if len(text) > MAX_DELIVERY_TEXT:
+        raise MentorshipError(
+            "text", f"O texto passa de {MAX_DELIVERY_TEXT} caracteres. Envie como arquivo.")
+    if data:
+        extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if extension not in DELIVERY_EXTENSIONS:
+            raise MentorshipError(
+                "format", "Formato não aceito. Use " + ", ".join(DELIVERY_EXTENSIONS) + ".")
+        if len(data) > MAX_DELIVERY_BYTES:
+            raise MentorshipError(
+                "size", f"O arquivo passa de {MAX_DELIVERY_BYTES // (1024 * 1024)} MB.", 413)
+
+    now = _now()
+    deadline = naive(activity.due_at)
+    late = deadline is not None and now > deadline
+    existing = (await db.execute(select(MentorshipDeliveryModel).where(
+        MentorshipDeliveryModel.activity_id == activity.id,
+        MentorshipDeliveryModel.signup_id == signup.id))).scalar_one_or_none()
+    delivery = existing or MentorshipDeliveryModel(
+        activity_id=activity.id, form_id=form.id, signup_id=signup.id,
+        tutor_id=form.tutor_id)
+    delivery.text = text
+    delivery.filename = filename if data else ""
+    delivery.file_size = len(data)
+    delivery.file_data = data or None
+    delivery.late = late
+    delivery.delivered_at = now
+    if existing is None:
+        db.add(delivery)
+    await db.commit()
+    return delivery, existing is not None
+
+
+async def delivery_matrix(db: AsyncSession, form: MentorshipFormModel) -> dict:
+    """Aceitos x atividades: o que cada um entregou, atrasou ou deixou de entregar."""
+    activities = await list_activities(db, form.id)
+    people = await accepted_signups(db, form.id)
+    by_key = {(d.activity_id, d.signup_id): d for d in await deliveries_of(db, form.id)}
+    now = _now()
+    rows = []
+    for person in people:
+        cells = []
+        for activity in activities:
+            delivery = by_key.get((activity.id, person.id))
+            cells.append({
+                "activity_id": activity.id,
+                "status": delivery_status(activity, delivery, now),
+                "delivery_id": delivery.id if delivery else None,
+                "delivered_at": delivery.delivered_at if delivery else None,
+                "filename": delivery.filename if delivery else "",
+                "text_preview": (delivery.text[:160] if delivery else ""),
+            })
+        rows.append({"signup_id": person.id, "name": person.name,
+                     "enrollment": person.enrollment, "cells": cells})
+    return {"activities": activities, "rows": rows}
+
+
+async def at_risk(db: AsyncSession, form: MentorshipFormModel, misses: int) -> list[dict]:
+    """Aceitos que deixaram de entregar as `misses` ultimas atividades vencidas.
+
+    Conta a sequencia a partir da atividade vencida mais recente: uma entrega, mesmo
+    atrasada, zera a contagem. So sugere - quem remove e o professor.
+    """
+    misses = max(1, misses)
+    now = _now()
+    due = sorted((a for a in await list_activities(db, form.id)
+                  if naive(a.due_at) is not None and naive(a.due_at) <= now),
+                 key=lambda a: naive(a.due_at), reverse=True)
+    delivered = {(d.activity_id, d.signup_id) for d in await deliveries_of(db, form.id)}
+    flagged = []
+    for person in await accepted_signups(db, form.id):
+        streak = 0
+        for activity in due:
+            if (activity.id, person.id) in delivered:
+                break
+            streak += 1
+        if streak >= misses:
+            flagged.append({"signup_id": person.id, "name": person.name,
+                            "enrollment": person.enrollment, "misses": streak})
+    return sorted(flagged, key=lambda item: (-item["misses"], item["name"]))
+
+
+def delivery_url(form: MentorshipFormModel) -> str:
+    """Link de entrega, ou vazio quando nao ha endereco publico para montar."""
+    from .email_template import brand_base_url
+
+    base = brand_base_url()
+    return f"{base}/education/mentorship-deliver/{form.token}" if base else ""
+
+
+async def send_due_reminders(session_factory, now: Optional[datetime] = None) -> int:
+    """Lembra por e-mail, uma vez, quem ainda nao entregou uma atividade que vence em
+    ate 24 h. Chamado de tempos em tempos pelo agendador; devolve quantos e-mails sairam."""
+    from .registration_invite_service import (
+        registration_delivery_configured, send_transactional_email)
+
+    now = naive(now) or _now()
+    horizon = now + timedelta(hours=REMINDER_WINDOW_HOURS)
+    sent = 0
+    async with session_factory() as db:
+        activities = (await db.execute(select(MentorshipActivityModel).where(
+            MentorshipActivityModel.remind.is_(True),
+            MentorshipActivityModel.reminded_at.is_(None),
+            MentorshipActivityModel.due_at.is_not(None),
+            MentorshipActivityModel.due_at > now,
+            MentorshipActivityModel.due_at <= horizon))).scalars().all()
+        for activity in activities:
+            form = await db.get(MentorshipFormModel, activity.form_id)
+            if form is None:
+                continue
+            done = {d.signup_id for d in (await db.execute(
+                select(MentorshipDeliveryModel).where(
+                    MentorshipDeliveryModel.activity_id == activity.id))).scalars().all()}
+            link = delivery_url(form)
+            for person in await accepted_signups(db, form.id):
+                if person.id in done or not registration_delivery_configured(person.email):
+                    continue
+                try:
+                    await send_transactional_email(
+                        person.email,
+                        subject=f"Lembrete: {activity.title} vence em breve"[:200],
+                        text_content=(
+                            f"Olá, {person.name}!\n\n"
+                            f"A atividade “{activity.title}” da mentoria “{form.title}” "
+                            f"vence em {naive(activity.due_at):%d/%m/%Y às %H:%M} (UTC).\n\n"
+                            + (f"Entregue por aqui:\n{link}\n" if link
+                               else "Entregue pelo link de entrega que você recebeu.\n")))
+                    sent += 1
+                except Exception as exc:
+                    logger.warning(f"Lembrete de atividade nao enviado: {exc}")
+            # Marca mesmo se alguem falhou: melhor perder um lembrete que repetir para todos.
+            activity.reminded_at = now
+        await db.commit()
+    return sent

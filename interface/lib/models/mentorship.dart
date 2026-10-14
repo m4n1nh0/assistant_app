@@ -183,3 +183,151 @@ String availabilityText(Object? value) {
   }
   return parts.join(', ');
 }
+
+/// Atividade que os aceitos entregam pelo link de entrega.
+class MentorshipActivity {
+  final String id;
+  final String title;
+  final String instructions;
+  final DateTime? dueAt;
+  final bool remind;
+
+  /// Quantos aceitos já entregaram, de quantos aceitos há.
+  final int delivered;
+  final int expected;
+
+  const MentorshipActivity({
+    required this.id,
+    required this.title,
+    this.instructions = '',
+    this.dueAt,
+    this.remind = true,
+    this.delivered = 0,
+    this.expected = 0,
+  });
+
+  factory MentorshipActivity.fromJson(Map<String, dynamic> json) => MentorshipActivity(
+        id: '${json['id']}',
+        title: json['title']?.toString() ?? '',
+        instructions: json['instructions']?.toString() ?? '',
+        dueAt: _utc(json['due_at']),
+        remind: json['remind'] != false,
+        delivered: (json['delivered'] as num?)?.toInt() ?? 0,
+        expected: (json['expected'] as num?)?.toInt() ?? 0,
+      );
+
+  bool get overdue => dueAt != null && dueAt!.isBefore(DateTime.now());
+}
+
+/// O servidor guarda UTC sem fuso: sem o "Z" o Dart leria como hora local.
+DateTime? _utc(Object? value) {
+  final text = value?.toString() ?? '';
+  if (text.isEmpty) return null;
+  final hasZone = RegExp(r'(Z|[+-]\d\d:?\d\d)$').hasMatch(text);
+  return DateTime.tryParse(hasZone ? text : '${text}Z')?.toLocal();
+}
+
+/// Situação de um aluno em uma atividade: `delivered`, `late`, `overdue` ou `pending`.
+class DeliveryCell {
+  final String activityId;
+  final String status;
+  final String? deliveryId;
+  final DateTime? deliveredAt;
+  final String filename;
+  final String textPreview;
+
+  const DeliveryCell({
+    required this.activityId,
+    required this.status,
+    this.deliveryId,
+    this.deliveredAt,
+    this.filename = '',
+    this.textPreview = '',
+  });
+
+  factory DeliveryCell.fromJson(Map<String, dynamic> json) => DeliveryCell(
+        activityId: '${json['activity_id']}',
+        status: json['status']?.toString() ?? 'pending',
+        deliveryId: json['delivery_id']?.toString(),
+        deliveredAt: _utc(json['delivered_at']),
+        filename: json['filename']?.toString() ?? '',
+        textPreview: json['text_preview']?.toString() ?? '',
+      );
+
+  bool get hasDelivery => deliveryId != null;
+}
+
+class DeliveryRow {
+  final String signupId;
+  final String name;
+  final String enrollment;
+  final List<DeliveryCell> cells;
+
+  const DeliveryRow({
+    required this.signupId,
+    required this.name,
+    required this.enrollment,
+    this.cells = const [],
+  });
+
+  factory DeliveryRow.fromJson(Map<String, dynamic> json) => DeliveryRow(
+        signupId: '${json['signup_id']}',
+        name: json['name']?.toString() ?? '',
+        enrollment: json['enrollment']?.toString() ?? '',
+        cells: [
+          for (final c in (json['cells'] as List? ?? const []))
+            DeliveryCell.fromJson(Map<String, dynamic>.from(c as Map)),
+        ],
+      );
+}
+
+/// Aceito que deixou de entregar as últimas atividades vencidas.
+class AtRiskStudent {
+  final String signupId;
+  final String name;
+  final String enrollment;
+  final int misses;
+
+  const AtRiskStudent({
+    required this.signupId,
+    required this.name,
+    required this.enrollment,
+    required this.misses,
+  });
+
+  factory AtRiskStudent.fromJson(Map<String, dynamic> json) => AtRiskStudent(
+        signupId: '${json['signup_id']}',
+        name: json['name']?.toString() ?? '',
+        enrollment: json['enrollment']?.toString() ?? '',
+        misses: (json['misses'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class DeliveryDetail {
+  final String id;
+  final String text;
+  final String filename;
+  final int fileSize;
+  final bool late;
+  final DateTime? deliveredAt;
+
+  const DeliveryDetail({
+    required this.id,
+    this.text = '',
+    this.filename = '',
+    this.fileSize = 0,
+    this.late = false,
+    this.deliveredAt,
+  });
+
+  factory DeliveryDetail.fromJson(Map<String, dynamic> json) => DeliveryDetail(
+        id: '${json['id']}',
+        text: json['text']?.toString() ?? '',
+        filename: json['filename']?.toString() ?? '',
+        fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
+        late: json['late'] == true,
+        deliveredAt: _utc(json['delivered_at']),
+      );
+
+  bool get hasFile => filename.isNotEmpty;
+}

@@ -29,13 +29,14 @@ from sqlalchemy import (
     Integer,
     JSON,
     Float,
+    LargeBinary,
     UniqueConstraint,
     inspect,
     select,
     text,
 )
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
+from sqlalchemy.dialects.mysql import LONGBLOB, MEDIUMTEXT
 from datetime import datetime, timezone
 from loguru import logger
 from .config import get_settings
@@ -1034,6 +1035,45 @@ class MentorshipSignupModel(Base):
     status         = Column(String(16), nullable=False, default="pending", index=True)
     student_id     = Column(String(64), nullable=True)
     created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MentorshipActivityModel(Base):
+    """Atividade que os aceitos de uma mentoria entregam pelo link de entrega."""
+
+    __tablename__ = "mentorship_activities"
+    id           = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    form_id      = Column(String(64), nullable=False, index=True)
+    tutor_id     = Column(String(64), nullable=False, index=True)
+    title        = Column(String(255), nullable=False, default="")
+    instructions = Column(Text, nullable=False, default="")
+    # Prazo em UTC sem fuso; vazio = sem prazo (nunca fica atrasada).
+    due_at       = Column(DateTime, nullable=True)
+    # Lembrete por e-mail ~24 h antes do prazo, para quem ainda nao entregou.
+    remind       = Column(Boolean, nullable=False, default=True)
+    reminded_at  = Column(DateTime, nullable=True)
+    position     = Column(Integer, nullable=False, default=0)
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MentorshipDeliveryModel(Base):
+    """Entrega de um aceito em uma atividade. Reenviar substitui a anterior."""
+
+    __tablename__ = "mentorship_deliveries"
+    __table_args__ = (
+        UniqueConstraint("activity_id", "signup_id", name="uq_mentorship_delivery"),
+    )
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    activity_id = Column(String(64), nullable=False, index=True)
+    form_id     = Column(String(64), nullable=False, index=True)
+    signup_id   = Column(String(64), nullable=False, index=True)
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    text        = Column(Text, nullable=False, default="")
+    filename    = Column(String(255), nullable=False, default="")
+    file_size   = Column(Integer, nullable=False, default=0)
+    file_data   = Column(
+        LargeBinary().with_variant(LONGBLOB(), "mysql", "mariadb"), nullable=True)
+    late        = Column(Boolean, nullable=False, default=False)
+    delivered_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class MeetingRoomModel(Base):

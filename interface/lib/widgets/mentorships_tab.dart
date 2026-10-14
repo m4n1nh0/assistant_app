@@ -18,6 +18,7 @@ import '../models/mentorship.dart';
 import '../models/presentation_material.dart' show isLocalAddress;
 import '../services/education_service.dart';
 import '../utils/theme.dart';
+import 'mentorship_activities_panel.dart';
 
 class MentorshipsTab extends StatefulWidget {
   /// Trocam serviço e endereço nos testes.
@@ -392,6 +393,22 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
           _buildForm(form),
           const SizedBox(height: 12),
           _buildSignups(form),
+          const SizedBox(height: 12),
+          MentorshipActivitiesPanel(
+            // Recarrega quando entra ou sai alguem da turma da mentoria.
+            key: ValueKey('${form.id}-${form.accepted}'),
+            form: form,
+            baseUrl: _baseUrl,
+            service: _service,
+            pollEvery: widget.pollEvery == Duration.zero
+                ? Duration.zero
+                : const Duration(seconds: 30),
+            onRemove: (ids) => _setStatus(
+              form,
+              [for (final s in _signups) if (ids.contains(s.id)) s],
+              'removed',
+            ),
+          ),
         ],
       ],
     );

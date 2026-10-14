@@ -59,6 +59,9 @@ class _Backend {
   List<Map<String, dynamic>> signups;
   final requests = <http.Request>[];
   bool aiAnswers = true;
+  List<Map<String, dynamic>> activities = [];
+  List<Map<String, dynamic>> rows = [];
+  List<Map<String, dynamic>> risk = [];
 
   _Backend({List<Map<String, dynamic>>? forms, List<Map<String, dynamic>>? signups})
       : forms = forms ?? [],
@@ -101,6 +104,36 @@ class _Backend {
       });
     }
     if (path.endsWith('/signups')) return json(signups);
+    if (path.endsWith('/activities')) {
+      if (request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final created = {
+          'id': 'a${activities.length + 1}',
+          'title': body['title'],
+          'instructions': body['instructions'],
+          'due_at': body['due_at'],
+          'remind': body['remind'],
+          'delivered': 0,
+          'expected': 2,
+        };
+        activities = [...activities, created];
+        return json(created);
+      }
+      return json({'path': '/education/mentorship-deliver/tokf1', 'activities': activities});
+    }
+    if (path.endsWith('/deliveries')) return json({'activities': activities, 'rows': rows});
+    if (path.endsWith('/at-risk')) return json({'misses': 2, 'students': risk});
+    final detail = RegExp(r'/deliveries/(\w+)$').firstMatch(path);
+    if (detail != null) {
+      return json({
+        'id': detail.group(1),
+        'text': 'https://github.com/aluno/projeto',
+        'filename': '',
+        'file_size': 0,
+        'late': false,
+        'delivered_at': '2026-10-14T12:00:00',
+      });
+    }
     if (path.endsWith('/export')) return json({'csv': 'Matrícula;Nome\n1;Ana', 'count': 1});
     return http.Response('{"detail":"inesperado $path"}', 404);
   }
@@ -132,7 +165,118 @@ Future<void> _open(
   }, () => client);
 }
 
+Map<String, dynamic> _activity(String id, String title, {int delivered = 1, String? due}) => {
+      'id': id,
+      'title': title,
+      'instructions': 'Faça isto',
+      'due_at': due ?? '2026-10-20T23:59:00',
+      'remind': true,
+      'delivered': delivered,
+      'expected': 2,
+    };
+
+Map<String, dynamic> _row(String id, String name, List<String> statuses) => {
+      'signup_id': id,
+      'name': name,
+      'enrollment': '2024000$id',
+      'cells': [
+        for (var i = 0; i < statuses.length; i++)
+          {
+            'activity_id': 'a${i + 1}',
+            'status': statuses[i],
+            'delivery_id': statuses[i] == 'delivered' || statuses[i] == 'late' ? 'd$id$i' : null,
+            'text_preview': 'resposta',
+          },
+      ],
+    };
+
 void main() {
+  testWidgets('mostra as atividades, o link de entrega, a matriz e quem está faltando',
+      (tester) async {
+    final backend = _Backend(forms: [_form(signups: 2, accepted: 2)], signups: [
+      _signup('1', 'Ana Souza', status: 'accepted'),
+      _signup('2', 'Bruno Lima', status: 'accepted'),
+    ])
+      ..activities = [_activity('a1', 'Ler o capítulo 1'), _activity('a2', 'Projeto final', delivered: 0)]
+      ..rows = [
+        _row('1', 'Ana Souza', ['delivered', 'late']),
+        _row('2', 'Bruno Lima', ['overdue', 'pending']),
+      ]
+      ..risk = [
+        {'signup_id': '2', 'name': 'Bruno Lima', 'enrollment': '20240002', 'misses': 2},
+      ];
+    await _open(tester, backend, body: () async {
+      expect(find.text('ATIVIDADES E ENTREGAS'), findsOneWidget);
+      expect(find.textContaining('/education/mentorship-deliver/tokf1'), findsOneWidget);
+      expect(find.text('Ler o capítulo 1'), findsWidgets);
+      expect(find.text('1/2 entregaram'), findsOneWidget);
+      expect(find.text('QUEM ENTREGOU'), findsOneWidget);
+      expect(find.byKey(const Key('cell-1-a1')), findsOneWidget);
+      expect(find.text('2 sem entrega'), findsOneWidget);
+    });
+  });
+
+  testWidgets('cria uma atividade com título e instruções', (tester) async {
+    final backend = _Backend(forms: [_form(signups: 1, accepted: 1)], signups: [
+      _signup('1', 'Ana Souza', status: 'accepted'),
+    ]);
+    await _open(tester, backend, body: () async {
+      await tester.tap(find.byKey(const Key('activity-new')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('activity-title')), 'Primeira tarefa');
+      await tester.enterText(find.byKey(const Key('activity-instructions')), 'Leia e resuma');
+      await tester.tap(find.byKey(const Key('activity-save')));
+      await tester.pumpAndSettle();
+
+      final sent = backend.bodyOf('POST', '/activities');
+      expect(sent['title'], 'Primeira tarefa');
+      expect(sent['instructions'], 'Leia e resuma');
+      expect(sent.containsKey('due_at'), isFalse, reason: 'prazo é opcional');
+      expect(find.text('Primeira tarefa'), findsWidgets);
+    });
+  });
+
+  testWidgets('abrir uma entrega mostra o texto enviado pelo aluno', (tester) async {
+    final backend = _Backend(forms: [_form(signups: 1, accepted: 1)], signups: [
+      _signup('1', 'Ana Souza', status: 'accepted'),
+    ])
+      ..activities = [_activity('a1', 'Ler o capítulo 1')]
+      ..rows = [_row('1', 'Ana Souza', ['delivered'])];
+    await _open(tester, backend, body: () async {
+      await tester.tap(find.byKey(const Key('cell-1-a1')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('https://github.com/aluno/projeto'), findsOneWidget);
+      expect(find.textContaining('Entregue no prazo'), findsOneWidget);
+    });
+  });
+
+  testWidgets('tirar da mentoria quem está faltando pede confirmação e só então remove',
+      (tester) async {
+    final backend = _Backend(forms: [_form(signups: 1, accepted: 1)], signups: [
+      _signup('2', 'Bruno Lima', status: 'accepted'),
+    ])
+      ..activities = [_activity('a1', 'Ler o capítulo 1', delivered: 0)]
+      ..rows = [_row('2', 'Bruno Lima', ['overdue'])]
+      ..risk = [
+        {'signup_id': '2', 'name': 'Bruno Lima', 'enrollment': '20240002', 'misses': 1},
+      ];
+    await _open(tester, backend, body: () async {
+      await tester.ensureVisible(find.byKey(const Key('risk-remove-2')));
+      await tester.tap(find.byKey(const Key('risk-remove-2')));
+      await tester.pumpAndSettle();
+      expect(backend.called('POST', '/signups/status'), isFalse,
+          reason: 'nada sai antes da confirmação');
+
+      await tester.tap(find.text('Tirar'));
+      await tester.pumpAndSettle();
+
+      final sent = backend.bodyOf('POST', '/signups/status');
+      expect(sent['status'], 'removed');
+      expect(sent['ids'], ['2']);
+    });
+  });
+
   testWidgets('novas inscrições aparecem sozinhas, sem apertar nada', (tester) async {
     final backend = _Backend(
       forms: [_form(signups: 1, pending: 1)],

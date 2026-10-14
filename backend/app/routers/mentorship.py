@@ -415,3 +415,192 @@ async def signup_submit(token: str, payload: dict, db: AsyncSession = Depends(ge
         "Enviamos uma confirmação para o seu e-mail." if emailed
         else "O professor vai analisar e entrar em contato.")
     return JSONResponse({"ok": True, "message": message}, headers={"Cache-Control": "no-store"})
+
+
+# --- atividades e entregas (professor) ------------------------------------------------
+
+
+class ActivityCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    instructions: str = Field(default="", max_length=5000)
+    due_at: Optional[datetime] = None
+    remind: bool = True
+
+
+class ActivityUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    instructions: Optional[str] = Field(default=None, max_length=5000)
+    due_at: Optional[datetime] = None
+    clear_due: bool = False
+    remind: Optional[bool] = None
+
+
+def _activity_out(item, delivered: int = 0, expected: int = 0) -> dict[str, Any]:
+    return dict(
+        id=item.id, form_id=item.form_id, title=item.title,
+        instructions=item.instructions, due_at=item.due_at, remind=bool(item.remind),
+        delivered=delivered, expected=expected, created_at=item.created_at)
+
+
+def _delivery_link(form: MentorshipFormModel) -> str:
+    return f"/education/mentorship-deliver/{form.token}"
+
+
+async def _owned_activity(activity_id: str, tutor_id: str, db: AsyncSession):
+    from ..core.database import MentorshipActivityModel
+
+    item = await db.get(MentorshipActivityModel, activity_id)
+    if item is None or item.tutor_id != tutor_id:
+        raise HTTPException(404, "Atividade não encontrada")
+    return item
+
+
+@router.get("/{form_id}/activities")
+async def list_activities(
+    form_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """As atividades, com quantos aceitos já entregaram cada uma, e o link de entrega."""
+    form = await _owned(form_id, user["tutor_id"], db)
+    activities = await svc.list_activities(db, form.id)
+    expected = len(await svc.accepted_signups(db, form.id))
+    counts: dict[str, int] = {}
+    accepted_ids = {s.id for s in await svc.accepted_signups(db, form.id)}
+    for delivery in await svc.deliveries_of(db, form.id):
+        if delivery.signup_id in accepted_ids:
+            counts[delivery.activity_id] = counts.get(delivery.activity_id, 0) + 1
+    return {
+        "path": _delivery_link(form),
+        "activities": [_activity_out(a, counts.get(a.id, 0), expected) for a in activities],
+    }
+
+
+@router.post("/{form_id}/activities")
+async def create_activity(
+    form_id: str,
+    body: ActivityCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..core.database import MentorshipActivityModel
+
+    form = await _owned(form_id, user["tutor_id"], db)
+    position = len(await svc.list_activities(db, form.id))
+    item = MentorshipActivityModel(
+        form_id=form.id, tutor_id=form.tutor_id, title=" ".join(body.title.split()),
+        instructions=body.instructions.strip(), due_at=svc.naive(body.due_at),
+        remind=body.remind, position=position)
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return _activity_out(item, 0, len(await svc.accepted_signups(db, form.id)))
+
+
+@router.patch("/activities/{activity_id}")
+async def update_activity(
+    activity_id: str,
+    body: ActivityUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    item = await _owned_activity(activity_id, user["tutor_id"], db)
+    if body.title is not None:
+        item.title = " ".join(body.title.split())
+    if body.instructions is not None:
+        item.instructions = body.instructions.strip()
+    if body.clear_due:
+        item.due_at = None
+        item.reminded_at = None
+    elif body.due_at is not None:
+        item.due_at = svc.naive(body.due_at)
+        item.reminded_at = None  # novo prazo, novo lembrete
+    if body.remind is not None:
+        item.remind = body.remind
+    await db.commit()
+    return _activity_out(item)
+
+
+@router.delete("/activities/{activity_id}")
+async def delete_activity(
+    activity_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apaga a atividade e as entregas dela."""
+    from ..core.database import MentorshipDeliveryModel
+
+    item = await _owned_activity(activity_id, user["tutor_id"], db)
+    await db.execute(delete(MentorshipDeliveryModel).where(
+        MentorshipDeliveryModel.activity_id == item.id))
+    await db.delete(item)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/{form_id}/deliveries")
+async def delivery_matrix(
+    form_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aceitos x atividades: entregue, atrasada, vencida sem entrega ou pendente."""
+    form = await _owned(form_id, user["tutor_id"], db)
+    matrix = await svc.delivery_matrix(db, form)
+    return {
+        "activities": [_activity_out(a) for a in matrix["activities"]],
+        "rows": matrix["rows"],
+    }
+
+
+@router.get("/{form_id}/at-risk")
+async def at_risk(
+    form_id: str,
+    misses: int = 2,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Quem deixou de entregar as últimas `misses` atividades vencidas. Só sugere."""
+    form = await _owned(form_id, user["tutor_id"], db)
+    return {"misses": max(1, misses), "students": await svc.at_risk(db, form, misses)}
+
+
+async def _owned_delivery(delivery_id: str, tutor_id: str, db: AsyncSession):
+    from ..core.database import MentorshipDeliveryModel
+
+    item = await db.get(MentorshipDeliveryModel, delivery_id)
+    if item is None or item.tutor_id != tutor_id:
+        raise HTTPException(404, "Entrega não encontrada")
+    return item
+
+
+@router.get("/deliveries/{delivery_id}")
+async def delivery_detail(
+    delivery_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    item = await _owned_delivery(delivery_id, user["tutor_id"], db)
+    return dict(
+        id=item.id, activity_id=item.activity_id, signup_id=item.signup_id,
+        text=item.text, filename=item.filename, file_size=item.file_size,
+        late=bool(item.late), delivered_at=item.delivered_at)
+
+
+@router.get("/deliveries/{delivery_id}/file")
+async def delivery_file(
+    delivery_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    item = await _owned_delivery(delivery_id, user["tutor_id"], db)
+    if not item.file_data:
+        raise HTTPException(404, "Esta entrega não tem arquivo")
+    return Response(
+        content=bytes(item.file_data), media_type="application/octet-stream",
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''{quote(item.filename or 'entrega')}"})

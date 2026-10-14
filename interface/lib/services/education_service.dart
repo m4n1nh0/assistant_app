@@ -254,6 +254,109 @@ class EducationService {
     return (Map<String, dynamic>.from(_decode(response) as Map))['csv'] as String;
   }
 
+  // --- mentorias: atividades e entregas ----------------------------------------------
+
+  /// As atividades da mentoria e o caminho do link de entrega.
+  Future<({String path, List<MentorshipActivity> activities})>
+      listMentorshipActivities(String formId) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/$formId/activities'),
+        headers: _headers);
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (
+      path: data['path']?.toString() ?? '',
+      activities: [
+        for (final a in data['activities'] as List)
+          MentorshipActivity.fromJson(Map<String, dynamic>.from(a as Map)),
+      ],
+    );
+  }
+
+  Future<MentorshipActivity> createMentorshipActivity(
+    String formId, {
+    required String title,
+    String instructions = '',
+    DateTime? dueAt,
+    bool remind = true,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/mentorships/$formId/activities'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'instructions': instructions,
+        if (dueAt != null) 'due_at': dueAt.toUtc().toIso8601String(),
+        'remind': remind,
+      }),
+    );
+    return MentorshipActivity.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> updateMentorshipActivity(
+      String activityId, Map<String, dynamic> changes) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/mentorships/activities/$activityId'),
+      headers: _headers,
+      body: jsonEncode(changes),
+    );
+    _decode(response);
+  }
+
+  Future<void> deleteMentorshipActivity(String activityId) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/mentorships/activities/$activityId'),
+        headers: _headers);
+    _decode(response);
+  }
+
+  /// Aceitos x atividades.
+  Future<({List<MentorshipActivity> activities, List<DeliveryRow> rows})>
+      mentorshipDeliveries(String formId) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/$formId/deliveries'),
+        headers: _headers);
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (
+      activities: [
+        for (final a in data['activities'] as List)
+          MentorshipActivity.fromJson(Map<String, dynamic>.from(a as Map)),
+      ],
+      rows: [
+        for (final r in data['rows'] as List)
+          DeliveryRow.fromJson(Map<String, dynamic>.from(r as Map)),
+      ],
+    );
+  }
+
+  /// Quem deixou de entregar as últimas [misses] atividades vencidas (só sugere).
+  Future<List<AtRiskStudent>> mentorshipAtRisk(String formId, int misses) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/$formId/at-risk?misses=$misses'),
+        headers: _headers);
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return [
+      for (final s in data['students'] as List)
+        AtRiskStudent.fromJson(Map<String, dynamic>.from(s as Map)),
+    ];
+  }
+
+  Future<DeliveryDetail> getMentorshipDelivery(String deliveryId) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/deliveries/$deliveryId'),
+        headers: _headers);
+    return DeliveryDetail.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<List<int>> downloadMentorshipDeliveryFile(String deliveryId) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/deliveries/$deliveryId/file'),
+        headers: _headers);
+    if (response.statusCode >= 400) _decode(response); // levanta a mensagem do servidor
+    return response.bodyBytes;
+  }
+
   /// A sala, quem está nela e o fim da transcrição.
   Future<MeetingDetail> getMeeting(String id) async {
     final response = await http.get(
