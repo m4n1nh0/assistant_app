@@ -38,6 +38,20 @@ _HEAD = (
 )
 
 
+def _environment_tag() -> str:
+    """Selo de ambiente na barra. Produção não mostra nada: o aluno vê só a marca."""
+    from ..core.config import runtime_environment
+
+    env = runtime_environment()
+    if env == "production":
+        return ""
+    label = "AMBIENTE LOCAL" if env == "local" else f"AMBIENTE {escape(env.upper())}"
+    return (
+        f'<span style="margin-left:auto;padding:3px 10px;border-radius:10px;'
+        f"background:{GOLD};color:{NAVY};font-size:10px;font-weight:800;letter-spacing:1.5px;"
+        f'white-space:nowrap;">{label} · TESTE</span>')
+
+
 def bar_html(*, fixed: bool = False) -> str:
     """Barra de marca. Estilo inline: nenhuma regra da página consegue desfazê-la."""
     position = "position:fixed;top:0;left:0;right:0;" if fixed else ""
@@ -52,7 +66,7 @@ def bar_html(*, fixed: bool = False) -> str:
         f'line-height:1;">INTAR<span style="color:{BLUE};">Q</span></span>'
         f'<span style="font-size:9px;letter-spacing:2px;color:{SILVER};'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-        f"AI · SOFTWARE · CLOUD · ARCHITECTURE</span></header>"
+        f"AI · SOFTWARE · CLOUD · ARCHITECTURE</span>{_environment_tag()}</header>"
     )
 
 

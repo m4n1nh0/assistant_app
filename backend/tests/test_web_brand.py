@@ -140,3 +140,86 @@ def test_paginas_de_mentoria_usam_o_casco_da_marca():
                    mentorship_delivery._closed_page("Encerrado.")):
         html = pagina.body.decode()
         assert html.count('class="iq-bar"') == 1 and "INTAR" in html
+
+
+# --- ambiente ---------------------------------------------------------------------------
+
+
+def _limpa_ambiente(monkeypatch):
+    for nome in ("APP_ENV", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT",
+                 "RAILWAY_PUBLIC_DOMAIN", "RAILWAY_SERVICE_ID"):
+        monkeypatch.delenv(nome, raising=False)
+
+
+def test_fora_da_railway_e_local(monkeypatch):
+    from app.core.config import runtime_environment
+
+    _limpa_ambiente(monkeypatch)
+
+    assert runtime_environment() == "local"
+
+
+def test_na_railway_e_producao_mesmo_sem_nome_de_ambiente(monkeypatch):
+    from app.core.config import runtime_environment
+
+    _limpa_ambiente(monkeypatch)
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "app.up.railway.app")
+
+    assert runtime_environment() == "production"
+
+
+def test_nome_do_ambiente_da_railway_vale_e_outro_nome_nao_e_producao(monkeypatch):
+    from app.core.config import runtime_environment
+
+    _limpa_ambiente(monkeypatch)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+    assert runtime_environment() == "production"
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "Staging")
+    assert runtime_environment() == "staging"
+
+
+def test_app_env_manda_sobre_a_railway(monkeypatch):
+    from app.core.config import runtime_environment
+
+    _limpa_ambiente(monkeypatch)
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "app.up.railway.app")
+    monkeypatch.setenv("APP_ENV", "Local")
+
+    assert runtime_environment() == "local"
+    monkeypatch.setenv("APP_ENV", "prod")
+    assert runtime_environment() == "production"
+
+
+def test_health_live_informa_o_ambiente(monkeypatch):
+    from app.routers.routes import router_health
+
+    _limpa_ambiente(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    app = FastAPI()
+    app.include_router(router_health)
+
+    resposta = TestClient(app).get("/health/live").json()
+
+    assert resposta["environment"] == "production" and resposta["status"] == "ok"
+
+
+def test_barra_de_marca_so_avisa_quando_nao_e_producao(monkeypatch):
+    _limpa_ambiente(monkeypatch)
+
+    monkeypatch.setenv("APP_ENV", "production")
+    assert "TESTE" not in wb.bar_html()
+
+    monkeypatch.setenv("APP_ENV", "local")
+    local = wb.bar_html()
+    assert "AMBIENTE LOCAL" in local and "TESTE" in local
+
+    monkeypatch.setenv("APP_ENV", "staging")
+    assert "AMBIENTE STAGING" in wb.bar_html()
+
+
+def test_nome_de_ambiente_estranho_nao_vira_marcacao(monkeypatch):
+    _limpa_ambiente(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "<script>x</script>")
+
+    assert "<script>x" not in wb.bar_html()

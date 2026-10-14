@@ -481,6 +481,29 @@ def _normalize_http_base_url(value: object, *, default_port: int) -> str:
 
 
 
+def runtime_environment() -> str:
+    """Ambiente em que o processo roda: `production`, `staging` ou `local`.
+
+    Existe para a interface e as paginas dizerem onde voce esta, porque o mesmo app
+    aponta para `localhost` ou para a Railway e os dados de um nao aparecem no outro.
+
+    `APP_ENV` manda quando definido. Sem ele, estar na Railway (que injeta
+    `RAILWAY_ENVIRONMENT_NAME`, ou ao menos o dominio publico) vale `production`, a menos
+    que o ambiente da Railway tenha outro nome (ex.: `staging`). Fora da Railway e `local`.
+    """
+    explicit = os.getenv("APP_ENV", "").strip().lower()
+    if explicit:
+        return "production" if explicit.startswith("prod") else explicit
+    railway = os.getenv("RAILWAY_ENVIRONMENT_NAME", "").strip().lower() or os.getenv(
+        "RAILWAY_ENVIRONMENT", "").strip().lower()
+    if railway:
+        return "production" if railway.startswith("prod") else railway
+    if os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip() or os.getenv(
+            "RAILWAY_SERVICE_ID", "").strip():
+        return "production"
+    return "local"
+
+
 def build_revision() -> str:
     """Commit que originou o processo em execucao, ou vazio quando desconhecido.
 

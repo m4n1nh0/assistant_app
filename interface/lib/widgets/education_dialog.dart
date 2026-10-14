@@ -45,6 +45,7 @@ import 'study_time_tab.dart';
 import 'class_agenda_action.dart';
 import 'mentorships_tab.dart';
 import 'research_tab.dart';
+import 'student_portal_dialog.dart';
 import 'project_groups_tab.dart';
 
 /// Ordem das abas: cadastro (turmas, mentorias, grupos) antes do uso em aula (gravar,
@@ -4035,6 +4036,12 @@ class _RosterTabState extends State<_RosterTab> {
               spacing: 8,
               runSpacing: 6,
               children: [
+            OutlinedButton.icon(
+              key: const Key('roster-student-portal'),
+              onPressed: () => showStudentPortalDialog(context),
+              icon: const Icon(Icons.badge_outlined, size: 15),
+              label: const Text('PORTAL DO ALUNO', style: TextStyle(fontSize: 10)),
+            ),
             OutlinedButton.icon(
               key: const Key('roster-create-agenda'),
               onPressed: _creatingAgenda ? null : _createAgenda,

@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 import '../branding/intarq_brand.dart';
 import '../providers/app_provider.dart';
 import '../utils/theme.dart';
+import 'environment_tag.dart';
 
 /// Barra superior propria da janela, ja que a nativa fica oculta.
 class AssistantTitleBar extends ConsumerWidget {
@@ -50,6 +51,8 @@ class AssistantTitleBar extends ConsumerWidget {
             ),
             const SizedBox(width: 14),
             _StatusPill(isOnline: isAuth),
+            const SizedBox(width: 8),
+            const Flexible(child: EnvironmentTag()),
             const Spacer(),
             if (config.userName.isNotEmpty)
               Padding(

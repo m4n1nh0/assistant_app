@@ -506,6 +506,26 @@ class EducationService {
     _decode(response);
   }
 
+  // --- portal do aluno ---------------------------------------------------------------
+
+  /// O link do portal do aluno (criado na primeira vez) e se está aberto.
+  Future<({String path, bool active})> studentPortalLink() async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/portal-link'), headers: _headers);
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (path: data['path']?.toString() ?? '', active: data['active'] != false);
+  }
+
+  Future<({String path, bool active})> setStudentPortalActive(bool active) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/portal-link'),
+      headers: _headers,
+      body: jsonEncode({'active': active}),
+    );
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (path: data['path']?.toString() ?? '', active: data['active'] != false);
+  }
+
   /// A sala, quem está nela e o fim da transcrição.
   Future<MeetingDetail> getMeeting(String id) async {
     final response = await http.get(

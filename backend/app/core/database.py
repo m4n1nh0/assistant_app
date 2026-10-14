@@ -1131,6 +1131,22 @@ class ResearchStageModel(Base):
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class StudentPortalModel(Base):
+    """Link unico do portal do aluno de um professor.
+
+    Um token por professor: o aluno digita a matricula e o portal junta o que e dele em
+    todas as turmas (graduacao e mentorias). Fechar o portal derruba o acesso sem apagar
+    nada.
+    """
+
+    __tablename__ = "student_portals"
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id   = Column(String(64), nullable=False, unique=True, index=True)
+    token      = Column(String(64), nullable=False, unique=True, index=True)
+    active     = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class MeetingRoomModel(Base):
     """Sala de reuniao online propria (video e audio por WebRTC, sem gravacao).
 

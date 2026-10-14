@@ -34,7 +34,7 @@ from ..core.security import (
     require_admin,
     verify_secret,
 )
-from ..core.config import build_revision, get_settings
+from ..core.config import build_revision, get_settings, runtime_environment
 from ..core.rate_limit import rate_limit
 from ..core.database import (
     AssistantProfileModel,
@@ -2043,6 +2043,9 @@ async def health_live():
         # Tambem aqui: e o unico health que responde com as dependencias fora
         # do ar, entao e onde da para conferir a versao de um deploy quebrado.
         "revision": build_revision(),
+        # Onde o processo roda (production, staging ou local): a interface mostra isto
+        # no cabecalho para ninguem trabalhar no ambiente errado sem perceber.
+        "environment": runtime_environment(),
         "uptime_seconds": round(time.time() - _start, 1),
     }
 
