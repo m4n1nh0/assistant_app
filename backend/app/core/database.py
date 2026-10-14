@@ -1076,6 +1076,61 @@ class MentorshipDeliveryModel(Base):
     delivered_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class ResearchProjectModel(Base):
+    """Uma pesquisa cientifica acompanhada pelo professor (iniciacao, TCC, artigo...)."""
+
+    __tablename__ = "research_projects"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    title       = Column(String(255), nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    area        = Column(String(120), nullable=False, default="")
+    semester    = Column(String(16), nullable=False, default="")
+    # planning, active, paused ou done.
+    status      = Column(String(16), nullable=False, default="planning", index=True)
+    start_date  = Column(DateTime, nullable=True)
+    end_date    = Column(DateTime, nullable=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ResearchParticipantModel(Base):
+    """Quem participa de uma pesquisa: aluno da casa ou pessoa de fora."""
+
+    __tablename__ = "research_participants"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id  = Column(String(64), nullable=False, index=True)
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    name        = Column(String(180), nullable=False, default="")
+    email       = Column(String(255), nullable=False, default="")
+    phone       = Column(String(40), nullable=False, default="")
+    enrollment  = Column(String(80), nullable=False, default="")
+    institution = Column(String(180), nullable=False, default="")
+    # orientando, coorientador ou colaborador.
+    role        = Column(String(24), nullable=False, default="orientando")
+    # Casou com um aluno ativo cadastrado (pela matricula).
+    student_id    = Column(String(64), nullable=True)
+    known_student = Column(Boolean, nullable=False, default=False)
+    active      = Column(Boolean, nullable=False, default=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ResearchStageModel(Base):
+    """Etapa do plano de uma pesquisa, com prazo e situacao."""
+
+    __tablename__ = "research_stages"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id  = Column(String(64), nullable=False, index=True)
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    title       = Column(String(255), nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    due_at      = Column(DateTime, nullable=True)
+    # todo, doing ou done.
+    status      = Column(String(12), nullable=False, default="todo")
+    position    = Column(Integer, nullable=False, default=0)
+    done_at     = Column(DateTime, nullable=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class MeetingRoomModel(Base):
     """Sala de reuniao online propria (video e audio por WebRTC, sem gravacao).
 

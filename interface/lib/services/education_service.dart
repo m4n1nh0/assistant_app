@@ -13,6 +13,7 @@ import '../models/group_points.dart';
 import '../models/meeting_room.dart';
 import '../models/mentorship.dart';
 import '../models/presentation_material.dart';
+import '../models/research.dart';
 import 'api_service.dart';
 import 'student_csv_parser.dart';
 
@@ -355,6 +356,154 @@ class EducationService {
         headers: _headers);
     if (response.statusCode >= 400) _decode(response); // levanta a mensagem do servidor
     return response.bodyBytes;
+  }
+
+  // --- pesquisas científicas ---------------------------------------------------------
+
+  /// A IA propõe as etapas (com datas) a partir do tema. Nada é gravado.
+  Future<({List<StageDraft> stages, bool fromAi})> generateResearchPlan({
+    required String title,
+    String description = '',
+    int weeks = 24,
+    DateTime? startDate,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/research/generate-plan'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'description': description,
+        'weeks': weeks,
+        if (startDate != null) 'start_date': startDate.toUtc().toIso8601String(),
+      }),
+    );
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (
+      stages: [
+        for (final s in data['stages'] as List)
+          StageDraft.fromJson(Map<String, dynamic>.from(s as Map)),
+      ],
+      fromAi: data['from_ai'] == true,
+    );
+  }
+
+  Future<List<ResearchProject>> listResearch() async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/research'), headers: _headers);
+    return [
+      for (final item in _decode(response) as List)
+        ResearchProject.fromJson(Map<String, dynamic>.from(item as Map)),
+    ];
+  }
+
+  Future<ResearchProject> createResearch({
+    required String title,
+    String description = '',
+    String area = '',
+    DateTime? startDate,
+    DateTime? endDate,
+    List<StageDraft> stages = const [],
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/research'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'description': description,
+        'area': area,
+        if (startDate != null) 'start_date': startDate.toUtc().toIso8601String(),
+        if (endDate != null) 'end_date': endDate.toUtc().toIso8601String(),
+        'stages': [for (final s in stages) s.toJson()],
+      }),
+    );
+    return ResearchProject.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<ResearchDetail> getResearch(String id) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/research/$id'), headers: _headers);
+    return ResearchDetail.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<ResearchProject> updateResearch(String id, Map<String, dynamic> changes) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/research/$id'),
+      headers: _headers,
+      body: jsonEncode(changes),
+    );
+    return ResearchProject.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> deleteResearch(String id) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/research/$id'), headers: _headers);
+    _decode(response);
+  }
+
+  Future<ResearchParticipant> addResearchParticipant(
+    String projectId, {
+    required String name,
+    String role = 'orientando',
+    String email = '',
+    String phone = '',
+    String enrollment = '',
+    String institution = '',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/research/$projectId/participants'),
+      headers: _headers,
+      body: jsonEncode({
+        'name': name,
+        'role': role,
+        'email': email,
+        'phone': phone,
+        'enrollment': enrollment,
+        'institution': institution,
+      }),
+    );
+    return ResearchParticipant.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> removeResearchParticipant(String participantId) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/research/participants/$participantId'),
+        headers: _headers);
+    _decode(response);
+  }
+
+  Future<ResearchStage> addResearchStage(
+    String projectId, {
+    required String title,
+    String description = '',
+    DateTime? dueAt,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/research/$projectId/stages'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'description': description,
+        if (dueAt != null) 'due_at': dueAt.toUtc().toIso8601String(),
+      }),
+    );
+    return ResearchStage.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<ResearchStage> updateResearchStage(
+      String stageId, Map<String, dynamic> changes) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/research/stages/$stageId'),
+      headers: _headers,
+      body: jsonEncode(changes),
+    );
+    return ResearchStage.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> deleteResearchStage(String stageId) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/research/stages/$stageId'), headers: _headers);
+    _decode(response);
   }
 
   /// A sala, quem está nela e o fim da transcrição.
