@@ -5,6 +5,7 @@ import 'package:http/testing.dart';
 
 import 'package:assistant_app/services/education_service.dart';
 import 'package:assistant_app/widgets/attendance_tab.dart';
+import 'package:assistant_app/widgets/class_agenda_action.dart';
 
 void main() {
   testWidgets('renders QR call controls and the reports panel', (tester) async {

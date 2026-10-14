@@ -11,11 +11,12 @@ abas operacionais:
   logo abaixo, junto aos atalhos **Iniciar aula** e **Conversar**. O segundo
   retorna ao chat principal sem criar outra conversa ou copiar dados.
 
-1. cadastro de disciplinas, turmas, horários e alunos;
+1. cadastro de disciplinas, turmas, horários e alunos, com a **agenda das turmas** no
+   Google ou Microsoft Calendar (botão *Criar agenda no calendário* na aba Turmas);
 2. gravação e transcrição de aulas;
 3. pontuação extra identificada durante a fala;
 4. histórico, correção de transcrição, resumo e PDF;
-5. chamada por QR Code, presença, relatórios e agenda das turmas.
+5. chamada por QR Code, presença e relatórios.
 
 Antes da aula, **Configurações > Sistema > Microfone de entrada** permite
 selecionar e ouvir um teste de cinco segundos do microfone real que será usado.

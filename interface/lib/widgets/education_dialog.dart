@@ -42,6 +42,7 @@ import 'materials_panel.dart';
 import 'quiz_center.dart';
 import 'sia_attendance_importer.dart';
 import 'study_time_tab.dart';
+import 'class_agenda_action.dart';
 import 'mentorships_tab.dart';
 import 'project_groups_tab.dart';
 
@@ -3106,6 +3107,7 @@ class _RosterTabState extends State<_RosterTab> {
   var _importing = false;
   var _deletingStudents = false;
   var _creatingDemo = false;
+  var _creatingAgenda = false;
   var _status = '';
   var _statusIsError = false;
 
@@ -3215,6 +3217,21 @@ class _RosterTabState extends State<_RosterTab> {
       await _loadClasses(keepId: group.id);
     } catch (e) {
       _report('Falha ao criar turma: $e', error: true);
+    }
+  }
+
+  /// Cria no calendario externo a agenda semanal das turmas cadastradas.
+  Future<void> _createAgenda() async {
+    if (_creatingAgenda) return;
+    setState(() => _creatingAgenda = true);
+    try {
+      final outcome = await createClassAgendaFlow(
+        context,
+        widget.classes.value ?? const <ClassGroup>[],
+      );
+      if (outcome != null) _report(outcome.message, error: outcome.error);
+    } finally {
+      if (mounted) setState(() => _creatingAgenda = false);
     }
   }
 
@@ -4004,7 +4021,25 @@ class _RosterTabState extends State<_RosterTab> {
           const SizedBox(height: 10),
           Align(
             alignment: Alignment.centerRight,
-            child: OutlinedButton.icon(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+            OutlinedButton.icon(
+              key: const Key('roster-create-agenda'),
+              onPressed: _creatingAgenda ? null : _createAgenda,
+              icon: _creatingAgenda
+                  ? const SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.event_repeat, size: 15),
+              label: Text(
+                _creatingAgenda ? 'CRIANDO...' : 'CRIAR AGENDA NO CALENDARIO',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+            OutlinedButton.icon(
               onPressed: _creatingDemo ? null : _createPresentationDemo,
               icon: _creatingDemo
                   ? const SizedBox.square(
@@ -4018,6 +4053,8 @@ class _RosterTabState extends State<_RosterTab> {
                     : 'CRIAR EXEMPLO PARA APRESENTACAO',
                 style: const TextStyle(fontSize: 10),
               ),
+            ),
+              ],
             ),
           ),
           const SizedBox(height: 8),
