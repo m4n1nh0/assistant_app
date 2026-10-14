@@ -46,15 +46,40 @@ Professor (autenticadas): `GET|PATCH /education/portal-link`.
 
 Públicas, em `/education/portal/{token}`: `GET` (a página), `POST /lookup` e `POST /material`.
 
-## Qual ambiente estou acessando?
+## Lacunas conhecidas
 
-O cabeçalho do app mostra uma etiqueta com o ambiente e o endereço do servidor conectado:
-**PRODUÇÃO** (discreta, em verde), **LOCAL** ou **HOMOLOGAÇÃO** (em destaque âmbar) e
-**SEM CONEXÃO** quando o servidor não responde. O tooltip traz o endereço completo, o commit
-em execução e há quanto tempo o servidor está no ar.
+O portal junta **graduação e mentoria**, mas ainda não cobre quem também está em **pesquisa**.
+Cenário de referência: um aluno que cursa uma disciplina, faz mentoria e participa de uma
+pesquisa. Hoje:
 
-O servidor informa o ambiente em `/health/live` (campo `environment`): `APP_ENV` manda quando
-definido; sem ele, estar na Railway vale `production` (ou o nome do ambiente da Railway, se
-for outro) e fora dela vale `local`. Nas páginas web (portal, quiz, inscrição, chamada), a
-barra INTARQ ganha o selo **AMBIENTE LOCAL · TESTE** fora da produção; em produção o aluno
-vê só a marca.
+| O quê | Situação |
+|---|---|
+| Disciplina + mentoria no mesmo portal | **Funciona.** A matrícula é a chave e as turmas das duas entram juntas; os pontos extras somam entre elas. |
+| Ver as pesquisas em que participa | **Não existe.** O portal não tem aba de pesquisa: o aluno não vê o projeto, o papel dele, as etapas nem os prazos. |
+| Entrar no portal sendo só participante de pesquisa (ou só aceito na mentoria, sem registro de aluno) | **Não funciona.** O portal procura a matrícula só entre os alunos cadastrados; quem não tem registro recebe "Não encontrei esta matrícula". Pessoas de fora, sem matrícula, não têm como entrar. |
+| Visão do professor sobre um aluno só | **Não existe.** Não há ficha que mostre, de uma pessoa, as disciplinas, a mentoria (inscrição, entregas, faltas) e as pesquisas ao mesmo tempo; é preciso abrir cada aba. |
+
+### Por que acontece
+
+- O participante de pesquisa é um cadastro à parte (`research_participants`). A matrícula dele
+  só **marca** se casa com um aluno (`ALUNO CONHECIDO`); nada liga os dois no portal.
+- O portal começa pela lista de alunos ativos e, a partir das turmas deles, monta as abas. Quem
+  não está em turma nenhuma fica de fora, mesmo tendo inscrição aceita ou pesquisa.
+- Cada módulo guarda o próprio vínculo (turma, inscrição, participante); não existe uma
+  identidade única da pessoa entre eles.
+
+### O que fazer
+
+1. **Aba "Pesquisa" no portal:** o projeto, o papel do aluno e as etapas com situação e prazo
+   (só leitura).
+2. **Entrada pela matrícula em qualquer vínculo:** aceitar também quem é participante de
+   pesquisa ou aceito na mentoria, mesmo sem registro de aluno, mostrando só as abas que se
+   aplicam. Quem é de fora e não tem matrícula precisa de outro caminho (por exemplo, um
+   código enviado por e-mail).
+3. **Ficha do aluno para o professor:** uma tela única por pessoa, juntando disciplinas,
+   mentoria e pesquisas, a partir da matrícula.
+4. **Reconciliar nomes e e-mails** entre os cadastros quando a mesma pessoa aparece com dados
+   diferentes em cada módulo.
+
+Ver também [pesquisas-cientificas.md](pesquisas-cientificas.md) e
+[inscricao-mentorias.md](inscricao-mentorias.md).

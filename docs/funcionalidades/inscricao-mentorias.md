@@ -100,3 +100,7 @@ Públicas: `/education/mentorship-signup/{token}` (inscrição: `GET` a página,
 
 Plano de encontros: cruzar os horários livres dos inscritos com as suas noites livres e o
 sábado de manhã para sugerir o dia dos encontros.
+
+Também ficou de fora: o portal do aluno só reconhece quem tem registro de aluno cadastrado
+(o aceite cria esse registro, então aceitos entram), mas não cobre quem está só em pesquisa.
+Ver [portal-do-aluno.md](portal-do-aluno.md#lacunas-conhecidas).

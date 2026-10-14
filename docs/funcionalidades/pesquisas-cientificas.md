@@ -40,3 +40,6 @@ Autenticadas, em `/education/research`: `POST /generate-plan`, `POST`, `GET`, `G
   revisão da IA (clareza, estrutura, citações).
 - **Eventos e submissões:** congressos e periódicos com prazos e lembretes.
 - **Visão geral:** cartão da pesquisa no painel inicial.
+- **Portal do aluno:** hoje o aluno não vê as pesquisas em que participa, e quem só participa
+  de pesquisa (sem registro de aluno) não consegue entrar no portal. Detalhes e plano em
+  [portal-do-aluno.md](portal-do-aluno.md#lacunas-conhecidas).
