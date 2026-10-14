@@ -614,3 +614,16 @@ def test_apagar_atividade_apaga_as_entregas_e_so_o_dono_mexe(api):
     assert asyncio.run(sobras()) == []
     assert api.patch("/education/mentorships/activities/inexistente",
                      json={"title": "x"}).status_code == 404
+
+
+def test_lista_de_mentorias_informa_quantas_atividades_cada_uma_tem(api):
+    com = cria(api, title="Com atividades")
+    sem = cria(api, title="Sem atividades")
+    atividade(api, com, "A1")
+    atividade(api, com, "A2")
+
+    por_titulo = {m["title"]: m["activities"]
+                  for m in api.get("/education/mentorships").json()}
+
+    assert por_titulo == {"Com atividades": 2, "Sem atividades": 0}
+    assert sem["id"] != com["id"]

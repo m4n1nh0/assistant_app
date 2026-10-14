@@ -62,6 +62,7 @@ class MentorshipForm {
   final int signups;
   final int pending;
   final int accepted;
+  final int activities;
   final String? classId;
 
   const MentorshipForm({
@@ -78,6 +79,7 @@ class MentorshipForm {
     this.signups = 0,
     this.pending = 0,
     this.accepted = 0,
+    this.activities = 0,
     this.classId,
   });
 
@@ -98,6 +100,7 @@ class MentorshipForm {
         signups: (json['signups'] as num?)?.toInt() ?? 0,
         pending: (json['pending'] as num?)?.toInt() ?? 0,
         accepted: (json['accepted'] as num?)?.toInt() ?? 0,
+        activities: (json['activities'] as num?)?.toInt() ?? 0,
         classId: json['class_id']?.toString(),
       );
 

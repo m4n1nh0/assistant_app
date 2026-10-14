@@ -76,12 +76,13 @@ async def _form_out(form: MentorshipFormModel, db: AsyncSession) -> dict[str, An
     rows = (await db.execute(select(MentorshipSignupModel.status).where(
         MentorshipSignupModel.form_id == form.id))).scalars().all()
     taken = sum(1 for s in rows if s in ("pending", "accepted"))
+    activities = len(await svc.list_activities(db, form.id))
     return dict(
         id=form.id, token=form.token, path=_link_path(form), title=form.title,
         description=form.description, semester=form.semester,
         fields=svc.sanitize_fields(form.fields), active=bool(form.active),
         state=svc.form_state(form, taken), closes_at=form.closes_at,
-        max_slots=form.max_slots, signups=len(rows),
+        max_slots=form.max_slots, signups=len(rows), activities=activities,
         pending=sum(1 for s in rows if s == "pending"),
         accepted=sum(1 for s in rows if s == "accepted"),
         class_id=form.class_id, discipline_id=form.discipline_id,

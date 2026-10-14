@@ -53,7 +53,9 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
   bool _generated = false;
 
   List<MentorshipForm> _forms = const [];
+  /// A mentoria aberta; nula = a lista. A tela da mentoria tem três seções.
   String? _selectedId;
+  int _section = 0;
   List<MentorshipSignup> _signups = const [];
   String _filter = 'all';
   bool _loading = true;
@@ -87,7 +89,8 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
       if (!mounted) return;
       setState(() {
         _forms = forms;
-        if (_selected == null) _selectedId = forms.isEmpty ? null : forms.first.id;
+        // A mentoria aberta foi apagada em outro lugar: volta para a lista.
+        if (_selectedId != null && _selected == null) _selectedId = null;
       });
       final id = _selectedId;
       if (id == null) return;
@@ -124,9 +127,7 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
       setState(() {
         _forms = forms;
         _loading = false;
-        if (_selectedId == null || _selected == null) {
-          _selectedId = forms.isEmpty ? null : forms.first.id;
-        }
+        if (_selectedId != null && _selected == null) _selectedId = null;
       });
       await _loadSignups();
     } catch (e) {
@@ -218,6 +219,8 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
         setState(() {
           _forms = [form, ..._forms];
           _selectedId = form.id;
+          _section = 2; // a primeira coisa a fazer é copiar o link
+          _filter = 'all';
           _signups = const [];
           _creating = false;
         });
@@ -270,10 +273,9 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
       if (!mounted) return;
       setState(() {
         _forms = [for (final f in _forms) if (f.id != form.id) f];
-        _selectedId = _forms.isEmpty ? null : _forms.first.id;
+        _selectedId = null;
         _signups = const [];
       });
-      await _loadSignups();
       _report('Formulário apagado.');
     });
   }
@@ -333,6 +335,25 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
 
   // --- tela -------------------------------------------------------------------------
 
+  void _open(MentorshipForm form) {
+    setState(() {
+      _selectedId = form.id;
+      _section = 0;
+      _filter = 'all';
+      _signups = const [];
+      _message = '';
+    });
+    _loadSignups();
+  }
+
+  void _back() {
+    setState(() {
+      _selectedId = null;
+      _signups = const [];
+      _message = '';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -340,25 +361,7 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
-        Row(children: [
-          const Icon(Icons.person_add_alt_outlined, color: AssistantTheme.c3),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text('INSCRIÇÃO EM MENTORIAS',
-                style: TextStyle(
-                    fontFamily: 'Rajdhani',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.6)),
-          ),
-          if (!_creating)
-            FilledButton.icon(
-              key: const Key('mentorship-new'),
-              onPressed: _startCreating,
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('NOVA MENTORIA'),
-            ),
-        ]),
+        if (form == null) _buildListHeader() else _buildDetailHeader(form),
         if (_message.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -368,32 +371,138 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
                     color: _error ? Colors.redAccent : AssistantTheme.c3)),
           ),
         const SizedBox(height: 10),
-        if (_creating) _buildCreator(),
-        if (!_creating && _forms.isEmpty)
-          const _Hint('Nenhum formulário ainda. Clique em NOVA MENTORIA, descreva o '
-              'tema e a IA monta as perguntas.'),
-        if (_forms.length > 1)
-          Wrap(spacing: 8, runSpacing: 6, children: [
-            for (final f in _forms)
-              ChoiceChip(
-                label: Text(f.title),
-                selected: f.id == _selectedId,
-                onSelected: (_) {
-                  setState(() {
-                    _selectedId = f.id;
-                    _signups = const [];
-                    _filter = 'all';
-                  });
-                  _loadSignups();
-                },
-              ),
+        if (form == null) ...[
+          if (_creating) _buildCreator(),
+          if (!_creating && _forms.isEmpty)
+            const _Hint('Nenhuma mentoria ainda. Clique em NOVA MENTORIA, descreva o '
+                'tema e a IA monta as perguntas.'),
+          for (final f in _forms) _buildCard(f),
+        ] else
+          ..._buildDetail(form),
+      ],
+    );
+  }
+
+  Widget _buildListHeader() => Row(children: [
+        const Icon(Icons.person_add_alt_outlined, color: AssistantTheme.c3),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+              _forms.length > 1 ? 'MENTORIAS (${_forms.length})' : 'MENTORIAS',
+              style: const TextStyle(
+                  fontFamily: 'Rajdhani',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.6)),
+        ),
+        if (!_creating)
+          FilledButton.icon(
+            key: const Key('mentorship-new'),
+            onPressed: _startCreating,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('NOVA MENTORIA'),
+          ),
+      ]);
+
+  Widget _buildDetailHeader(MentorshipForm form) => Row(children: [
+        IconButton(
+          key: const Key('mentorship-back'),
+          tooltip: 'Voltar para a lista de mentorias',
+          onPressed: _back,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        Expanded(
+          child: Text(form.title.toUpperCase(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontFamily: 'Rajdhani',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2)),
+        ),
+        const SizedBox(width: 8),
+        _Chip(form.stateLabel, form.isOpen ? AssistantTheme.c3 : AssistantTheme.textMuted),
+      ]);
+
+  /// O cartão da lista: o suficiente para decidir qual abrir, com o que pede atenção.
+  Widget _buildCard(MentorshipForm f) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        key: Key('mentorship-card-${f.id}'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _open(f),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AssistantTheme.bg.withOpacity(.38),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+                color: (f.pending > 0 ? AssistantTheme.c4 : AssistantTheme.c3)
+                    .withOpacity(.5)),
+          ),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(f.title,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                if (f.description.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(f.description.trim().replaceAll('\n', ' '),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12, color: AssistantTheme.textSecondary)),
+                  ),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 6, children: [
+                  _Chip(f.stateLabel,
+                      f.isOpen ? AssistantTheme.c3 : AssistantTheme.textMuted),
+                  _Chip(f.summary, AssistantTheme.c1),
+                  if (f.pending > 0)
+                    _Chip('${f.pending} aguardando você', AssistantTheme.c4),
+                  _Chip('${f.accepted} aceitos', AssistantTheme.c3),
+                  if (f.activities > 0)
+                    _Chip('${f.activities} atividades', AssistantTheme.c2),
+                  if (f.closesAt != null)
+                    _Chip('prazo ${_formatDate(f.closesAt!.toLocal())}',
+                        AssistantTheme.textMuted),
+                ]),
+              ]),
+            ),
+            const Icon(Icons.chevron_right, color: AssistantTheme.textMuted),
           ]),
-        if (form != null) ...[
-          const SizedBox(height: 12),
-          _buildForm(form),
-          const SizedBox(height: 12),
-          _buildSignups(form),
-          const SizedBox(height: 12),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildDetail(MentorshipForm form) => [
+        SegmentedButton<int>(
+          key: const Key('mentorship-sections'),
+          showSelectedIcon: false,
+          segments: [
+            ButtonSegment(
+                value: 0,
+                icon: const Icon(Icons.how_to_reg_outlined, size: 16),
+                label: Text('INSCRITOS (${form.signups})')),
+            ButtonSegment(
+                value: 1,
+                icon: const Icon(Icons.assignment_outlined, size: 16),
+                label: Text('ATIVIDADES (${form.activities})')),
+            const ButtonSegment(
+                value: 2,
+                icon: Icon(Icons.link, size: 16),
+                label: Text('LINK E DADOS')),
+          ],
+          selected: {_section},
+          onSelectionChanged: (value) => setState(() => _section = value.first),
+        ),
+        const SizedBox(height: 12),
+        if (_section == 0) _buildSignups(form),
+        if (_section == 1)
           MentorshipActivitiesPanel(
             // Recarrega quando entra ou sai alguem da turma da mentoria.
             key: ValueKey('${form.id}-${form.accepted}'),
@@ -409,10 +518,8 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
               'removed',
             ),
           ),
-        ],
-      ],
-    );
-  }
+        if (_section == 2) _buildForm(form),
+      ];
 
   Widget _buildCreator() {
     return _Panel(
@@ -570,9 +677,7 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
   Widget _buildForm(MentorshipForm form) {
     final url = form.url(_baseUrl);
     return _Panel(
-      title: form.title.toUpperCase(),
-      trailing: _Chip(form.stateLabel,
-          form.isOpen ? AssistantTheme.c3 : AssistantTheme.textMuted),
+      title: 'LINK E DADOS',
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (form.description.isNotEmpty)
           Padding(

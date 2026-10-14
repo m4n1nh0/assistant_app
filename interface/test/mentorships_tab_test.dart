@@ -14,6 +14,7 @@ Map<String, dynamic> _form({
   int signups = 0,
   int pending = 0,
   int accepted = 0,
+  int activities = 0,
   String state = 'open',
 }) =>
     {
@@ -38,6 +39,7 @@ Map<String, dynamic> _form({
       'signups': signups,
       'pending': pending,
       'accepted': accepted,
+      'activities': activities,
     };
 
 Map<String, dynamic> _signup(String id, String name, {String status = 'pending', bool known = false}) => {
@@ -190,6 +192,18 @@ Map<String, dynamic> _row(String id, String name, List<String> statuses) => {
       ],
     };
 
+/// Abre a mentoria pela lista.
+Future<void> _openCard(WidgetTester tester, [String id = 'f1']) async {
+  await tester.tap(find.byKey(Key('mentorship-card-$id')));
+  await tester.pumpAndSettle();
+}
+
+/// Troca a seção da tela da mentoria (INSCRITOS, ATIVIDADES ou LINK E DADOS).
+Future<void> _goTo(WidgetTester tester, String label) async {
+  await tester.tap(find.textContaining(label));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('mostra as atividades, o link de entrega, a matriz e quem está faltando',
       (tester) async {
@@ -206,6 +220,8 @@ void main() {
         {'signup_id': '2', 'name': 'Bruno Lima', 'enrollment': '20240002', 'misses': 2},
       ];
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
+      await _goTo(tester, 'ATIVIDADES');
       expect(find.text('ATIVIDADES E ENTREGAS'), findsOneWidget);
       expect(find.textContaining('/education/mentorship-deliver/tokf1'), findsOneWidget);
       expect(find.text('Ler o capítulo 1'), findsWidgets);
@@ -221,6 +237,8 @@ void main() {
       _signup('1', 'Ana Souza', status: 'accepted'),
     ]);
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
+      await _goTo(tester, 'ATIVIDADES');
       await tester.tap(find.byKey(const Key('activity-new')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const Key('activity-title')), 'Primeira tarefa');
@@ -243,6 +261,8 @@ void main() {
       ..activities = [_activity('a1', 'Ler o capítulo 1')]
       ..rows = [_row('1', 'Ana Souza', ['delivered'])];
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
+      await _goTo(tester, 'ATIVIDADES');
       await tester.tap(find.byKey(const Key('cell-1-a1')));
       await tester.pumpAndSettle();
 
@@ -262,6 +282,8 @@ void main() {
         {'signup_id': '2', 'name': 'Bruno Lima', 'enrollment': '20240002', 'misses': 1},
       ];
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
+      await _goTo(tester, 'ATIVIDADES');
       await tester.ensureVisible(find.byKey(const Key('risk-remove-2')));
       await tester.tap(find.byKey(const Key('risk-remove-2')));
       await tester.pumpAndSettle();
@@ -283,6 +305,7 @@ void main() {
       signups: [_signup('1', 'Ana Souza')],
     );
     await _open(tester, backend, pollEvery: const Duration(seconds: 15), body: () async {
+      await _openCard(tester);
       expect(find.text('Ana Souza'), findsOneWidget);
       expect(find.text('Bruno Lima'), findsNothing);
 
@@ -292,7 +315,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Bruno Lima'), findsOneWidget);
-      expect(find.text('2 inscritos · 8 vagas'), findsOneWidget);
+      expect(find.text('INSCRITOS (2)'), findsOneWidget);
     });
     // Desmonta a tela para o timer periódico não ficar pendente.
     await tester.pumpWidget(const SizedBox());
@@ -303,9 +326,95 @@ void main() {
     expect(availabilityText(null), '');
   });
 
+  testWidgets('com mais de uma mentoria, a lista mostra um cartão de cada com o que pede atenção',
+      (tester) async {
+    final backend = _Backend(forms: [
+      _form(id: 'f1', title: 'Mentoria de dados', signups: 4, pending: 2, accepted: 2, activities: 3),
+      _form(id: 'f2', title: 'Mentoria de IA', signups: 1, pending: 0, accepted: 1, state: 'closed'),
+    ]);
+    await _open(tester, backend, body: () async {
+      expect(find.text('MENTORIAS (2)'), findsOneWidget);
+      expect(find.byKey(const Key('mentorship-card-f1')), findsOneWidget);
+      expect(find.byKey(const Key('mentorship-card-f2')), findsOneWidget);
+      expect(find.text('2 aguardando você'), findsOneWidget);
+      expect(find.text('3 atividades'), findsOneWidget);
+      expect(find.text('FECHADO'), findsOneWidget);
+      // Ainda na lista: nada de inscritos nem de atividades.
+      expect(find.text('INSCRITOS'), findsNothing);
+      expect(backend.called('GET', '/signups'), isFalse,
+          reason: 'só carrega os inscritos da mentoria que for aberta');
+    });
+  });
+
+  testWidgets('abre uma mentoria pelo cartão, vê só os dados dela e volta para a lista',
+      (tester) async {
+    final backend = _Backend(
+      forms: [
+        _form(id: 'f1', title: 'Mentoria de dados', signups: 1, pending: 1),
+        _form(id: 'f2', title: 'Mentoria de IA'),
+      ],
+      signups: [_signup('1', 'Ana Souza')],
+    );
+    await _open(tester, backend, body: () async {
+      await _openCard(tester, 'f2');
+
+      expect(find.text('MENTORIA DE IA'), findsOneWidget);
+      expect(find.byKey(const Key('mentorship-sections')), findsOneWidget);
+      expect(backend.requests.any((r) => r.url.path.contains('/f2/signups')), isTrue);
+      expect(find.text('Mentoria de dados'), findsNothing,
+          reason: 'a outra mentoria some da tela');
+
+      await tester.tap(find.byKey(const Key('mentorship-back')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('MENTORIAS (2)'), findsOneWidget);
+      expect(find.byKey(const Key('mentorship-card-f1')), findsOneWidget);
+    });
+  });
+
+  testWidgets('a tela da mentoria separa inscritos, atividades e link em seções',
+      (tester) async {
+    final backend = _Backend(
+      forms: [_form(signups: 1, pending: 1, activities: 2)],
+      signups: [_signup('1', 'Ana Souza')],
+    );
+    await _open(tester, backend, body: () async {
+      await _openCard(tester);
+
+      expect(find.text('INSCRITOS (1)'), findsOneWidget);
+      expect(find.text('ATIVIDADES (2)'), findsOneWidget);
+      expect(find.text('Ana Souza'), findsOneWidget);
+      expect(find.text('LINK E DADOS'), findsOneWidget, reason: 'só o rótulo da seção');
+      expect(find.text('ATIVIDADES E ENTREGAS'), findsNothing);
+
+      await _goTo(tester, 'ATIVIDADES');
+      expect(find.text('ATIVIDADES E ENTREGAS'), findsOneWidget);
+      expect(find.text('Ana Souza'), findsNothing);
+
+      await _goTo(tester, 'LINK E DADOS');
+      expect(find.textContaining('/education/mentorship-signup/tokf1'), findsOneWidget);
+      expect(find.text('FECHAR INSCRIÇÕES'), findsOneWidget);
+    });
+  });
+
+  testWidgets('criar a mentoria já abre a tela dela na seção do link', (tester) async {
+    final backend = _Backend();
+    await _open(tester, backend, body: () async {
+      await tester.tap(find.byKey(const Key('mentorship-new')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('mentorship-title')), 'Nova mentoria');
+      await tester.tap(find.byKey(const Key('mentorship-create')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('NOVA MENTORIA'), findsWidgets);
+      expect(find.byKey(const Key('mentorship-back')), findsOneWidget);
+      expect(find.textContaining('/education/mentorship-signup/toknovo'), findsOneWidget);
+    });
+  });
+
   testWidgets('sem formulário, orienta a criar o primeiro', (tester) async {
     await _open(tester, _Backend(), body: () async {
-      expect(find.textContaining('Nenhum formulário ainda'), findsOneWidget);
+      expect(find.textContaining('Nenhuma mentoria ainda'), findsOneWidget);
       expect(find.byKey(const Key('mentorship-new')), findsOneWidget);
     });
   });
@@ -366,10 +475,11 @@ void main() {
       signups: [_signup('1', 'Ana Souza', known: true), _signup('2', 'Bruno Lima')],
     );
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
       expect(find.text('Ana Souza'), findsOneWidget);
       expect(find.text('ALUNO CONHECIDO'), findsOneWidget);
       expect(find.text('Horários livres: Sáb manhã, Seg noite'), findsNWidgets(2));
-      expect(find.text('2 inscritos · 8 vagas'), findsOneWidget);
+      expect(find.text('INSCRITOS (2)'), findsOneWidget);
 
       await tester.tap(find.text('ACEITAR').first);
       await tester.pumpAndSettle();
@@ -387,6 +497,7 @@ void main() {
       signups: [_signup('1', 'Ana Souza'), _signup('2', 'Bruno Lima', status: 'rejected')],
     );
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
       await tester.tap(find.text('Recusados'));
       await tester.pumpAndSettle();
       expect(find.text('Ana Souza'), findsNothing);
@@ -412,10 +523,13 @@ void main() {
       signups: [_signup('1', 'Ana Souza')],
     );
     await _open(tester, backend, body: () async {
+      await _openCard(tester);
+      await _goTo(tester, 'LINK E DADOS');
       await tester.tap(find.byTooltip('Copiar link'));
       await tester.pumpAndSettle();
       expect(copied.last, 'https://app.exemplo.com/education/mentorship-signup/tokf1');
 
+      await _goTo(tester, 'INSCRITOS');
       await tester.tap(find.text('COPIAR CSV'));
       await tester.pumpAndSettle();
       expect(copied.last, contains('Matrícula;Nome'));
