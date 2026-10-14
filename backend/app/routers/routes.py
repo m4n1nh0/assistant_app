@@ -854,16 +854,17 @@ def _oauth_result_page(title: str, message: str, ok: bool = True) -> HTMLRespons
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: #090c13;
+      background: linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);
       color: #eef5ff;
       font-family: Arial, sans-serif;
     }}
     main {{
       width: min(560px, calc(100vw - 32px));
-      border: 1px solid #223047;
+      border: 1px solid #0A8FB0;
+      border-top: 4px solid #00D6FF;
       border-radius: 6px;
       padding: 28px;
-      background: #101723;
+      background: #0A1324;
     }}
     h1 {{ color: {color}; margin: 0 0 12px; font-size: 22px; }}
     p {{ color: #aab6c9; line-height: 1.55; margin: 0; }}

@@ -13,7 +13,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -31,7 +31,7 @@
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);
             color: white;
             padding: 30px;
             text-align: center;
@@ -75,7 +75,7 @@
 
         .question-number {
             font-size: 12px;
-            color: #667eea;
+            color: #0B6E8A;
             font-weight: 600;
             text-transform: uppercase;
             margin-bottom: 10px;
@@ -125,7 +125,7 @@
         .timer {
             font-size: 48px;
             font-weight: 700;
-            color: #667eea;
+            color: #0B6E8A;
             text-align: center;
             margin: 20px 0;
         }
@@ -159,15 +159,15 @@
         }
 
         .option-button:hover {
-            border-color: #667eea;
+            border-color: #0B6E8A;
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.1);
+            box-shadow: 0 10px 20px rgba(11, 110, 138, 0.1);
         }
 
         .option-button.selected {
-            background: #667eea;
+            background: #0B6E8A;
             color: white;
-            border-color: #667eea;
+            border-color: #0B6E8A;
         }
 
         .option-button.correct {
@@ -189,9 +189,9 @@
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            background: rgba(102, 126, 234, 0.1);
+            background: rgba(11, 110, 138, 0.1);
             font-weight: 700;
-            color: #667eea;
+            color: #0B6E8A;
         }
 
         .option-button.selected .option-label,
@@ -223,7 +223,7 @@
 
         .open-question textarea:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #0B6E8A;
         }
 
         .actions {
@@ -244,14 +244,14 @@
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);
             color: white;
             flex: 1;
         }
 
         .btn-primary:hover:not(:disabled) {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 10px 20px rgba(11, 110, 138, 0.3);
         }
 
         .btn-primary:disabled {
@@ -314,7 +314,7 @@
         .results-score {
             font-size: 48px;
             font-weight: 700;
-            color: #667eea;
+            color: #0B6E8A;
             margin-bottom: 10px;
         }
 
@@ -334,7 +334,7 @@
         .stat-value {
             font-size: 32px;
             font-weight: 700;
-            color: #667eea;
+            color: #0B6E8A;
         }
 
         .stat-label {
@@ -357,7 +357,7 @@
             width: 50px;
             height: 50px;
             border: 4px solid #e5e7eb;
-            border-top: 4px solid #667eea;
+            border-top: 4px solid #0B6E8A;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
@@ -728,7 +728,7 @@
             if (timeLeft <= 10) {
                 timerEl.style.color = '#ef4444';
             } else {
-                timerEl.style.color = '#667eea';
+                timerEl.style.color = '#0B6E8A';
             }
         }
 

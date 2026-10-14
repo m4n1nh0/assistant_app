@@ -18,8 +18,8 @@ LIVEKIT_CLIENT_URL = (
 
 _STYLE = """
 *{box-sizing:border-box}
-body{margin:0;background:#0b1220;color:#e5ecf6;font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
-.brand{font-size:12px;font-weight:900;letter-spacing:2px;color:#7dd3fc}
+body{margin:0;background:#0A1324;color:#e5ecf6;font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+.brand{font-size:12px;font-weight:900;letter-spacing:2px;color:#00D6FF}
 h1{font-size:22px;margin:8px 0 4px}
 p{margin:6px 0;color:#9fb3c8;font-size:14px}
 #join{min-height:calc(100vh - 52px);display:grid;place-items:center;padding:20px}
@@ -29,7 +29,7 @@ input[type=text]{width:100%;padding:12px 14px;border:2px solid #25456b;border-ra
 .consent{display:flex;gap:10px;align-items:flex-start;margin:16px 0 4px;font-size:13px;color:#cbd5e1;line-height:1.4}
 .consent input{margin-top:3px}
 button{border:0;border-radius:10px;font-weight:800;letter-spacing:.6px;cursor:pointer}
-.primary{width:100%;margin-top:16px;padding:14px;background:#0ea5e9;color:#04121f}
+.primary{width:100%;margin-top:16px;padding:14px;background:#00D6FF;color:#04121f}
 .primary:disabled{opacity:.5;cursor:default}
 .msg{margin:14px 0 0;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:600}
 .err{background:#3b1219;color:#fca5a5}

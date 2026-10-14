@@ -497,12 +497,12 @@ def _generate_quiz_page(
 <title>{text["page_prefix"]} - {escape(f'{text["question"]} {question_index + 1}')}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);
 color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;
 display:grid;place-items:center;padding:20px}}
 main{{width:min(600px,100%);background:white;border-radius:12px;padding:28px;
 box-shadow:0 14px 35px #11182740;overflow:hidden}}
-.header{{background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:white;
+.header{{background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:white;
 margin:-28px -28px 28px;padding:20px 28px;}}
 .mark{{color:white;font-size:12px;font-weight:800;letter-spacing:2px}}
 .progress{{display:flex;justify-content:space-between;align-items:center;
@@ -512,7 +512,7 @@ margin:0 12px;}}
 .progress-fill{{height:100%;background:#4ade80;border-radius:3px;
 width:{((question_index + 1) / total_questions) * 100}%;}}
 h1{{font-size:20px;margin:20px 0 8px;color:#1f2937}}
-.player{{font-size:13px;color:#e0e7ff;margin-top:6px}}
+.player{{font-size:13px;color:#cfe8f0;margin-top:6px}}
 .question-info{{color:#6b7280;font-size:14px;margin-bottom:20px}}
 fieldset.choices{{border:0;margin:0;padding:0;min-width:0}}
 .question-text{{font-size:18px;font-weight:600;margin:20px 0;line-height:1.5;color:#1f2937;
@@ -520,28 +520,28 @@ padding:0;float:left;width:100%}}
 .question-text + *{{clear:both}}
 .option{{display:flex;align-items:center;padding:12px;margin:8px 0;border:2px solid #e5e7eb;
 border-radius:8px;cursor:pointer;transition:all 0.3s}}
-.option:hover{{border-color:#667eea;background:#f9fafb}}
-.option:focus-within{{border-color:#4f46e5;outline:3px solid #4f46e5;outline-offset:2px}}
-.btn-primary:focus-visible,.languages a:focus-visible{{outline:3px solid #facc15;outline-offset:2px}}
+.option:hover{{border-color:#0B6E8A;background:#f9fafb}}
+.option:focus-within{{border-color:#0B6E8A;outline:3px solid #0B6E8A;outline-offset:2px}}
+.btn-primary:focus-visible,.languages a:focus-visible{{outline:3px solid #D4AF37;outline-offset:2px}}
 @media (prefers-reduced-motion:reduce){{*{{animation:none!important;transition:none!important}}}}
 .option input[type="radio"]{{margin-right:12px;cursor:pointer;width:20px;height:20px}}
 .option label{{flex:1;cursor:pointer;margin:0}}
 textarea{{width:100%;min-height:120px;padding:12px;border:2px solid #e5e7eb;
 border-radius:8px;font-size:16px;font-family:inherit;resize:vertical;margin:12px 0}}
-textarea:focus{{outline:none;border-color:#667eea}}
+textarea:focus{{outline:none;border-color:#0B6E8A}}
 .feedback{{padding:12px;border-radius:8px;margin:12px 0;font-weight:600}}
 .feedback.correct{{background:#dcfce7;color:#166534;border-left:4px solid #4ade80}}
 .feedback.incorrect{{background:#fee2e2;color:#7f1d1d;border-left:4px solid #ef4444}}
 .feedback.skipped{{background:#fef3c7;color:#92400e;border-left:4px solid #f59e0b}}
 .actions{{display:flex;gap:10px;margin-top:20px}}
-.btn-primary{{flex:1;padding:12px;border:0;border-radius:8px;background:#667eea;
+.btn-primary{{flex:1;padding:12px;border:0;border-radius:8px;background:#0B6E8A;
 color:white;font-weight:800;letter-spacing:.7px;cursor:pointer;text-decoration:none;
 text-align:center;transition:all 0.3s}}
-.btn-primary:hover{{transform:translateY(-2px);box-shadow:0 8px 16px rgba(102, 126, 234, 0.3)}}
+.btn-primary:hover{{transform:translateY(-2px);box-shadow:0 8px 16px rgba(11, 110, 138, 0.3)}}
 .btn-secondary{{flex:1;padding:12px;border:2px solid #e5e7eb;border-radius:8px;
 background:white;color:#6b7280;font-weight:800;cursor:pointer;text-decoration:none;
 text-align:center;transition:all 0.3s}}
-.btn-secondary:hover{{border-color:#667eea;color:#667eea}}
+.btn-secondary:hover{{border-color:#0B6E8A;color:#0B6E8A}}
 small{{display:block;color:#7b8999;margin-top:18px;line-height:1.4;text-align:center}}
 {timer_css}
 {_LIVE_CSS}
@@ -871,7 +871,7 @@ def _generate_completion_page(
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);
 color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;
 display:grid;place-items:center;padding:20px}}
 main{{width:min(500px,100%);background:white;border-radius:12px;padding:40px;
@@ -880,9 +880,9 @@ box-shadow:0 14px 35px #11182740;text-align:center;}}
 h1{{font-size:28px;margin:20px 0 10px;color:#1f2937}}
 p{{color:#6b7280;font-size:16px;margin:10px 0}}
 .btn{{display:inline-block;padding:12px 30px;margin-top:20px;border:0;border-radius:8px;
-background:#667eea;color:white;font-weight:800;letter-spacing:.7px;cursor:pointer;
+background:#0B6E8A;color:white;font-weight:800;letter-spacing:.7px;cursor:pointer;
 text-decoration:none;transition:all 0.3s}}
-.btn:hover{{transform:translateY(-2px);box-shadow:0 8px 16px rgba(102, 126, 234, 0.3)}}
+.btn:hover{{transform:translateY(-2px);box-shadow:0 8px 16px rgba(11, 110, 138, 0.3)}}
 </style></head><body><main>
 <div class="icon">{text['completed_title'].split()[0]}</div>
 <h1>{text["completed_title"]}</h1>
@@ -908,7 +908,7 @@ def _generate_empty_page(*, language: str = "pt") -> HTMLResponse:
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
 min-height:100vh;display:grid;place-items:center;padding:20px}}
 main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
 box-shadow:0 14px 35px #11182740;text-align:center;}}
@@ -939,7 +939,7 @@ def _generate_closed_page(*, language: str = "pt") -> HTMLResponse:
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
 min-height:100vh;display:grid;place-items:center;padding:20px}}
 main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
 box-shadow:0 14px 35px #11182740;text-align:center;}}
@@ -970,7 +970,7 @@ def _generate_draft_page(*, language: str = "pt") -> HTMLResponse:
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
 min-height:100vh;display:grid;place-items:center;padding:20px}}
 main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
 box-shadow:0 14px 35px #11182740;text-align:center;}}
@@ -1040,18 +1040,18 @@ def _generate_join_page(
 .intro{{margin:0 0 4px;color:#4b5563;font-size:14px}}
 .error{{margin:10px 0 0;padding:10px 12px;border-radius:8px;background:#fef2f2;
 color:#b91c1c;font-size:14px;font-weight:600}}
-input[name=enrollment]:focus-visible{{outline:3px solid #4f46e5;outline-offset:2px}}
+input[name=enrollment]:focus-visible{{outline:3px solid #0B6E8A;outline-offset:2px}}
 *{{box-sizing:border-box}}
-body{{margin:0;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#111827;
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:#111827;
 font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;
 place-items:center;padding:20px}}
 main{{width:min(460px,100%);background:white;border-radius:14px;padding:34px;
 box-shadow:0 18px 45px #11182740;text-align:center}}
-.brand{{font-size:12px;font-weight:900;letter-spacing:2px;color:#4f46e5}}
+.brand{{font-size:12px;font-weight:900;letter-spacing:2px;color:#0B6E8A}}
 h1{{font-size:30px;margin:12px 0;color:#111827}}
 input{{width:100%;padding:14px 16px;border:2px solid #d1d5db;border-radius:10px;
 font-size:18px;margin:18px 0 14px}}
-button{{width:100%;padding:14px;border:0;border-radius:10px;background:#4f46e5;
+button{{width:100%;padding:14px;border:0;border-radius:10px;background:#0B6E8A;
 color:white;font-weight:900;letter-spacing:.8px;cursor:pointer}}
 fieldset.langs{{margin:4px 0 18px;padding:0;border:0;min-width:0;text-align:left}}
 .langs legend{{padding:0;margin:0 0 8px;font-size:13px;font-weight:700;color:#4b5563}}
@@ -1060,9 +1060,9 @@ fieldset.langs{{margin:4px 0 18px;padding:0;border:0;min-width:0;text-align:left
 padding:10px 4px;text-align:center;font-size:14px;font-weight:700;color:#374151;cursor:pointer}}
 /* Escondido so da vista: continua focavel por teclado e lido pelo leitor de tela. */
 .lang input{{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}}
-.lang.on{{border-color:#4f46e5;background:#eef2ff;color:#3730a3}}
-.lang:focus-within{{outline:3px solid #4f46e5;outline-offset:2px}}
-input[name=student_name]:focus-visible,button:focus-visible{{outline:3px solid #4f46e5;outline-offset:2px}}
+.lang.on{{border-color:#0B6E8A;background:#e6f4f8;color:#0A3A5C}}
+.lang:focus-within{{outline:3px solid #0B6E8A;outline-offset:2px}}
+input[name=student_name]:focus-visible,button:focus-visible{{outline:3px solid #0B6E8A;outline-offset:2px}}
 </style></head><body><main>
 <div class="brand">{text["brand"]}</div>
 <h1>{text["page_prefix"]}</h1>
@@ -1108,7 +1108,7 @@ def _generate_waiting_page(
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:#111827;color:white;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+body{{margin:0;background:#0A1324;color:white;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
 min-height:100vh;display:grid;place-items:center;padding:20px}}
 main{{width:min(480px,100%);text-align:center}}
 .pulse{{width:84px;height:84px;border:8px solid #38bdf8;border-top-color:transparent;
@@ -1241,24 +1241,24 @@ def _generate_ranking_page(
 <title>{text["ranking"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:linear-gradient(135deg,#0f172a,#581c87);color:white;
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:white;
 font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;padding:20px;
 display:grid;place-items:center}}
 main{{width:min(620px,100%)}}
-.player{{color:#c4b5fd;font-weight:800;text-align:center}}
+.player{{color:#7dd3fc;font-weight:800;text-align:center}}
 h1{{font-size:36px;text-align:center;margin:8px 0 18px}}
 .question{{background:#ffffff14;border:1px solid #ffffff25;border-radius:12px;
-padding:14px;margin-bottom:16px;color:#e0e7ff}}
+padding:14px;margin-bottom:16px;color:#cfe8f0}}
 ol{{list-style:none;padding:0;margin:0;display:grid;gap:8px}}
 li{{display:grid;grid-template-columns:64px 1fr auto;gap:10px;align-items:center;
 background:white;color:#111827;border-radius:10px;padding:12px 14px}}
-li.me{{outline:3px solid #facc15}}
-li strong{{font-size:20px;color:#7c3aed}}
+li.me{{outline:3px solid #D4AF37}}
+li strong{{font-size:20px;color:#0B6E8A}}
 li span small{{display:block;font-size:12px;font-weight:700;margin-top:2px}}
 li span small.gain{{color:#15803d}}
 li span small.none{{color:#6b7280}}
 li em{{font-style:normal;font-weight:900;color:#0f766e}}
-.own{{margin-top:18px;background:#facc15;color:#422006;border-radius:12px;
+.own{{margin-top:18px;background:#D4AF37;color:#422006;border-radius:12px;
 padding:16px;text-align:center;font-size:20px;font-weight:800}}
 .verdict{{font-size:16px;margin-bottom:6px}}
 .verdict.ok{{color:#14532d}}
@@ -1532,7 +1532,7 @@ async def quiz_play_page(
 <title>{text["page_prefix"]}</title>
 <style>
 *{{box-sizing:border-box}}
-body{{margin:0;background:#f3f6fa;color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
+body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:#111827;font:16px system-ui,-apple-system,Segoe UI,sans-serif;
 min-height:100vh;display:grid;place-items:center;padding:20px}}
 main{{width:min(440px,100%);background:white;border-radius:12px;padding:40px;
 box-shadow:0 14px 35px #11182740;text-align:center;}}

@@ -716,7 +716,7 @@ def _check_in_page(
 ) -> HTMLResponse:
     language = _normalize_public_language(language) or "pt"
     text = _PUBLIC_TEXT[language]
-    accent = "#059669" if ok is not False else "#dc2626"
+    accent = "#0B6E8A" if ok is not False else "#dc2626"
     form = ""
     if open_for_check_in:
         form = f"""
@@ -734,18 +734,17 @@ def _check_in_page(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{text["page_prefix"]} - {escape(title)}</title>
 <style>
-*{{box-sizing:border-box}} body{{margin:0;background:#f3f6fa;color:#111827;
+*{{box-sizing:border-box}} body{{margin:0;background:linear-gradient(135deg,#0A1324 0%,#0F2A52 60%,#0A3A5C 100%);color:#111827;
 font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;
-place-items:center;padding:20px}} main{{width:min(440px,100%);background:white;border:1px solid
-#d8e0ea;border-radius:12px;padding:28px;box-shadow:0 14px 35px #11182718}}
+place-items:center;padding:20px}} main{{width:min(440px,100%);background:white;border-top:4px solid #00D6FF;border-radius:12px;padding:28px;box-shadow:0 14px 35px #11182718}}
 .mark{{color:{accent};font-size:12px;font-weight:800;letter-spacing:2px}}
 h1{{font-size:23px;margin:8px 0 6px}} p{{color:#526277;line-height:1.45;margin:0 0 20px}}
 label{{display:block;font-size:12px;font-weight:700;margin-bottom:6px}} input{{width:100%;
 padding:13px;border:1px solid #b9c5d3;border-radius:7px;font-size:18px;margin-bottom:12px}}
-button{{width:100%;padding:13px;border:0;border-radius:7px;background:#059669;color:white;
+button{{width:100%;padding:13px;border:0;border-radius:7px;background:#0A1324;color:#00D6FF;
 font-weight:800;letter-spacing:.7px;cursor:pointer}} small{{display:block;color:#7b8999;
  margin-top:18px;line-height:1.4}}
-.languages{{display:flex;justify-content:flex-end;gap:5px;margin:-5px 0 14px}}
+.languages{{display:flex;justify-content:flex-end;gap:5px;margin:10px 0 14px}}
 .languages a{{color:#526277;text-decoration:none;border:1px solid #d8e0ea;border-radius:5px;
 padding:5px 7px;font-size:12px}} .languages a.active{{color:{accent};border-color:{accent};
 font-weight:800;background:#f0fdf8}}
