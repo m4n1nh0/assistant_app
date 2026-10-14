@@ -91,6 +91,9 @@ class Settings(MCPSettings):
     # Nome que aparece como remetente nos e-mails; sem ele o Gmail mostra so o
     # endereco tecnico do provedor.
     email_sender_name: str = "INTARQ"
+    # Endereco publico do servidor (https://...), de onde os e-mails buscam o logo.
+    # Na Railway vem sozinho de RAILWAY_PUBLIC_DOMAIN.
+    public_base_url: str = ""
     health_alerts_enabled: bool = False
     health_alert_interval_seconds: int = Field(default=60, ge=30)
     health_alert_failure_threshold: int = Field(default=3, ge=1)

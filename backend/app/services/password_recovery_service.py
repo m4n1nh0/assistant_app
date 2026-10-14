@@ -76,6 +76,7 @@ async def _send_password_reset_email(
             "Se voce nao fez esta solicitacao, ignore este email. Sua senha "
             "nao sera alterada."
         ),
+        highlight=token,
     )
 
 

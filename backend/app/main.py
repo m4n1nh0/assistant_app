@@ -53,6 +53,7 @@ from .routers.llm_config import router as llm_config_router
 from .routers.quiz_web import router as quiz_web_router
 from .routers.quiz_play import router as quiz_play_router
 from .routers.material_submission import router as material_submission_router
+from .routers.brand import router as brand_router
 from .routers.mentorship import public_router as mentorship_public_router
 from .routers.mentorship import router as mentorship_router
 from .routers.meeting_rooms import public as meeting_public_router
@@ -269,6 +270,7 @@ app.include_router(llm_config_router)
 app.include_router(quiz_web_router)
 app.include_router(quiz_play_router)
 app.include_router(material_submission_router)
+app.include_router(brand_router)
 app.include_router(mentorship_public_router)
 app.include_router(mentorship_router)
 app.include_router(meeting_public_router)

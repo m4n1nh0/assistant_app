@@ -328,8 +328,7 @@ async def send_confirmation(form: MentorshipFormModel, signup: MentorshipSignupM
             text_content=(
                 f"Olá, {signup.name}!\n\n"
                 f"Recebemos a sua inscrição na mentoria “{form.title}”.\n"
-                "Você receberá uma resposta quando as inscrições forem analisadas.\n\n"
-                "INTARQ\n"))
+                "Você receberá uma resposta quando as inscrições forem analisadas.\n"))
         return True
     except Exception as exc:
         logger.warning(f"Confirmacao de mentoria nao enviada: {exc}")

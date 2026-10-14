@@ -92,8 +92,15 @@ async def send_transactional_email(
     *,
     subject: str,
     text_content: str,
+    highlight: str | None = None,
 ) -> None:
-    """Delivers security emails without exposing provider details to callers."""
+    """Delivers security emails without exposing provider details to callers.
+
+    O corpo vai em texto e em HTML com a marca INTARQ (montado a partir do texto);
+    `highlight` e a linha que ganha destaque, como o token de uso unico.
+    """
+    from .email_template import render_html
+
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
     payload = {
         "sender": {
@@ -103,6 +110,7 @@ async def send_transactional_email(
         "to": [{"email": recipient.strip().lower()}],
         "subject": subject,
         "textContent": text_content,
+        "htmlContent": render_html(subject, text_content, highlight=highlight),
     }
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
@@ -136,6 +144,7 @@ async def _send_registration_email(
             f"Valido ate {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}.\n\n"
             "Se voce nao solicitou este token, ignore este email."
         ),
+        highlight=token,
     )
 
 
