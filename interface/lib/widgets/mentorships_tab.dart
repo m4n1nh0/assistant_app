@@ -8,6 +8,8 @@
 /// não entrega é tirar o aluno da turma.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -22,7 +24,16 @@ class MentorshipsTab extends StatefulWidget {
   final EducationService? service;
   final String? baseUrl;
 
-  const MentorshipsTab({super.key, this.service, this.baseUrl});
+  /// De quanto em quanto tempo a lista se atualiza sozinha, para novas inscrições
+  /// aparecerem sem apertar nada. Zero desliga (testes).
+  final Duration pollEvery;
+
+  const MentorshipsTab({
+    super.key,
+    this.service,
+    this.baseUrl,
+    this.pollEvery = const Duration(seconds: 15),
+  });
 
   @override
   State<MentorshipsTab> createState() => _MentorshipsTabState();
@@ -48,6 +59,7 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
   bool _busy = false;
   bool _error = false;
   String _message = '';
+  Timer? _timer;
 
   MentorshipForm? get _selected {
     for (final form in _forms) {
@@ -60,10 +72,32 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
   void initState() {
     super.initState();
     _load();
+    if (widget.pollEvery > Duration.zero) {
+      _timer = Timer.periodic(widget.pollEvery, (_) => _refresh());
+    }
+  }
+
+  /// Atualização silenciosa: não mexe na mensagem nem no que o professor está
+  /// escrevendo, e fica quieta quando a rede falha (a próxima rodada resolve).
+  Future<void> _refresh() async {
+    if (!mounted || _busy || _loading) return;
+    try {
+      final forms = await _service.listMentorships();
+      if (!mounted) return;
+      setState(() {
+        _forms = forms;
+        if (_selected == null) _selectedId = forms.isEmpty ? null : forms.first.id;
+      });
+      final id = _selectedId;
+      if (id == null) return;
+      final signups = await _service.listMentorshipSignups(id);
+      if (mounted && _selectedId == id && !_busy) setState(() => _signups = signups);
+    } catch (_) {}
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
     _title.dispose();
     _description.dispose();
     _slots.dispose();

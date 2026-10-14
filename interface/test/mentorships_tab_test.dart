@@ -116,6 +116,7 @@ class _Backend {
 Future<void> _open(
   WidgetTester tester,
   _Backend backend, {
+  Duration pollEvery = Duration.zero,
   required Future<void> Function() body,
 }) async {
   tester.view.physicalSize = const Size(1600, 1800);
@@ -123,8 +124,8 @@ Future<void> _open(
   addTearDown(tester.view.reset);
   final client = MockClient((request) async => backend.handle(request));
   await http.runWithClient(() async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(body: MentorshipsTab(baseUrl: 'https://app.exemplo.com')),
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: MentorshipsTab(baseUrl: 'https://app.exemplo.com', pollEvery: pollEvery)),
     ));
     await tester.pumpAndSettle();
     await body();
@@ -132,6 +133,27 @@ Future<void> _open(
 }
 
 void main() {
+  testWidgets('novas inscrições aparecem sozinhas, sem apertar nada', (tester) async {
+    final backend = _Backend(
+      forms: [_form(signups: 1, pending: 1)],
+      signups: [_signup('1', 'Ana Souza')],
+    );
+    await _open(tester, backend, pollEvery: const Duration(seconds: 15), body: () async {
+      expect(find.text('Ana Souza'), findsOneWidget);
+      expect(find.text('Bruno Lima'), findsNothing);
+
+      backend.forms = [_form(signups: 2, pending: 2)];
+      backend.signups = [_signup('1', 'Ana Souza'), _signup('2', 'Bruno Lima')];
+      await tester.pump(const Duration(seconds: 16));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bruno Lima'), findsOneWidget);
+      expect(find.text('2 inscritos · 8 vagas'), findsOneWidget);
+    });
+    // Desmonta a tela para o timer periódico não ficar pendente.
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('horários livres aparecem legíveis', () {
     expect(availabilityText(['sab-manha', 'seg-noite']), 'Sáb manhã, Seg noite');
     expect(availabilityText(null), '');

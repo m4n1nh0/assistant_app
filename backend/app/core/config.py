@@ -88,6 +88,9 @@ class Settings(MCPSettings):
     smtp_starttls: bool = True
     smtp_use_ssl: bool = False
     brevo_api_key: str = ""
+    # Nome que aparece como remetente nos e-mails; sem ele o Gmail mostra so o
+    # endereco tecnico do provedor.
+    email_sender_name: str = "INTARQ"
     health_alerts_enabled: bool = False
     health_alert_interval_seconds: int = Field(default=60, ge=30)
     health_alert_failure_threshold: int = Field(default=3, ge=1)

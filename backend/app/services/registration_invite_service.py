@@ -96,7 +96,10 @@ async def send_transactional_email(
     """Delivers security emails without exposing provider details to callers."""
     sender = settings.smtp_from.strip() or settings.smtp_username.strip()
     payload = {
-        "sender": {"email": sender},
+        "sender": {
+            "name": str(getattr(settings, "email_sender_name", "")).strip() or "INTARQ",
+            "email": sender,
+        },
         "to": [{"email": recipient.strip().lower()}],
         "subject": subject,
         "textContent": text_content,
