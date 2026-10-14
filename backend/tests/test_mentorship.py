@@ -325,3 +325,36 @@ def test_so_o_dono_ve_e_mexe_no_formulario(api):
     assert api.patch(f"/education/mentorships/{form['id']}", json={"active": False}
                      ).status_code == 404
     assert api.get(f"/education/mentorships/{form['id']}/signups").status_code == 404
+
+
+def test_aceitar_avisa_por_email_so_quem_mudou_de_situacao(api):
+    form = cria(api)
+    inscreve(api, form, matricula="777")
+    inscrito = api.get(f"/education/mentorships/{form['id']}/signups").json()[0]
+    url = f"/education/mentorships/{form['id']}/signups/status"
+    api.emails.clear()  # a confirmacao do envio nao conta
+
+    primeiro = api.post(url, json={"ids": [inscrito["id"]], "status": "accepted"}).json()
+    repetido = api.post(url, json={"ids": [inscrito["id"]], "status": "accepted"}).json()
+
+    assert primeiro["emailed"] == 1 and repetido["emailed"] == 0
+    assert [assunto for _, assunto in api.emails] == ["Inscrição aceita: Mentoria de dados"]
+
+    api.post(url, json={"ids": [inscrito["id"]], "status": "removed"})
+    api.emails.clear()
+    de_volta = api.post(url, json={"ids": [inscrito["id"]], "status": "accepted"}).json()
+
+    assert de_volta["emailed"] == 1  # removido e aceito de novo e avisado outra vez
+    assert len(api.emails) == 1
+
+
+def test_recusar_e_remover_nao_mandam_email(api):
+    form = cria(api)
+    inscreve(api, form, matricula="777")
+    inscrito = api.get(f"/education/mentorships/{form['id']}/signups").json()[0]
+    api.emails.clear()
+
+    resposta = api.post(f"/education/mentorships/{form['id']}/signups/status",
+                        json={"ids": [inscrito["id"]], "status": "rejected"}).json()
+
+    assert resposta["emailed"] == 0 and api.emails == []

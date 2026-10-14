@@ -366,8 +366,10 @@ async def ensure_class(db: AsyncSession, form: MentorshipFormModel) -> ClassGrou
 
 
 async def set_status(db: AsyncSession, form: MentorshipFormModel,
-                     signups: list[MentorshipSignupModel], status: str) -> None:
+                     signups: list[MentorshipSignupModel], status: str) -> list[MentorshipSignupModel]:
     """Muda a situacao dos inscritos e mantem a turma da mentoria em dia.
+
+    Devolve so os que mudaram de situacao: quem ja estava assim nao e avisado de novo.
 
     Aceitar cria o aluno na turma (ou reativa o que ja existia); recusar ou remover quem
     estava aceito tira o aluno da turma, sem apagar o historico dele.
@@ -375,6 +377,7 @@ async def set_status(db: AsyncSession, form: MentorshipFormModel,
     if status not in STATUSES:
         raise MentorshipError("status", "Situação inválida.")
     group = await ensure_class(db, form) if status == "accepted" else None
+    changed = [s for s in signups if s.status != status]
     for signup in signups:
         if status == "accepted":
             student = await db.get(StudentModel, signup.student_id) if signup.student_id else None
@@ -394,3 +397,26 @@ async def set_status(db: AsyncSession, form: MentorshipFormModel,
                 student.active = False
         signup.status = status
     await db.commit()
+    return changed
+
+
+async def notify_decision(form: MentorshipFormModel, signup: MentorshipSignupModel,
+                          status: str) -> bool:
+    """Avisa o inscrito por e-mail quando ele e aceito. Falha nunca desfaz o aceite."""
+    from .registration_invite_service import (
+        registration_delivery_configured, send_transactional_email)
+
+    if status != "accepted" or not registration_delivery_configured(signup.email):
+        return False
+    try:
+        await send_transactional_email(
+            signup.email,
+            subject=f"Inscrição aceita: {form.title}"[:200],
+            text_content=(
+                f"Olá, {signup.name}!\n\n"
+                f"Boas notícias: a sua inscrição na mentoria “{form.title}” foi aceita.\n\n"
+                "Em breve você receberá os detalhes dos encontros.\n"))
+        return True
+    except Exception as exc:
+        logger.warning(f"Aviso de aceite da mentoria nao enviado: {exc}")
+        return False

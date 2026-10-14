@@ -233,7 +233,7 @@ class EducationService {
   }
 
   /// Aceita, recusa ou remove inscritos; aceitar põe o aluno na turma da mentoria.
-  Future<MentorshipForm> setMentorshipSignupStatus(
+  Future<({MentorshipForm form, int emailed})> setMentorshipSignupStatus(
       String id, List<String> signupIds, String status) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/education/mentorships/$id/signups/status'),
@@ -241,7 +241,10 @@ class EducationService {
       body: jsonEncode({'ids': signupIds, 'status': status}),
     );
     final data = Map<String, dynamic>.from(_decode(response) as Map);
-    return MentorshipForm.fromJson(Map<String, dynamic>.from(data['form'] as Map));
+    return (
+      form: MentorshipForm.fromJson(Map<String, dynamic>.from(data['form'] as Map)),
+      emailed: (data['emailed'] as num?)?.toInt() ?? 0,
+    );
   }
 
   /// Inscritos em CSV (ponto e vírgula, abre direto no Excel).

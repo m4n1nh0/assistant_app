@@ -318,12 +318,13 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
   Future<void> _setStatus(MentorshipForm form, List<MentorshipSignup> items,
           String status) =>
       _guard(() async {
-        final updated = await _service.setMentorshipSignupStatus(
+        final result = await _service.setMentorshipSignupStatus(
             form.id, [for (final s in items) s.id], status);
-        _replace(updated);
+        _replace(result.form);
         await _loadSignups();
         _report(switch (status) {
-          'accepted' => '${items.length} aceito(s). Já estão na turma da mentoria.',
+          'accepted' => '${items.length} aceito(s). Já estão na turma da mentoria'
+              '${result.emailed > 0 ? ' e ${result.emailed} foram avisados por e-mail' : ''}.',
           'rejected' => '${items.length} recusado(s).',
           _ => '${items.length} removido(s) da turma.',
         });

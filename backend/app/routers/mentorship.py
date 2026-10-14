@@ -203,10 +203,11 @@ async def set_signup_status(
         MentorshipSignupModel.form_id == form.id,
         MentorshipSignupModel.id.in_(body.ids)))).scalars().all()
     try:
-        await svc.set_status(db, form, list(rows), body.status)
+        changed = await svc.set_status(db, form, list(rows), body.status)
     except svc.MentorshipError as exc:
         raise HTTPException(exc.status, exc.message) from exc
-    return {"changed": len(rows), "class_id": form.class_id, "form": await _form_out(form, db)}
+    sent = [await svc.notify_decision(form, item, body.status) for item in changed]
+    return {"changed": len(rows), "emailed": sum(sent), "class_id": form.class_id, "form": await _form_out(form, db)}
 
 
 @router.get("/{form_id}/export")
