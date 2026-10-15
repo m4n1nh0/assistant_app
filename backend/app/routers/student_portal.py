@@ -123,6 +123,7 @@ _SCRIPT = """
   var base = location.pathname.replace(/\\/$/, "");
   var $ = function (id) { return document.getElementById(id); };
   var enrollment = "", data = null, current = "aulas";
+  var MODE = {presencial: "Presencial", online: "Online", ambos: "Presencial ou online"};
   var STATUS = {delivered: ["Entregue", "ok"], late: ["Entregue com atraso", "warn"],
                 overdue: ["Prazo vencido", "bad"], pending: ["Pendente", "info"]};
 
@@ -241,6 +242,63 @@ _SCRIPT = """
         c.appendChild(btn); c.appendChild(out); root.appendChild(c);
       });
     },
+    atendimento: function (root) {
+      var a = data.availability;
+      if (!a.weekly.length && !a.upcoming.length) return root.appendChild(
+        empty("O professor ainda não publicou horários de atendimento."));
+      function where(parent, s) {
+        var text = MODE[s.mode] || "";
+        parent.appendChild(document.createTextNode(text));
+        if (!s.location) return;
+        parent.appendChild(document.createTextNode(" · "));
+        if (/^https?:\/\//i.test(s.location)) {
+          var link = el("a", "go", "entrar na reunião");
+          link.href = s.location; link.rel = "noopener noreferrer"; link.target = "_blank";
+          parent.appendChild(link);
+        } else parent.appendChild(document.createTextNode(s.location));
+      }
+      var week = el("div", "card");
+      week.appendChild(el("h3", "", "Horários da semana"));
+      week.appendChild(el("div", "meta", "Repetem toda semana, exceto nos dias avisados abaixo."));
+      if (!a.weekly.length) week.appendChild(empty("Nenhum horário fixo."));
+      a.weekly.forEach(function (s) {
+        var p = el("p");
+        p.appendChild(chip(s.weekday_name, "info"));
+        p.appendChild(document.createTextNode(s.start_time + " às " + s.end_time + " · "));
+        where(p, s);
+        if (s.audience !== "todos") {
+          var who = chip(s.audience === "mentoria" ? "só mentoria" : "só graduação", "");
+          who.style.marginLeft = "8px"; p.appendChild(who);
+        }
+        if (s.note) p.appendChild(el("div", "meta", s.note));
+        week.appendChild(p);
+      });
+      root.appendChild(week);
+
+      var next = el("div", "card");
+      next.appendChild(el("h3", "", "Próximos 28 dias"));
+      if (!a.upcoming.length) next.appendChild(empty("Nenhum atendimento nos próximos dias."));
+      a.upcoming.forEach(function (o) {
+        var parts = o.date.split("-");
+        var day = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        var p = el("p");
+        p.appendChild(chip(day.toLocaleDateString("pt-BR",
+          {weekday: "short", day: "2-digit", month: "2-digit"}), o.blocked ? "bad" : "ok"));
+        if (o.blocked) {
+          p.appendChild(document.createTextNode("Sem atendimento" + (o.note ? " · " + o.note : "")));
+        } else {
+          p.appendChild(document.createTextNode(o.start_time + " às " + o.end_time + " · "));
+          where(p, o);
+          if (o.source === "extra") {
+            var extra = chip("horário extra", "warn");
+            extra.style.marginLeft = "8px"; p.appendChild(extra);
+          }
+          if (o.note) p.appendChild(el("div", "meta", o.note));
+        }
+        next.appendChild(p);
+      });
+      root.appendChild(next);
+    },
     mentoria: function (root) {
       if (!data.mentorships.length) return root.appendChild(
         empty("Você não está em nenhuma mentoria."));
@@ -267,6 +325,7 @@ _SCRIPT = """
     var tabs = $("tabs"); tabs.textContent = "";
     var defs = [["aulas", "Aulas", true], ["quizzes", "Quizzes", true],
                 ["pontos", "Pontos", true], ["materiais", "Materiais", true],
+                ["atendimento", "Atendimento", true],
                 ["mentoria", "Mentoria", data.mentorships.length > 0]];
     defs.filter(function (d) { return d[2]; }).forEach(function (d) {
       var b = el("button", "tab", d[1]); b.type = "button"; b.setAttribute("role", "tab");

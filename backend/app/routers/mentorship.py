@@ -529,6 +529,19 @@ async def delivery_matrix(
     }
 
 
+@router.get("/{form_id}/meeting-plan")
+async def meeting_plan(
+    form_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Quais faixas da sua agenda servem melhor aos aceitos, pelos horários livres deles."""
+    from ..services import availability_service
+
+    form = await _owned(form_id, user["tutor_id"], db)
+    return await availability_service.meeting_plan(db, form)
+
+
 @router.get("/{form_id}/at-risk")
 async def at_risk(
     form_id: str,

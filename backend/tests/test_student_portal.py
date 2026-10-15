@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import (
+    AvailabilityExceptionModel,
+    AvailabilitySlotModel,
     ClassGroupModel,
     DisciplineModel,
     LessonClassGroupModel,
@@ -49,7 +51,8 @@ TABELAS = (
     LessonPointModel, MaterialModel, ProjectGroupModel, ProjectGroupMemberModel, ProjectGroupClassModel,
     QuizModel, QuestionModel, StudentAnswerModel, QuizGroupConfigModel, QuizGroupLinkModel,
     QuizGroupRepresentativeModel, MentorshipFormModel, MentorshipSignupModel, MentorshipActivityModel,
-    MentorshipDeliveryModel, StudentPortalModel,
+    MentorshipDeliveryModel, StudentPortalModel, AvailabilitySlotModel,
+    AvailabilityExceptionModel,
 )
 AGORA = datetime(2026, 10, 10, 12, 0)
 
@@ -388,3 +391,72 @@ def test_quiz_em_andamento_vem_marcado_e_quem_nao_respondeu_nao_ve(api):
     assert consulta(api, "20240002").json()["quizzes"][0]["finished"] is False
     # Aluno de outra turma/disciplina nao tem o quiz
     assert consulta(api, "20240003").json()["quizzes"] == []
+
+
+# --- agenda de atendimento ---------------------------------------------------------------
+
+
+def com_agenda(api):
+    """Quinta 19-21 para todos, sabado 9-11 so mentoria, segunda 14-16 so graduacao."""
+    async def run():
+        async with api.sessions() as db:
+            db.add_all([
+                AvailabilitySlotModel(tutor_id="t1", weekday=3, start_time="19:00",
+                                      end_time="21:00", mode="online",
+                                      location="https://meet.exemplo.com/sala", audience="todos"),
+                AvailabilitySlotModel(tutor_id="t1", weekday=5, start_time="09:00",
+                                      end_time="11:00", mode="presencial", location="Sala 12",
+                                      audience="mentoria"),
+                AvailabilitySlotModel(tutor_id="t1", weekday=0, start_time="14:00",
+                                      end_time="16:00", mode="presencial", location="Bloco B",
+                                      audience="graduacao"),
+                AvailabilitySlotModel(tutor_id="t1", weekday=1, start_time="10:00",
+                                      end_time="11:00", audience="todos", active=False),
+            ])
+            await db.commit()
+
+    asyncio.run(run())
+
+
+def test_portal_mostra_so_as_faixas_que_valem_para_o_aluno(api):
+    com_agenda(api)
+
+    bia = consulta(api, "20240002").json()["availability"]  # so graduacao
+    ana = consulta(api, "20240001").json()["availability"]  # graduacao e mentoria
+
+    assert {(s["weekday_name"], s["audience"]) for s in bia["weekly"]} == {
+        ("Segunda", "graduacao"), ("Quinta", "todos")}
+    assert {s["weekday_name"] for s in ana["weekly"]} == {"Segunda", "Quinta", "Sábado"}
+    assert "Sala 12" not in str(bia) and "Sala 12" in str(ana)
+    assert "Terça" not in str(ana), "faixa desativada nao aparece"
+
+
+def test_portal_traz_as_ocorrencias_datadas_e_os_dias_bloqueados(api):
+    com_agenda(api)
+    from app.services import availability_service as availability
+
+    quinta = availability.today()
+    while quinta.weekday() != 3:
+        quinta += timedelta(days=1)
+
+    async def bloqueia():
+        async with api.sessions() as db:
+            db.add(AvailabilityExceptionModel(tutor_id="t1", day=quinta.isoformat(),
+                                              kind="blocked", note="Viagem"))
+            await db.commit()
+
+    asyncio.run(bloqueia())
+
+    upcoming = consulta(api, "20240002").json()["availability"]["upcoming"]
+
+    bloqueado = [o for o in upcoming if o["date"] == quinta.isoformat()]
+    assert len(bloqueado) == 1 and bloqueado[0]["blocked"] is True
+    assert bloqueado[0]["note"] == "Viagem"
+    proxima = quinta + timedelta(days=7)
+    assert any(o["date"] == proxima.isoformat() and o["start_time"] == "19:00" for o in upcoming)
+
+
+def test_sem_agenda_o_portal_devolve_listas_vazias(api):
+    dados = consulta(api, "20240002").json()["availability"]
+
+    assert dados == {"weekly": [], "upcoming": []}

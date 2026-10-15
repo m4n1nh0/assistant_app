@@ -634,4 +634,29 @@ void main() {
       expect(calls, 0);
     });
   });
+
+  group('limpeza do audio ao encerrar a aula', () {
+    test('so e automatica ao encerrar e com a opcao ligada', () {
+      expect(cleanupIsAutomatic(closing: true, autoDelete: true), isTrue);
+      expect(cleanupIsAutomatic(closing: true, autoDelete: false), isFalse);
+      // O botao de apagar do professor sempre pergunta, mesmo no automatico.
+      expect(cleanupIsAutomatic(closing: false, autoDelete: true), isFalse);
+      expect(cleanupIsAutomatic(closing: false, autoDelete: false), isFalse);
+    });
+
+    test('o resumo conta o que foi apagado e o que continua guardado', () {
+      expect(autoCleanupSummary(removed: 96, pending: 0),
+          '96 bloco(s) de audio apagado(s) do computador (limpeza automatica).');
+      expect(autoCleanupSummary(removed: 90, pending: 6),
+          contains('6 bloco(s) ainda nao foram enviados e continuam guardados'));
+    });
+
+    test('sem nada entregue, nao diz que apagou', () {
+      final onlyPending = autoCleanupSummary(removed: 0, pending: 4);
+      expect(onlyPending, startsWith('Nenhum bloco entregue para apagar.'));
+      expect(onlyPending, isNot(contains('apagado(s)')));
+      expect(autoCleanupSummary(removed: 0, pending: 0),
+          'Nao havia audio entregue para apagar.');
+    });
+  });
 }

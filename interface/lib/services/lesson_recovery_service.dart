@@ -116,6 +116,24 @@ class RecoverableLesson {
 }
 
 /// Quanto áudio já entregue está guardado no computador.
+/// A limpeza ao encerrar roda sem perguntar quando a opcao automatica esta ligada. A
+/// limpeza pedida pelo professor (botao de apagar) sempre confirma.
+bool cleanupIsAutomatic({required bool closing, required bool autoDelete}) =>
+    closing && autoDelete;
+
+/// O que contar depois da limpeza automatica. Nunca diz que apagou o que ficou guardado.
+String autoCleanupSummary({required int removed, required int pending}) {
+  final kept = pending > 0
+      ? ' $pending bloco(s) ainda nao foram enviados e continuam guardados.'
+      : '';
+  if (removed == 0) {
+    return pending > 0
+        ? 'Nenhum bloco entregue para apagar.$kept'
+        : 'Nao havia audio entregue para apagar.';
+  }
+  return '$removed bloco(s) de audio apagado(s) do computador (limpeza automatica).$kept';
+}
+
 class StoredAudioUsage {
   final int chunks;
   final int bytes;

@@ -13,13 +13,14 @@ qual abrir: situação (aberto, fechado, prazo encerrado, vagas esgotadas), insc
 **quantos aguardam você** (cartão com borda âmbar), aceitos, atividades e prazo. **Nova
 mentoria** fica no topo da lista.
 
-Clicar num cartão abre a **tela da mentoria**, com a seta de voltar e três seções:
+Clicar num cartão abre a **tela da mentoria**, com a seta de voltar e quatro seções:
 
 - **Inscritos (N):** a lista, os filtros por situação, aceitar, recusar, remover e copiar CSV;
 - **Atividades (N):** as atividades, o link de entrega, a tabela de quem entregou e quem está
   faltando;
 - **Link e dados:** o link de inscrição, o QR Code, fechar e reabrir inscrições, apagar e os
-  campos do formulário.
+  campos do formulário;
+- **Encontros:** o plano de encontros, que sugere o melhor dia pela sua agenda de atendimento.
 
 Ao criar uma mentoria, a tela dela já abre na seção do link. Cada mentoria tem a sua turma, as
 suas atividades e o seu link, então abrir uma não mostra dados de outra. A lista e a tela se
@@ -115,10 +116,15 @@ Do professor (autenticadas), em `/education/mentorships`: `POST /generate-fields
 Públicas: `/education/mentorship-signup/{token}` (inscrição: `GET` a página, `POST` enviar) e
 `/education/mentorship-deliver/{token}` (entrega: `GET` a página, `POST /lookup`, `POST /send`).
 
+## Encontros
+
+A seção **Encontros** da tela da mentoria sugere o melhor dia, cruzando as suas faixas de
+atendimento com os horários livres que cada aceito marcou na inscrição. Veja
+[agenda-de-atendimento.md](agenda-de-atendimento.md#plano-de-encontros-da-mentoria).
+
 ## Ainda não existe
 
-Plano de encontros: cruzar os horários livres dos inscritos com as suas noites livres e o
-sábado de manhã para sugerir o dia dos encontros.
+Criar o encontro no calendário a partir do plano e avisar os alunos.
 
 Também ficou de fora: o portal do aluno só reconhece quem tem registro de aluno cadastrado
 (o aceite cria esse registro, então aceitos entram), mas não cobre quem está só em pesquisa.

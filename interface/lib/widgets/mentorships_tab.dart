@@ -18,6 +18,7 @@ import '../models/mentorship.dart';
 import '../models/presentation_material.dart' show isLocalAddress;
 import '../services/education_service.dart';
 import '../utils/theme.dart';
+import 'meeting_plan_panel.dart';
 import 'mentorship_activities_panel.dart';
 
 class MentorshipsTab extends StatefulWidget {
@@ -496,6 +497,10 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
                 value: 2,
                 icon: Icon(Icons.link, size: 16),
                 label: Text('LINK E DADOS')),
+            const ButtonSegment(
+                value: 3,
+                icon: Icon(Icons.event_available_outlined, size: 16),
+                label: Text('ENCONTROS')),
           ],
           selected: {_section},
           onSelectionChanged: (value) => setState(() => _section = value.first),
@@ -519,6 +524,12 @@ class _MentorshipsTabState extends State<MentorshipsTab> {
             ),
           ),
         if (_section == 2) _buildForm(form),
+        if (_section == 3)
+          MeetingPlanPanel(
+            formId: form.id,
+            service: _service,
+            accepted: form.accepted,
+          ),
       ];
 
   Widget _buildCreator() {

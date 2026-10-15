@@ -25,6 +25,19 @@ cancelamento de eco quando suportados pelo sistema. Headsets Bluetooth aparecem
 como entrada `Hands-Free`/`Headset`; é necessário atualizar a lista depois de
 conectá-los.
 
+**Áudio guardado no computador.** Durante a aula, cada bloco de áudio fica numa pasta local
+até o servidor aceitá-lo, para dar para reenviar se a rede cair. Ao encerrar a aula, o app
+cuida do que já foi aceito conforme **Configurações > Preferências > Apagar o áudio da aula
+sozinho ao encerrar**:
+
+- **Ligado (padrão, inclusive para quem nunca salvou essa opção):** o áudio já aceito sai do
+  computador sozinho e o app diz quantos blocos apagou.
+- **Desligado:** o app pergunta, a cada aula, se deve apagar ou manter.
+
+Nos dois modos, o áudio que **ainda não foi enviado nunca é apagado**: ele continua guardado
+e o app avisa quantos blocos ficaram. O botão de apagar o áudio já entregue, na tela da aula,
+continua pedindo confirmação.
+
 Na transcrição, o backend reduz repetições mecânicas do reconhecedor sem
 reescrever o conteúdo da aula: remove frases exatas duplicadas, sequências de
 três ou mais palavras iguais e sobreposição exata na fronteira dos blocos. O
@@ -273,7 +286,7 @@ mecanismo. O que muda é a que a gravação pertence, e isso se escolhe em
 | Tipo | Exige | Herda | Onde aparece |
 |---|---|---|---|
 | **Aula** | disciplina e turma | — | histórico, quiz, chat |
-| **Apresentação** | o grupo de projeto | disciplina e período do grupo | também no cartão do grupo, em `4. Grupos de Projeto` |
+| **Apresentação** | o grupo de projeto | disciplina e período do grupo | também no cartão do grupo, em `5. Grupos de Projeto` |
 | **Palestra** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
 | **Reunião** | só o título | nada: sem disciplina e sem turma | histórico, quiz, chat |
 

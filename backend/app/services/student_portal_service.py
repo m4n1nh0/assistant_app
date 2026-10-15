@@ -38,6 +38,7 @@ from ..core.database import (
     StudentModel,
     StudentPortalModel,
 )
+from . import availability_service as availability
 from . import mentorship_service as mentorship
 from . import quiz_group_service as groups
 
@@ -236,6 +237,25 @@ async def _mentorships(db: AsyncSession, tutor_id: str, class_ids: set[str],
     return out
 
 
+async def _availability(db: AsyncSession, tutor_id: str, classes: list[ClassGroupModel],
+                        mentorship_ids: set[str]) -> dict:
+    """A agenda de atendimento, só com as faixas que valem para este aluno."""
+    wanted = {"todos"}
+    if any(c.id not in mentorship_ids for c in classes):
+        wanted.add("graduacao")
+    if any(c.id in mentorship_ids for c in classes):
+        wanted.add("mentoria")
+    upcoming = await availability.occurrences(db, tutor_id, days=28, wanted=wanted)
+    weekly = [
+        {"weekday": s.weekday, "weekday_name": availability.WEEKDAY_NAMES[s.weekday],
+         "start_time": s.start_time, "end_time": s.end_time, "mode": s.mode,
+         "location": s.location, "audience": s.audience, "note": s.note}
+        for s in await availability.list_slots(db, tutor_id, only_active=True)
+        if s.audience in wanted
+    ]
+    return {"weekly": weekly, "upcoming": upcoming}
+
+
 async def build_portal(db: AsyncSession, tutor_id: str, students: list[StudentModel],
                        enrollment: str) -> dict[str, Any]:
     """Tudo que o portal mostra para esse aluno."""
@@ -256,6 +276,7 @@ async def build_portal(db: AsyncSession, tutor_id: str, students: list[StudentMo
         "materials": await _materials(db, tutor_id, discipline_ids),
         "mentorships": await _mentorships(
             db, tutor_id, class_ids & mentorship_ids, normalize_enrollment(enrollment)),
+        "availability": await _availability(db, tutor_id, classes, mentorship_ids),
     }
 
 

@@ -1147,6 +1147,48 @@ class StudentPortalModel(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class AvailabilitySlotModel(Base):
+    """Faixa semanal em que o professor atende. Repete toda semana.
+
+    Horario de parede (o relogio de quem atende), sem fuso: "quinta, 19:00 as 21:00".
+    `audience` diz para quem a faixa vale: `todos`, `graduacao` ou `mentoria`.
+    """
+
+    __tablename__ = "availability_slots"
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id   = Column(String(64), nullable=False, index=True)
+    weekday    = Column(Integer, nullable=False, default=0)  # 0 = segunda
+    start_time = Column(String(5), nullable=False, default="")
+    end_time   = Column(String(5), nullable=False, default="")
+    # presencial, online ou ambos.
+    mode       = Column(String(12), nullable=False, default="ambos")
+    # Sala, bloco ou link da reuniao online.
+    location   = Column(String(255), nullable=False, default="")
+    audience   = Column(String(12), nullable=False, default="todos")
+    note       = Column(String(255), nullable=False, default="")
+    active     = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AvailabilityExceptionModel(Base):
+    """Uma data que foge da agenda semanal: dia bloqueado ou horario extra."""
+
+    __tablename__ = "availability_exceptions"
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id   = Column(String(64), nullable=False, index=True)
+    # AAAA-MM-DD, no relogio de quem atende.
+    day        = Column(String(10), nullable=False, index=True)
+    # blocked (nao atende neste dia) ou extra (horario a mais so nesta data).
+    kind       = Column(String(8), nullable=False, default="blocked")
+    start_time = Column(String(5), nullable=False, default="")
+    end_time   = Column(String(5), nullable=False, default="")
+    mode       = Column(String(12), nullable=False, default="ambos")
+    location   = Column(String(255), nullable=False, default="")
+    audience   = Column(String(12), nullable=False, default="todos")
+    note       = Column(String(255), nullable=False, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class MeetingRoomModel(Base):
     """Sala de reuniao online propria (video e audio por WebRTC, sem gravacao).
 

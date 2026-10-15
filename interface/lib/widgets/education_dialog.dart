@@ -44,6 +44,7 @@ import 'sia_attendance_importer.dart';
 import 'study_time_tab.dart';
 import 'class_agenda_action.dart';
 import 'mentorships_tab.dart';
+import 'availability_tab.dart';
 import 'research_tab.dart';
 import 'student_portal_dialog.dart';
 import 'project_groups_tab.dart';
@@ -56,15 +57,16 @@ const _dashboardTab = 0;
 const _rosterTab = 1;
 const _mentorshipsTab = 2;
 const _researchTab = 3;
-const _groupsTab = 4;
-const _lessonTab = 5;
-const _attendanceTab = 6;
-const _pointsTab = 7;
-const _historyTab = 8;
-const _quizTab = 9;
-const _materialTab = 10;
-const _studyTimeTab = 11;
-const _meetingsTab = 12;
+const _availabilityTab = 4;
+const _groupsTab = 5;
+const _lessonTab = 6;
+const _attendanceTab = 7;
+const _pointsTab = 8;
+const _historyTab = 9;
+const _quizTab = 10;
+const _materialTab = 11;
+const _studyTimeTab = 12;
+const _meetingsTab = 13;
 
 /// Turmas conhecidas pelo backend, compartilhadas entre as abas. `null` = a
 /// lista ainda nao chegou.
@@ -131,6 +133,8 @@ class _EducationDialogState extends State<EducationDialog> {
         _initialTab = _mentorshipsTab;
       } else if (widget.startAt == 'research') {
         _initialTab = _researchTab;
+      } else if (widget.startAt == 'availability') {
+        _initialTab = _availabilityTab;
       } else if (widget.startAt == 'attendance') {
         _initialTab = _attendanceTab;
       } else if (widget.startAt == 'quiz') {
@@ -170,7 +174,7 @@ class _EducationDialogState extends State<EducationDialog> {
             else
               Expanded(
                 child: DefaultTabController(
-                  length: 13,
+                  length: 14,
                   initialIndex: initialTab,
                   child: Builder(
                     builder: (tabContext) => Column(
@@ -210,34 +214,38 @@ class _EducationDialogState extends State<EducationDialog> {
                             Tab(
                                 icon: Icon(Icons.biotech_outlined, size: tabIconSize),
                                 text: '3. PESQUISAS'),
+                            Tab(
+                                icon: Icon(Icons.event_available_outlined,
+                                    size: tabIconSize),
+                                text: '4. ATENDIMENTO'),
                             Tab(icon: Icon(Icons.groups_2_outlined, size: tabIconSize),
-                                text: '4. GRUPOS DE PROJETO'),
+                                text: '5. GRUPOS DE PROJETO'),
                             Tab(
                                 icon: Icon(Icons.mic_none, size: tabIconSize),
-                                text: '5. GRAVAR'),
+                                text: '6. GRAVAR'),
                             Tab(
                                 icon: Icon(Icons.how_to_reg_outlined, size: tabIconSize),
-                                text: '6. PRESENCA'),
+                                text: '7. PRESENCA'),
                             Tab(
                                 icon:
                                     Icon(Icons.emoji_events_outlined, size: tabIconSize),
-                                text: '7. PONTUACOES'),
+                                text: '8. PONTUACOES'),
                             Tab(
                                 icon: Icon(Icons.history, size: tabIconSize),
-                                text: '8. HISTORICO'),
+                                text: '9. HISTORICO'),
                             Tab(
                                 icon: Icon(Icons.quiz_outlined, size: tabIconSize),
-                                text: '9. QUIZ'),
+                                text: '10. QUIZ'),
                             Tab(
                                 icon: Icon(Icons.folder_open_outlined,
                                     size: tabIconSize),
-                                text: '10. MATERIAL'),
+                                text: '11. MATERIAL'),
                             Tab(icon: Icon(Icons.timer_outlined, size: tabIconSize),
-                                text: '11. TEMPO DE ESTUDO'),
+                                text: '12. TEMPO DE ESTUDO'),
                             Tab(
                                 icon: Icon(Icons.video_camera_front_outlined,
                                     size: tabIconSize),
-                                text: '12. REUNIOES'),
+                                text: '13. REUNIOES'),
                           ],
                         )),
                         IconButton(
@@ -305,6 +313,7 @@ class _EducationDialogState extends State<EducationDialog> {
                               _RosterTab(classes: _classes),
                               const MentorshipsTab(),
                               const ResearchTab(),
+                              const AvailabilityTab(),
                               ProjectGroupsTab(
                                 initialText: widget.initialGroupText,
                                 initialDisciplineCode: widget.initialDisciplineCode,
@@ -1204,6 +1213,16 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
   Future<void> _offerCleanup(String lessonId, {bool closing = true}) async {
     final usage = await lessonRecovery.usage(lessonId: lessonId);
     if (!mounted || usage.chunks == 0) return;
+    if (cleanupIsAutomatic(
+      closing: closing,
+      autoDelete: ref.read(configProvider).autoDeleteLessonAudio,
+    )) {
+      final removed = await lessonRecovery.clearDelivered(lessonId: lessonId);
+      _setStatus(autoCleanupSummary(removed: removed, pending: usage.pending));
+      await _refreshChunks();
+      await _scanRecovery();
+      return;
+    }
     final clear = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(

@@ -105,6 +105,27 @@ class _Backend {
         'form': _form(signups: signups.length, accepted: ids.length),
       });
     }
+    if (path.endsWith('/meeting-plan')) {
+      return json({
+        'accepted': 2,
+        'with_availability': 2,
+        'has_slots': true,
+        'options': [
+          {
+            'slot_id': 'a',
+            'weekday': 3,
+            'weekday_name': 'Quinta',
+            'start_time': '19:00',
+            'end_time': '21:00',
+            'mode': 'online',
+            'location': '',
+            'count': 2,
+            'names': ['Ana Souza', 'Bruno Lima'],
+          },
+        ],
+        'uncovered': <Object>[],
+      });
+    }
     if (path.endsWith('/signups')) return json(signups);
     if (path.endsWith('/activities')) {
       if (request.method == 'POST') {
@@ -409,6 +430,24 @@ void main() {
       expect(find.text('NOVA MENTORIA'), findsWidgets);
       expect(find.byKey(const Key('mentorship-back')), findsOneWidget);
       expect(find.textContaining('/education/mentorship-signup/toknovo'), findsOneWidget);
+    });
+  });
+
+  testWidgets('a seção Encontros mostra o plano a partir da agenda de atendimento',
+      (tester) async {
+    final backend = _Backend(
+      forms: [_form(signups: 2, accepted: 2)],
+      signups: [_signup('1', 'Ana Souza', status: 'accepted'), _signup('2', 'Bruno Lima', status: 'accepted')],
+    );
+    await _open(tester, backend, body: () async {
+      await _openCard(tester);
+      await _goTo(tester, 'ENCONTROS');
+
+      expect(find.text('PLANO DE ENCONTROS'), findsOneWidget);
+      expect(find.text('Quinta 19:00 às 21:00'), findsOneWidget);
+      expect(find.text('MELHOR OPÇÃO'), findsOneWidget);
+      expect(find.text('Conseguem: Ana Souza, Bruno Lima'), findsOneWidget);
+      expect(backend.called('GET', '/f1/meeting-plan'), isTrue);
     });
   });
 

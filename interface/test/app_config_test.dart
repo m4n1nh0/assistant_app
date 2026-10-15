@@ -78,6 +78,23 @@ void main() {
     expect(restored.toJson()['sendMessageOnEnter'], isFalse);
   });
 
+  test('lesson audio is deleted automatically unless the user chose otherwise', () {
+    // Nada salvo: automatico.
+    expect(AppConfig().autoDeleteLessonAudio, isTrue);
+    expect(AppConfig.fromJson({}).autoDeleteLessonAudio, isTrue);
+    // Config antiga, de antes da opcao existir: tambem automatico.
+    expect(AppConfig.fromJson({'sendMessageOnEnter': false}).autoDeleteLessonAudio, isTrue);
+    expect(AppConfig.fromJson({'autoDeleteLessonAudio': null}).autoDeleteLessonAudio, isTrue);
+
+    // Escolha explicita pelo manual sobrevive ao salvar e carregar.
+    final manual = AppConfig.fromJson({'autoDeleteLessonAudio': false});
+    expect(manual.autoDeleteLessonAudio, isFalse);
+    expect(manual.toJson()['autoDeleteLessonAudio'], isFalse);
+    expect(AppConfig.fromJson(manual.toJson()).autoDeleteLessonAudio, isFalse);
+
+    expect(AppConfig().toJson()['autoDeleteLessonAudio'], isTrue);
+  });
+
   test('distribution default backend can be configured at runtime', () {
     final previous = AppConfig.defaultBackendUrl;
     addTearDown(() => AppConfig.setDefaultBackendUrl(previous));

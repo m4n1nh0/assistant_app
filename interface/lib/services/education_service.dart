@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/availability.dart';
 import '../models/combined_summary.dart';
 import '../models/group_draw.dart';
 import '../models/group_points.dart';
@@ -524,6 +525,86 @@ class EducationService {
     );
     final data = Map<String, dynamic>.from(_decode(response) as Map);
     return (path: data['path']?.toString() ?? '', active: data['active'] != false);
+  }
+
+  // --- agenda de atendimento ---------------------------------------------------------
+
+  Future<({List<AvailabilitySlot> slots, List<AvailabilityException> exceptions})>
+      availabilityOverview() async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/availability'), headers: _headers);
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return (
+      slots: [
+        for (final s in data['slots'] as List)
+          AvailabilitySlot.fromJson(Map<String, dynamic>.from(s as Map)),
+      ],
+      exceptions: [
+        for (final e in data['exceptions'] as List)
+          AvailabilityException.fromJson(Map<String, dynamic>.from(e as Map)),
+      ],
+    );
+  }
+
+  /// As datas dos próximos dias; [audience] mostra como um aluno daquele público veria.
+  Future<List<AvailabilityOccurrence>> availabilityPreview({
+    int days = 28,
+    String? audience,
+  }) async {
+    final query = {'days': '$days', if (audience != null) 'audience': audience};
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/availability/preview')
+            .replace(queryParameters: query),
+        headers: _headers);
+    final data = Map<String, dynamic>.from(_decode(response) as Map);
+    return [
+      for (final o in data['occurrences'] as List)
+        AvailabilityOccurrence.fromJson(Map<String, dynamic>.from(o as Map)),
+    ];
+  }
+
+  Future<AvailabilitySlot> saveAvailabilitySlot(
+    Map<String, dynamic> body, {
+    String? id,
+  }) async {
+    final uri = Uri.parse(id == null
+        ? '$_baseUrl/education/availability/slots'
+        : '$_baseUrl/education/availability/slots/$id');
+    final response = id == null
+        ? await http.post(uri, headers: _headers, body: jsonEncode(body))
+        : await http.patch(uri, headers: _headers, body: jsonEncode(body));
+    return AvailabilitySlot.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> deleteAvailabilitySlot(String id) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/availability/slots/$id'), headers: _headers);
+    _decode(response);
+  }
+
+  Future<AvailabilityException> createAvailabilityException(
+      Map<String, dynamic> body) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/availability/exceptions'),
+      headers: _headers,
+      body: jsonEncode(body),
+    );
+    return AvailabilityException.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  Future<void> deleteAvailabilityException(String id) async {
+    final response = await http.delete(
+        Uri.parse('$_baseUrl/education/availability/exceptions/$id'), headers: _headers);
+    _decode(response);
+  }
+
+  /// Quais faixas da agenda servem melhor aos aceitos de uma mentoria.
+  Future<MeetingPlan> mentorshipMeetingPlan(String formId) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/education/mentorships/$formId/meeting-plan'),
+        headers: _headers);
+    return MeetingPlan.fromJson(Map<String, dynamic>.from(_decode(response) as Map));
   }
 
   /// A sala, quem está nela e o fim da transcrição.

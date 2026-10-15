@@ -107,6 +107,11 @@ class AppConfig {
   bool ttsEnabled;
   bool continuousVoiceMode;
   bool sendMessageOnEnter;
+
+  /// Ao encerrar a aula, apaga sozinho o audio que o servidor ja aceitou. E o padrao:
+  /// quem nunca mexeu nessa opcao tem a limpeza automatica. Desligada, o app pergunta
+  /// a cada aula. O que ainda nao subiu nunca e apagado, nos dois modos.
+  bool autoDeleteLessonAudio;
   int voicePromptRetries;
   bool startMinimized;
   bool autoLaunch;
@@ -170,6 +175,7 @@ class AppConfig {
     this.ttsEnabled = true,
     this.continuousVoiceMode = true,
     this.sendMessageOnEnter = true,
+    this.autoDeleteLessonAudio = true,
     this.voicePromptRetries = 3,
     this.startMinimized = false,
     this.autoLaunch = false,
@@ -241,6 +247,7 @@ class AppConfig {
         'ttsEnabled': ttsEnabled,
         'continuousVoiceMode': continuousVoiceMode,
         'sendMessageOnEnter': sendMessageOnEnter,
+        'autoDeleteLessonAudio': autoDeleteLessonAudio,
         'voicePromptRetries': voicePromptRetries,
         'startMinimized': startMinimized,
         'autoLaunch': autoLaunch,
@@ -284,6 +291,8 @@ class AppConfig {
       ttsEnabled: j['ttsEnabled'] ?? true,
       continuousVoiceMode: j['continuousVoiceMode'] ?? true,
       sendMessageOnEnter: j['sendMessageOnEnter'] ?? true,
+      // Sem valor salvo (config antiga ou nova) vale o automatico.
+      autoDeleteLessonAudio: j['autoDeleteLessonAudio'] != false,
       voicePromptRetries: _intValue(j['voicePromptRetries'], fallback: 3),
       startMinimized: j['startMinimized'] ?? false,
       autoLaunch: j['autoLaunch'] ?? false,

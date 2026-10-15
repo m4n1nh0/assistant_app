@@ -24,6 +24,9 @@ está ligado às turmas em que ele está, de graduação e de mentoria:
 - **Mentoria:** só para quem foi **aceito**: as atividades com a situação de cada uma
   (entregue, entregue com atraso, prazo vencido, pendente) e o atalho para a página de
   entrega.
+- **Atendimento:** a [agenda de atendimento](agenda-de-atendimento.md): horários semanais e os
+  próximos 28 dias, com modalidade, local ou link, dias sem atendimento e horários extras,
+  só das faixas que valem para o público do aluno (graduação, mentoria ou todos).
 
 Tudo é lido ao vivo: o que você gera no app aparece sozinho, sem publicar item a item. O
 aluno nunca vê a lista de colegas nem dados de outra turma ou de outro professor.

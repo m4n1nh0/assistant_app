@@ -1616,6 +1616,14 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               (v) => setState(() => _draft.autoLaunch = v)),
           _Toggle('Resposta por voz', _draft.ttsEnabled,
               (v) => setState(() => _draft.ttsEnabled = v)),
+          _Toggle('Apagar o áudio da aula sozinho ao encerrar',
+              _draft.autoDeleteLessonAudio,
+              (v) => setState(() => _draft.autoDeleteLessonAudio = v)),
+          const _InfoBox(
+            'Ligado (padrão): ao encerrar a aula, o áudio que o servidor já aceitou '
+            'sai deste computador sozinho. Desligado: o app pergunta a cada aula. Nos '
+            'dois casos, o áudio que ainda não foi enviado nunca é apagado.',
+          ),
           _Toggle('Enter envia mensagem', _draft.sendMessageOnEnter,
               (v) => setState(() => _draft.sendMessageOnEnter = v)),
           const _InfoBox(
