@@ -115,6 +115,7 @@ background:#e5e7eb;color:#374151;margin-right:6px}
 .chip.bad{background:#fef2f2;color:#b91c1c}.chip.info{background:#e6f4f8;color:#0A6E8A}
 .big{font-size:28px;font-weight:800;color:#0A1324}
 button.open{width:auto;margin:8px 0 0;padding:8px 14px;font-size:12px}
+.sum.doc{max-height:520px;overflow:auto;background:#f9fafb;padding:12px;border-radius:8px;margin-top:10px}
 pre.text{white-space:pre-wrap;font:13px/1.5 system-ui;margin:10px 0 0;max-height:420px;
 overflow:auto;background:#f9fafb;padding:12px;border-radius:8px}
 a.go{display:inline-block;margin-top:8px;color:#0A6E8A;font-weight:700}
@@ -198,6 +199,39 @@ _SCRIPT = """
     return box;
   }
 
+  // Texto extraido de apostila/slide: blocos separados por linha em branco. Linha curta sem
+  // pontuacao final vira titulo; "-", "•" e "1." viram lista; o resto, paragrafo.
+  var BULLET = /^\\s*(?:[-*•▪◦–]|\\d{1,2}[.)])\\s+(.*)$/;
+  function isHeading(line) {
+    var t = line.trim();
+    if (!t || t.length > 90 || /[.;,:!?]$/.test(t) || BULLET.test(t)) return false;
+    var words = t.split(/\\s+/).length;
+    return words <= 12 && (t === t.toUpperCase() && /[A-ZÀ-Ú]/.test(t) ||
+      /^(cap[ií]tulo|unidade|aula|se[cç][aã]o|m[oó]dulo)\\b/i.test(t) || /^\\d+(\\.\\d+)*\\.?\\s+\\S/.test(t) ||
+      words <= 8);
+  }
+  function structure(text) {
+    var box = el("div", "sum doc");
+    text.split(/\\n\\s*\\n/).forEach(function (block) {
+      var lines = block.split("\\n").map(function (l) { return l.trim(); }).filter(Boolean);
+      var list = null, para = null;
+      lines.forEach(function (line, i) {
+        var li = BULLET.exec(line);
+        if (li) {
+          para = null;
+          if (!list) { list = el("ul"); box.appendChild(list); }
+          var item = el("li"); inline(item, li[1]); list.appendChild(item); return;
+        }
+        list = null;
+        if (lines.length > 1 ? i === 0 && isHeading(line) && lines.length > 1 && !isHeading(lines[1]) :
+            isHeading(line)) { box.appendChild(el("h4", "", line)); para = null; return; }
+        if (!para) { para = el("p"); box.appendChild(para); } else para.appendChild(document.createTextNode(" "));
+        inline(para, line);
+      });
+    });
+    return box;
+  }
+
   async function call(path, body) {
     var res = await fetch(base + path, {method: "POST",
       headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -263,7 +297,7 @@ _SCRIPT = """
           btn.disabled = true;
           try {
             var r = await call("/material", {enrollment: enrollment, material_id: m.id});
-            out.textContent = ""; var pre = el("pre", "text", r.content); out.appendChild(pre);
+            out.textContent = ""; out.appendChild(structure(r.content));
             btn.remove();
           } catch (e) { say("err", e.message); btn.disabled = false; }
         };

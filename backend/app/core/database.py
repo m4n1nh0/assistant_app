@@ -963,6 +963,33 @@ class MaterialModel(Base):
     link_id       = Column(String(64), nullable=True, index=True)
 
 
+class MaterialChunkModel(Base):
+    """Um bloco do material, cortado por titulo, na ordem do documento.
+
+    E a unidade que as demais etapas usam: indexar no Qdrant, estruturar com IA e sortear
+    conteudo para a prova. O texto inteiro continua em `materials.content`; o bloco e
+    derivado dele e pode ser refeito a qualquer momento.
+
+    `heading_path` guarda o caminho de titulos ("Capitulo 1 > 1.1 Elementos"), que da ao
+    bloco o contexto que ele perde ao ser separado. `qdrant_point_id` e `embedding_model`
+    ligam o bloco ao vetor, como em `lesson_segments`.
+    """
+
+    __tablename__ = "material_chunks"
+    id              = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    material_id     = Column(String(64), nullable=False, index=True)
+    tutor_id        = Column(String(64), nullable=False, index=True)
+    discipline_id   = Column(String(64), nullable=True, index=True)
+    sequence        = Column(Integer, nullable=False, default=0)
+    heading_path    = Column(String(500), nullable=False, default="")
+    text            = Column(Text, nullable=False)
+    char_count      = Column(Integer, nullable=False, default=0)
+    indexed         = Column(Boolean, nullable=False, default=False)
+    qdrant_point_id = Column(String(64), nullable=True)
+    embedding_model = Column(String(120), nullable=True)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class MaterialSubmissionLinkModel(Base):
     """Link publico para os alunos enviarem o material das apresentacoes.
 

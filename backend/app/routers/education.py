@@ -138,6 +138,7 @@ from ..services.user_llm_config_service import (
     user_llm_context,
 )
 from ..services import (
+    material_chunk_service,
     material_service,
     meeting_transcript_service,
     quiz_generator_service,
@@ -3374,6 +3375,8 @@ async def upload_material(
         content=extraido.text,
     )
     db.add(material)
+    await db.flush()
+    await material_chunk_service.replace_chunks(db, material)
     await db.commit()
     await db.refresh(material)
     return _material_response(material)
@@ -3445,6 +3448,7 @@ async def delete_material(
     material = await db.get(MaterialModel, material_id)
     if not material or material.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Material nao encontrado")
+    await material_chunk_service.delete_chunks(db, material_id)
     await db.delete(material)
     await db.commit()
     return {"deleted": material_id}
