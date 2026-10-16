@@ -94,9 +94,12 @@ def _closed(message: str) -> HTMLResponse:
 
 
 _EXTRA_CSS = """
-main{width:min(900px,100%)}
-.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 6px;border-bottom:1px solid #e5e7eb}
-.tab{width:auto;margin:0;padding:10px 14px;border-radius:8px 8px 0 0;background:none;
+.iq-wrap{padding:12px}
+main{width:min(560px,100%);padding:20px 16px}
+main.logged{width:100%}
+.tabs{display:flex;gap:6px;margin:14px 0 6px;border-bottom:1px solid #e5e7eb;
+overflow-x:auto;white-space:nowrap;scrollbar-width:thin}
+.tab{flex:none;width:auto;margin:0;padding:10px 14px;border-radius:8px 8px 0 0;background:none;
 color:#4b5563;letter-spacing:.4px;font-size:13px}
 .tab[aria-selected=true]{background:#0A1324;color:#00D6FF}
 .card{margin-top:14px;padding:16px;border:1px solid #e5e7eb;border-radius:10px}
@@ -115,6 +118,31 @@ button.open{width:auto;margin:8px 0 0;padding:8px 14px;font-size:12px}
 pre.text{white-space:pre-wrap;font:13px/1.5 system-ui;margin:10px 0 0;max-height:420px;
 overflow:auto;background:#f9fafb;padding:12px;border-radius:8px}
 a.go{display:inline-block;margin-top:8px;color:#0A6E8A;font-weight:700}
+@media (min-width:700px){
+.iq-wrap{padding:28px 20px}
+main{padding:30px}
+main.logged{width:min(900px,100%)}
+}
+@media (min-width:1000px){
+main.logged{width:min(1360px,100%)}
+main.logged>.intro{display:none}
+main.logged #login{display:flex;gap:10px;align-items:flex-end;max-width:520px}
+main.logged #login>div{flex:1}
+main.logged #login button{width:auto;margin:0;padding:12px 22px}
+#step2{display:grid;grid-template-columns:210px minmax(0,1fr);column-gap:28px;align-items:start}
+#step2>p{grid-column:1/-1}
+.tabs{flex-direction:column;overflow:visible;white-space:normal;margin:0;gap:4px;
+border-bottom:0;border-right:1px solid #e5e7eb;padding-right:14px;position:sticky;top:16px}
+.tab{text-align:left;padding:12px 14px;border-radius:8px;font-size:14px}
+#view{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;
+align-items:start}
+#view>.card{margin-top:0}
+#view>.meta{grid-column:1/-1}
+}
+@media (min-width:1600px){
+main.logged{width:min(1560px,100%)}
+#view{grid-template-columns:repeat(auto-fill,minmax(400px,1fr))}
+}
 """
 
 _SCRIPT = """
@@ -336,6 +364,7 @@ _SCRIPT = """
     var root = $("view"); root.textContent = "";
     VIEWS[current](root);
     $("step2").hidden = false;
+    document.querySelector("main").classList.add("logged");
   }
 
   async function lookup() {
@@ -344,7 +373,8 @@ _SCRIPT = """
     if (!enrollment) { say("err", "Digite a sua matrícula."); return; }
     $("find").disabled = true;
     try { data = await call("/lookup", {enrollment: enrollment}); current = "aulas"; render(); }
-    catch (e) { $("step2").hidden = true; say("err", e.message); }
+    catch (e) { $("step2").hidden = true;
+      document.querySelector("main").classList.remove("logged"); say("err", e.message); }
     $("find").disabled = false;
   }
   $("find").onclick = lookup;
@@ -366,11 +396,13 @@ async def portal_page(token: str, db: AsyncSession = Depends(get_db)):
     body = """
 <div class="brand">PORTAL DO ALUNO</div>
 <h1>Portal do aluno</h1>
-<p>Digite a sua matrícula para ver os resumos das aulas, o resultado dos quizzes em grupo,
+<p class="intro">Digite a sua matrícula para ver os resumos das aulas, o resultado dos quizzes em grupo,
 seus pontos, os materiais das disciplinas e, se estiver em uma mentoria, as atividades.</p>
-<label for="enrollment">Matrícula</label>
-<input type="text" id="enrollment" maxlength="80" autocomplete="off" autofocus>
+<div id="login">
+<div><label for="enrollment">Matrícula</label>
+<input type="text" id="enrollment" maxlength="80" autocomplete="off" autofocus></div>
 <button type="button" id="find">ENTRAR</button>
+</div>
 <div id="msg" class="msg" hidden role="alert"></div>
 <section id="step2" hidden>
   <p>Olá, <b id="who"></b>!</p>

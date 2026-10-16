@@ -31,6 +31,12 @@ está ligado às turmas em que ele está, de graduação e de mentoria:
 Tudo é lido ao vivo: o que você gera no app aparece sozinho, sem publicar item a item. O
 aluno nunca vê a lista de colegas nem dados de outra turma ou de outro professor.
 
+### Layout
+
+A página é pensada primeiro para o celular: uma coluna, abas rolando na horizontal. Em telas largas
+(a partir de ~1000 px) ela ocupa a janela: abas viram um menu lateral fixo e o conteúdo vira uma
+grade de cartões que ganha colunas conforme a largura (até ~1560 px).
+
 ## Acesso e privacidade
 
 O acesso é **só pela matrícula**, por escolha. Isso tem um custo: quem souber a matrícula de
