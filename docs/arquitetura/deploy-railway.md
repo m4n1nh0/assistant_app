@@ -359,18 +359,14 @@ pasta *Assistant*:
 | `Prometheus` | o Prometheus do projeto | latência, requisições HTTP, operações e a saúde dos bancos |
 | `App (MySQL)` | o banco da aplicação, com o usuário `monitor` | o consumo de IA, exato |
 
-O painel **Assistant · consumo de IA e saúde** tem três comportamentos de período, para o dado não sumir
-quando alguém encurta o seletor de tempo do alto para olhar a latência de uma hora:
+Os dois painéis são dinâmicos: **tudo segue o seletor de tempo do alto** (padrão 7 dias no de consumo e
+24 horas no de infraestrutura), sem período escondido em nenhum quadro.
 
-- **Totais e tabelas** (custo, tokens, chamadas, falhas, sem preço, clientes, por modelo e por cliente)
-  seguem a lista **"Período do consumo"** (24 horas, 7, 30 ou 90 dias; padrão 30), e **não** o seletor
-  de tempo. É uma janela móvel em UTC, o fuso em que as horas são guardadas.
-- **Linhas do tempo do consumo** têm **período próprio**: tokens das últimas 24 horas hora a hora, e dos
-  últimos 30 dias dia a dia, a participação de cada provedor (em %), o custo por dia, a taxa de falha por
-  provedor (em %) e as chamadas que deram certo x as que falharam. O consumo anterior à tabela por hora
-  só tem o total do dia, então aparece nos gráficos dia a dia, e não no hora a hora.
-- **Latência e saúde** (Prometheus) seguem o seletor de tempo do alto, porque é com ele que se olha um
-  incidente. O padrão é 6 horas.
+- **Assistant · consumo de IA e saúde:** totais, tabelas e gráficos cobrem o período do seletor. A lista
+  **"Agrupar por"** define o passo dos gráficos (hora, 6 horas, dia ou 7 dias); em `auto` ele cresce com o
+  período, e nunca é menor que 1 hora, que é como o dado é guardado. O consumo anterior à tabela por hora só
+  tem o total do dia, então só aparece quando o passo é de um dia ou mais.
+- **Latência e saúde** (Prometheus) seguem o mesmo seletor.
 
 O painel **Assistant · MySQL, Redis e Qdrant** segue o seletor de tempo do alto em tudo (padrão 24 horas),
 sem períodos escondidos. Dois ajustes evitam o quadro vazio:

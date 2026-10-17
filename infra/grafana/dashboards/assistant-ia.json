@@ -7,17 +7,17 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 5,
+  "version": 6,
   "refresh": "5m",
   "time": {
-    "from": "now-6h",
+    "from": "now-7d",
     "to": "now"
   },
   "panels": [
     {
       "id": 1,
       "type": "row",
-      "title": "Consumo de IA (exato, do banco) · totais e tabelas seguem a lista \"Período do consumo\"; as linhas do tempo têm período próprio",
+      "title": "Consumo de IA (exato, do banco) · tudo segue o seletor de tempo do alto",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -31,7 +31,7 @@
       "id": 2,
       "type": "stat",
       "title": "Custo estimado",
-      "description": "No período escolhido na lista \"Período do consumo\". Tokens x preço de tabela do modelo (aba Preços do app): é uma estimativa, e o valor real depende do seu contrato.",
+      "description": "No período do seletor de tempo. Tokens x preço de tabela do modelo (aba Preços do app): é uma estimativa, e o valor real depende do seu contrato.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -51,7 +51,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
+          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -111,7 +111,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
+          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -171,7 +171,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
+          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -231,7 +231,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
+          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -291,7 +291,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
+          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -351,7 +351,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY AND tenant_id <> ''",
+          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND tenant_id <> ''",
           "refId": "A"
         }
       ],
@@ -390,8 +390,8 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Tokens: últimas 24 horas, hora a hora",
-      "description": "Entrada + saída por provedor, uma barra por hora. Período fixo de 24 horas: não muda com o seletor. O consumo anterior à tabela por hora só tem o total do dia, então aparece nos gráficos dia a dia, e não neste.",
+      "title": "Tokens por provedor",
+      "description": "Entrada + saída por provedor. Segue o seletor de tempo do alto; o passo (hora, dia...) segue a lista \"Agrupar por\".",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -411,14 +411,14 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND legacy = 0 GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "sem consumo por hora nas últimas 24 horas",
+          "noValue": "sem consumo no período",
           "custom": {
             "drawStyle": "bars",
             "barAlignment": 0,
@@ -448,14 +448,13 @@
           "sort": "desc"
         }
       },
-      "timeFrom": "24h",
-      "interval": "1h"
+      "interval": "$passo"
     },
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Tokens: últimos 30 dias, dia a dia",
-      "description": "Entrada + saída por provedor, uma barra por dia. Período fixo de 30 dias: não muda com o seletor.",
+      "title": "Custo estimado por modelo",
+      "description": "Por provedor e modelo, no período do seletor.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -475,131 +474,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "sem consumo no período",
-          "custom": {
-            "drawStyle": "bars",
-            "barAlignment": 0,
-            "lineWidth": 1,
-            "fillOpacity": 75,
-            "showPoints": "never",
-            "pointSize": 6,
-            "spanNulls": true,
-            "stacking": {
-              "mode": "normal"
-            },
-            "axisSoftMin": 0
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "timeFrom": "30d"
-    },
-    {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Participação de cada provedor (% dos tokens)",
-      "description": "Que parte dos tokens de cada dia foi para cada provedor (cada barra soma 100%). Últimos 30 dias.",
-      "datasource": {
-        "type": "mysql",
-        "uid": "appdb"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 13
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "mysql",
-            "uid": "appdb"
-          },
-          "editorMode": "code",
-          "format": "time_series",
-          "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "noValue": "sem consumo no período",
-          "custom": {
-            "drawStyle": "bars",
-            "barAlignment": 0,
-            "lineWidth": 1,
-            "fillOpacity": 75,
-            "showPoints": "never",
-            "pointSize": 6,
-            "spanNulls": true,
-            "stacking": {
-              "mode": "percent"
-            },
-            "axisSoftMin": 0
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "timeFrom": "30d"
-    },
-    {
-      "id": 11,
-      "type": "timeseries",
-      "title": "Custo estimado por dia (30 dias)",
-      "description": "Por provedor e modelo. Últimos 30 dias.",
-      "datasource": {
-        "type": "mysql",
-        "uid": "appdb"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 13
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "mysql",
-            "uid": "appdb"
-          },
-          "editorMode": "code",
-          "format": "time_series",
-          "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -636,13 +511,13 @@
           "sort": "desc"
         }
       },
-      "timeFrom": "30d"
+      "interval": "$passo"
     },
     {
-      "id": 12,
+      "id": 10,
       "type": "timeseries",
-      "title": "Taxa de falha por provedor (% das chamadas)",
-      "description": "De cada 100 chamadas a um provedor, quantas falharam no dia. 100% significa que nenhuma funcionou: chave ausente ou inválida, sem crédito ou provedor fora do ar. Últimos 30 dias.",
+      "title": "Participação de cada provedor (% dos tokens)",
+      "description": "Que parte dos tokens de cada passo foi para cada provedor (cada barra soma 100%).",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -650,6 +525,130 @@
       "gridPos": {
         "h": 8,
         "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "sem consumo no período",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "percent"
+            },
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "$passo"
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Chamadas: deram certo x falharam",
+      "description": "Total de chamadas por passo, separando as que funcionaram das que falharam.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), SUM(calls - errors) AS \"Deram certo\", SUM(errors) AS \"Falharam\" FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "sem consumo no período",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal"
+            },
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "$passo"
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Taxa de falha por provedor (% das chamadas)",
+      "description": "De cada 100 chamadas a um provedor, quantas falharam. 100% significa que nenhuma funcionou: chave ausente ou inválida, sem crédito ou provedor fora do ar.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
         "x": 0,
         "y": 21
       },
@@ -662,7 +661,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), provider AS metric, SUM(errors) / SUM(calls) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(calls) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(errors) / SUM(calls) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(calls) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -701,73 +700,10 @@
           "sort": "desc"
         }
       },
-      "timeFrom": "30d"
+      "interval": "$passo"
     },
     {
       "id": 13,
-      "type": "timeseries",
-      "title": "Chamadas: deram certo x falharam (30 dias)",
-      "description": "Total de chamadas por dia, separando as que funcionaram das que falharam. Últimos 30 dias.",
-      "datasource": {
-        "type": "mysql",
-        "uid": "appdb"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 21
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "mysql",
-            "uid": "appdb"
-          },
-          "editorMode": "code",
-          "format": "time_series",
-          "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), SUM(calls - errors) AS \"Deram certo\", SUM(errors) AS \"Falharam\"FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1 ORDER BY 1",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "sem consumo no período",
-          "custom": {
-            "drawStyle": "bars",
-            "barAlignment": 0,
-            "lineWidth": 1,
-            "fillOpacity": 75,
-            "showPoints": "never",
-            "pointSize": 6,
-            "spanNulls": true,
-            "stacking": {
-              "mode": "normal"
-            },
-            "axisSoftMin": 0
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "timeFrom": "30d"
-    },
-    {
-      "id": 14,
       "type": "table",
       "title": "Consumo por modelo",
       "description": "",
@@ -790,7 +726,133 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
+          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "sem consumo no período",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Custo"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Chamadas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falhas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Entrada"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Saida"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Consumo por cliente",
+      "description": "Quanto cada conta usou no período. A coluna Cliente é o e-mail da conta.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
           "refId": "A"
         }
       ],
@@ -894,134 +956,8 @@
     },
     {
       "id": 15,
-      "type": "table",
-      "title": "Consumo por cliente",
-      "description": "Quanto cada conta usou no período. A coluna Cliente é o e-mail da conta.",
-      "datasource": {
-        "type": "mysql",
-        "uid": "appdb"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 29
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "mysql",
-            "uid": "appdb"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "sem consumo no período",
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Custo"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              },
-              {
-                "id": "decimals",
-                "value": 4
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Chamadas"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Falhas"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Entrada"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Saida"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      }
-    },
-    {
-      "id": 16,
       "type": "row",
-      "title": "Latência e saúde (Prometheus) · seguem o seletor de tempo do alto, e pontos aparecem conforme há chamadas",
+      "title": "Latência e saúde (Prometheus) · seguem o seletor de tempo do alto",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1032,7 +968,7 @@
       "panels": []
     },
     {
-      "id": 17,
+      "id": 16,
       "type": "timeseries",
       "title": "Latência p95 das chamadas a modelos",
       "description": "Tempo que cada provedor leva para responder (percentil 95).",
@@ -1087,7 +1023,7 @@
       }
     },
     {
-      "id": 18,
+      "id": 17,
       "type": "timeseries",
       "title": "Chamadas por segundo, por provedor",
       "description": "",
@@ -1142,7 +1078,7 @@
       }
     },
     {
-      "id": 19,
+      "id": 18,
       "type": "timeseries",
       "title": "Latência p95 por rota HTTP",
       "description": "",
@@ -1197,7 +1133,7 @@
       }
     },
     {
-      "id": 20,
+      "id": 19,
       "type": "timeseries",
       "title": "Erros 5xx por rota",
       "description": "",
@@ -1252,7 +1188,7 @@
       }
     },
     {
-      "id": 21,
+      "id": 20,
       "type": "timeseries",
       "title": "Operações por tipo (traces)",
       "description": "Chamadas por segundo de cada tipo de operação: llm, tool, mcp, graph, agent, node.",
@@ -1307,7 +1243,7 @@
       }
     },
     {
-      "id": 22,
+      "id": 21,
       "type": "timeseries",
       "title": "Operações com erro (traces)",
       "description": "",
@@ -1365,38 +1301,44 @@
   "templating": {
     "list": [
       {
-        "name": "dias",
-        "label": "Período do consumo",
-        "type": "custom",
+        "name": "passo",
+        "label": "Agrupar por",
+        "type": "interval",
         "hide": 0,
-        "includeAll": false,
-        "multi": false,
-        "query": "Últimas 24 horas : 1,7 dias : 7,30 dias : 30,90 dias : 90",
+        "auto": true,
+        "auto_count": 30,
+        "auto_min": "1h",
+        "query": "1h,6h,1d,7d",
         "current": {
           "selected": true,
-          "text": "30 dias",
-          "value": "30"
+          "text": "auto",
+          "value": "$__auto_interval_passo"
         },
         "options": [
           {
-            "selected": false,
-            "text": "Últimas 24 horas",
-            "value": "1"
-          },
-          {
-            "selected": false,
-            "text": "7 dias",
-            "value": "7"
-          },
-          {
             "selected": true,
-            "text": "30 dias",
-            "value": "30"
+            "text": "auto",
+            "value": "$__auto_interval_passo"
           },
           {
             "selected": false,
-            "text": "90 dias",
-            "value": "90"
+            "text": "1h",
+            "value": "1h"
+          },
+          {
+            "selected": false,
+            "text": "6h",
+            "value": "6h"
+          },
+          {
+            "selected": false,
+            "text": "1d",
+            "value": "1d"
+          },
+          {
+            "selected": false,
+            "text": "7d",
+            "value": "7d"
           }
         ]
       }
