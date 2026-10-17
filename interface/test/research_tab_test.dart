@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:assistant_app/widgets/research_tab.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 Map<String, dynamic> _project({
   String id = 'p1',
@@ -14,6 +16,7 @@ Map<String, dynamic> _project({
   int done = 1,
   int overdue = 1,
   int participants = 2,
+  int pending = 0,
 }) =>
     {
       'id': id,
@@ -29,6 +32,7 @@ Map<String, dynamic> _project({
       'overdue': overdue,
       'progress': stages == 0 ? 0 : (done * 100 / stages).round(),
       'participants': participants,
+      'pending': pending,
       'next_due': '2026-11-20T23:59:00',
       'next_title': 'Coleta',
     };
@@ -46,7 +50,10 @@ Map<String, dynamic> _stage(String id, String title, String status, String state
     };
 
 Map<String, dynamic> _person(String id, String name,
-        {String role = 'orientando', bool known = false, String institution = ''}) =>
+        {String role = 'orientando',
+        bool known = false,
+        String institution = '',
+        String status = 'accepted'}) =>
     {
       'id': id,
       'name': name,
@@ -56,6 +63,7 @@ Map<String, dynamic> _person(String id, String name,
       'institution': institution,
       'role': role,
       'known_student': known,
+      'status': status,
     };
 
 class _Backend {
@@ -64,6 +72,12 @@ class _Backend {
   List<Map<String, dynamic>> people;
   final requests = <http.Request>[];
   bool aiAnswers = true;
+  Map<String, dynamic> joinLink = {
+    'path': '/education/research-join/tok123',
+    'active': true,
+    'role': 'orientando',
+    'pending': 0,
+  };
 
   _Backend({
     List<Map<String, dynamic>>? projects,
@@ -103,6 +117,22 @@ class _Backend {
           role: body['role'] as String);
       people = [...people, created];
       return json(created);
+    }
+    if (path.endsWith('/join-link')) {
+      if (request.method == 'PATCH') {
+        joinLink = {...joinLink, ...jsonDecode(request.body) as Map<String, dynamic>};
+      }
+      return json(joinLink);
+    }
+    final decision = RegExp(r'/participants/(\w+)/decision$').firstMatch(path);
+    if (decision != null && request.method == 'POST') {
+      final accept = (jsonDecode(request.body) as Map<String, dynamic>)['accept'] == true;
+      final id = decision.group(1);
+      final person = people.firstWhere((p) => p['id'] == id);
+      people = accept
+          ? [for (final p in people) p['id'] == id ? {...p, 'status': 'accepted'} : p]
+          : [for (final p in people) if (p['id'] != id) p];
+      return json({...person, 'status': accept ? 'accepted' : 'pending'});
     }
     final stage = RegExp(r'/stages/(\w+)$').firstMatch(path);
     if (stage != null && request.method == 'PATCH') {
@@ -298,6 +328,91 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(backend.bodyOf('PATCH', '/education/research/p1')['status'], 'done');
+    });
+  });
+
+  testWidgets('LINK ONLINE mostra o endereço, o QR Code e copia o link', (tester) async {
+    final backend = _withProject();
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform,
+        (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied.add((call.arguments as Map)['text'] as String);
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    await _open(tester, backend, body: () async {
+      await tester.tap(find.byKey(const Key('participant-link')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cadastro online na pesquisa'), findsOneWidget);
+      expect(find.byType(QrImageView), findsOneWidget);
+      final shown = tester.widget<SelectableText>(find.byKey(const Key('join-url'))).data!;
+      expect(shown, endsWith('/education/research-join/tok123'));
+
+      await tester.tap(find.byKey(const Key('join-copy')));
+      await tester.pumpAndSettle();
+      expect(copied, [shown]);
+    });
+  });
+
+  testWidgets('fechar o link e trocar o papel gravam na hora', (tester) async {
+    final backend = _withProject();
+    await _open(tester, backend, body: () async {
+      await tester.tap(find.byKey(const Key('participant-link')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('join-active')));
+      await tester.pumpAndSettle();
+      expect(backend.bodyOf('PATCH', '/join-link'), {'active': false});
+
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Colaborador').last);
+      await tester.pumpAndSettle();
+      expect(backend.bodyOf('PATCH', '/join-link'), {'role': 'colaborador'});
+    });
+  });
+
+  testWidgets('quem preencheu o link aparece aguardando e o professor aceita', (tester) async {
+    final backend = _Backend(
+      projects: [_project(participants: 1, pending: 1)],
+      stages: [_stage('s1', 'Revisão', 'todo', 'todo')],
+      people: [
+        _person('a1', 'Ana Souza', known: true),
+        _person('b2', 'Bia Online', status: 'pending'),
+      ],
+    );
+    await _open(tester, backend, body: () async {
+      expect(find.text('1 aguardando você'), findsOneWidget);
+      expect(find.text('AGUARDANDO'), findsOneWidget);
+      // Quem já participa continua com o botão de tirar; quem aguarda tem aceitar e recusar.
+      expect(find.byTooltip('Tirar da pesquisa'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('participant-accept-b2')));
+      await tester.pumpAndSettle();
+
+      expect(backend.bodyOf('POST', '/participants/b2/decision'), {'accept': true});
+      expect(find.text('AGUARDANDO'), findsNothing);
+      expect(find.byTooltip('Tirar da pesquisa'), findsNWidgets(2));
+    });
+  });
+
+  testWidgets('recusar tira o cadastro da lista', (tester) async {
+    final backend = _Backend(
+      projects: [_project(participants: 0, pending: 1)],
+      stages: [_stage('s1', 'Revisão', 'todo', 'todo')],
+      people: [_person('b2', 'Bia Online', status: 'pending')],
+    );
+    await _open(tester, backend, body: () async {
+      await tester.tap(find.byKey(const Key('participant-reject-b2')));
+      await tester.pumpAndSettle();
+
+      expect(backend.bodyOf('POST', '/participants/b2/decision'), {'accept': false});
+      expect(find.text('Bia Online'), findsNothing);
     });
   });
 }

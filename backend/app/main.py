@@ -58,6 +58,7 @@ from .services.web_brand import BrandHtmlMiddleware
 from .routers.mentorship import public_router as mentorship_public_router
 from .routers.availability import router as availability_router
 from .routers.research import router as research_router
+from .routers.research_join import public_router as research_join_public_router
 from .routers.student_portal import router as student_portal_router
 from .routers.mentorship_delivery import router as mentorship_delivery_router
 from .routers.mentorship import router as mentorship_router
@@ -283,6 +284,7 @@ app.include_router(mentorship_public_router)
 app.include_router(mentorship_delivery_router)
 app.include_router(availability_router)
 app.include_router(research_router)
+app.include_router(research_join_public_router)
 app.include_router(student_portal_router)
 app.include_router(mentorship_router)
 app.include_router(meeting_public_router)

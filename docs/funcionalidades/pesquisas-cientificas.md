@@ -24,13 +24,37 @@ acompanhe prazos e andamento em um só lugar.
    o próximo prazo. A situação da pesquisa (planejamento, em andamento, pausada, concluída)
    muda na hora pelo seletor. A tela se atualiza sozinha a cada 30 s.
 
+
+## Cadastro online dos participantes
+
+Em vez de digitar os dados de cada pessoa, mande um **link**. Em **Participantes**, o botão
+**LINK ONLINE** mostra o endereço, o **QR Code** e o botão de copiar. Quem abre preenche a
+própria página, sem login:
+
+- nome e e-mail (obrigatórios) e telefone;
+- **matrícula** (se for aluno) **ou** **instituição** (se for de fora): um dos dois é exigido.
+
+O **papel** de quem entra pelo link (orientando, coorientador ou colaborador) é escolhido por
+você no próprio diálogo do link, e não pela pessoa: ninguém se declara coorientador sozinho.
+
+Quem preenche **não entra direto**: fica **AGUARDANDO**, com **ACEITAR** e **RECUSAR** ao lado.
+A pesquisa mostra *N aguardando você*, e quem está pendente **não conta** como participante até
+você aceitar. Recusar tira a pessoa da lista, e a matrícula pode voltar a se cadastrar. A regra
+da matrícula repetida vale também para quem está pendente.
+
+O diálogo do link tem ainda o interruptor **Aceitando cadastros**: fechar não apaga ninguém, só
+impede novos envios. Pesquisa **concluída** também não recebe cadastro. O link tem limite de 15
+envios por IP a cada 10 minutos, porque a página é pública e grava no banco.
 Apagar uma pesquisa apaga as etapas e os participantes dela.
 
 ## Rotas
 
 Autenticadas, em `/education/research`: `POST /generate-plan`, `POST`, `GET`, `GET /{id}`,
 `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/participants`,
-`PATCH|DELETE /participants/{id}`, `POST /{id}/stages`, `PATCH|DELETE /stages/{id}`.
+`PATCH|DELETE /participants/{id}`, `POST /participants/{id}/decision`, `GET|PATCH /{id}/join-link`,
+`POST /{id}/stages`, `PATCH|DELETE /stages/{id}`.
+
+Pública, sem login: `GET|POST /education/research-join/{token}` (a página de cadastro).
 
 ## Próximas fases
 

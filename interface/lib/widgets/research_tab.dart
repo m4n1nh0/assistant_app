@@ -8,7 +8,10 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
+import '../models/presentation_material.dart' show isLocalAddress;
 import '../models/research.dart';
 import '../services/education_service.dart';
 import '../utils/theme.dart';
@@ -17,12 +20,16 @@ class ResearchTab extends StatefulWidget {
   /// Trocam serviço nos testes.
   final EducationService? service;
 
+  /// Endereço público do servidor, que vai no link de cadastro online. Vazio usa o do app.
+  final String? baseUrl;
+
   /// De quanto em quanto tempo a tela se atualiza sozinha. Zero desliga (testes).
   final Duration pollEvery;
 
   const ResearchTab({
     super.key,
     this.service,
+    this.baseUrl,
     this.pollEvery = const Duration(seconds: 30),
   });
 
@@ -32,6 +39,7 @@ class ResearchTab extends StatefulWidget {
 
 class _ResearchTabState extends State<ResearchTab> {
   EducationService get _service => widget.service ?? education;
+  String get _baseUrl => widget.baseUrl ?? _service.publicBaseUrl;
 
   // criação
   final _title = TextEditingController();
@@ -339,6 +347,116 @@ class _ResearchTabState extends State<ResearchTab> {
       _report('Participante adicionado.');
     });
   }
+
+  /// Link para a pessoa se cadastrar sozinha: copiar, QR Code, abrir/fechar e o papel dela.
+  Future<void> _showJoinLink(ResearchProject project) async {
+    ResearchJoinLink link;
+    try {
+      link = await _service.researchJoinLink(project.id);
+    } catch (e) {
+      _report(_errorText(e), error: true);
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final url = link.url(_baseUrl);
+          Future<void> change({bool? active, String? role}) async {
+            try {
+              final updated = await _service.updateResearchJoinLink(
+                  project.id, active: active, role: role);
+              setDialogState(() => link = updated);
+            } catch (e) {
+              _report(_errorText(e), error: true);
+            }
+          }
+
+          return AlertDialog(
+            backgroundColor: AssistantTheme.surface,
+            title: const Text('Cadastro online na pesquisa'),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  const Text(
+                    'Mande o link ou o QR Code. A pessoa preenche os próprios dados e '
+                    'fica aguardando: só entra na pesquisa quando você aceitar.',
+                    style: TextStyle(fontSize: 11, color: AssistantTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: SelectableText(url,
+                          key: const Key('join-url'),
+                          style: const TextStyle(fontSize: 12, color: AssistantTheme.c1)),
+                    ),
+                    IconButton(
+                      key: const Key('join-copy'),
+                      tooltip: 'Copiar link',
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: url));
+                        _report('Link copiado.');
+                      },
+                    ),
+                  ]),
+                  if (isLocalAddress(_baseUrl))
+                    const _Hint('O endereço do servidor é local: quem recebe o link só '
+                        'abre um endereço público.'),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(10),
+                      child: QrImageView(data: url, size: 180),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey('join-role-${link.role}'),
+                    initialValue: link.role,
+                    decoration: const InputDecoration(
+                        labelText: 'PAPEL DE QUEM ENTRA PELO LINK', isDense: true),
+                    items: [
+                      for (final e in researchRoles.entries)
+                        DropdownMenuItem(value: e.key, child: Text(e.value)),
+                    ],
+                    onChanged: (value) => value == null ? null : change(role: value),
+                  ),
+                  const SizedBox(height: 6),
+                  SwitchListTile(
+                    key: const Key('join-active'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Aceitando cadastros', style: TextStyle(fontSize: 13)),
+                    value: link.active,
+                    onChanged: (value) => change(active: value),
+                  ),
+                ]),
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('FECHAR')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _decide(ResearchParticipant person, {required bool accept}) =>
+      _guard(() async {
+        await _service.decideResearchParticipant(person.id, accept: accept);
+        await _reload();
+        _report(accept ? '${person.name} aceito na pesquisa.' : 'Cadastro recusado.');
+      });
 
   Future<void> _removeParticipant(ResearchParticipant person) => _guard(() async {
         await _service.removeResearchParticipant(person.id);
@@ -653,6 +771,8 @@ class _ResearchTabState extends State<ResearchTab> {
             children: [
           if (project.area.isNotEmpty) _Chip(project.area, AssistantTheme.c1),
           _Chip('${project.participants} participantes', AssistantTheme.c2),
+          if (project.pending > 0)
+            _Chip('${project.pending} aguardando você', AssistantTheme.c4),
           _Chip('${project.done}/${project.stages} etapas', AssistantTheme.c3),
           if (project.overdue > 0)
             _Chip('${project.overdue} atrasada(s)', Colors.redAccent),
@@ -687,14 +807,23 @@ class _ResearchTabState extends State<ResearchTab> {
   Widget _buildParticipants(ResearchDetail detail) {
     return _Panel(
       title: 'PARTICIPANTES',
-      trailing: FilledButton.tonalIcon(
-        key: const Key('participant-add'),
-        onPressed: _busy ? null : () => _addParticipant(detail.project),
-        icon: const Icon(Icons.person_add_alt, size: 16),
-        label: const Text('ADICIONAR'),
-      ),
+      trailing: Wrap(spacing: 8, children: [
+        OutlinedButton.icon(
+          key: const Key('participant-link'),
+          onPressed: _busy ? null : () => _showJoinLink(detail.project),
+          icon: const Icon(Icons.link, size: 16),
+          label: const Text('LINK ONLINE'),
+        ),
+        FilledButton.tonalIcon(
+          key: const Key('participant-add'),
+          onPressed: _busy ? null : () => _addParticipant(detail.project),
+          icon: const Icon(Icons.person_add_alt, size: 16),
+          label: const Text('ADICIONAR'),
+        ),
+      ]),
       child: detail.participants.isEmpty
-          ? const _Hint('Ninguém ainda. Adicione alunos ou pessoas de fora.')
+          ? const _Hint('Ninguém ainda. Adicione alunos ou pessoas de fora, ou mande o link '
+              'para elas se cadastrarem.')
           : Column(children: [
               for (final person in detail.participants)
                 Container(
@@ -713,6 +842,7 @@ class _ResearchTabState extends State<ResearchTab> {
                               style: const TextStyle(
                                   fontWeight: FontWeight.w700, fontSize: 13)),
                           _Chip(person.roleLabel, AssistantTheme.c1),
+                          if (person.pending) _Chip('AGUARDANDO', AssistantTheme.c4),
                           if (person.knownStudent)
                             _Chip('ALUNO CONHECIDO', AssistantTheme.c3),
                           if (person.institution.isNotEmpty)
@@ -729,11 +859,23 @@ class _ResearchTabState extends State<ResearchTab> {
                         ),
                       ]),
                     ),
-                    IconButton(
-                      tooltip: 'Tirar da pesquisa',
-                      onPressed: _busy ? null : () => _removeParticipant(person),
-                      icon: const Icon(Icons.person_remove_outlined, size: 18),
-                    ),
+                    if (person.pending) ...[
+                      TextButton(
+                        key: Key('participant-accept-${person.id}'),
+                        onPressed: _busy ? null : () => _decide(person, accept: true),
+                        child: const Text('ACEITAR'),
+                      ),
+                      TextButton(
+                        key: Key('participant-reject-${person.id}'),
+                        onPressed: _busy ? null : () => _decide(person, accept: false),
+                        child: const Text('RECUSAR'),
+                      ),
+                    ] else
+                      IconButton(
+                        tooltip: 'Tirar da pesquisa',
+                        onPressed: _busy ? null : () => _removeParticipant(person),
+                        icon: const Icon(Icons.person_remove_outlined, size: 18),
+                      ),
                   ]),
                 ),
             ]),

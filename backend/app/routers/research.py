@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
+    ResearchJoinLinkModel,
     ResearchParticipantModel,
     ResearchProjectModel,
     ResearchStageModel,
@@ -73,6 +74,15 @@ class StageUpdate(BaseModel):
     clear_due: bool = False
 
 
+class JoinLinkUpdate(BaseModel):
+    active: Optional[bool] = None
+    role: Optional[str] = None
+
+
+class Decision(BaseModel):
+    accept: bool
+
+
 class ParticipantUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=180)
     role: Optional[str] = None
@@ -100,7 +110,7 @@ def _participant_out(item: ResearchParticipantModel) -> dict[str, Any]:
     return dict(
         id=item.id, name=item.name, email=item.email, phone=item.phone,
         enrollment=item.enrollment, institution=item.institution, role=item.role,
-        known_student=bool(item.known_student))
+        known_student=bool(item.known_student), status=item.status or "accepted")
 
 
 async def _owned(project_id: str, tutor_id: str, db: AsyncSession) -> ResearchProjectModel:
@@ -213,7 +223,7 @@ async def delete_project(
 ):
     """Apaga a pesquisa com as etapas e os participantes dela."""
     project = await _owned(project_id, user["tutor_id"], db)
-    for model in (ResearchStageModel, ResearchParticipantModel):
+    for model in (ResearchStageModel, ResearchParticipantModel, ResearchJoinLinkModel):
         await db.execute(delete(model).where(model.project_id == project.id))
     await db.delete(project)
     await db.commit()
@@ -258,6 +268,63 @@ async def update_participant(
         if value is not None:
             setattr(item, field, value.strip())
     await db.commit()
+    return _participant_out(item)
+
+
+def _join_out(link: ResearchJoinLinkModel, pending: int) -> dict[str, Any]:
+    return dict(
+        path=f"/education/research-join/{link.token}", active=bool(link.active),
+        role=link.role, pending=pending)
+
+
+@router.get("/{project_id}/join-link")
+async def join_link(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """O link para a pessoa se cadastrar sozinha na pesquisa; criado na primeira vez."""
+    project = await _owned(project_id, user["tutor_id"], db)
+    link = await svc.get_join_link(db, project)
+    pending = len(await svc.participants_of(db, project.id, status="pending"))
+    return _join_out(link, pending)
+
+
+@router.patch("/{project_id}/join-link")
+async def update_join_link(
+    project_id: str,
+    body: JoinLinkUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Abre ou fecha o link, ou muda o papel de quem entra por ele."""
+    project = await _owned(project_id, user["tutor_id"], db)
+    link = await svc.get_join_link(db, project)
+    if body.role is not None:
+        if body.role not in svc.ROLES:
+            raise HTTPException(400, "Papel inválido.")
+        link.role = body.role
+    if body.active is not None:
+        link.active = body.active
+    await db.commit()
+    pending = len(await svc.participants_of(db, project.id, status="pending"))
+    return _join_out(link, pending)
+
+
+@router.post("/participants/{participant_id}/decision")
+async def decide_participant(
+    participant_id: str,
+    body: Decision,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aceita ou recusa quem se cadastrou pelo link."""
+    item = await _owned_child(
+        ResearchParticipantModel, participant_id, user["tutor_id"], db, "Participante")
+    try:
+        item = await svc.decide_participant(db, item, accept=body.accept)
+    except svc.ResearchError as exc:
+        raise HTTPException(exc.status, exc.message) from exc
     return _participant_out(item)
 
 

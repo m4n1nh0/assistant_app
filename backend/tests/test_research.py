@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.database import (
     ResearchParticipantModel,
     ResearchProjectModel,
+    ResearchJoinLinkModel,
     ResearchStageModel,
     StudentModel,
     get_db,
@@ -29,7 +30,8 @@ from app.routers import research
 from app.services import research_service as svc
 
 USER = {"uid": "u1", "tutor_id": "t1"}
-TABELAS = (StudentModel, ResearchProjectModel, ResearchParticipantModel, ResearchStageModel)
+TABELAS = (StudentModel, ResearchProjectModel, ResearchParticipantModel, ResearchStageModel,
+           ResearchJoinLinkModel)
 
 
 def iso(**delta):

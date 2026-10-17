@@ -1159,6 +1159,28 @@ class ResearchParticipantModel(Base):
     # Casou com um aluno ativo cadastrado (pela matricula).
     student_id    = Column(String(64), nullable=True)
     known_student = Column(Boolean, nullable=False, default=False)
+    # `accepted` (o professor adicionou ou aceitou) ou `pending` (preencheu o link online e
+    # espera o professor). Quem esta pendente nao conta como participante.
+    status      = Column(String(12), nullable=False, default="accepted")
+    active      = Column(Boolean, nullable=False, default=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ResearchJoinLinkModel(Base):
+    """Link publico para a pessoa se cadastrar sozinha numa pesquisa.
+
+    Um por pesquisa. Quem preenche entra como pendente, com o papel definido aqui, e o
+    professor aceita ou recusa. Fechar o link nao apaga ninguem. Tabela propria, e nao coluna
+    em `research_projects`, porque `create_all` cria tabela nova mas nao acrescenta coluna.
+    """
+
+    __tablename__ = "research_join_links"
+    id          = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id  = Column(String(64), nullable=False, unique=True, index=True)
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    token       = Column(String(64), nullable=False, unique=True, index=True)
+    # Papel de quem entra pelo link: orientando, coorientador ou colaborador.
+    role        = Column(String(24), nullable=False, default="orientando")
     active      = Column(Boolean, nullable=False, default=True)
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -1641,6 +1663,9 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "lesson_segments": {
             "embedding_model": "VARCHAR(120) NULL",
+        },
+        "research_participants": {
+            "status": "VARCHAR(12) NOT NULL DEFAULT 'accepted'",
         },
         "attendance_rosters": {
             "class_group_id": "VARCHAR(64) NULL",

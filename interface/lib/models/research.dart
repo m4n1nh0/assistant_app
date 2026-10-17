@@ -88,6 +88,9 @@ class ResearchParticipant {
   /// A matrícula casa com um aluno cadastrado.
   final bool knownStudent;
 
+  /// `accepted` ou `pending`: quem preencheu o link online espera o professor aceitar.
+  final String status;
+
   const ResearchParticipant({
     required this.id,
     required this.name,
@@ -97,6 +100,7 @@ class ResearchParticipant {
     this.institution = '',
     this.role = 'orientando',
     this.knownStudent = false,
+    this.status = 'accepted',
   });
 
   factory ResearchParticipant.fromJson(Map<String, dynamic> json) => ResearchParticipant(
@@ -108,7 +112,10 @@ class ResearchParticipant {
         institution: json['institution']?.toString() ?? '',
         role: json['role']?.toString() ?? 'orientando',
         knownStudent: json['known_student'] == true,
+        status: json['status']?.toString() ?? 'accepted',
       );
+
+  bool get pending => status == 'pending';
 
   String get roleLabel => researchRoles[role] ?? role;
 }
@@ -130,6 +137,9 @@ class ResearchProject {
   final int overdue;
   final int progress;
   final int participants;
+
+  /// Cadastros pelo link online que esperam o professor aceitar.
+  final int pending;
   final DateTime? nextDue;
   final String nextTitle;
 
@@ -147,6 +157,7 @@ class ResearchProject {
     this.overdue = 0,
     this.progress = 0,
     this.participants = 0,
+    this.pending = 0,
     this.nextDue,
     this.nextTitle = '',
   });
@@ -165,11 +176,38 @@ class ResearchProject {
         overdue: (json['overdue'] as num?)?.toInt() ?? 0,
         progress: (json['progress'] as num?)?.toInt() ?? 0,
         participants: (json['participants'] as num?)?.toInt() ?? 0,
+        pending: (json['pending'] as num?)?.toInt() ?? 0,
         nextDue: parseServerUtc(json['next_due']),
         nextTitle: json['next_title']?.toString() ?? '',
       );
 
   String get statusLabel => researchStatuses[status] ?? status;
+}
+
+/// O link para a pessoa se cadastrar sozinha na pesquisa.
+class ResearchJoinLink {
+  final String path;
+  final bool active;
+
+  /// Papel de quem entra pelo link.
+  final String role;
+  final int pending;
+
+  const ResearchJoinLink({
+    required this.path,
+    this.active = true,
+    this.role = 'orientando',
+    this.pending = 0,
+  });
+
+  factory ResearchJoinLink.fromJson(Map<String, dynamic> json) => ResearchJoinLink(
+        path: json['path']?.toString() ?? '',
+        active: json['active'] != false,
+        role: json['role']?.toString() ?? 'orientando',
+        pending: (json['pending'] as num?)?.toInt() ?? 0,
+      );
+
+  String url(String baseUrl) => '${baseUrl.replaceAll(RegExp(r'/+$'), '')}$path';
 }
 
 class ResearchDetail {

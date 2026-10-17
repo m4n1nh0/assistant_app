@@ -466,6 +466,49 @@ class EducationService {
         Map<String, dynamic>.from(_decode(response) as Map));
   }
 
+  /// O link de cadastro online da pesquisa; o servidor cria na primeira vez.
+  Future<ResearchJoinLink> researchJoinLink(String projectId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/research/$projectId/join-link'),
+      headers: _headers,
+    );
+    return ResearchJoinLink.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// Abre ou fecha o link, ou troca o papel de quem entra por ele.
+  Future<ResearchJoinLink> updateResearchJoinLink(
+    String projectId, {
+    bool? active,
+    String? role,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/education/research/$projectId/join-link'),
+      headers: _headers,
+      body: jsonEncode({
+        if (active != null) 'active': active,
+        if (role != null) 'role': role,
+      }),
+    );
+    return ResearchJoinLink.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
+  /// Aceita ou recusa quem se cadastrou pelo link.
+  Future<ResearchParticipant> decideResearchParticipant(
+    String participantId, {
+    required bool accept,
+  }) async {
+    final response = await http.post(
+      Uri.parse(
+          '$_baseUrl/education/research/participants/$participantId/decision'),
+      headers: _headers,
+      body: jsonEncode({'accept': accept}),
+    );
+    return ResearchParticipant.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map));
+  }
+
   Future<void> removeResearchParticipant(String participantId) async {
     final response = await http.delete(
         Uri.parse('$_baseUrl/education/research/participants/$participantId'),

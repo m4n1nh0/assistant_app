@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -20,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import (
+    ResearchJoinLinkModel,
     ResearchParticipantModel,
     ResearchProjectModel,
     ResearchStageModel,
@@ -178,7 +180,7 @@ async def known_student(db: AsyncSession, tutor_id: str, enrollment: str) -> Opt
 
 
 async def add_participant(
-    db: AsyncSession, project: ResearchProjectModel, data: dict,
+    db: AsyncSession, project: ResearchProjectModel, data: dict, *, status: str = "accepted",
 ) -> ResearchParticipantModel:
     name = " ".join(str(data.get("name") or "").split())[:180]
     if not name:
@@ -202,7 +204,8 @@ async def add_participant(
         project_id=project.id, tutor_id=project.tutor_id, name=name, email=email,
         phone=" ".join(str(data.get("phone") or "").split())[:40], enrollment=enrollment,
         institution=" ".join(str(data.get("institution") or "").split())[:180], role=role,
-        student_id=student.id if student else None, known_student=student is not None)
+        student_id=student.id if student else None, known_student=student is not None,
+        status=status)
     db.add(participant)
     await db.commit()
     await db.refresh(participant)
@@ -236,11 +239,17 @@ async def stages_of(db: AsyncSession, project_id: str) -> list[ResearchStageMode
     ).order_by(ResearchStageModel.position, ResearchStageModel.created_at))).scalars().all())
 
 
-async def participants_of(db: AsyncSession, project_id: str) -> list[ResearchParticipantModel]:
-    return list((await db.execute(select(ResearchParticipantModel).where(
+async def participants_of(
+    db: AsyncSession, project_id: str, *, status: Optional[str] = None,
+) -> list[ResearchParticipantModel]:
+    """Participantes ativos; sem `status`, os aceitos e os que aguardam o professor."""
+    query = select(ResearchParticipantModel).where(
         ResearchParticipantModel.project_id == project_id,
-        ResearchParticipantModel.active.is_(True)
-    ).order_by(ResearchParticipantModel.role, ResearchParticipantModel.name))).scalars().all())
+        ResearchParticipantModel.active.is_(True))
+    if status:
+        query = query.where(ResearchParticipantModel.status == status)
+    return list((await db.execute(query.order_by(
+        ResearchParticipantModel.role, ResearchParticipantModel.name))).scalars().all())
 
 
 async def summary(db: AsyncSession, project: ResearchProjectModel) -> dict:
@@ -256,5 +265,68 @@ async def summary(db: AsyncSession, project: ResearchProjectModel) -> dict:
         "progress": round(done * 100 / len(stages)) if stages else 0,
         "next_due": upcoming[0].due_at if upcoming else None,
         "next_title": upcoming[0].title if upcoming else "",
-        "participants": len(await participants_of(db, project.id)),
+        "participants": len(await participants_of(db, project.id, status="accepted")),
+        "pending": len(await participants_of(db, project.id, status="pending")),
     }
+
+
+# --- inscricao online -------------------------------------------------------------------
+
+
+async def get_join_link(
+    db: AsyncSession, project: ResearchProjectModel,
+) -> ResearchJoinLinkModel:
+    """O link de inscricao da pesquisa; criado na primeira vez."""
+    link = (await db.execute(select(ResearchJoinLinkModel).where(
+        ResearchJoinLinkModel.project_id == project.id))).scalar_one_or_none()
+    if link is None:
+        link = ResearchJoinLinkModel(
+            project_id=project.id, tutor_id=project.tutor_id, token=secrets.token_urlsafe(12))
+        db.add(link)
+        await db.commit()
+        await db.refresh(link)
+    return link
+
+
+async def link_by_token(db: AsyncSession, token: str) -> Optional[ResearchJoinLinkModel]:
+    return (await db.execute(select(ResearchJoinLinkModel).where(
+        ResearchJoinLinkModel.token == token))).scalar_one_or_none()
+
+
+def join_state(link: ResearchJoinLinkModel, project: Optional[ResearchProjectModel]) -> str:
+    """`open`, `closed` (professor fechou) ou `finished` (pesquisa concluida)."""
+    if project is None or not link.active:
+        return "closed"
+    if project.status == "done":
+        return "finished"
+    return "open"
+
+
+async def submit_join(
+    db: AsyncSession, link: ResearchJoinLinkModel, project: ResearchProjectModel, data: dict,
+) -> ResearchParticipantModel:
+    """Cadastro feito pela propria pessoa: entra como pendente, com o papel do link."""
+    enrollment = " ".join(str(data.get("enrollment") or "").split())
+    institution = " ".join(str(data.get("institution") or "").split())
+    if not str(data.get("email") or "").strip():
+        raise ResearchError("email", "Informe o seu e-mail.")
+    if not enrollment and not institution:
+        raise ResearchError(
+            "who", "Informe a matrícula (se for aluno) ou a instituição (se for de fora).")
+    return await add_participant(
+        db, project, {**data, "role": link.role, "enrollment": enrollment,
+                      "institution": institution}, status="pending")
+
+
+async def decide_participant(
+    db: AsyncSession, participant: ResearchParticipantModel, *, accept: bool,
+) -> ResearchParticipantModel:
+    """Aceita quem preencheu o link, ou recusa (sai da lista, e a matricula pode voltar)."""
+    if participant.status != "pending":
+        raise ResearchError("state", "Este participante não está aguardando decisão.", 409)
+    if accept:
+        participant.status = "accepted"
+    else:
+        participant.active = False
+    await db.commit()
+    return participant
