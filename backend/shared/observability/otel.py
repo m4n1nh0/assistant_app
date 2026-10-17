@@ -10,6 +10,7 @@ que e o padrao da propria especificacao - nao ha nome de fornecedor no codigo.
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 from loguru import logger
@@ -118,6 +119,78 @@ def setup(
         _tracer = None
         _enabled = False
         return False
+
+
+def instrument_clients(*, tracer_provider: Any = None) -> list[str]:
+    """Liga o trace nas chamadas que saem deste processo.
+
+    Cada chamada HTTP (outro servico, Qdrant, provedor de modelo) e cada comando do Redis vira um
+    span de CLIENTE, e as chamadas HTTP levam o `traceparent` junto. E isso que liga o trace da API
+    ao do orquestrador, da tool-service e do MCP, e e o que o mapa de servicos do collector precisa
+    para desenhar quem chama quem.
+
+    Returns:
+        Os nomes do que foi ligado. Pacote ausente nao e erro: aquele pedaco so fica de fora.
+    """
+    if not _enabled:
+        return []
+    ligados: list[str] = []
+    for nome, modulo, classe in (
+        ("httpx", "opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor"),
+        ("redis", "opentelemetry.instrumentation.redis", "RedisInstrumentor"),
+    ):
+        try:
+            instrumentor = getattr(importlib.import_module(modulo), classe)()
+            if not instrumentor.is_instrumented_by_opentelemetry:
+                instrumentor.instrument(tracer_provider=tracer_provider)
+            ligados.append(nome)
+        except ImportError:
+            logger.debug(f"Instrumentacao de {nome} ausente: sem spans de cliente para ele.")
+        except Exception as exc:
+            logger.warning(f"Instrumentacao de {nome} falhou: {exc}")
+    return ligados
+
+
+def instrument_database(engine: Any) -> bool:
+    """Liga o trace nas consultas do engine SQLAlchemy (um span de cliente por comando)."""
+    if not _enabled:
+        return False
+    try:
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+        SQLAlchemyInstrumentor().instrument(engine=getattr(engine, "sync_engine", engine))
+        return True
+    except ImportError:
+        logger.debug("Instrumentacao de SQLAlchemy ausente: o banco nao aparece no mapa.")
+    except Exception as exc:
+        logger.warning(f"Instrumentacao do banco falhou: {exc}")
+    return False
+
+
+def instrument_server(
+    app: Any, *, excluded_paths: tuple[str, ...] = (), tracer_provider: Any = None
+) -> bool:
+    """Abre um span de SERVIDOR para cada requisicao que entra, herdando o `traceparent` recebido.
+
+    Sem isso o servico que recebe a chamada abre um trace novo, e a API e o orquestrador viram
+    dois traces sem ligacao.
+    """
+    if not _enabled or app is None:
+        return False
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(
+            app,
+            excluded_urls=",".join(p.lstrip("/") for p in excluded_paths) or None,
+            tracer_provider=tracer_provider,
+        )
+        return True
+    except ImportError:
+        logger.debug("Instrumentacao do FastAPI ausente: sem spans de servidor.")
+    except Exception as exc:
+        logger.warning(f"Instrumentacao do servidor falhou: {exc}")
+    return False
 
 
 def shutdown() -> None:

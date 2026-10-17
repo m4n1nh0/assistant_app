@@ -21,7 +21,8 @@ import redis.asyncio as redis_asyncio
 import sys
 
 from .core.config import get_settings
-from .core.database import init_db
+from .core.database import engine, init_db
+from shared.observability.otel import instrument_database
 from .services import llm_price_service, llm_usage_service
 from .core.database_seed import apply_database_seed, database_seed_requested
 from .core.net import client_ip, client_ip_identifier
@@ -236,6 +237,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Precisa vir depois da criacao do app e antes do primeiro request: e ele que
 # abre o contexto de correlacao que todas as camadas abaixo leem.
 setup_observability(app, service_name=settings.otel_service_name, settings=settings)
+instrument_database(engine)  # o banco entra no mapa de servicos
 
 
 @app.middleware("http")

@@ -56,6 +56,23 @@ receivers:
     collection_interval: 30s
 
 processors:
+  # Da nome ao destino das chamadas que saem (span de CLIENTE), para o mapa de servicos mostrar
+  # "mysql", "redis" e "qdrant" (db.name, que o mapa trata como banco) e o dominio dos demais
+  # (peer.service, no virtual: provedor de modelo, por exemplo). Servico nosso que recebe a
+  # chamada nao depende disto: o par cliente-servidor se forma pelo proprio trace.
+  transform/peer:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["db.name"], "mysql") where kind == SPAN_KIND_CLIENT and (attributes["db.system"] == "mysql" or attributes["db.system.name"] == "mysql")
+          - set(attributes["db.name"], "redis") where kind == SPAN_KIND_CLIENT and (attributes["db.system"] == "redis" or attributes["db.system.name"] == "redis")
+          - set(attributes["db.name"], "qdrant") where kind == SPAN_KIND_CLIENT and (IsMatch(attributes["http.url"], ".*qdrant.*") or IsMatch(attributes["url.full"], ".*qdrant.*"))
+          - set(attributes["peer.service"], attributes["server.address"]) where kind == SPAN_KIND_CLIENT and attributes["peer.service"] == nil and attributes["server.address"] != nil
+          - set(attributes["peer.service"], attributes["net.peer.name"]) where kind == SPAN_KIND_CLIENT and attributes["peer.service"] == nil and attributes["net.peer.name"] != nil
+          - set(attributes["peer.service"], ExtractPatterns(attributes["http.url"], "^https?://(?P<host>[^/:?#]+)")["host"]) where kind == SPAN_KIND_CLIENT and attributes["peer.service"] == nil and attributes["http.url"] != nil
+          - set(attributes["peer.service"], ExtractPatterns(attributes["url.full"], "^https?://(?P<host>[^/:?#]+)")["host"]) where kind == SPAN_KIND_CLIENT and attributes["peer.service"] == nil and attributes["url.full"] != nil
+          - replace_pattern(attributes["peer.service"], "[.]railway[.]internal$", "") where kind == SPAN_KIND_CLIENT
   batch:
     timeout: 5s
   memory_limiter:
@@ -64,6 +81,16 @@ processors:
     spike_limit_percentage: 20
 
 connectors:
+  # Mapa de servicos: casa o span de cliente de um servico com o span de servidor do outro (mesmo
+  # trace) e conta chamadas, falhas e latencia de cada par. Banco e provedor de modelo nao tem
+  # span de servidor nosso: viram no virtual pelo peer.service que o processador acima define.
+  servicegraph:
+    latency_histogram_buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 30s, 60s]
+    store:
+      ttl: 10s
+      max_items: 2000
+    metrics_flush_interval: 15s
+    virtual_node_peer_attributes: [peer.service]
   spanmetrics:
     namespace: assistant.spans
     histogram:
@@ -94,9 +121,9 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [debug, spanmetrics]
+      processors: [memory_limiter, transform/peer, batch]
+      exporters: [debug, spanmetrics, servicegraph]
     metrics:
-      receivers: [otlp, spanmetrics, mysql, redis]
+      receivers: [otlp, spanmetrics, servicegraph, mysql, redis]
       processors: [memory_limiter, batch]
       exporters: [prometheus]

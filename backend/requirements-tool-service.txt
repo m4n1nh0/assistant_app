@@ -51,6 +51,8 @@ orjson==3.11.9
 opentelemetry-api==1.39.0
 opentelemetry-sdk==1.39.0
 opentelemetry-exporter-otlp-proto-http==1.39.0
+opentelemetry-instrumentation-fastapi==0.60b0
+opentelemetry-instrumentation-httpx==0.60b0
 
 # NAO entram: sqlalchemy, aiomysql, python-jose, passlib, bcrypt, cryptography
 # (nenhum modulo de banco ou seguranca e carregado), anthropic, openai,

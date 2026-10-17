@@ -1,0 +1,800 @@
+{
+  "uid": "assistant-mapa",
+  "title": "Assistant · mapa da requisição",
+  "tags": [
+    "assistant",
+    "mapa"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Por onde passa a requisição · tudo segue o seletor de tempo do alto",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "nodeGraph",
+      "title": "Mapa de serviços",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Cada círculo é um serviço, banco ou provedor; cada seta é uma ligação, com o total de chamadas no período. A cor do círculo mostra a saúde (verde: sem falha; laranja: até 5% das chamadas recebidas falharam; vermelho: 5% ou mais) e o número dentro é a taxa de falha. \"user\" é quem chama a API de fora (a interface, o portal). Bancos (mysql, redis, qdrant) e provedores de modelo aparecem como destino das chamadas.",
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "label_replace(label_replace(label_join(round(sum by (client, server) (increase(traces_service_graph_request_total[$__range]))), \"id\", \"->\", \"client\", \"server\"), \"source\", \"$1\", \"client\", \"(.*)\"), \"target\", \"$1\", \"server\", \"(.*)\")",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "label_replace((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) >= 5), \"color\", \"red\", \"id\", \".*\") or label_replace(((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) > 0) and (max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) < 5)), \"color\", \"orange\", \"id\", \".*\") or label_replace((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) == 0), \"color\", \"green\", \"id\", \".*\")",
+          "legendFormat": "",
+          "refId": "B",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "m",
+              "Value #B": "m"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "mainstat",
+            "mode": "binary",
+            "binary": {
+              "left": "m",
+              "operator": "*",
+              "right": "1"
+            },
+            "replaceFields": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "m": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "ainda sem chamadas entre serviços"
+        },
+        "overrides": []
+      },
+      "options": {
+        "nodes": {
+          "mainStatUnit": "%"
+        },
+        "edges": {
+          "mainStatUnit": " chamadas"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Chamadas entre serviços",
+      "description": "Cada chamada de um serviço a outro, a um banco ou a um provedor, no período.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(increase(traces_service_graph_request_total[$__range]))) or vector(0)",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Falhas",
+      "description": "Chamadas que terminaram em erro.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(increase(traces_service_graph_request_failed_total[$__range]))) or vector(0)",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Taxa de falha",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(100 * sum(increase(traces_service_graph_request_failed_total[$__range])) / clamp_min(sum(increase(traces_service_graph_request_total[$__range])), 1)) or vector(0)",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Ligações ativas",
+      "description": "Pares origem → destino que tiveram chamada no período.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(count(sum by (client, server) (increase(traces_service_graph_request_total[$__range])))) or vector(0)",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Cada ligação",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Origem → destino, com chamadas, falhas, taxa de falha e a latência do percentil 95 vista por quem chama.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (client, server) (increase(traces_service_graph_request_total[$__range]))",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (client, server) (increase(traces_service_graph_request_failed_total[$__range])) or sum by (client, server) (increase(traces_service_graph_request_total[$__range])) * 0",
+          "legendFormat": "",
+          "refId": "B",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, client, server) (increase(traces_service_graph_request_client_seconds_bucket[$__range])))",
+          "legendFormat": "",
+          "refId": "C",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Taxa de falha",
+            "mode": "binary",
+            "binary": {
+              "left": "Value #B",
+              "operator": "/",
+              "right": "Value #A"
+            },
+            "replaceFields": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "client": 0,
+              "server": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Taxa de falha": 4,
+              "Value #C": 5
+            },
+            "renameByName": {
+              "client": "Origem",
+              "server": "Destino",
+              "Value #A": "Chamadas",
+              "Value #B": "Falhas",
+              "Value #C": "Latência p95"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Chamadas",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "ainda sem chamadas entre serviços",
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Chamadas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falhas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Taxa de falha"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.01
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.05
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Latência p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Chamadas por segundo, por ligação",
+      "description": "Quanto cada ligação está sendo usada.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (client, server) (rate(traces_service_graph_request_total[$__rate_interval]))",
+          "legendFormat": "{{client}} → {{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "sem chamadas no período",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Falhas por segundo, por ligação",
+      "description": "Vazio quer dizer que nada falhou.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (client, server) (rate(traces_service_graph_request_failed_total[$__rate_interval]))",
+          "legendFormat": "{{client}} → {{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "sem falhas no período",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Latência p95, por ligação",
+      "description": "Tempo até a resposta, visto por quem chama (inclui a rede e a fila do servidor).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, client, server) (rate(traces_service_graph_request_client_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{client}} → {{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "sem chamadas no período",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Latência média, por ligação",
+      "description": "Média do tempo de resposta de cada ligação.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (client, server) (rate(traces_service_graph_request_client_seconds_sum[$__rate_interval])) / sum by (client, server) (rate(traces_service_graph_request_client_seconds_count[$__rate_interval]))",
+          "legendFormat": "{{client}} → {{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "sem chamadas no período",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}

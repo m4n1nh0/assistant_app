@@ -69,6 +69,10 @@ async def _ready() -> dict[str, Any]:
 
 
 async def _startup() -> None:
+    from app.core.database import engine
+    from shared.observability.otel import instrument_database
+
+    instrument_database(engine)  # o banco entra no mapa de servicos
     llm_usage_service.enable()
     llm_price_service.start_background_refresh()
     if not settings.internal_service_token.strip():

@@ -556,6 +556,50 @@ pacote de saída, e o tráfego pela rede privada conta nos dois sentidos:
 Ligar nos três não quebra nada, mas é inútil nos dois primeiros. O serverless só vale para o
 container novo: depois de ligar, faça um redeploy.
 
+#### Mapa da requisição
+
+O painel **Assistant · mapa da requisição** desenha por onde a requisição passa: quem chama quem, quantas
+vezes, quanto demora e onde falha.
+
+```mermaid
+flowchart LR
+    U([user]) --> API[assistant-api]
+    API --> ORCH[agent-orchestrator]
+    API --> TOOL[tool-service]
+    TOOL --> MCP[mcp-service]
+    API --> DB[(mysql)]
+    ORCH --> DB
+    API --> R[(redis)]
+    ORCH --> Q[(qdrant)]
+    ORCH --> LLM[provedores de modelo]
+```
+
+Ele é montado a partir dos traces, sem serviço novo:
+
+1. **Na aplicação**: cada requisição que entra abre um span de servidor e herda o `traceparent` que veio
+   no cabeçalho. Cada chamada que sai (HTTP, Redis e consultas ao MySQL) abre um span de cliente, e as
+   chamadas HTTP levam o `traceparent` junto. É isso que liga o trace da API ao do orquestrador, da
+   tool-service e do MCP.
+2. **No `otel-collector`**: o conector `servicegraph` casa o span de cliente de um serviço com o span de
+   servidor do outro e conta chamadas, falhas e latência de cada par. Um processador dá nome ao destino
+   das chamadas que saem: `mysql`, `redis` e `qdrant`, e o domínio dos demais (um provedor de modelo, por
+   exemplo).
+3. **No Grafana**: o painel lê essas métricas do Prometheus (`traces_service_graph_*`).
+
+O que o painel mostra, tudo no período do seletor de tempo do alto:
+
+- **Mapa de serviços:** cada círculo é um serviço, banco ou provedor. A cor mostra a saúde (verde: sem
+  falha; laranja: até 5% das chamadas recebidas falharam; vermelho: 5% ou mais) e o número dentro é a
+  taxa de falha. `user` é quem chama a API de fora (a interface, o portal).
+- **Totais, tabela "Cada ligação" e gráficos:** chamadas, falhas, taxa de falha e latência (p95 e média)
+  de cada par origem → destino.
+
+Para o mapa aparecer, os **quatro** serviços da aplicação precisam de `OTEL_ENABLED=true` e do
+`OTEL_EXPORTER_ENDPOINT` (veja a tabela acima): serviço sem telemetria fica de fora do desenho, e a
+ligação até ele aparece como um destino sem saída. O mapa só tem dado depois que há tráfego; as
+métricas aparecem uns 30 segundos depois da primeira requisição. A ligação até o MySQL só existe se o
+`opentelemetry-instrumentation-sqlalchemy` estiver na imagem (está no `requirements.txt`).
+
 #### Problemas comuns da observabilidade
 
 | Sintoma | Causa | O que fazer |

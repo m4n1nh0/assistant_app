@@ -125,11 +125,16 @@ def setup_observability(
     if getattr(settings, "otel_enabled", False):
         from .otel import setup as setup_otel
 
-        setup_otel(
+        if setup_otel(
             service_name=service_name,
             endpoint=getattr(settings, "otel_exporter_endpoint", ""),
             console=getattr(settings, "otel_console_export", False),
-        )
+        ):
+            # Trace que atravessa os servicos: span de servidor na entrada, de cliente na saida.
+            from .otel import instrument_clients, instrument_server
+
+            instrument_clients()
+            instrument_server(app, excluded_paths=excluded_paths)
 
     from .langsmith import setup as setup_langsmith
 
