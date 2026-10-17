@@ -19,7 +19,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.database import LLMPriceModel, LLMUsageDailyModel, UserModel, get_db
+from app.core.database import (
+    LLMPriceModel, LLMUsageDailyModel, LLMUsageHourlyModel, UserModel, get_db)
 from app.core.security import get_current_user
 from app.models.schemas import LLMResponse
 from app.routers import observability
@@ -149,7 +150,7 @@ def sessions():
 
     async def criar():
         async with engine.begin() as conn:
-            for model in (LLMPriceModel, LLMUsageDailyModel, UserModel):
+            for model in (LLMPriceModel, LLMUsageHourlyModel, LLMUsageDailyModel, UserModel):
                 await conn.run_sync(model.__table__.create)
 
     asyncio.run(criar())
@@ -259,17 +260,21 @@ def test_apagar_o_preco_devolve_o_modelo_ao_padrao(sessions):
 # --- consumo por cliente -----------------------------------------------------------------------
 
 
+H10 = datetime(2026, 10, 10, 12, 30)  # a hora 12 do dia 10
+H11 = datetime(2026, 10, 11, 12, 30)
+
+
 def uso(provider="claude", model="sonnet", entrada=1000, saida=500, ok=True):
     return build_usage(provider, model=model, input_tokens=entrada, output_tokens=saida, ok=ok)
 
 
 def test_consumo_soma_por_dia_cliente_provedor_e_modelo(sessions):
     async def caso(db):
-        await usage_service.add_usage(db, uso(), "t1", day="2026-10-10")
-        await usage_service.add_usage(db, uso(entrada=2000), "t1", day="2026-10-10")
-        await usage_service.add_usage(db, uso(), "t2", day="2026-10-10")
-        await usage_service.add_usage(db, uso(model="haiku"), "t1", day="2026-10-10")
-        return (await db.execute(select(LLMUsageDailyModel))).scalars().all()
+        await usage_service.add_usage(db, uso(), "t1", bucket=H10)
+        await usage_service.add_usage(db, uso(entrada=2000), "t1", bucket=H10)
+        await usage_service.add_usage(db, uso(), "t2", bucket=H10)
+        await usage_service.add_usage(db, uso(model="haiku"), "t1", bucket=H10)
+        return (await db.execute(select(LLMUsageHourlyModel))).scalars().all()
 
     linhas = roda(sessions, caso)
     por_chave = {(r.tenant_id, r.model): r for r in linhas}
@@ -283,9 +288,9 @@ def test_consumo_soma_por_dia_cliente_provedor_e_modelo(sessions):
 def test_token_ausente_nao_vira_zero_e_a_chamada_fica_sem_preco(sessions):
     async def caso(db):
         await usage_service.add_usage(
-            db, build_usage("claude", model="x"), "t1", day="2026-10-10")
-        await usage_service.add_usage(db, uso(), "t1", day="2026-10-11")
-        return (await db.execute(select(LLMUsageDailyModel).order_by(LLMUsageDailyModel.day))
+            db, build_usage("claude", model="x"), "t1", bucket=H10)
+        await usage_service.add_usage(db, uso(), "t1", bucket=H11)
+        return (await db.execute(select(LLMUsageHourlyModel).order_by(LLMUsageHourlyModel.bucket))
                 ).scalars().all()
 
     sem_token, com_token = roda(sessions, caso)
@@ -295,9 +300,9 @@ def test_token_ausente_nao_vira_zero_e_a_chamada_fica_sem_preco(sessions):
 
 def test_chamada_com_erro_e_contada(sessions):
     async def caso(db):
-        await usage_service.add_usage(db, uso(ok=False), "t1", day="2026-10-10")
-        await usage_service.add_usage(db, uso(), "t1", day="2026-10-10")
-        return (await db.execute(select(LLMUsageDailyModel))).scalars().one()
+        await usage_service.add_usage(db, uso(ok=False), "t1", bucket=H10)
+        await usage_service.add_usage(db, uso(), "t1", bucket=H10)
+        return (await db.execute(select(LLMUsageHourlyModel))).scalars().one()
 
     linha = roda(sessions, caso)
     assert (linha.calls, linha.errors) == (2, 1)
@@ -307,10 +312,10 @@ def test_chamada_que_falhou_nao_conta_como_sem_preco(sessions):
     # Falha nao tem token nem custo por natureza: e falha, e nao "sem preco". So a chamada que deu
     # certo e ficou sem custo (agente conectado, provedor que nao informou token) e "sem preco".
     async def caso(db):
-        await usage_service.add_usage(db, build_usage("claude", ok=False), "t1", day="2026-10-10")
-        await usage_service.add_usage(db, build_usage("claude", ok=False), "t1", day="2026-10-10")
-        await usage_service.add_usage(db, build_usage("codex_cli"), "t1", day="2026-10-10")
-        return (await db.execute(select(LLMUsageDailyModel).order_by(LLMUsageDailyModel.provider))
+        await usage_service.add_usage(db, build_usage("claude", ok=False), "t1", bucket=H10)
+        await usage_service.add_usage(db, build_usage("claude", ok=False), "t1", bucket=H10)
+        await usage_service.add_usage(db, build_usage("codex_cli"), "t1", bucket=H10)
+        return (await db.execute(select(LLMUsageHourlyModel).order_by(LLMUsageHourlyModel.provider))
                 ).scalars().all()
 
     claude, agente = roda(sessions, caso)
@@ -320,15 +325,15 @@ def test_chamada_que_falhou_nao_conta_como_sem_preco(sessions):
 
 
 def hoje(dias_atras=0):
-    return (datetime.now(timezone.utc) - timedelta(days=dias_atras)).strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc) - timedelta(days=dias_atras)
 
 
 def test_resumo_agrupa_e_respeita_a_janela_e_o_cliente(sessions):
     async def caso(db):
-        await usage_service.add_usage(db, uso(), "t1", day=hoje(0))
-        await usage_service.add_usage(db, uso(provider="gpt", model="gpt-4o"), "t1", day=hoje(1))
-        await usage_service.add_usage(db, uso(), "t2", day=hoje(1))
-        await usage_service.add_usage(db, uso(), "t1", day=hoje(40))  # fora da janela de 30 dias
+        await usage_service.add_usage(db, uso(), "t1", bucket=hoje(0))
+        await usage_service.add_usage(db, uso(provider="gpt", model="gpt-4o"), "t1", bucket=hoje(1))
+        await usage_service.add_usage(db, uso(), "t2", bucket=hoje(1))
+        await usage_service.add_usage(db, uso(), "t1", bucket=hoje(40))  # fora da janela de 30 dias
         return {
             "provider": await usage_service.summarize(db, days=30, group_by="provider", tenant_id="t1"),
             "model": await usage_service.summarize(db, days=30, group_by="model", tenant_id="t1"),
@@ -350,10 +355,112 @@ def test_resumo_agrupa_e_respeita_a_janela_e_o_cliente(sessions):
 
 def test_cliente_sem_conta_aparece_com_nome_legivel(sessions):
     async def caso(db):
-        await usage_service.add_usage(db, uso(), "", day=hoje())
+        await usage_service.add_usage(db, uso(), "", bucket=hoje())
         return await usage_service.summarize(db, days=7, group_by="tenant")
 
     assert roda(sessions, caso)["groups"][0]["label"] == "(sem conta)"
+
+
+def test_a_mesma_chamada_em_horas_diferentes_vira_linhas_diferentes(sessions):
+    # E o que deixa o grafico mostrar a variacao ao longo do dia: uma linha por hora.
+    async def caso(db):
+        for hora, vezes in ((9, 2), (10, 1), (14, 3)):
+            for _ in range(vezes):
+                await usage_service.add_usage(
+                    db, uso(), "t1", bucket=datetime(2026, 10, 10, hora, 17))
+        return (await db.execute(select(LLMUsageHourlyModel).order_by(LLMUsageHourlyModel.bucket))
+                ).scalars().all()
+
+    linhas = roda(sessions, caso)
+
+    assert [(r.bucket.hour, r.calls) for r in linhas] == [(9, 2), (10, 1), (14, 3)]
+    assert all(r.bucket.minute == 0 and r.bucket.second == 0 for r in linhas)
+
+
+def test_a_hora_e_truncada_e_vale_tambem_com_fuso(sessions):
+    assert usage_service.current_bucket(datetime(2026, 10, 10, 9, 59, 59)) == datetime(2026, 10, 10, 9)
+    # 09:30 em UTC-3 e 12:30 em UTC.
+    com_fuso = datetime(2026, 10, 10, 9, 30, tzinfo=timezone(timedelta(hours=-3)))
+    assert usage_service.current_bucket(com_fuso) == datetime(2026, 10, 10, 12)
+
+
+def test_resumo_por_dia_soma_as_horas_do_dia(sessions):
+    async def caso(db):
+        agora = datetime.now(timezone.utc).replace(hour=15, minute=5, second=0, microsecond=0)
+        for hora in (3, 9, 15):
+            await usage_service.add_usage(db, uso(), "t1", bucket=agora.replace(hour=hora))
+        return await usage_service.summarize(db, days=3, group_by="day", tenant_id="t1")
+
+    resumo = roda(sessions, caso)
+
+    assert len(resumo["groups"]) == 1 and resumo["groups"][0]["calls"] == 3
+    assert resumo["total"]["calls"] == 3
+
+
+# --- historico por dia (tabela antiga) ---------------------------------------------------------
+
+
+def test_historico_por_dia_e_copiado_para_a_tabela_por_hora(sessions):
+    async def caso(db):
+        # Pela regra antiga, toda falha tambem era contada como "sem preco" (unpriced == errors).
+        db.add(LLMUsageDailyModel(day="2026-10-05", tenant_id="t1", provider="claude", model="sonnet",
+                                  calls=4, errors=1, unpriced_calls=1, input_tokens=100,
+                                  output_tokens=50, cached_tokens=0, cost_usd=0.12))
+        db.add(LLMUsageDailyModel(day="2026-10-06", tenant_id="", provider="gpt", model="",
+                                  calls=2, errors=2, unpriced_calls=2, input_tokens=0,
+                                  output_tokens=0, cached_tokens=0, cost_usd=0.0))
+        await db.commit()
+        copiadas = await usage_service.migrate_legacy_daily(db)
+        linhas = (await db.execute(select(LLMUsageHourlyModel).order_by(LLMUsageHourlyModel.bucket))
+                  ).scalars().all()
+        return copiadas, linhas
+
+    copiadas, linhas = roda(sessions, caso)
+
+    assert copiadas == 2
+    assert [(r.bucket, r.tenant_id, r.provider, r.calls, r.errors) for r in linhas] == [
+        (datetime(2026, 10, 5), "t1", "claude", 4, 1), (datetime(2026, 10, 6), "", "gpt", 2, 2)]
+    assert linhas[0].cost_usd == 0.12 and linhas[0].input_tokens == 100
+
+
+def test_a_copia_corrige_o_sem_preco_inflado_pelas_falhas(sessions):
+    async def caso(db):
+        # 5 chamadas: 2 falharam (contadas como sem preco pela regra antiga) e 1 era de agente
+        # conectado, que deu certo e ficou sem custo: 3 "sem preco" na regra antiga.
+        db.add(LLMUsageDailyModel(day="2026-10-05", tenant_id="t1", provider="codex_cli", model="",
+                                  calls=5, errors=2, unpriced_calls=3, input_tokens=0,
+                                  output_tokens=0, cached_tokens=0, cost_usd=0.0))
+        await db.commit()
+        await usage_service.migrate_legacy_daily(db)
+        return (await db.execute(select(LLMUsageHourlyModel))).scalars().one()
+
+    linha = roda(sessions, caso)
+
+    assert (linha.calls, linha.errors, linha.unpriced_calls) == (5, 2, 1)
+
+
+def test_copiar_de_novo_nao_duplica_nem_pisa_no_que_ja_existe(sessions):
+    async def caso(db):
+        db.add(LLMUsageDailyModel(day="2026-10-05", tenant_id="t1", provider="claude", model="sonnet",
+                                  calls=4, errors=0, unpriced_calls=0, input_tokens=1,
+                                  output_tokens=1, cached_tokens=0, cost_usd=0.1))
+        await db.commit()
+        primeira = await usage_service.migrate_legacy_daily(db)
+        segunda = await usage_service.migrate_legacy_daily(db)
+        # Consumo novo na mesma chave e nao e apagado nem somado de novo.
+        await usage_service.add_usage(db, uso(), "t1", bucket=datetime(2026, 10, 5, 0, 20))
+        terceira = await usage_service.migrate_legacy_daily(db)
+        linhas = (await db.execute(select(LLMUsageHourlyModel))).scalars().all()
+        return primeira, segunda, terceira, linhas
+
+    primeira, segunda, terceira, linhas = roda(sessions, caso)
+
+    assert (primeira, segunda, terceira) == (1, 0, 0)
+    assert len(linhas) == 1 and linhas[0].calls == 5  # 4 do historico + 1 nova, sem duplicar
+
+
+def test_sem_historico_antigo_nada_e_copiado(sessions):
+    assert roda(sessions, usage_service.migrate_legacy_daily) == 0
 
 
 # --- de quem é a chamada -----------------------------------------------------------------------
@@ -436,9 +543,9 @@ def api(sessions, monkeypatch):
             UserModel(id="u2", username="bia", email=None, tutor_id="t2", password_hash="x"),
         ])
         await db.commit()
-        await usage_service.add_usage(db, uso(), "t1", day=hoje())
-        await usage_service.add_usage(db, uso(), "t2", day=hoje())
-        await usage_service.add_usage(db, uso(), "t2", day=hoje())
+        await usage_service.add_usage(db, uso(), "t1", bucket=hoje())
+        await usage_service.add_usage(db, uso(), "t2", bucket=hoje())
+        await usage_service.add_usage(db, uso(), "t2", bucket=hoje())
 
     roda(sessions, semear)
 

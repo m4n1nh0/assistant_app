@@ -24,8 +24,9 @@ histórico de antes.
 
 ### O que conta, e como
 
-O consumo é somado por **dia, cliente, provedor e modelo**: meses de uso cabem em poucas linhas, e
-somar um período é barato. O cliente é o dono da conta que fez a chamada, o mesmo que fornece a
+O consumo é somado por **hora, cliente, provedor e modelo**: meses de uso cabem em poucas linhas, e
+somar um período é barato. A hora (e não o dia) é o que deixa o gráfico do Grafana mostrar a variação
+do consumo ao longo do dia; o app soma as horas por dia. O cliente é o dono da conta que fez a chamada, o mesmo que fornece a
 chave do provedor. Isso vale para tudo que passa por um modelo do backend: chat, resumo de aula,
 quiz, melhoria de material e as demais funções.
 
@@ -111,17 +112,18 @@ Autenticadas, em `/observability`:
 - O consumo por cliente depende de a chamada rodar com a conta do cliente ativa. Chamadas em
   segundo plano sem essa conta aparecem como *(sem conta)*.
 
-## Corrigir os números "sem preço" de antes da correção
+## O histórico de antes da tabela por hora
 
-Até uma versão anterior, uma chamada que **falhou** também era contada como "sem preço", e o aviso do
-app mostrava, por exemplo, "12 chamadas sem preço" para 12 falhas. A regra já foi corrigida, mas as
-linhas dos dias anteriores guardam o valor inflado. Para acertá-las, rode **uma vez** no MySQL, depois
-do deploy da correção (só os dias passados: o de hoje mistura as duas regras e se acerta amanhã):
+O consumo era guardado por dia (`llm_usage_daily`) antes de passar a ser por hora (`llm_usage_hourly`).
+Ao subir, a API **copia o histórico antigo** para a tabela nova, uma vez e sem duplicar: cada dia vira uma
+linha no início dele (00:00 UTC), e repetir a cópia não soma de novo. A tabela antiga só é lida e deixa
+de receber gravação, então pode ficar onde está.
 
-```sql
-UPDATE llm_usage_daily SET unpriced_calls = GREATEST(unpriced_calls - errors, 0) WHERE day < CURDATE();
-```
+Na cópia, o **"sem preço" é corrigido**. Antes uma chamada que falhou também contava como "sem preço", e o
+aviso do app mostrava, por exemplo, "12 chamadas sem preço" para 12 falhas. Como toda falha antiga foi
+contada assim, a cópia tira `errors` de `unpriced_calls`, e sobram só as chamadas que deram certo e ficaram
+sem custo (as dos agentes conectados). Não há nada para rodar à mão.
 
-A conta é exata: toda falha era contada como sem preço, então tirar `errors` de `unpriced_calls` deixa
-só as chamadas que deram certo e ficaram sem custo (as dos agentes conectados). **Não rode duas vezes**,
-senão subtrai de novo.
+O histórico copiado fica só no início do dia, então o gráfico por hora mostra os dias antigos como uma
+barra à meia-noite UTC. A variação dentro do dia aparece só a partir de quando a tabela por hora passou a
+receber o consumo.

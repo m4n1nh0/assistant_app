@@ -1,8 +1,8 @@
 apiVersion: 1
 
-# Consumo de IA, lido do banco da aplicacao (tabela llm_usage_daily). As metricas do Prometheus
+# Consumo de IA, lido do banco da aplicacao (tabela llm_usage_hourly). As metricas do Prometheus
 # perdem a primeira contagem de cada serie nova (o `increase()` parte da segunda amostra), o que
-# apaga justo as primeiras chamadas de um uso pequeno; o banco guarda o numero exato, por dia,
+# apaga justo as primeiras chamadas de um uso pequeno; o banco guarda o numero exato, por hora,
 # provedor, modelo e cliente.
 #
 # O usuario precisa ser o `monitor`, com SELECT so nessa tabela e em tres colunas dos usuarios

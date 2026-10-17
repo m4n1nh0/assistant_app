@@ -234,7 +234,7 @@ OTEL_EXPORTER_ENDPOINT="http://${{otel-collector.RAILWAY_PRIVATE_DOMAIN}}:4318"
   modelo de cada cliente. Veja [Consumo e preços de IA](../funcionalidades/consumo-e-precos-de-ia.md).
   Um modelo sem preço próprio usa o padrão do provedor, que é só uma ordem de grandeza.
 - Os quadros de **consumo** do Grafana (tokens, custo, chamadas, por modelo e por cliente) leem do
-  **banco** (tabela `llm_usage_daily`), que guarda o número exato por dia, provedor, modelo e cliente.
+  **banco** (tabela `llm_usage_hourly`), que guarda o número exato por hora, provedor, modelo e cliente.
   As métricas do Prometheus ficam só para latência e saúde: elas somam todos os clientes (um rótulo por
   cliente criaria uma série por cliente) e perdem a primeira contagem de cada série nova, o que
   distorce justamente um uso pequeno. O mesmo consumo aparece no app (Configurações → Consumo de IA).
@@ -444,18 +444,23 @@ nada é criado).
    CREATE USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';
    GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'monitor'@'%';
    GRANT SELECT ON performance_schema.* TO 'monitor'@'%';
-   GRANT SELECT ON assistant.llm_usage_daily TO 'monitor'@'%';
+   GRANT SELECT ON assistant.llm_usage_hourly TO 'monitor'@'%';
    GRANT SELECT (tutor_id, email, username) ON assistant.users TO 'monitor'@'%';
    ```
 
    | Permissão | Para quê |
    |---|---|
    | `PROCESS`, `REPLICATION CLIENT` e `performance_schema` | as métricas de saúde do MySQL (collector) |
-   | `llm_usage_daily` | o consumo de IA no Grafana (uma tabela de números, sem dado pessoal) |
+   | `llm_usage_hourly` | o consumo de IA no Grafana (uma tabela de números, sem dado pessoal) |
    | três colunas de `users` | mostrar o e-mail do cliente no quadro "Consumo por cliente" |
 
    Ele **não** lê o resto do banco: nem `password_hash`, nem as aulas, os alunos ou as conversas.
    Testado: `SELECT password_hash` e `SELECT *` em `users` dão `command denied`, e `INSERT` também.
+
+   Se você já criou o `monitor` quando a tabela de consumo era por dia (`llm_usage_daily`), ele precisa
+   da permissão da tabela nova, senão os quadros de consumo dão `SELECT command denied`:
+   `GRANT SELECT ON assistant.llm_usage_hourly TO 'monitor'@'%';` (a da tabela antiga pode ficar, ou ser
+   revogada com `REVOKE SELECT ON assistant.llm_usage_daily FROM 'monitor'@'%';`).
 
    Se o usuário já existir (`ERROR 1396`), troque o `CREATE USER` por
    `ALTER USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';`. Se você já o criou com a permissão

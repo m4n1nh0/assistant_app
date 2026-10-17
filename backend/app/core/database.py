@@ -1040,18 +1040,44 @@ class LLMPriceModel(Base):
         onupdate=lambda: datetime.now(timezone.utc))
 
 
-class LLMUsageDailyModel(Base):
-    """Consumo de IA de um cliente num dia, somado por provedor e modelo.
+class LLMUsageHourlyModel(Base):
+    """Consumo de IA de um cliente numa hora, somado por provedor e modelo.
 
-    Uma linha por (dia, cliente, provedor, modelo), e nao uma por chamada: o historico de meses
-    cabe em poucas linhas e a consulta por periodo e barata. `tenant_id` e o perfil de dados
-    (`tutor_id`) da conta que fez a chamada; vazio quando a chamada nao tinha conta (processo
-    sem usuario).
+    Uma linha por (hora, cliente, provedor, modelo), e nao uma por chamada: o historico de meses
+    cabe em poucas linhas e a consulta por periodo e barata. A hora (e nao o dia) e o que deixa o
+    grafico mostrar a variacao do consumo ao longo do dia. `bucket` e o inicio da hora, em UTC,
+    sem fuso. `tenant_id` e o perfil de dados (`tutor_id`) da conta que fez a chamada; vazio quando
+    a chamada nao tinha conta (processo sem usuario).
 
     `cost_usd` soma so as chamadas com preco conhecido, calculado na hora da chamada com o preco
     vigente nela. `unpriced_calls` conta as que deram certo e ficaram sem preco (agente conectado,
     ou provedor que nao informou token), para o total nao parecer completo quando nao e; chamada
     com falha vai so em `errors`. Token que o provedor nao informou nao e somado como zero.
+    """
+
+    __tablename__ = "llm_usage_hourly"
+    __table_args__ = (
+        UniqueConstraint("bucket", "tenant_id", "provider", "model", name="uq_llm_usage_hourly"),
+    )
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    bucket        = Column(DateTime, nullable=False, index=True)
+    tenant_id     = Column(String(64), nullable=False, default="", index=True)
+    provider      = Column(String(32), nullable=False)
+    model         = Column(String(160), nullable=False, default="")
+    calls         = Column(Integer, nullable=False, default=0)
+    errors        = Column(Integer, nullable=False, default=0)
+    unpriced_calls = Column(Integer, nullable=False, default=0)
+    input_tokens  = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cached_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd      = Column(Float, nullable=False, default=0.0)
+
+
+class LLMUsageDailyModel(Base):
+    """LEGADO: consumo por dia, de antes da tabela por hora (`llm_usage_hourly`).
+
+    Nao recebe mais gravacao. Ao subir, a API copia estas linhas para a tabela por hora (no
+    inicio do dia, UTC), uma vez e sem duplicar, e depois so le a tabela por hora.
     """
 
     __tablename__ = "llm_usage_daily"

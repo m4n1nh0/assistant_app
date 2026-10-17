@@ -140,6 +140,8 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized")
         # Precos de IA vindos do banco e consumo por cliente: so onde ha banco.
         llm_usage_service.enable()
+        # Consumo antigo (por dia) vira por hora, uma vez e sem duplicar.
+        await llm_usage_service.migrate_legacy_on_startup()
         llm_price_service.start_background_refresh()
         if seed_requested:
             seed_applied = await apply_database_seed(settings.database_seed)

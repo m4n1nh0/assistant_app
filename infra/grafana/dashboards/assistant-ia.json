@@ -7,17 +7,17 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "5m",
   "time": {
-    "from": "now-30d",
+    "from": "now-7d",
     "to": "now"
   },
   "panels": [
     {
       "id": 1,
       "type": "row",
-      "title": "Consumo de IA (exato, do banco) · use o seletor de período no alto",
+      "title": "Consumo de IA (exato, do banco, por hora) · use o seletor de período no alto",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -51,7 +51,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -111,7 +111,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -171,7 +171,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -231,7 +231,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -291,7 +291,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
           "refId": "A"
         }
       ],
@@ -351,7 +351,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') AND tenant_id <> ''",
+          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND tenant_id <> ''",
           "refId": "A"
         }
       ],
@@ -390,8 +390,8 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Tokens por dia",
-      "description": "Entrada + saída, por provedor.",
+      "title": "Tokens por hora",
+      "description": "Entrada + saída, por provedor. Uma barra por hora: escolha um período de pelo menos 1 hora.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -402,6 +402,7 @@
         "x": 0,
         "y": 5
       },
+      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -411,7 +412,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider ORDER BY day",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -450,7 +451,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Custo estimado por dia",
+      "title": "Custo estimado por hora",
       "description": "Por provedor e modelo.",
       "datasource": {
         "type": "mysql",
@@ -462,6 +463,7 @@
         "x": 12,
         "y": 5
       },
+      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -471,7 +473,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider, model ORDER BY day",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -510,7 +512,7 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Chamadas por dia",
+      "title": "Chamadas por hora",
       "description": "Chamadas que deram certo, por provedor.",
       "datasource": {
         "type": "mysql",
@@ -522,6 +524,7 @@
         "x": 0,
         "y": 13
       },
+      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -531,7 +534,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, provider AS metric, SUM(calls - errors) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider ORDER BY day",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(calls - errors) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(calls - errors) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -570,7 +573,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Falhas por dia",
+      "title": "Falhas por hora",
       "description": "Chamadas com erro, por provedor. Sem o nome do modelo, porque ele só vem na resposta.",
       "datasource": {
         "type": "mysql",
@@ -582,6 +585,7 @@
         "x": 12,
         "y": 13
       },
+      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -591,7 +595,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, provider AS metric, SUM(errors) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider ORDER BY day",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(errors) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(errors) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -651,7 +655,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
+          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
           "refId": "A"
         }
       ],
@@ -777,7 +781,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
+          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
           "refId": "A"
         }
       ],
