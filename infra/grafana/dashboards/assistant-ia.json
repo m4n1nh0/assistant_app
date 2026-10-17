@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "5m",
   "time": {
     "from": "now-7d",
@@ -17,7 +17,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "Consumo de IA (exato, do banco, por hora) · use o seletor de período no alto",
+      "title": "Consumo de IA (exato, do banco) · o seletor de período vale para os totais e as tabelas; as linhas do tempo têm período próprio",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -390,8 +390,8 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Tokens por hora",
-      "description": "Entrada + saída, por provedor. Uma barra por hora: escolha um período de pelo menos 1 hora.",
+      "title": "Tokens: últimas 24 horas, hora a hora",
+      "description": "Entrada + saída por provedor, uma barra por hora. Período fixo de 24 horas: não muda com o seletor.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -402,7 +402,6 @@
         "x": 0,
         "y": 5
       },
-      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -426,6 +425,8 @@
             "lineWidth": 1,
             "fillOpacity": 75,
             "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
             "stacking": {
               "mode": "normal"
             },
@@ -446,13 +447,15 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "timeFrom": "24h",
+      "interval": "1h"
     },
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Custo estimado por hora",
-      "description": "Por provedor e modelo.",
+      "title": "Tokens: últimos 30 dias, dia a dia",
+      "description": "Entrada + saída por provedor, uma barra por dia. Período fixo de 30 dias: não muda com o seletor.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -463,7 +466,6 @@
         "x": 12,
         "y": 5
       },
-      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -473,7 +475,133 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "sem consumo no período",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal"
+            },
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "timeFrom": "30d"
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Participação de cada provedor (% dos tokens)",
+      "description": "Que parte dos tokens de cada dia foi para cada provedor (cada barra soma 100%). Últimos 30 dias.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "sem consumo no período",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "percent"
+            },
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "timeFrom": "30d"
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Custo estimado por dia (30 dias)",
+      "description": "Por provedor e modelo. Últimos 30 dias.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -487,6 +615,8 @@
             "lineWidth": 1,
             "fillOpacity": 75,
             "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
             "stacking": {
               "mode": "normal"
             },
@@ -507,13 +637,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "timeFrom": "30d"
     },
     {
-      "id": 10,
+      "id": 12,
       "type": "timeseries",
-      "title": "Chamadas por hora",
-      "description": "Chamadas que deram certo, por provedor.",
+      "title": "Taxa de falha por provedor (% das chamadas)",
+      "description": "De cada 100 chamadas a um provedor, quantas falharam no dia. 100% significa que nenhuma funcionou: chave ausente ou inválida, sem crédito ou provedor fora do ar. Últimos 30 dias.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -522,9 +653,8 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 21
       },
-      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -534,24 +664,27 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(calls - errors) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(calls - errors) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), provider AS metric, SUM(errors) / SUM(calls) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(calls) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "percentunit",
           "noValue": "sem consumo no período",
           "custom": {
-            "drawStyle": "bars",
+            "drawStyle": "line",
             "barAlignment": 0,
-            "lineWidth": 1,
-            "fillOpacity": 75,
-            "showPoints": "never",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": true,
             "stacking": {
-              "mode": "normal"
+              "mode": "none"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
           }
         },
         "overrides": []
@@ -561,20 +694,22 @@
           "displayMode": "table",
           "placement": "bottom",
           "calcs": [
-            "sum"
+            "mean",
+            "max"
           ]
         },
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "timeFrom": "30d"
     },
     {
-      "id": 11,
+      "id": 13,
       "type": "timeseries",
-      "title": "Falhas por hora",
-      "description": "Chamadas com erro, por provedor. Sem o nome do modelo, porque ele só vem na resposta.",
+      "title": "Chamadas: deram certo x falharam (30 dias)",
+      "description": "Total de chamadas por dia, separando as que funcionaram das que falharam. Últimos 30 dias.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -583,9 +718,8 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 13
+        "y": 21
       },
-      "interval": "1h",
       "targets": [
         {
           "datasource": {
@@ -595,7 +729,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(errors) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(errors) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, 1d), SUM(calls - errors) AS \"Deram certo\", SUM(errors) AS \"Falharam\"FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d 00:00:00') AND bucket <= $__timeTo() GROUP BY 1 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -609,6 +743,8 @@
             "lineWidth": 1,
             "fillOpacity": 75,
             "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": true,
             "stacking": {
               "mode": "normal"
             },
@@ -629,10 +765,11 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "timeFrom": "30d"
     },
     {
-      "id": 12,
+      "id": 14,
       "type": "table",
       "title": "Consumo por modelo",
       "description": "",
@@ -644,7 +781,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 21
+        "y": 29
       },
       "targets": [
         {
@@ -758,7 +895,7 @@
       }
     },
     {
-      "id": 13,
+      "id": 15,
       "type": "table",
       "title": "Consumo por cliente",
       "description": "Quanto cada conta usou no período. A coluna Cliente é o e-mail da conta.",
@@ -770,7 +907,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 21
+        "y": 29
       },
       "targets": [
         {
@@ -884,7 +1021,7 @@
       }
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "row",
       "title": "Latência e saúde (Prometheus) · pontos aparecem conforme há chamadas",
       "collapsed": false,
@@ -892,12 +1029,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 37
       },
       "panels": []
     },
     {
-      "id": 15,
+      "id": 17,
       "type": "timeseries",
       "title": "Latência p95 das chamadas a modelos",
       "description": "Tempo que cada provedor leva para responder (percentil 95).",
@@ -909,7 +1046,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 38
       },
       "targets": [
         {
@@ -952,7 +1089,7 @@
       }
     },
     {
-      "id": 16,
+      "id": 18,
       "type": "timeseries",
       "title": "Chamadas por segundo, por provedor",
       "description": "",
@@ -964,7 +1101,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 38
       },
       "targets": [
         {
@@ -1007,7 +1144,7 @@
       }
     },
     {
-      "id": 17,
+      "id": 19,
       "type": "timeseries",
       "title": "Latência p95 por rota HTTP",
       "description": "",
@@ -1019,7 +1156,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 38
+        "y": 46
       },
       "targets": [
         {
@@ -1062,7 +1199,7 @@
       }
     },
     {
-      "id": 18,
+      "id": 20,
       "type": "timeseries",
       "title": "Erros 5xx por rota",
       "description": "",
@@ -1074,7 +1211,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 38
+        "y": 46
       },
       "targets": [
         {
@@ -1117,7 +1254,7 @@
       }
     },
     {
-      "id": 19,
+      "id": 21,
       "type": "timeseries",
       "title": "Operações por tipo (traces)",
       "description": "Chamadas por segundo de cada tipo de operação: llm, tool, mcp, graph, agent, node.",
@@ -1129,7 +1266,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 46
+        "y": 54
       },
       "targets": [
         {
@@ -1172,7 +1309,7 @@
       }
     },
     {
-      "id": 20,
+      "id": 22,
       "type": "timeseries",
       "title": "Operações com erro (traces)",
       "description": "",
@@ -1184,7 +1321,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 46
+        "y": 54
       },
       "targets": [
         {

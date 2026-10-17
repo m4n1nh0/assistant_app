@@ -124,6 +124,6 @@ aviso do app mostrava, por exemplo, "12 chamadas sem preço" para 12 falhas. Com
 contada assim, a cópia tira `errors` de `unpriced_calls`, e sobram só as chamadas que deram certo e ficaram
 sem custo (as dos agentes conectados). Não há nada para rodar à mão.
 
-O histórico copiado fica só no início do dia, então o gráfico por hora mostra os dias antigos como uma
-barra à meia-noite UTC. A variação dentro do dia aparece só a partir de quando a tabela por hora passou a
-receber o consumo.
+O histórico copiado fica só no início do dia, então ele aparece normalmente nos gráficos dia a dia, mas
+não no hora a hora (não dá para saber em que hora aquelas chamadas foram feitas). A variação dentro do
+dia aparece só a partir de quando a tabela por hora passou a receber o consumo.

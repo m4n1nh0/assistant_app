@@ -359,6 +359,15 @@ pasta *Assistant*:
 | `Prometheus` | o Prometheus do projeto | latência, requisições HTTP, operações e a saúde dos bancos |
 | `App (MySQL)` | o banco da aplicação, com o usuário `monitor` | o consumo de IA, exato |
 
+O painel **Assistant · consumo de IA e saúde** se comporta assim em relação ao seletor de período do alto:
+
+- **Totais e tabelas** (custo, tokens, chamadas, falhas, por modelo e por cliente) seguem o seletor.
+- **Linhas do tempo** têm **período próprio** e não dependem dele: tokens das últimas 24 horas hora a
+  hora, e dos últimos 30 dias dia a dia, a participação de cada provedor (em %), o custo por dia, a taxa
+  de falha por provedor (em %) e as chamadas que deram certo x as que falharam. Assim nunca ficam
+  vazias por causa de uma janela curta: o dado é por hora, e uma janela de minutos não tem barra para
+  mostrar.
+
 A fonte `App (MySQL)` lê as variáveis `GRAFANA_DB_HOST`, `GRAFANA_DB_NAME`, `GRAFANA_DB_USER` e
 `GRAFANA_DB_PASSWORD` do **serviço do Grafana** (o IaC já as define; no painel, preencha à mão). Sem
 elas o Grafana sobe normalmente, e só os quadros de consumo ficam sem dado.
