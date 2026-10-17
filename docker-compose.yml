@@ -246,7 +246,7 @@ services:
       - "${OBSERVABILITY_PORT:-8004}:4318"
       - "4317:4317"
     volumes:
-      - ./infra/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./infra/otel-collector/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     networks:
       default:
         aliases:

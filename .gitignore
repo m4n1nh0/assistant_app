@@ -81,3 +81,6 @@ site/
 # Instaladores gerados por scripts/build_installer.ps1. Sao artefato de build
 # (20 MB por versao): distribua por release, nao pelo repositorio.
 dist/
+
+# SDK do Railway (IaC), instalado na raiz por `npm install --save-dev railway`
+node_modules/

@@ -46,7 +46,7 @@ flowchart LR
 | `Redis` | template Railway | não | do template | rate limiting e cache de status dos provedores |
 | `qdrant` | imagem `qdrant/qdrant:v1.12.6` | não | `/qdrant/storage` | índice vetorial das aulas e memórias |
 | `localai` | imagem LocalAI | não | `/models` | LLM local (opcional) |
-| `otel-collector` | `infra/Dockerfile.otel-collector` | não | — | recebe traces e métricas da aplicação (opcional) |
+| `otel-collector` | `infra/otel-collector/Dockerfile` | não | — | recebe traces e métricas da aplicação (opcional) |
 | `prometheus` | `infra/prometheus/Dockerfile` | não | `/prometheus` | guarda as métricas (opcional) |
 | `grafana` | `infra/grafana/Dockerfile` | **sim** | `/var/lib/grafana` | painel de consumo de IA e saúde (opcional) |
 
@@ -199,6 +199,30 @@ aplicação são: tokens, custo estimado, chamadas e duração das chamadas a mo
 modelo) e a duração das requisições HTTP (por rota). O collector as expõe na porta `8889`, o
 Prometheus busca por lá e o Grafana lê do Prometheus.
 
+#### Pelo Infrastructure as Code (alternativa ao painel)
+
+O arquivo `.railway/railway.ts` declara os três serviços, os dois
+volumes e as variáveis fixas (`RAILWAY_RUN_UID`, a senha do Grafana vinda de uma variável
+compartilhada). A CLI aplica, em vez de criar tudo pelo painel. É uma **parcial nomeada**
+(`observability`): ela só apaga o que ela mesma criou, então o resto do projeto (a API, o MySQL,
+o Redis, o Qdrant) não é tocado. Um `apply` comum, sem parcial, **apagaria** o que não estivesse
+no arquivo, e por isso o arquivo precisa manter o `export const partial`.
+
+```bash
+railway config plan --verbose   # só mostra o que mudaria; leia antes
+railway config apply            # pede confirmação
+```
+
+Antes do primeiro `apply`: apague o `otel-collector` criado à mão (o nome é o mesmo), crie a
+variável compartilhada `GRAFANA_ADMIN_PASSWORD` em *Project Settings > Shared Variables* e
+preencha `REGION` no arquivo com a região dos seus outros serviços.
+
+O IaC **não** cobre: o domínio público do Grafana (domínio gerado pelo Railway não entra no
+arquivo; gere no painel, porta `3000`), os *Watch Paths* e as variáveis `OTEL_*` da aplicação.
+Cada serviço sai de uma pasta com um arquivo chamado `Dockerfile` (`infra/otel-collector`,
+`infra/prometheus`, `infra/grafana`), porque o IaC não tem campo para o caminho do Dockerfile.
+Um serviço gerido pelo IaC não deve ser editado no painel nos campos que o arquivo declara.
+
 O compose monta os arquivos de configuração por volume, e o Railway não faz isso com imagem
 pronta. Por isso cada serviço sai de um Dockerfile que copia a configuração para dentro da imagem.
 **Os nomes dos serviços importam**: `prometheus.yml` e a fonte de dados do Grafana usam
@@ -209,9 +233,9 @@ pronta. Por isso cada serviço sai de um Dockerfile que copia a configuração p
 | Campo | Valor |
 |---|---|
 | Source | mesmo repositório e mesma branch |
-| Root Directory | vazio (raiz do repositório) |
-| Dockerfile Path | `/infra/Dockerfile.otel-collector` |
-| Watch Paths | `/infra/otel-collector.yaml` e `/infra/Dockerfile.otel-collector` |
+| Root Directory | `/infra/otel-collector` |
+| Dockerfile Path | vazio (o Railway detecta o `Dockerfile` da pasta) |
+| Watch Paths | `/infra/otel-collector/**` |
 | Domínio público | **não**: só a rede privada recebe telemetria |
 | Volume | nenhum |
 
@@ -223,7 +247,7 @@ Healthcheck opcional: `PORT="13133"` e caminho `/` (a extensão `health_check` d
 |---|---|
 | Source | mesmo repositório e mesma branch |
 | Root Directory | `/infra/prometheus` |
-| Dockerfile Path | `/infra/prometheus/Dockerfile` |
+| Dockerfile Path | vazio (o Railway detecta o `Dockerfile` da pasta) |
 | Watch Paths | `/infra/prometheus/**` |
 | Domínio público | **não** (a API do Prometheus não tem autenticação) |
 | Volume | `/prometheus` (histórico de 30 dias) |
@@ -240,7 +264,7 @@ RAILWAY_RUN_UID="0"
 |---|---|
 | Source | mesmo repositório e mesma branch |
 | Root Directory | `/infra/grafana` |
-| Dockerfile Path | `/infra/grafana/Dockerfile` |
+| Dockerfile Path | vazio (o Railway detecta o `Dockerfile` da pasta) |
 | Watch Paths | `/infra/grafana/**` |
 | Domínio público | **sim**, na porta `3000` |
 | Volume | `/var/lib/grafana` |

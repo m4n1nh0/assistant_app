@@ -462,7 +462,7 @@ no ambiente de um serviço Python não muda nada. No Railway o equivalente é
 A aplicação envia traces e métricas ao collector com o mesmo `OTEL_EXPORTER_ENDPOINT`, que
 aceita a URL base (`http://collector:4318`): o código acrescenta `/v1/traces` e `/v1/metrics`.
 
-A configuração de destino vive em `infra/otel-collector.yaml`.
+A configuração de destino vive em `infra/otel-collector/otel-collector.yaml`.
 Trocar de backend de observabilidade é acrescentar um exporter ali — não há nome
 de fornecedor no código da aplicação.
 
