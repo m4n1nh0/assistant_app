@@ -199,34 +199,104 @@ aplicação são: tokens, custo estimado, chamadas e duração das chamadas a mo
 modelo) e a duração das requisições HTTP (por rota). O collector as expõe na porta `8889`, o
 Prometheus busca por lá e o Grafana lê do Prometheus.
 
-#### Pelo Infrastructure as Code (alternativa ao painel)
-
-O arquivo `.railway/railway.ts` declara os três serviços, os dois
-volumes e as variáveis fixas (`RAILWAY_RUN_UID`, a senha do Grafana vinda de uma variável
-compartilhada). A CLI aplica, em vez de criar tudo pelo painel. É uma **parcial nomeada**
-(`observability`): ela só apaga o que ela mesma criou, então o resto do projeto (a API, o MySQL,
-o Redis, o Qdrant) não é tocado. Um `apply` comum, sem parcial, **apagaria** o que não estivesse
-no arquivo, e por isso o arquivo precisa manter o `export const partial`.
-
-```bash
-railway config plan --verbose   # só mostra o que mudaria; leia antes
-railway config apply            # pede confirmação
-```
-
-Antes do primeiro `apply`: apague o `otel-collector` criado à mão (o nome é o mesmo), crie a
-variável compartilhada `GRAFANA_ADMIN_PASSWORD` em *Project Settings > Shared Variables* e
-preencha `REGION` no arquivo com a região dos seus outros serviços.
-
-O IaC **não** cobre: o domínio público do Grafana (domínio gerado pelo Railway não entra no
-arquivo; gere no painel, porta `3000`), os *Watch Paths* e as variáveis `OTEL_*` da aplicação.
-Cada serviço sai de uma pasta com um arquivo chamado `Dockerfile` (`infra/otel-collector`,
-`infra/prometheus`, `infra/grafana`), porque o IaC não tem campo para o caminho do Dockerfile.
-Um serviço gerido pelo IaC não deve ser editado no painel nos campos que o arquivo declara.
-
-O compose monta os arquivos de configuração por volume, e o Railway não faz isso com imagem
-pronta. Por isso cada serviço sai de um Dockerfile que copia a configuração para dentro da imagem.
 **Os nomes dos serviços importam**: `prometheus.yml` e a fonte de dados do Grafana usam
 `otel-collector.railway.internal` e `prometheus.railway.internal`.
+
+#### Variáveis de observabilidade, serviço por serviço
+
+Os três serviços novos **não leem** variável `OTEL_*`: o que eles precisam já está nos arquivos
+da pasta `infra/`. As variáveis abaixo vão **nos serviços da aplicação**:
+
+| Serviço | `OTEL_ENABLED` | `OTEL_EXPORTER_ENDPOINT` | Também vale | O que ele envia |
+|---|:---:|:---:|---|---|
+| `assistant-api` | `true` | sim | `OTEL_SERVICE_NAME`, `LANGSMITH_*` | traces, duração das requisições, **tokens** (exatos) e **custo estimado** do resumo de aula, quiz, melhoria de material e chat |
+| `agent-orchestrator` | `true` | sim | `LANGSMITH_*` | traces, duração das requisições, **tokens** (exatos) e **custo estimado** do chat |
+| `tool-service` | `true` | sim | — | traces e duração das requisições |
+| `mcp-service` | `true` | sim | — | traces e duração das requisições |
+| `otel-collector`, `prometheus`, `grafana` | não leem | — | — | — |
+
+Em cada um dos quatro:
+
+```dotenv
+OTEL_ENABLED="true"
+# Aceita a URL base: o codigo acrescenta /v1/traces e /v1/metrics. A URL completa de traces,
+# usada antes, continua valendo.
+OTEL_EXPORTER_ENDPOINT="http://${{otel-collector.RAILWAY_PRIVATE_DOMAIN}}:4318"
+```
+
+- `OTEL_SERVICE_NAME` só é lida pela `assistant-api` (padrão `assistant-api`); os outros três
+  passam o próprio nome no código, e definir a variável neles não renomeia nada.
+- **Tokens são exatos; o custo é uma estimativa.** Cada cliente escolhe a própria chave e o próprio
+  modelo, e isso fica no banco dele. O preço é **por modelo**, numa tabela do banco que o
+  administrador edita no app (Configurações → Consumo de IA → Preços) e que ele pode importar de uma
+  tabela pública. Não é variável do Railway: o `LLM_PRICING` só serve de reserva e não acompanha o
+  modelo de cada cliente. Veja [Consumo e preços de IA](../funcionalidades/consumo-e-precos-de-ia.md).
+  Um modelo sem preço próprio usa o padrão do provedor, que é só uma ordem de grandeza.
+- O painel do Grafana soma todos os clientes do ambiente: a métrica não leva o usuário como rótulo
+  (uma série por cliente sairia cara). O consumo **por cliente** fica no banco e aparece no app
+  (Configurações → Consumo de IA), onde o administrador vê quanto cada conta usou.
+- `LANGSMITH_*` não pertence ao `tool-service` nem ao `mcp-service`: lá ela liga um rastreamento
+  que nunca receberá chamada de modelo, e a chave ficaria exposta sem uso.
+- `OTEL_CONSOLE_EXPORT` e `TELEMETRY_MEMORY_EVENTS` não precisam mudar. Com a telemetria
+  ligada, a janela em memória da tela de diagnóstico continua funcionando.
+
+Cada mudança de variável redeploya o serviço, então altere um de cada vez, começando pelo
+`assistant-api`.
+
+#### Dois caminhos para criar os três serviços
+
+**Pelo Infrastructure as Code (recomendado).** O arquivo `.railway/railway.ts` declara os três
+serviços, os dois volumes (`prometheus-data` e `grafana-storage`) e as variáveis fixas
+(`RAILWAY_RUN_UID`, a senha do Grafana vinda de uma variável compartilhada). A CLI aplica, em vez
+de criar tudo pelo painel. É uma **parcial nomeada** (`observability`): ela só apaga o que ela mesma
+criou, então o resto do projeto (a API, o MySQL, o Redis, o Qdrant) não é tocado. Um `apply`
+comum, sem parcial, **apagaria** o que não estivesse no arquivo, e por isso o arquivo precisa
+manter o `export const partial`.
+
+Preparação, uma vez:
+
+```powershell
+npm install -g @railway/cli --allow-scripts=@railway/cli   # o npm bloqueia o script que baixa o binario
+npm install --save-dev railway                              # na raiz do repositorio: o SDK que o arquivo importa
+railway login
+railway link                                                # escolha o projeto e o ambiente
+```
+
+Antes do primeiro `apply`:
+1. apague o `otel-collector` criado à mão, se existir (o nome é o mesmo);
+2. crie a variável compartilhada `GRAFANA_ADMIN_PASSWORD` em *Project Settings > Shared
+   Variables*, com uma senha forte (veja o aviso do Grafana abaixo);
+3. confira `REGION` no arquivo: ela precisa ser a região dos serviços (hoje `us-east4-eqdc4a`,
+   Virginia). Volume e serviço têm de estar na mesma.
+
+```powershell
+# No Windows (PowerShell): o SDK confere a versao da CLI rodando `railway`, e o atalho .cmd que o
+# npm cria nao e executavel assim. Aponte para o binario real.
+$env:_ = "$env:APPDATA\npm\node_modules\@railway\cli\bin\railway.exe"
+
+railway config plan --verbose   # so mostra o que mudaria; leia antes
+railway config apply            # pede confirmacao
+```
+
+O `plan` deve mostrar só criações (`5 to add, 0 to change, 0 to destroy`). Qualquer remoção ou
+alteração em `assistant-api`, `mysql`, `redis` ou `qdrant` significa que a parcial não está
+protegendo: **não aplique**. Para detalhes, `railway config plan --full` (evite `--show-values`
+e `--decrypt-variables`, que imprimem a senha).
+
+O IaC **não** cobre, e continua no painel:
+- o **domínio público** do Grafana (domínio gerado pelo Railway não entra no arquivo; gere em
+  *Settings > Networking*, porta `3000`);
+- *Watch Paths*, limite de CPU e memória, e serverless (o campo não existe no IaC);
+- as variáveis `OTEL_*` da aplicação, que estão fora da parcial.
+
+Cada serviço sai de uma pasta com um arquivo chamado `Dockerfile` (`infra/otel-collector`,
+`infra/prometheus`, `infra/grafana`), porque o IaC não tem campo para o caminho do Dockerfile e o
+Railway só detecta um arquivo com esse nome na Root Directory. Um serviço gerido pelo IaC não deve
+ser editado no painel nos campos que o arquivo declara.
+
+**Pelo painel.** O compose monta os arquivos de configuração por volume, e o Railway não faz isso
+com imagem pronta. Por isso cada serviço sai de um Dockerfile que copia a configuração para
+dentro da imagem. Os campos de cada serviço estão a seguir.
 
 #### `otel-collector`
 
@@ -281,32 +351,85 @@ RAILWAY_RUN_UID="0"
 Nada se configura na interface do Grafana: a fonte de dados `Prometheus` e o painel
 **Assistant · consumo de IA e saúde** já vêm provisionados, na pasta *Assistant*.
 
-#### Ligando a aplicação
+#### Ordem e conferência
 
-Em **cada serviço que exporta** (`assistant-api`, `agent-orchestrator`, `tool-service`,
-`mcp-service`):
+Ordem: `otel-collector`, depois `prometheus`, depois `grafana`, e por fim as variáveis `OTEL_*` da
+aplicação. As métricas aparecem no painel cerca de um minuto depois da primeira chamada a um modelo.
 
-```dotenv
-OTEL_ENABLED="true"
-# Aceita a URL base: o codigo acrescenta /v1/traces e /v1/metrics. A URL completa de traces,
-# usada antes, continua valendo.
-OTEL_EXPORTER_ENDPOINT="http://${{otel-collector.RAILWAY_PRIVATE_DOMAIN}}:4318"
+Para conferir o caminho por partes:
+1. nos logs do collector aparece `Everything is ready` e, depois, os traces (exporter `debug`);
+2. no Grafana, *Connections > Data sources > Prometheus > Test* deve dar **OK**. Isso prova que o
+   Grafana alcança o Prometheus pela rede privada, e é o único jeito de ver, porque o Prometheus não
+   tem domínio público;
+3. no painel **Assistant · consumo de IA e saúde**, os quadros de tokens e custo só enchem depois de
+   uma chamada de resumo, quiz, melhoria de material ou chat.
+
+#### Senha do Grafana (leia antes de gerar o domínio)
+
+O serviço tem domínio público. Duas armadilhas:
+
+- **Variável vazia.** Se `GRAFANA_ADMIN_PASSWORD` não existir como variável compartilhada, a
+  referência `${{shared.GRAFANA_ADMIN_PASSWORD}}` resolve **vazia** (`<empty string>` na lista de
+  variáveis) e o Grafana volta ao padrão `admin` / `admin`. Confira o valor resolvido e, antes de
+  expor, tente entrar com `admin` / `admin`: se entrar, apague o domínio.
+- **O Grafana só lê a senha na primeira subida**, quando cria o banco no volume. Trocar a variável
+  depois não muda a senha de um banco que já existe. Se o serviço subiu uma vez com a variável
+  vazia, resete a senha ou recrie o volume.
+
+Para resetar a senha (a CLI pede uma chave SSH cadastrada, e a senha digitada fica só no terminal):
+
+```powershell
+ssh-keygen -t ed25519
+railway ssh keys add
+railway ssh --service grafana
+# dentro do container:
+grafana cli --homepath /usr/share/grafana admin reset-admin-password "SUA-SENHA-FORTE"
 ```
 
-Ordem: `otel-collector`, depois `prometheus`, depois `grafana`, e por fim a mudança nas variáveis
-da aplicação. As métricas aparecem no painel cerca de um minuto depois da primeira chamada.
+Para recriar o volume em vez de resetar: apague o volume no painel e troque o nome dele em
+`.railway/railway.ts` (hoje `grafana-storage`). **O Railway guarda um volume apagado por cerca de
+dois dias**, e nesse período o nome continua ocupado: recriar com o mesmo nome dá "já existe no
+projeto" (`railway volume list` mostra a data em *Deletes on*). Nome novo evita a espera.
 
-Para conferir o caminho por partes: nos logs do collector aparecem os traces (exporter `debug`); o
-Prometheus, em *Status > Targets* (via `railway run` ou um domínio temporário), mostra
-`otel-collector` como `UP`; e no Grafana o painel começa a preencher.
+#### Dimensionamento e serverless
+
+Os três cabem em **1 vCPU e 1 GB** com folga (o collector tem limitador de memória em 75% do que o
+container tiver; o Prometheus guarda poucas centenas de séries; o Grafana usa algumas centenas de
+MB). O que o painel mostra é o **limite máximo** por réplica, e a cobrança é pelo uso real: baixar
+o limite funciona como teto de segurança, não como economia. Configure em *Settings > Replica Limits*
+de cada serviço; o IaC não tem esse campo.
+
+**Serverless** só no Grafana. O Railway considera o serviço inativo depois de 5 a 10 minutos sem
+pacote de saída, e o tráfego pela rede privada conta nos dois sentidos:
+- o **Prometheus** busca as métricas a cada 15 segundos, então nunca dorme;
+- o **collector** responde a essas buscas (e recebe os dados da aplicação), então também não dorme;
+- o **Grafana** só é usado quando alguém abre o painel, então dorme e acorda na próxima visita. A
+  primeira requisição pode demorar e devolver 502 (recarregar resolve).
+
+Ligar nos três não quebra nada, mas é inútil nos dois primeiros. O serverless só vale para o
+container novo: depois de ligar, faça um redeploy.
+
+#### Problemas comuns da observabilidade
+
+| Sintoma | Causa | O que fazer |
+|---|---|---|
+| Build do collector: *Root directory "infra/otel-collector" was not found* | a pasta nova ainda não está no GitHub (o Railway constrói do repositório) | commitar e dar push |
+| O diagnóstico do Railway sugere *Fix root directory* | ele quer voltar ao layout antigo | não aceite; desligue o *Run automatically*, que pode aplicar a correção sozinho e abrir um PR que reescreve o Dockerfile |
+| `railway config plan` reclama de versão da CLI mesmo com a 5.70 | no Windows o SDK não executa o atalho `.cmd` | `$env:_` apontando para o `railway.exe` |
+| `npm install -g @railway/cli` instala, mas `railway` não acha o binário | o npm bloqueou o script que o baixa | `npm install -g @railway/cli --allow-scripts=@railway/cli` |
+| *Volume já existe no projeto* | volume apagado ainda em retenção | nome novo no `railway.ts`, ou esperar a data de *Deletes on* |
+| Senha do Grafana vazia ou `admin` | variável compartilhada ausente, ou banco criado antes dela | seção *Senha do Grafana* acima |
+| Painel sem dados de tokens e custo | ninguém chamou um modelo ainda, ou `OTEL_ENABLED` está `false` na `assistant-api` | disparar um resumo e conferir a variável |
+| `permission denied` no boot do Prometheus ou do Grafana | a imagem roda sem root e o volume monta como root | `RAILWAY_RUN_UID="0"` (o IaC já define) |
 
 Em ambiente Railway antigo, de rede privada só IPv6, o collector e o Prometheus precisam escutar
-em `[::]` em vez de `0.0.0.0` (receptor `otlp` e exporter `prometheus` em `otel-collector.yaml`,
-e `--web.listen-address` no Dockerfile do Prometheus), como o aviso do `qdrant` acima.
+em `[::]` em vez de `0.0.0.0` (receptor `otlp` e exporter `prometheus` em
+`infra/otel-collector/otel-collector.yaml`, e `--web.listen-address` no Dockerfile do Prometheus),
+como o aviso do `qdrant` acima.
 
 Para guardar traces e consultá-los, acrescente um exporter de traces em
-`infra/otel-collector.yaml`, por exemplo `otlphttp` para um backend gerenciado, com a chave em uma
-variável do serviço (`${env:NOME}` no YAML) e nunca escrita no arquivo.
+`infra/otel-collector/otel-collector.yaml`, por exemplo `otlphttp` para um backend gerenciado, com a
+chave em uma variável do serviço (`${env:NOME}` no YAML) e nunca escrita no arquivo.
 
 ---
 
@@ -336,6 +459,7 @@ MCP_CIRCUIT_FAILURE_THRESHOLD="3"
 MCP_CIRCUIT_RESET_SECONDS="60"
 MCP_TOOLS_CACHE_TTL_SECONDS="300"
 
+# Observabilidade e opcional: para ligar, veja a secao "Observabilidade" acima.
 OTEL_ENABLED="false"
 ```
 
@@ -379,6 +503,7 @@ MCP_TIMEOUT_SECONDS="30"
 MCP_MAX_RETRIES="2"
 MCP_RETRY_BACKOFF_SECONDS="0.5"
 
+# Observabilidade e opcional: para ligar, veja a secao "Observabilidade" acima.
 OTEL_ENABLED="false"
 ```
 
@@ -465,6 +590,7 @@ CHECKPOINT_MAX_THREADS="200"
 GRAPH_NODE_MAX_RETRIES="2"
 
 # --- observabilidade -----------------------------------------------------------
+# Observabilidade e opcional: para ligar, veja a secao "Observabilidade" acima.
 OTEL_ENABLED="false"
 LANGSMITH_ENABLED="false"
 LANGSMITH_API_KEY=""
@@ -589,6 +715,12 @@ MCP_MAX_RETRIES="2"
 MCP_RETRY_BACKOFF_SECONDS="0.5"
 CHECKPOINT_BACKEND="memory"
 CHECKPOINT_MAX_THREADS="200"
+
+# --- observabilidade (opcional) ---------------------------------------------------
+# Para ligar, veja a secao "Observabilidade" acima. A API e o orquestrador sao os unicos que
+# chamam modelos, entao so neles OTEL_* gera as metricas de tokens e custo.
+OTEL_ENABLED="false"
+# OTEL_SERVICE_NAME="assistant-api"
 
 # --- opcionais -----------------------------------------------------------------
 # Chaves globais: só migração da primeira conta admin; cada usuário usa as suas.

@@ -840,20 +840,24 @@ def _record_call_usage(response: LLMResponse) -> None:
     try:
         from shared.observability import build_usage, current_context, record_usage
 
+        from . import llm_usage_service
+        from .user_llm_config_service import runtime_scope
+
         context = current_context()
-        record_usage(
-            build_usage(
-                response.llm,
-                model=response.model,
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
-                cached_tokens=response.cached_tokens,
-                duration_ms=float(response.duration_ms),
-                agent_id=context.agent_id,
-                ok=not response.is_error,
-                correlation=context.as_dict(),
-            )
+        usage = build_usage(
+            response.llm,
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cached_tokens=response.cached_tokens,
+            duration_ms=float(response.duration_ms),
+            agent_id=context.agent_id,
+            ok=not response.is_error,
+            correlation=context.as_dict(),
         )
+        record_usage(usage)
+        # O cliente e o dono do contexto de provedores ativo: e dele a chave que fez a chamada.
+        llm_usage_service.schedule(usage, llm_usage_service.tenant_of_scope(runtime_scope()))
     except Exception:
         pass
 

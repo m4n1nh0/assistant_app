@@ -32,6 +32,7 @@ from app.core.config import get_settings
 from app.core.internal_auth import require_internal_token
 from shared.observability import bind
 from app.orchestration.graph import chat_graph, graph_state, run_chat_graph
+from app.services import llm_price_service, llm_usage_service
 from app.services.device_catalog_service import bind_device, get_device_catalog, reset_device
 from app.services.user_llm_config_service import (
     activate_user_llms,
@@ -68,6 +69,8 @@ async def _ready() -> dict[str, Any]:
 
 
 async def _startup() -> None:
+    llm_usage_service.enable()
+    llm_price_service.start_background_refresh()
     if not settings.internal_service_token.strip():
         logger.error(
             "INTERNAL_SERVICE_TOKEN vazio: o agent-orchestrator vai recusar "

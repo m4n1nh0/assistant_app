@@ -20,7 +20,9 @@ extraidos ficam atras de perfis.
 | `mcp-service` | `Dockerfile.mcp-service` | 8002 | — | Perfis `services`, `mcp`. Le `backend/.env.mcp-service`. |
 | `tool-service` | `Dockerfile.tool-service` | 8003 | — | Perfis `services`, `tools`. Le `backend/.env.tool-service`. |
 | `agent-orchestrator` | `Dockerfile` | 8001 | — | Perfis `services`, `orchestrator`. Le `backend/.env.orchestrator`. |
-| `otel-collector` | `otel/opentelemetry-collector-contrib` | 8004, 4317 | — | Perfil `observability`. |
+| `otel-collector` | `otel/opentelemetry-collector-contrib` | 8004, 4317 | — | Perfil `observability`. Recebe traces e metricas (OTLP). Expoe as metricas em 8889, so na rede interna, de onde o Prometheus busca. |
+| `prometheus` | `infra/prometheus/Dockerfile` | 9090 | — | Perfil `observability`. Busca as metricas no collector. |
+| `grafana` | `infra/grafana/Dockerfile` | 3000 | — | Perfil `observability`. Painel pronto sobre o Prometheus. |
 
 O container `ollama` e uma imagem propria justamente para ja trazer o modelo:
 o `Dockerfile` em `ollama/` sobe o servidor durante o build, espera o

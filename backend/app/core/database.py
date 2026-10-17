@@ -1012,6 +1012,65 @@ class MaterialImprovementModel(Base):
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class LLMPriceModel(Base):
+    """Preco de token de um modelo, em dolar por milhao de tokens.
+
+    O preco de token nao pertence ao codigo nem ao ambiente: muda sem aviso, difere por modelo do
+    mesmo provedor e cada cliente escolhe o seu. Fica aqui, editavel, com a tabela do codigo e o
+    `LLM_PRICING` como reserva.
+
+    `model` vazio e o preco padrao do provedor. `source` diz de onde veio: `manual` (um
+    administrador digitou, e a sincronizacao nunca sobrescreve) ou `litellm` (importado da tabela
+    publica de precos). Uma linha com preco zero vale: e como se marca um modelo gratuito.
+    """
+
+    __tablename__ = "llm_prices"
+    __table_args__ = (
+        UniqueConstraint("provider", "model", name="uq_llm_prices_provider_model"),
+    )
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider      = Column(String(32), nullable=False, index=True)
+    model         = Column(String(160), nullable=False, default="")
+    input_per_mtok        = Column(Float, nullable=False, default=0.0)
+    output_per_mtok       = Column(Float, nullable=False, default=0.0)
+    cached_input_per_mtok = Column(Float, nullable=True)
+    source        = Column(String(16), nullable=False, default="manual")
+    updated_at    = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc))
+
+
+class LLMUsageDailyModel(Base):
+    """Consumo de IA de um cliente num dia, somado por provedor e modelo.
+
+    Uma linha por (dia, cliente, provedor, modelo), e nao uma por chamada: o historico de meses
+    cabe em poucas linhas e a consulta por periodo e barata. `tenant_id` e o perfil de dados
+    (`tutor_id`) da conta que fez a chamada; vazio quando a chamada nao tinha conta (processo
+    sem usuario).
+
+    `cost_usd` soma so as chamadas com preco conhecido, calculado na hora da chamada com o preco
+    vigente nela. `unpriced_calls` conta as que ficaram sem preco, para o total nao parecer
+    completo quando nao e. Token que o provedor nao informou nao e somado como zero.
+    """
+
+    __tablename__ = "llm_usage_daily"
+    __table_args__ = (
+        UniqueConstraint("day", "tenant_id", "provider", "model", name="uq_llm_usage_daily"),
+    )
+    id            = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    day           = Column(String(10), nullable=False, index=True)
+    tenant_id     = Column(String(64), nullable=False, default="", index=True)
+    provider      = Column(String(32), nullable=False)
+    model         = Column(String(160), nullable=False, default="")
+    calls         = Column(Integer, nullable=False, default=0)
+    errors        = Column(Integer, nullable=False, default=0)
+    unpriced_calls = Column(Integer, nullable=False, default=0)
+    input_tokens  = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cached_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd      = Column(Float, nullable=False, default=0.0)
+
+
 class MaterialSubmissionLinkModel(Base):
     """Link publico para os alunos enviarem o material das apresentacoes.
 

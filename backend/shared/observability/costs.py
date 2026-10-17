@@ -11,6 +11,7 @@ ausencia como zero produziria um relatorio que parece barato e esta errado.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from loguru import logger
@@ -86,14 +87,58 @@ def load_pricing_overrides(raw: str) -> None:
             logger.warning(f"LLM_PRICING: preco invalido para {key}")
 
 
+#: Precos editaveis, vindos do banco (`llm_prices`): `(provedor, modelo)` -> preco, com modelo vazio
+#: para o padrao do provedor. O backend os carrega e os renova; este modulo so consulta, e continua
+#: sem conhecer banco nenhum (ele serve tambem a servicos que nao tem).
+_db_prices: dict[tuple[str, str], ModelPrice] = {}
+
+#: O que pode vir depois do nome de um modelo para ainda ser o mesmo modelo: a data da versao
+#: (`-20250514`, `-2024-08-06`, `-001`) ou `-latest`. Sem essa regra, `gpt-4o` casaria com
+#: `gpt-4o-mini`, que custa bem menos.
+_VERSION_SUFFIX = re.compile(r"^-(\d{3,}|latest)")
+
+
+def set_db_prices(prices: dict[tuple[str, str], ModelPrice]) -> None:
+    """Troca a tabela de precos do banco inteira (chamado a cada renovacao)."""
+    _db_prices.clear()
+    _db_prices.update(prices)
+
+
+def _db_model_price(provider_key: str, model: str) -> ModelPrice | None:
+    """Preco do banco para o modelo: exato, ou o mais longo que e o nome sem a versao."""
+    wanted = model.lower()
+    exact = _db_prices.get((provider_key, wanted))
+    if exact is not None:
+        return exact
+    best: tuple[int, ModelPrice] | None = None
+    for (stored_provider, stored_model), price in _db_prices.items():
+        if stored_provider != provider_key or not stored_model:
+            continue
+        if wanted.startswith(stored_model) and _VERSION_SUFFIX.match(wanted[len(stored_model):]):
+            if best is None or len(stored_model) > best[0]:
+                best = (len(stored_model), price)
+    return best[1] if best else None
+
+
 def price_for(provider: str, model: str = "") -> ModelPrice | None:
-    """Preco aplicavel, preferindo a chave `provider:modelo` a chave do provedor."""
+    """Preco aplicavel, do mais especifico ao mais geral.
+
+    Ordem: o modelo no banco, o modelo no `LLM_PRICING`, o padrao do provedor no banco, o padrao do
+    provedor no `LLM_PRICING` e, por ultimo, a tabela do codigo. O banco vem primeiro porque e o que
+    alguem edita e ve na tela; o ambiente fica como reserva.
+    """
     provider_key = (provider or "").lower()
     if model:
-        specific = _overrides.get(f"{provider_key}:{model.lower()}")
+        specific = _db_model_price(provider_key, model)
+        if specific is None:
+            specific = _overrides.get(f"{provider_key}:{model.lower()}")
         if specific is not None:
             return specific
-    return _overrides.get(provider_key) or _DEFAULT_PRICING.get(provider_key)
+    return (
+        _db_prices.get((provider_key, ""))
+        or _overrides.get(provider_key)
+        or _DEFAULT_PRICING.get(provider_key)
+    )
 
 
 def estimate_cost(

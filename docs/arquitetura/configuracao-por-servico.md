@@ -164,6 +164,16 @@ efeito é credencial exposta sem contrapartida.
 (`app/main.py:187`); os serviços extraídos passam o próprio nome no código, em
 `create_service(name=...)`. Defini-la num serviço extraído não renomeia nada.
 
+Com `OTEL_ENABLED=true`, o `OTEL_EXPORTER_ENDPOINT` leva **traces e métricas** ao mesmo collector, e
+aceita a URL base (`http://collector:4318`): o código acrescenta `/v1/traces` e `/v1/metrics`. As
+métricas de **tokens e custo** só existem onde há chamada a modelo (`assistant-api` e
+`agent-orchestrator`). Os tokens são exatos; o custo é uma estimativa, porque o modelo é escolhido
+por cliente (no banco) e o preço é por modelo, numa tabela do banco editável no app; o
+`LLM_PRICING` só serve de reserva, de forma global. Veja
+[Consumo e preços de IA](../funcionalidades/consumo-e-precos-de-ia.md). Nos outros dois
+serviços o que sai são traces e a duração das requisições. A tabela de quem recebe o quê, e o
+passo a passo no Railway, estão em [deploy-railway.md](deploy-railway.md#observabilidade-otel-collector-prometheus-e-grafana-opcional).
+
 ---
 
 ## `assistant-api`

@@ -63,7 +63,7 @@ export default defineRailway((ctx) => {
 
   // Painel. Ja sobe com a fonte de dados e o painel "Assistant" provisionados. A senha vem de uma
   // variavel compartilhada, para nao ser escrita aqui.
-  const grafanaData = volume("grafana-data", { region: REGION, sizeMB: 512 });
+  const grafanaData = volume("grafana-storage", { region: REGION, sizeMB: 512 });
   const grafana = service("grafana", {
     source: fromRepo("infra/grafana"),
     replicas: { [REGION]: 1 },

@@ -25,7 +25,14 @@ from .context import (
     reset_context,
     set_context,
 )
-from .costs import build_usage, estimate_cost, load_pricing_overrides, price_for
+from .costs import (
+    ModelPrice,
+    build_usage,
+    estimate_cost,
+    load_pricing_overrides,
+    price_for,
+    set_db_prices,
+)
 from .sinks import CompositeSink, InMemorySink, LoggingSink, NullSink
 from .tracing import (
     SpanHandle,
@@ -42,6 +49,7 @@ __all__ = [
     "CompositeSink",
     "InMemorySink",
     "LoggingSink",
+    "ModelPrice",
     "NullSink",
     "ObservabilityContext",
     "SpanHandle",
@@ -61,6 +69,7 @@ __all__ = [
     "record_usage",
     "reset_context",
     "set_context",
+    "set_db_prices",
     "span",
     "span_sync",
 ]

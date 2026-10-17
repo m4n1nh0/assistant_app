@@ -143,6 +143,7 @@ from ..services.user_llm_config_service import (
     user_llm_context,
 )
 from ..services import (
+    llm_usage_service,
     material_chunk_service,
     material_improve_service,
     material_service,
@@ -2984,6 +2985,8 @@ async def store_external_summary(
     if not llm:
         raise HTTPException(400, "Informe qual agente gerou o resumo")
 
+    # O agente rodou na maquina do professor: o backend nao viu token, so conta a chamada.
+    llm_usage_service.record_agent_call(llm, user["tutor_id"])
     return await _store_summary(
         lesson,
         summary=summary,
@@ -3824,6 +3827,7 @@ async def store_external_improvement(
             422,
             "O texto devolvido nao parece uma reescrita fiel do material "
             "(muito menor ou muito maior que o original).")
+    llm_usage_service.record_agent_call(llm, user["tutor_id"])
     return await _store_improvement(db, material, content=text, llm=llm)
 
 

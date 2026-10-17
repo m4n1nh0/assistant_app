@@ -22,6 +22,7 @@ import sys
 
 from .core.config import get_settings
 from .core.database import init_db
+from .services import llm_price_service, llm_usage_service
 from .core.database_seed import apply_database_seed, database_seed_requested
 from .core.net import client_ip, client_ip_identifier
 from shared.observability.middleware import (
@@ -137,6 +138,9 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         logger.info("Database initialized")
+        # Precos de IA vindos do banco e consumo por cliente: so onde ha banco.
+        llm_usage_service.enable()
+        llm_price_service.start_background_refresh()
         if seed_requested:
             seed_applied = await apply_database_seed(settings.database_seed)
             if seed_applied:

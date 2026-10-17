@@ -24,6 +24,7 @@ import '../services/app_defaults_service.dart';
 import '../models/app_config.dart';
 import '../utils/theme.dart';
 import '../widgets/title_bar.dart';
+import '../widgets/ai_usage_dialog.dart';
 
 /// Tela de configuracao: persona, provedores, calendario e notificacao.
 class ConfigScreen extends ConsumerStatefulWidget {
@@ -974,6 +975,18 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           ),
           _InfoBox(
               'Encerra a sessão atual e abre a tela de login. Os dados locais permanecem separados por conta.'),
+        ]),
+        _SectionCard(title: '📊 CONSUMO DE IA', children: [
+          _InfoBox(
+              'Quantas chamadas, tokens e quanto custou, por provedor, modelo ou dia. Os tokens são os informados pelo provedor; o custo é uma estimativa com preço de tabela, que você pode ajustar por modelo.'),
+          _ActionBtn(
+            label: 'Abrir consumo e preços',
+            color: AssistantTheme.c1,
+            onTap: () => AiUsageDialog.show(
+              context,
+              isAdmin: _account?.isAdmin == true,
+            ),
+          ),
         ]),
         if (_account?.isAdmin == true)
           _SectionCard(title: '👥 USUÁRIOS E CONVITES', children: [
