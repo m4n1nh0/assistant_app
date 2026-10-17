@@ -23,6 +23,7 @@ NOW = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
         "quando tenho aula?",
         "quais os horarios das minhas turmas",
         "quais as proximas aulas",
+        "quando e a proxima aula para preparar o slide?",
         "tenho aula dia 21/09?",
         "liste as datas das aulas de banco de dados",
         "quais os horarios das aulas sobre banco de dados?",
@@ -41,6 +42,11 @@ def test_schedule_questions_go_to_the_schedule(message):
         "o que foi visto na aula do dia 14/09?",
         "tive aula dia 10/09?",
         "explica a materia da aula de quinta dia 10/09",
+        # planejar a aula: "proxima aula" aparece, mas a pessoa quer ideias, nao as datas
+        "O que posso abordar na proxima aula pensei em seguir o seguinte slide Da engenharia de software ao RAG",
+        "sugira um roteiro para a proxima aula",
+        "quero falar de redes na proxima aula",
+        "preciso preparar a proxima aula de banco de dados",
     ],
 )
 def test_questions_about_a_given_class_do_not(message):

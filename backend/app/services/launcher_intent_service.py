@@ -349,6 +349,15 @@ def build_auto_registration_from_launch(
     if not name or len(name) < 2:
         return None
 
+    # "abra o material da aula e resuma": o que vem depois do verbo e um pedido, nao o nome de um
+    # app. Nome de app e curto e nao traz outro verbo; sem caminho nem URL, frase longa ou com
+    # pedido embutido nao vira cadastro de atalho.
+    if not target and (
+        len(name.split()) > 5
+        or re.search(r"(resumw*|explicw*|sobre|depois|entao|para mim|me (?:diga|fale|mostre|explique))", _fold(name))
+    ):
+        return None
+
     # Reject overly generic words/phrases that aren't real app names
     _GENERIC = re.compile(
         r"^(janela|janelas|terminal|arquivo|arquivos|pasta|pastas|"

@@ -32,7 +32,15 @@ _LESSON_CONTENT = re.compile(
 #: "horarios das aulas sobre banco de dados" quer agenda. So vale como pedido de
 #: conteudo quando nenhuma palavra forte de agenda aparece junto.
 _ABOUT = re.compile(r"\bsobre\b")
-_STRONG_SCHEDULE = re.compile(r"\b(quando|horario\w*|agenda\w*|calendario\w*|proxim\w*)\b")
+#: Pedido para PLANEJAR a aula ("o que posso abordar na proxima aula", "pensei em seguir este
+#: slide"): "proxima aula" aparece, mas a pessoa quer ideias de conteudo, nao a lista de datas.
+#: So uma palavra de agenda explicita (quando, horario, agenda, calendario) mantem a rota de horarios.
+_PLANNING = re.compile(
+    r"\b(abord\w*|ensin\w*|lecion\w*|planej\w*|prepar\w*|pensei|pensando|falar|conversar|slides?|sugest\w*|ideias?|roteiro|pauta"
+    r"|o que (?:posso|devo|vou|podemos|poderia|seguir|dar|falar|passar))\b"
+)
+_EXPLICIT_SCHEDULE = re.compile(r"\b(quando|horario\w*|agenda\w*|calendario\w*)\b")
+_STRONG_SCHEDULE =re.compile(r"\b(quando|horario\w*|agenda\w*|calendario\w*|proxim\w*)\b")
 
 
 def is_academic_schedule_query(
@@ -54,6 +62,8 @@ def is_academic_schedule_query(
             and re.search(r"\b(quando|data|datas|dia|dias|horario|horarios|agenda|calendario|proxim|listar|trazer|tracar)\w*\b", text)):
         return False
     if _LESSON_CONTENT.search(text):
+        return False
+    if _PLANNING.search(text) and not _EXPLICIT_SCHEDULE.search(text):
         return False
     if _ABOUT.search(text) and not _STRONG_SCHEDULE.search(text):
         return False

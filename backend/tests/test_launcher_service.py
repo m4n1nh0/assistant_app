@@ -285,6 +285,14 @@ def test_auto_registration_from_launch_ignores_no_launch_keyword():
     assert action is None
 
 
+@pytest.mark.parametrize("message", [
+    "abra o material da aula de banco de dados e resuma",
+    "abra o conteudo sobre RAG para mim e me explique",
+])
+def test_auto_registration_from_launch_ignores_a_request_after_the_verb(message):
+    assert launcher_service.build_auto_registration_from_launch(message) is None
+
+
 def test_auto_registration_from_launch_ignores_generic_phrases():
     action = launcher_service.build_auto_registration_from_launch(
         "abra uma janela"
