@@ -372,6 +372,14 @@ quando alguém encurta o seletor de tempo do alto para olhar a latência de uma 
 - **Latência e saúde** (Prometheus) seguem o seletor de tempo do alto, porque é com ele que se olha um
   incidente. O padrão é 6 horas.
 
+O painel **Assistant · MySQL, Redis e Qdrant** segue o seletor de tempo do alto em tudo (padrão 24 horas),
+sem períodos escondidos. Dois ajustes evitam o quadro vazio:
+
+- A lista **"Janela de cálculo"** (5 min a 1 dia; padrão 1 hora) define em quanto tempo se somam os eventos
+  raros: erros de conexão, chaves expiradas ou expulsas, e requisições, latência e falhas do Qdrant. Com
+  pouco tráfego, aumente a janela; para ver o detalhe de um incidente, diminua.
+- Contadores de evento raro (consultas lentas, falhas) mostram **0** quando nada aconteceu, em vez de "sem dado".
+
 As faixas dos histogramas de duração (chamadas a modelos e requisições HTTP) vão de meio segundo a dois
 minutos. As do SDK terminam em 10 segundos, e uma chamada de 30 segundos fazia o p95 do gráfico ficar
 preso em 10 s.

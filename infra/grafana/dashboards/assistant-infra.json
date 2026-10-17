@@ -7,10 +7,10 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "1m",
   "time": {
-    "from": "now-6h",
+    "from": "now-24h",
     "to": "now"
   },
   "panels": [
@@ -195,7 +195,7 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Consultas lentas (24 h)",
+      "title": "Consultas lentas",
       "description": "Acima do long_query_time do MySQL (10 s por padrão).",
       "datasource": {
         "type": "prometheus",
@@ -213,7 +213,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(sum(increase(mysql_query_slow_count_total[24h]))) or vector(0)",
+          "expr": "(sum(increase(mysql_query_slow_count_total[$__range]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -608,8 +608,8 @@
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Erros de conexão por hora (24 h)",
-      "description": "Conexões recusadas ou abortadas, por hora. Período fixo de 24 horas. Subir de forma contínua indica um problema.",
+      "title": "Erros de conexão por janela",
+      "description": "Conexões recusadas ou abortadas, por janela. Subir de forma contínua indica um problema.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -626,16 +626,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (error) (increase(mysql_connection_errors_total[1h]))",
+          "expr": "sum by (error) (increase(mysql_connection_errors_total[$janela]))",
           "legendFormat": "{{error}}",
           "refId": "A"
         }
       ],
-      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "sem erros de conexão nas últimas 24 horas",
+          "noValue": "sem erros de conexão no período escolhido",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -1160,8 +1159,8 @@
     {
       "id": 22,
       "type": "timeseries",
-      "title": "Chaves expiradas e expulsas por hora (24 h)",
-      "description": "Expulsas por falta de memória é o sinal de que o Redis está cheio. Período fixo de 24 horas.",
+      "title": "Chaves expiradas e expulsas por janela",
+      "description": "Expulsas por falta de memória é o sinal de que o Redis está cheio.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1178,7 +1177,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(redis_keys_expired_total[1h]))",
+          "expr": "sum(increase(redis_keys_expired_total[$janela]))",
           "legendFormat": "expiradas",
           "refId": "A"
         },
@@ -1187,16 +1186,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(redis_keys_evicted_total[1h]))",
+          "expr": "sum(increase(redis_keys_evicted_total[$janela]))",
           "legendFormat": "expulsas por falta de memória",
           "refId": "B"
         }
       ],
-      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "sem chaves expiradas nem expulsas nas últimas 24 horas",
+          "noValue": "sem chaves expiradas nem expulsas no período escolhido",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -1352,7 +1350,7 @@
     {
       "id": 26,
       "type": "stat",
-      "title": "Requisições (24 h)",
+      "title": "Requisições",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -1370,7 +1368,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(sum(increase(rest_responses_total{job=\"qdrant\"}[24h]))) or vector(0)",
+          "expr": "(sum(increase(rest_responses_total{job=\"qdrant\"}[$__range]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -1408,7 +1406,7 @@
     {
       "id": 27,
       "type": "stat",
-      "title": "Falhas (24 h)",
+      "title": "Falhas",
       "description": "Zero quando não houve nenhuma falha: o Qdrant só cria a métrica depois da primeira.",
       "datasource": {
         "type": "prometheus",
@@ -1426,7 +1424,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(sum(increase(rest_responses_fail_total{job=\"qdrant\"}[24h]))) or vector(0)",
+          "expr": "(sum(increase(rest_responses_fail_total{job=\"qdrant\"}[$__range]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -1464,8 +1462,8 @@
     {
       "id": 28,
       "type": "timeseries",
-      "title": "Requisições por hora (24 h)",
-      "description": "Período fixo de 24 horas: não muda com o seletor. O Qdrant recebe poucas requisições, e numa janela de minutos não há o que calcular.",
+      "title": "Requisições por janela",
+      "description": "O Qdrant recebe poucas requisições, e numa janela de minutos não há o que calcular.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1482,16 +1480,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (method, endpoint) (increase(rest_responses_total{job=\"qdrant\"}[1h]))",
+          "expr": "sum by (method, endpoint) (increase(rest_responses_total{job=\"qdrant\"}[$janela]))",
           "legendFormat": "{{method}} {{endpoint}}",
           "refId": "A"
         }
       ],
-      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "sem requisições nas últimas 24 horas",
+          "noValue": "sem requisições no período escolhido",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -1523,8 +1520,8 @@
     {
       "id": 29,
       "type": "timeseries",
-      "title": "Latência p95 por rota (24 h)",
-      "description": "Percentil 95 de cada hora, só nas horas em que houve requisição. Período fixo de 24 horas.",
+      "title": "Latência p95 por rota",
+      "description": "Percentil 95 de cada hora, só nas horas em que houve requisição.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1541,16 +1538,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, endpoint) (increase(rest_responses_duration_seconds_bucket{job=\"qdrant\"}[1h])))",
+          "expr": "histogram_quantile(0.95, sum by (le, endpoint) (increase(rest_responses_duration_seconds_bucket{job=\"qdrant\"}[$janela])))",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
       ],
-      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "noValue": "sem requisições nas últimas 24 horas",
+          "noValue": "sem requisições no período escolhido",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -1658,8 +1654,8 @@
     {
       "id": 31,
       "type": "timeseries",
-      "title": "Falhas por rota (24 h)",
-      "description": "Falhas por hora em cada rota. Período fixo de 24 horas. Vazio quer dizer que não houve falha.",
+      "title": "Falhas por rota",
+      "description": "Falhas por janela em cada rota. Vazio quer dizer que não houve falha.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1676,16 +1672,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (endpoint) (increase(rest_responses_fail_total{job=\"qdrant\"}[1h]))",
+          "expr": "sum by (endpoint) (increase(rest_responses_fail_total{job=\"qdrant\"}[$janela]))",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
       ],
-      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "sem falhas nas últimas 24 horas",
+          "noValue": "sem falhas no período escolhido",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -1716,7 +1711,49 @@
     }
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "janela",
+        "label": "Janela de cálculo",
+        "type": "custom",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "query": "5 minutos : 5m,15 minutos : 15m,1 hora : 1h,6 horas : 6h,1 dia : 1d",
+        "current": {
+          "selected": true,
+          "text": "1 hora",
+          "value": "1h"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "5 minutos",
+            "value": "5m"
+          },
+          {
+            "selected": false,
+            "text": "15 minutos",
+            "value": "15m"
+          },
+          {
+            "selected": true,
+            "text": "1 hora",
+            "value": "1h"
+          },
+          {
+            "selected": false,
+            "text": "6 horas",
+            "value": "6h"
+          },
+          {
+            "selected": false,
+            "text": "1 dia",
+            "value": "1d"
+          }
+        ]
+      }
+    ]
   },
   "annotations": {
     "list": []
