@@ -290,6 +290,12 @@ services:
       - "${GRAFANA_PORT:-3000}:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Fonte `App (MySQL)`, com o consumo de IA. Aqui, so em desenvolvimento, usa o usuario da
+      # aplicacao; no Railway o certo e o `monitor`, que so le a tabela de consumo.
+      - GRAFANA_DB_HOST=mysql:3306
+      - GRAFANA_DB_NAME=assistant
+      - GRAFANA_DB_USER=assistant
+      - GRAFANA_DB_PASSWORD=assistant
     volumes:
       - assistant_grafana:/var/lib/grafana
     depends_on:

@@ -99,8 +99,9 @@ Autenticadas, em `/observability`:
 - O consumo só existe a partir de agora, e a **resposta em streaming** do chat ainda não é contada.
 - Um modelo **sem preço próprio** usa o padrão do provedor, que é só uma ordem de grandeza: o
   custo dele pode estar bem errado se for um modelo muito mais caro ou mais barato que o padrão.
-- O painel do **Grafana** (ver [deploy-railway.md](../arquitetura/deploy-railway.md)) continua
-  somando todos os clientes; o consumo **por cliente** está só aqui, no app. A métrica de custo do
-  Grafana usa a mesma tabela de preços.
+- O painel do **Grafana** (ver [deploy-railway.md](../arquitetura/deploy-railway.md)) lê este mesmo
+  consumo do banco, então mostra os mesmos totais, por modelo e por cliente. As métricas do
+  Prometheus somam todos os clientes, e ficam só para latência e saúde: elas perdem a primeira
+  contagem de cada série nova, então não servem para totais de um uso pequeno.
 - O consumo por cliente depende de a chamada rodar com a conta do cliente ativa. Chamadas em
   segundo plano sem essa conta aparecem como *(sem conta)*.

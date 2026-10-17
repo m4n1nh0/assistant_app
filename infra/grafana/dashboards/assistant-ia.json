@@ -7,36 +7,51 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
-  "refresh": "1m",
+  "version": 2,
+  "refresh": "5m",
   "time": {
-    "from": "now-24h",
+    "from": "now-30d",
     "to": "now"
   },
   "panels": [
     {
       "id": 1,
+      "type": "row",
+      "title": "Consumo de IA (exato, do banco) · use o seletor de período no alto",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
       "type": "stat",
-      "title": "Custo estimado (24 h)",
-      "description": "Estimativa: depende da tabela de preço e do que cada provedor informa de token.",
+      "title": "Custo estimado",
+      "description": "Tokens x preço de tabela do modelo (aba Preços do app). É uma estimativa: o valor real depende do seu contrato.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "sum(increase(assistant_llm_cost_usd_total[24h]))",
-          "legendFormat": "",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
           "refId": "A"
         }
       ],
@@ -64,91 +79,39 @@
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "fields": "/^value$/"
         },
         "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 2,
-      "type": "stat",
-      "title": "Tokens (24 h)",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 0
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(increase(assistant_llm_tokens_total[24h]))",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "noValue": "0",
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "none"
+        "graphMode": "none",
+        "textMode": "value"
       }
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Chamadas a modelos (24 h)",
-      "description": "",
+      "title": "Tokens",
+      "description": "Entrada + saída, os que o provedor informou.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 0
+        "w": 4,
+        "x": 4,
+        "y": 1
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "sum(increase(assistant_llm_calls_total[24h]))",
-          "legendFormat": "",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
           "refId": "A"
         }
       ],
@@ -176,41 +139,225 @@
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "fields": "/^value$/"
         },
         "colorMode": "value",
-        "graphMode": "none"
+        "graphMode": "none",
+        "textMode": "value"
       }
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Chamadas com falha (24 h)",
+      "title": "Chamadas",
       "description": "",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 0
+        "w": 4,
+        "x": 8,
+        "y": 1
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "sum(increase(assistant_llm_calls_total{ok=\"false\"}[24h])) / clamp_min(sum(increase(assistant_llm_calls_total[24h])), 1)",
-          "legendFormat": "",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Com falha",
+      "description": "Parte das chamadas que o provedor recusou ou que deram erro. Falha não traz o nome do modelo: aparece como (sem modelo).",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
+          "decimals": 1,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Sem preço",
+      "description": "Chamadas que não entram no custo: de agentes conectados (Codex, Claude Code), que rodam fora do servidor, ou sem token informado.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d')",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Clientes ativos",
+      "description": "",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') AND tenant_id <> ''",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
           "decimals": 0,
           "noValue": "0",
           "color": {
@@ -232,202 +379,56 @@
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "fields": "/^value$/"
         },
         "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 5,
-      "type": "timeseries",
-      "title": "Tokens por provedor e tipo",
-      "description": "Entrada (input), saída (output) e cache (cached).",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (provider, type) (increase(assistant_llm_tokens_total[$__rate_interval]))",
-          "legendFormat": "{{provider}} · {{type}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 6,
-      "type": "timeseries",
-      "title": "Custo estimado por modelo",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (provider, model) (increase(assistant_llm_cost_usd_total[$__rate_interval]))",
-          "legendFormat": "{{provider}} / {{model}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyUSD",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Latência p95 das chamadas a modelos",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 12
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(assistant_llm_duration_milliseconds_bucket[$__rate_interval])))",
-          "legendFormat": "{{provider}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "graphMode": "none",
+        "textMode": "value"
       }
     },
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Chamadas com falha por provedor",
-      "description": "",
+      "title": "Tokens por dia",
+      "description": "Entrada + saída, por provedor.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 12
+        "x": 0,
+        "y": 5
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "sum by (provider, model) (increase(assistant_llm_calls_total{ok=\"false\"}[$__rate_interval]))",
-          "legendFormat": "{{provider}} / {{model}}",
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider ORDER BY day",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "sem consumo no período",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
+            "barAlignment": 0,
             "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            },
+            "axisSoftMin": 0
           }
         },
         "overrides": []
@@ -449,37 +450,45 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Latência p95 por rota HTTP",
-      "description": "",
+      "title": "Custo estimado por dia",
+      "description": "Por provedor e modelo.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 20
+        "x": 12,
+        "y": 5
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(assistant_http_request_duration_milliseconds_bucket[$__rate_interval])))",
-          "legendFormat": "{{http_route}}",
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider, model ORDER BY day",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "currencyUSD",
+          "noValue": "sem consumo no período",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
+            "barAlignment": 0,
             "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            },
+            "axisSoftMin": 0
           }
         },
         "overrides": []
@@ -501,37 +510,45 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Erros 5xx por rota",
-      "description": "",
+      "title": "Chamadas por dia",
+      "description": "Chamadas que deram certo, por provedor.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 20
+        "x": 0,
+        "y": 13
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "sum by (http_route, http_status_code) (increase(assistant_http_request_duration_milliseconds_count{http_status_code=~\"5..\"}[$__rate_interval]))",
-          "legendFormat": "{{http_route}} · {{http_status_code}}",
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, provider AS metric, SUM(calls - errors) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider ORDER BY day",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "sem consumo no período",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
+            "barAlignment": 0,
             "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            },
+            "axisSoftMin": 0
           }
         },
         "overrides": []
@@ -553,37 +570,45 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Operações por tipo (traces)",
-      "description": "Chamadas por segundo de cada tipo de operação: llm, tool, mcp, graph, agent, node.",
+      "title": "Falhas por dia",
+      "description": "Chamadas com erro, por provedor. Sem o nome do modelo, porque ele só vem na resposta.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "mysql",
+        "uid": "appdb"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 28
+        "x": 12,
+        "y": 13
       },
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "mysql",
+            "uid": "appdb"
           },
-          "expr": "sum by (assistant_span_kind) (rate(assistant_spans_calls_total[$__rate_interval]))",
-          "legendFormat": "{{assistant_span_kind}}",
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT UNIX_TIMESTAMP(day) AS time, provider AS metric, SUM(errors) AS value FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY day, provider ORDER BY day",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
+          "noValue": "sem consumo no período",
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
+            "barAlignment": 0,
             "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
+            "fillOpacity": 75,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            },
+            "axisSoftMin": 0
           }
         },
         "overrides": []
@@ -604,6 +629,546 @@
     },
     {
       "id": 12,
+      "type": "table",
+      "title": "Consumo por modelo",
+      "description": "",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "sem consumo no período",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Custo"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Chamadas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falhas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Entrada"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Saida"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Consumo por cliente",
+      "description": "Quanto cada conta usou no período. A coluna Cliente é o e-mail da conta.",
+      "datasource": {
+        "type": "mysql",
+        "uid": "appdb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "mysql",
+            "uid": "appdb"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_daily WHERE day BETWEEN DATE_FORMAT($__timeFrom(), '%Y-%m-%d') AND DATE_FORMAT($__timeTo(), '%Y-%m-%d') GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "sem consumo no período",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Custo"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Chamadas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falhas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Entrada"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Saida"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Latência e saúde (Prometheus) · pontos aparecem conforme há chamadas",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Latência p95 das chamadas a modelos",
+      "description": "Tempo que cada provedor leva para responder (percentil 95).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(assistant_llm_duration_milliseconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "noValue": "sem dado ainda",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Chamadas por segundo, por provedor",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (provider) (rate(assistant_llm_calls_total[$__rate_interval]))",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "sem dado ainda",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Latência p95 por rota HTTP",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(assistant_http_request_duration_milliseconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{http_route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "noValue": "sem dado ainda",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Erros 5xx por rota",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (http_route, http_status_code) (increase(assistant_http_request_duration_milliseconds_count{http_status_code=~\"5..\"}[$__rate_interval]))",
+          "legendFormat": "{{http_route}} · {{http_status_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "sem dado ainda",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Operações por tipo (traces)",
+      "description": "Chamadas por segundo de cada tipo de operação: llm, tool, mcp, graph, agent, node.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (assistant_span_kind) (rate(assistant_spans_calls_total[$__rate_interval]))",
+          "legendFormat": "{{assistant_span_kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "sem dado ainda",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
       "type": "timeseries",
       "title": "Operações com erro (traces)",
       "description": "",
@@ -615,7 +1180,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 46
       },
       "targets": [
         {
@@ -631,11 +1196,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 12,
-            "showPoints": "never"
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -645,7 +1212,8 @@
           "displayMode": "table",
           "placement": "bottom",
           "calcs": [
-            "sum"
+            "lastNotNull",
+            "max"
           ]
         },
         "tooltip": {

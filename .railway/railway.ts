@@ -84,6 +84,12 @@ export default defineRailway((ctx) => {
     env: {
       RAILWAY_RUN_UID: "0",
       GF_SECURITY_ADMIN_PASSWORD: ctx.shared.GRAFANA_ADMIN_PASSWORD,
+      // Consumo de IA lido do banco (fonte `App (MySQL)`): o usuario `monitor`, que so ve a tabela
+      // de consumo e tres colunas dos usuarios, com a mesma senha que o collector usa.
+      GRAFANA_DB_HOST: "${{mysql.RAILWAY_PRIVATE_DOMAIN}}:3306",
+      GRAFANA_DB_NAME: "${{mysql.MYSQL_DATABASE}}",
+      GRAFANA_DB_USER: "monitor",
+      GRAFANA_DB_PASSWORD: ctx.shared.MYSQL_MONITOR_PASSWORD,
     },
     volumeMounts: { "/var/lib/grafana": grafanaData },
   });

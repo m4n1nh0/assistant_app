@@ -233,9 +233,11 @@ OTEL_EXPORTER_ENDPOINT="http://${{otel-collector.RAILWAY_PRIVATE_DOMAIN}}:4318"
   tabela pública. Não é variável do Railway: o `LLM_PRICING` só serve de reserva e não acompanha o
   modelo de cada cliente. Veja [Consumo e preços de IA](../funcionalidades/consumo-e-precos-de-ia.md).
   Um modelo sem preço próprio usa o padrão do provedor, que é só uma ordem de grandeza.
-- O painel do Grafana soma todos os clientes do ambiente: a métrica não leva o usuário como rótulo
-  (uma série por cliente sairia cara). O consumo **por cliente** fica no banco e aparece no app
-  (Configurações → Consumo de IA), onde o administrador vê quanto cada conta usou.
+- Os quadros de **consumo** do Grafana (tokens, custo, chamadas, por modelo e por cliente) leem do
+  **banco** (tabela `llm_usage_daily`), que guarda o número exato por dia, provedor, modelo e cliente.
+  As métricas do Prometheus ficam só para latência e saúde: elas somam todos os clientes (um rótulo por
+  cliente criaria uma série por cliente) e perdem a primeira contagem de cada série nova, o que
+  distorce justamente um uso pequeno. O mesmo consumo aparece no app (Configurações → Consumo de IA).
 - `LANGSMITH_*` não pertence ao `tool-service` nem ao `mcp-service`: lá ela liga um rastreamento
   que nunca receberá chamada de modelo, e a chave ficaria exposta sem uso.
 - `OTEL_CONSOLE_EXPORT` e `TELEMETRY_MEMORY_EVENTS` não precisam mudar. Com a telemetria
@@ -349,8 +351,17 @@ RAILWAY_RUN_UID="0"
 # GF_SERVER_ROOT_URL="https://<dominio-do-grafana>"
 ```
 
-Nada se configura na interface do Grafana: a fonte de dados `Prometheus` e o painel
-**Assistant · consumo de IA e saúde** já vêm provisionados, na pasta *Assistant*.
+Nada se configura na interface do Grafana: as fontes de dados e os painéis já vêm provisionados, na
+pasta *Assistant*:
+
+| Fonte de dados | Lê de | Usada para |
+|---|---|---|
+| `Prometheus` | o Prometheus do projeto | latência, requisições HTTP, operações e a saúde dos bancos |
+| `App (MySQL)` | o banco da aplicação, com o usuário `monitor` | o consumo de IA, exato |
+
+A fonte `App (MySQL)` lê as variáveis `GRAFANA_DB_HOST`, `GRAFANA_DB_NAME`, `GRAFANA_DB_USER` e
+`GRAFANA_DB_PASSWORD` do **serviço do Grafana** (o IaC já as define; no painel, preencha à mão). Sem
+elas o Grafana sobe normalmente, e só os quadros de consumo ficam sem dado.
 
 #### Ordem e conferência
 
@@ -425,16 +436,31 @@ nada é criado).
    *Variables* do serviço `mysql` qual é a senha do administrador (`MYSQL_ROOT_PASSWORD`): o
    usuário da aplicação (`MYSQL_USER`) provavelmente não tem permissão para criar usuários.
 
-2. No prompt `mysql>`, rode as duas linhas, **trocando `SUA-SENHA-AQUI` pela senha de verdade**
-   (use uma senha forte, sem aspas simples nem barras invertidas, usada só para isso):
+2. No prompt `mysql>`, rode as linhas abaixo, **trocando `SUA-SENHA-AQUI` pela senha de verdade**
+   (forte, sem aspas simples nem barras invertidas, usada só para isso) e **`assistant` pelo nome do
+   seu banco** (o valor de `MYSQL_DATABASE` do serviço `mysql`):
 
    ```sql
    CREATE USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';
-   GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'monitor'@'%';
+   GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'monitor'@'%';
+   GRANT SELECT ON performance_schema.* TO 'monitor'@'%';
+   GRANT SELECT ON assistant.llm_usage_daily TO 'monitor'@'%';
+   GRANT SELECT (tutor_id, email, username) ON assistant.users TO 'monitor'@'%';
    ```
 
+   | Permissão | Para quê |
+   |---|---|
+   | `PROCESS`, `REPLICATION CLIENT` e `performance_schema` | as métricas de saúde do MySQL (collector) |
+   | `llm_usage_daily` | o consumo de IA no Grafana (uma tabela de números, sem dado pessoal) |
+   | três colunas de `users` | mostrar o e-mail do cliente no quadro "Consumo por cliente" |
+
+   Ele **não** lê o resto do banco: nem `password_hash`, nem as aulas, os alunos ou as conversas.
+   Testado: `SELECT password_hash` e `SELECT *` em `users` dão `command denied`, e `INSERT` também.
+
    Se o usuário já existir (`ERROR 1396`), troque o `CREATE USER` por
-   `ALTER USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';`.
+   `ALTER USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';`. Se você já o criou com a permissão
+   ampla (`SELECT ON *.*`) de uma versão anterior deste guia, tire-a e dê as de cima:
+   `REVOKE SELECT ON *.* FROM 'monitor'@'%';`.
 
 3. Confira e saia:
 
@@ -443,23 +469,25 @@ nada é criado).
    exit
    ```
 
-   A saída deve listar `PROCESS, REPLICATION CLIENT` e o `SELECT`.
+   A saída deve listar as cinco permissões acima, e nenhum `SELECT ON *.*`.
 
-Esse usuário só lê estatísticas e não escreve em nada. Não use o usuário da aplicação: ele tem mais
-permissão do que a monitoria precisa, e a senha dele ficaria espalhada em mais um serviço. Não cole a
-senha em chat nem em arquivo do repositório: o comando fica no histórico do terminal do container.
+Esse usuário só lê e não escreve em nada. Não use o usuário da aplicação: ele tem mais permissão do que
+a monitoria precisa, e a senha dele ficaria espalhada em mais um serviço. Não cole a senha em chat nem
+em arquivo do repositório: o comando fica no histórico do terminal do container.
 
 **2. Variável compartilhada.** Em *Project Settings > Shared Variables*, crie
-`MYSQL_MONITOR_PASSWORD` com a mesma senha. O IaC a referencia, e ela não vai para o repositório.
+`MYSQL_MONITOR_PASSWORD` com a mesma senha. O IaC a referencia (no collector e no Grafana), e ela não vai
+para o repositório.
 
 **3. Redis.** O `.railway/railway.ts` lê `${{Redis.REDIS_PASSWORD}}` e `${{Redis.RAILWAY_PRIVATE_DOMAIN}}`.
 Confira em *Redis > Variables* que `REDIS_PASSWORD` existe com esse nome (o template do Railway pode
 chamá-la de outro jeito, como `REDISPASSWORD`); se for outro, ajuste o nome no arquivo. O nome do
 serviço no painel é `Redis`, com R maiúsculo, e a referência precisa casar com ele.
 
-**4. Aplicar.** O `plan` deve mostrar só cinco variáveis novas no `otel-collector` (`0 to add,
-5 to change, 0 to destroy`). Depois do `apply`, o collector redeploya. A configuração do Prometheus
-(a leitura do Qdrant) e o painel entram com o push do repositório.
+**4. Aplicar.** O `plan` deve mostrar só variáveis novas: cinco no `otel-collector` (endereço e senha
+do MySQL e do Redis) e quatro no `grafana` (`GRAFANA_DB_*`), sempre com `0 to add` e `0 to destroy`.
+Depois do `apply`, os dois serviços redeployam. A configuração do Prometheus (a leitura do Qdrant), a
+fonte de dados `App (MySQL)` e os painéis entram com o push do repositório.
 
 ```powershell
 railway config plan --verbose
@@ -510,7 +538,8 @@ container novo: depois de ligar, faça um redeploy.
 | `npm install -g @railway/cli` instala, mas `railway` não acha o binário | o npm bloqueou o script que o baixa | `npm install -g @railway/cli --allow-scripts=@railway/cli` |
 | *Volume já existe no projeto* | volume apagado ainda em retenção | nome novo no `railway.ts`, ou esperar a data de *Deletes on* |
 | Senha do Grafana vazia ou `admin` | variável compartilhada ausente, ou banco criado antes dela | seção *Senha do Grafana* acima |
-| Painel sem dados de tokens e custo | ninguém chamou um modelo ainda, ou `OTEL_ENABLED` está `false` na `assistant-api` | disparar um resumo e conferir a variável |
+| Quadros de consumo vazios (tokens, custo, por modelo e por cliente) | a fonte `App (MySQL)` não conecta (usuário `monitor` sem criar, senha diferente, ou `GRAFANA_DB_*` ausentes), ou ninguém chamou um modelo no período | *Connections > Data sources > App (MySQL) > Test*; criar o usuário e conferir as variáveis do Grafana |
+| Só os quadros de latência e saúde vazios | `OTEL_ENABLED` está `false` na `assistant-api`, ou ainda não houve chamada | conferir a variável e disparar um resumo |
 | `permission denied` no boot do Prometheus ou do Grafana | a imagem roda sem root e o volume monta como root | `RAILWAY_RUN_UID="0"` (o IaC já define) |
 | Painel de infra sem dados do MySQL; log do collector com `access denied` | usuário `monitor` não existe, ou a senha de `MYSQL_MONITOR_PASSWORD` é outra | criar o usuário e a variável compartilhada com a mesma senha |
 | `CREATE: command not found` ao criar o usuário `monitor` | o SQL foi colado no bash do container, não no cliente do MySQL | `mysql -uroot -p"$MYSQL_ROOT_PASSWORD"` e colar no prompt `mysql>` |
