@@ -46,6 +46,9 @@ flowchart LR
 | `Redis` | template Railway | não | do template | rate limiting e cache de status dos provedores |
 | `qdrant` | imagem `qdrant/qdrant:v1.12.6` | não | `/qdrant/storage` | índice vetorial das aulas e memórias |
 | `localai` | imagem LocalAI | não | `/models` | LLM local (opcional) |
+| `otel-collector` | `infra/Dockerfile.otel-collector` | não | — | recebe traces e métricas da aplicação (opcional) |
+| `prometheus` | `infra/prometheus/Dockerfile` | não | `/prometheus` | guarda as métricas (opcional) |
+| `grafana` | `infra/grafana/Dockerfile` | **sim** | `/var/lib/grafana` | painel de consumo de IA e saúde (opcional) |
 
 Só a `assistant-api` recebe tráfego de fora. Todo o resto conversa pela rede
 privada (`*.railway.internal`), que só existe entre serviços do mesmo projeto e
@@ -175,6 +178,111 @@ QDRANT__SERVICE__API_KEY=
 Configuração completa na seção *Ollama E LocalAI Na Railway* do `README.md` da raiz. Resumo:
 volume em `/models`, `LOCALAI_ADDRESS=:8080` e o modelo em `PRELOAD_MODELS`.
 `LOCALAI_MODEL` na API e no orquestrador precisa ser o `id` instalado no LocalAI.
+
+### Observabilidade: otel-collector, prometheus e grafana (opcional)
+
+Três serviços que só valem criar quando for olhar traces e métricas. Sem eles, deixe
+`OTEL_ENABLED="false"` nos serviços da aplicação: com a telemetria ligada e sem collector
+alcançável, o SDK registra falha de envio a cada lote.
+
+```mermaid
+flowchart LR
+    APP[assistant-api, orquestrador,<br/>tool-service, mcp-service] -->|OTLP traces + métricas :4318| COL[otel-collector]
+    COL -->|":8889 (Prometheus)"| PROM[(prometheus)]
+    PROM --> GRAF[grafana]
+    COL -.->|traces no log| LOG[log do serviço]
+```
+
+O collector recebe traces e métricas da aplicação. Os traces vão para o log dele e também viram
+métricas de chamadas, erros e latência por tipo de operação (`spanmetrics`). As métricas da
+aplicação são: tokens, custo estimado, chamadas e duração das chamadas a modelos (por provedor e
+modelo) e a duração das requisições HTTP (por rota). O collector as expõe na porta `8889`, o
+Prometheus busca por lá e o Grafana lê do Prometheus.
+
+O compose monta os arquivos de configuração por volume, e o Railway não faz isso com imagem
+pronta. Por isso cada serviço sai de um Dockerfile que copia a configuração para dentro da imagem.
+**Os nomes dos serviços importam**: `prometheus.yml` e a fonte de dados do Grafana usam
+`otel-collector.railway.internal` e `prometheus.railway.internal`.
+
+#### `otel-collector`
+
+| Campo | Valor |
+|---|---|
+| Source | mesmo repositório e mesma branch |
+| Root Directory | `/infra` |
+| Dockerfile Path | `/infra/Dockerfile.otel-collector` |
+| Watch Paths | `/infra/otel-collector.yaml` e `/infra/Dockerfile.otel-collector` |
+| Domínio público | **não**: só a rede privada recebe telemetria |
+| Volume | nenhum |
+
+Healthcheck opcional: `PORT="13133"` e caminho `/` (a extensão `health_check` do collector).
+
+#### `prometheus`
+
+| Campo | Valor |
+|---|---|
+| Source | mesmo repositório e mesma branch |
+| Root Directory | `/infra/prometheus` |
+| Dockerfile Path | `/infra/prometheus/Dockerfile` |
+| Watch Paths | `/infra/prometheus/**` |
+| Domínio público | **não** (a API do Prometheus não tem autenticação) |
+| Volume | `/prometheus` (histórico de 30 dias) |
+
+```dotenv
+# A imagem roda sem root e o volume do Railway monta como root: sem isto o Prometheus nao
+# consegue escrever e cai no boot com "permission denied".
+RAILWAY_RUN_UID="0"
+```
+
+#### `grafana`
+
+| Campo | Valor |
+|---|---|
+| Source | mesmo repositório e mesma branch |
+| Root Directory | `/infra/grafana` |
+| Dockerfile Path | `/infra/grafana/Dockerfile` |
+| Watch Paths | `/infra/grafana/**` |
+| Domínio público | **sim**, na porta `3000` |
+| Volume | `/var/lib/grafana` |
+
+```dotenv
+# Obrigatoria. O usuario e `admin`; o servico tem dominio publico, entao use uma senha forte.
+GF_SECURITY_ADMIN_PASSWORD="<senha forte>"
+# Pelo mesmo motivo do Prometheus.
+RAILWAY_RUN_UID="0"
+# Opcional: o endereco publico, para links e convites saírem certos.
+# GF_SERVER_ROOT_URL="https://<dominio-do-grafana>"
+```
+
+Nada se configura na interface do Grafana: a fonte de dados `Prometheus` e o painel
+**Assistant · consumo de IA e saúde** já vêm provisionados, na pasta *Assistant*.
+
+#### Ligando a aplicação
+
+Em **cada serviço que exporta** (`assistant-api`, `agent-orchestrator`, `tool-service`,
+`mcp-service`):
+
+```dotenv
+OTEL_ENABLED="true"
+# Aceita a URL base: o codigo acrescenta /v1/traces e /v1/metrics. A URL completa de traces,
+# usada antes, continua valendo.
+OTEL_EXPORTER_ENDPOINT="http://${{otel-collector.RAILWAY_PRIVATE_DOMAIN}}:4318"
+```
+
+Ordem: `otel-collector`, depois `prometheus`, depois `grafana`, e por fim a mudança nas variáveis
+da aplicação. As métricas aparecem no painel cerca de um minuto depois da primeira chamada.
+
+Para conferir o caminho por partes: nos logs do collector aparecem os traces (exporter `debug`); o
+Prometheus, em *Status > Targets* (via `railway run` ou um domínio temporário), mostra
+`otel-collector` como `UP`; e no Grafana o painel começa a preencher.
+
+Em ambiente Railway antigo, de rede privada só IPv6, o collector e o Prometheus precisam escutar
+em `[::]` em vez de `0.0.0.0` (receptor `otlp` e exporter `prometheus` em `otel-collector.yaml`,
+e `--web.listen-address` no Dockerfile do Prometheus), como o aviso do `qdrant` acima.
+
+Para guardar traces e consultá-los, acrescente um exporter de traces em
+`infra/otel-collector.yaml`, por exemplo `otlphttp` para um backend gerenciado, com a chave em uma
+variável do serviço (`${env:NOME}` no YAML) e nunca escrita no arquivo.
 
 ---
 

@@ -231,9 +231,12 @@ services:
       retries: 3
       start_period: 10s
 
-  # Collector de traces. Nao ha "observability-service" proprio: seria
+  # Collector de traces e metricas. Nao ha "observability-service" proprio: seria
   # reimplementar isto. A aplicacao exporta OTLP e o collector encaminha para o
   # backend de observabilidade que a instalacao escolher.
+  #
+  # Os aliases `*.railway.internal` existem para que prometheus.yml e a fonte de dados do
+  # Grafana, que usam os nomes de rede do Railway, funcionem aqui sem uma segunda versao.
   otel-collector:
     profiles: ["observability"]
     image: otel/opentelemetry-collector-contrib:0.115.1
@@ -244,8 +247,44 @@ services:
       - "4317:4317"
     volumes:
       - ./infra/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      default:
+        aliases:
+          - otel-collector.railway.internal
+
+  # Guarda e consulta as metricas que o collector expoe na porta 8889.
+  prometheus:
+    profiles: ["observability"]
+    build: ./infra/prometheus
+    container_name: assistant-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - assistant_prometheus:/prometheus
+    networks:
+      default:
+        aliases:
+          - prometheus.railway.internal
+
+  # Painel pronto sobre o Prometheus. Usuario `admin`; a senha vem de GRAFANA_ADMIN_PASSWORD.
+  grafana:
+    profiles: ["observability"]
+    build: ./infra/grafana
+    container_name: assistant-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - assistant_grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
 
 volumes:
+  assistant_prometheus:
+  assistant_grafana:
   assistant_data:
   assistant_logs:
   assistant_mysql:

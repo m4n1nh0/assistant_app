@@ -449,10 +449,18 @@ Não é código deste repositório — é a imagem oficial, configurada por arqu
 | Variável | Padrão | Efeito |
 |---|---|---|
 | `OBSERVABILITY_PORT` | `8004` | Porta publicada do receptor OTLP/HTTP |
+| `PROMETHEUS_PORT` | `9090` | Porta publicada do Prometheus (só compose) |
+| `GRAFANA_PORT` | `3000` | Porta publicada do Grafana (só compose) |
+| `GRAFANA_ADMIN_PASSWORD` | `admin` | Senha do usuário `admin` do Grafana (só compose) |
 
-`OBSERVABILITY_PORT` é lida pelo **`docker-compose.yml`**, na interpolação
-`${OBSERVABILITY_PORT:-8004}`; nenhum código da aplicação a consulta. Definir a
-variável no ambiente de um serviço Python não muda nada.
+Essas variáveis são lidas pelo **`docker-compose.yml`**, na interpolação
+`${OBSERVABILITY_PORT:-8004}` e semelhantes; nenhum código da aplicação as consulta. Defini-las
+no ambiente de um serviço Python não muda nada. No Railway o equivalente é
+`GF_SECURITY_ADMIN_PASSWORD` no serviço `grafana`, descrito em
+[deploy-railway.md](deploy-railway.md).
+
+A aplicação envia traces e métricas ao collector com o mesmo `OTEL_EXPORTER_ENDPOINT`, que
+aceita a URL base (`http://collector:4318`): o código acrescenta `/v1/traces` e `/v1/metrics`.
 
 A configuração de destino vive em `infra/otel-collector.yaml`.
 Trocar de backend de observabilidade é acrescentar um exporter ali — não há nome

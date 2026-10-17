@@ -32,7 +32,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from .user_llm_config_service import runtime_settings
-from shared.observability import build_usage, current_context, record_usage, span
+from shared.observability import span
 from ..models.schemas import LLMResponse, Message
 from . import llm_service
 
@@ -272,20 +272,7 @@ class ProviderChatModel(BaseChatModel):
             if response.is_error:
                 observed.fail(response.content)
 
-        record_usage(
-            build_usage(
-                response.llm,
-                model=response.model,
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
-                cached_tokens=response.cached_tokens,
-                duration_ms=float(response.duration_ms),
-                agent_id=current_context().agent_id,
-                ok=not response.is_error,
-                correlation=current_context().as_dict(),
-            )
-        )
-
+        # O consumo e contabilizado em `llm_service.dispatch_single`, por onde toda chamada passa.
         metadata = {
             "provider": response.llm,
             "model": response.model,

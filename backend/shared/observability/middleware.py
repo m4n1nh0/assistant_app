@@ -88,6 +88,12 @@ def _record_request(
         )
     except Exception:
         pass
+    try:
+        from .otel import record_http_metric
+
+        record_http_metric(method, path, status_code, duration_ms)
+    except Exception:
+        pass
 
 
 def setup_observability(

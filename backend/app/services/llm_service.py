@@ -824,9 +824,38 @@ async def dispatch_single(
         options = {"max_tokens": max_tokens} if max_tokens is not None else {}
         response = await caller(message, history, system_prompt, **options)
 
+    _record_call_usage(response)
     if response.is_error:
         await mark_llm_failure(llm, response.content)
     return response
+
+
+def _record_call_usage(response: LLMResponse) -> None:
+    """Conta tokens, custo e duracao da chamada na telemetria.
+
+    E aqui, e nao em cada chamador, porque `dispatch_single` e o ponto por onde passam o chat,
+    o resumo de aula, o quiz e a melhoria de material (e o `multi` e o `chain`, que o usam).
+    Registrar so no chat deixava de fora justamente o que o professor dispara no modo educacao.
+    """
+    try:
+        from shared.observability import build_usage, current_context, record_usage
+
+        context = current_context()
+        record_usage(
+            build_usage(
+                response.llm,
+                model=response.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cached_tokens=response.cached_tokens,
+                duration_ms=float(response.duration_ms),
+                agent_id=context.agent_id,
+                ok=not response.is_error,
+                correlation=context.as_dict(),
+            )
+        )
+    except Exception:
+        pass
 
 
 async def dispatch_multi(

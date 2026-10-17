@@ -1,11 +1,20 @@
-# Collector de traces do ambiente de desenvolvimento.
+# Collector do ambiente (compose e Railway).
 #
-# A aplicacao nao conhece nenhum fornecedor de observabilidade: ela exporta OTLP
-# e este arquivo decide para onde vai. Trocar de backend - Jaeger, Tempo, um
-# SaaS - e acrescentar um exporter aqui, sem tocar em uma linha de codigo.
+# A aplicacao nao conhece nenhum fornecedor de observabilidade: ela exporta OTLP e este arquivo
+# decide para onde vai. Trocar de backend e acrescentar um exporter aqui, sem tocar no codigo.
 #
-# O padrao imprime no proprio log do collector, que basta para inspecionar um
-# trace localmente sem subir mais um servico.
+# Dois sinais entram pelo mesmo receptor OTLP:
+#
+# - traces: vao para o log (exporter `debug`) e tambem alimentam o conector `spanmetrics`, que
+#   transforma os spans em contagem de chamadas, erros e latencia por tipo de operacao.
+# - metricas: as da aplicacao (tokens, custo e duracao de chamadas a modelos, duracao de
+#   requisicoes HTTP) mais as do `spanmetrics`, expostas em formato Prometheus na porta 8889.
+#   Quem le (Prometheus) vem buscar; o collector nao empurra.
+
+extensions:
+  # Verificacao de saude do proprio collector, para o healthcheck da plataforma.
+  health_check:
+    endpoint: 0.0.0.0:13133
 
 receivers:
   otlp:
@@ -23,16 +32,40 @@ processors:
     limit_percentage: 75
     spike_limit_percentage: 20
 
+connectors:
+  spanmetrics:
+    namespace: assistant.spans
+    histogram:
+      explicit:
+        buckets: [50ms, 100ms, 250ms, 500ms, 1s, 2500ms, 5s, 10s, 30s, 60s]
+    # Tipo da operacao (llm, tool, mcp, graph, agent, node...). Nome do span e servico ja entram
+    # por padrao; id de conversa ou de requisicao NAO entram: cada um criaria uma serie nova.
+    dimensions:
+      - name: assistant.span.kind
+    metrics_flush_interval: 15s
+
 exporters:
   debug:
     verbosity: normal
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Poe o nome do servico (assistant-api, mcp-service...) como rotulo de cada metrica.
+    resource_to_telemetry_conversion:
+      enabled: true
+    # Serie que parou de chegar sai da pagina depois disso, em vez de ficar para sempre.
+    metric_expiration: 15m
   # Descomente e ajuste para enviar a um backend real.
   # otlphttp/tempo:
   #   endpoint: http://tempo:4318
 
 service:
+  extensions: [health_check]
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [debug]
+      exporters: [debug, spanmetrics]
+    metrics:
+      receivers: [otlp, spanmetrics]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]

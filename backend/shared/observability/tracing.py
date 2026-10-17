@@ -53,6 +53,12 @@ def record_usage(usage: UsageRecord) -> None:
         _sink.record_usage(usage)
     except Exception:
         pass
+    try:
+        from .otel import record_usage_metrics
+
+        record_usage_metrics(usage)
+    except Exception:
+        pass
 
 
 @dataclass

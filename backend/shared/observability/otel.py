@@ -18,8 +18,25 @@ from shared.ports.telemetry import SpanKind, SpanRecord
 
 _tracer: Any = None
 _enabled = False
+_meter_provider: Any = None
+_instruments: dict[str, Any] = {}
 
 _KIND_TO_ATTRIBUTE = "assistant.span.kind"
+
+
+def signal_url(endpoint: str, signal: str) -> str:
+    """Endpoint OTLP/HTTP de um sinal (`traces` ou `metrics`).
+
+    Com endpoint explicito o SDK usa a URL como veio, sem acrescentar `/v1/traces`. Aceita aqui
+    tanto a base (`http://collector:4318`) quanto a URL completa de um dos sinais, e devolve a
+    do sinal pedido, para um valor so servir a traces e a metricas.
+    """
+    base = endpoint.strip().rstrip("/")
+    for known in ("/v1/traces", "/v1/metrics", "/v1/logs"):
+        if base.endswith(known):
+            base = base[: -len(known)]
+            break
+    return f"{base}/v1/{signal}"
 
 
 def available() -> bool:
@@ -69,7 +86,9 @@ def setup(
             )
 
             exporters.append(
-                OTLPSpanExporter(endpoint=endpoint) if endpoint else OTLPSpanExporter()
+                OTLPSpanExporter(endpoint=signal_url(endpoint, "traces"))
+                if endpoint
+                else OTLPSpanExporter()
             )
         except ImportError:
             logger.warning(
@@ -87,6 +106,7 @@ def setup(
         trace.set_tracer_provider(provider)
         _tracer = trace.get_tracer(service_name)
         _enabled = True
+        _setup_metrics(service_name=service_name, endpoint=endpoint)
         logger.info(
             f"OpenTelemetry ativo para {service_name}. O exporter OTLP precisa "
             "de um collector alcancavel: sem ele, o SDK registra falha de envio "
@@ -110,6 +130,121 @@ def shutdown() -> None:
         provider = trace.get_tracer_provider()
         if hasattr(provider, "shutdown"):
             provider.shutdown()
+    except Exception:
+        pass
+    if _meter_provider is not None:
+        try:
+            _meter_provider.shutdown()
+        except Exception:
+            pass
+
+
+# --- Metricas ------------------------------------------------------------------------------
+#
+# Os rotulos sao so os de baixa cardinalidade (provedor, modelo, rota, status): conversa,
+# requisicao e execucao ficam nos traces. Um rotulo por conversa criaria uma serie por
+# conversa, e o backend de metricas pagaria por isso.
+
+_EXPORT_INTERVAL_MS = 15_000
+
+
+def _setup_metrics(*, service_name: str, endpoint: str, reader: Any = None) -> bool:
+    """Liga o exportador de metricas OTLP. `reader` existe para os testes injetarem um leitor."""
+    global _meter_provider
+    try:
+        from opentelemetry import metrics
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.resources import Resource
+
+        if reader is None:
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+                OTLPMetricExporter,
+            )
+            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+            exporter = (
+                OTLPMetricExporter(endpoint=signal_url(endpoint, "metrics"))
+                if endpoint
+                else OTLPMetricExporter()
+            )
+            reader = PeriodicExportingMetricReader(
+                exporter, export_interval_millis=_EXPORT_INTERVAL_MS
+            )
+        provider = MeterProvider(
+            resource=Resource.create({"service.name": service_name}),
+            metric_readers=[reader],
+        )
+        meter = provider.get_meter(service_name)
+        _instruments.clear()
+        _instruments["tokens"] = meter.create_counter(
+            "assistant.llm.tokens",
+            unit="{token}",
+            description="Tokens das chamadas a modelos, por tipo (input, output, cached).",
+        )
+        _instruments["cost"] = meter.create_counter(
+            "assistant.llm.cost.usd",
+            description="Custo estimado das chamadas a modelos, em dolares.",
+        )
+        _instruments["calls"] = meter.create_counter(
+            "assistant.llm.calls",
+            unit="{call}",
+            description="Chamadas a modelos, por resultado.",
+        )
+        _instruments["llm_duration"] = meter.create_histogram(
+            "assistant.llm.duration",
+            unit="ms",
+            description="Duracao das chamadas a modelos.",
+        )
+        _instruments["http_duration"] = meter.create_histogram(
+            "assistant.http.request.duration",
+            unit="ms",
+            description="Duracao das requisicoes HTTP, por rota.",
+        )
+        _meter_provider = provider
+        metrics.set_meter_provider(provider)
+        return True
+    except ImportError:
+        logger.warning(
+            "Exporter OTLP de metricas ausente: so traces serao exportados. "
+            "Instale opentelemetry-exporter-otlp-proto-http."
+        )
+    except Exception as exc:
+        logger.warning(f"Metricas OpenTelemetry indisponiveis: {exc}")
+    _instruments.clear()
+    return False
+
+
+def record_usage_metrics(usage: Any) -> None:
+    """Conta tokens, custo, chamadas e duracao de uma chamada a modelo."""
+    if not _instruments:
+        return
+    try:
+        labels = {"provider": usage.provider, "model": usage.model or "desconhecido"}
+        for kind, value in (
+            ("input", usage.input_tokens),
+            ("output", usage.output_tokens),
+            ("cached", usage.cached_tokens),
+        ):
+            # `None` e "o provedor nao informou": nao vira zero, para a soma nao fingir um dado.
+            if value:
+                _instruments["tokens"].add(value, {**labels, "type": kind})
+        if usage.estimated_cost_usd:
+            _instruments["cost"].add(usage.estimated_cost_usd, labels)
+        _instruments["calls"].add(1, {**labels, "ok": "true" if usage.ok else "false"})
+        _instruments["llm_duration"].record(usage.duration_ms, labels)
+    except Exception:
+        pass
+
+
+def record_http_metric(method: str, route: str, status_code: int, duration_ms: float) -> None:
+    """Mede uma requisicao HTTP. `route` e o padrao da rota, nao o caminho com ids."""
+    if not _instruments:
+        return
+    try:
+        _instruments["http_duration"].record(
+            duration_ms,
+            {"http.method": method, "http.route": route, "http.status_code": status_code},
+        )
     except Exception:
         pass
 
