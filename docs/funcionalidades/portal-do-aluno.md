@@ -44,9 +44,14 @@ Depois de entrar, o campo de matrícula some e fica o link **Sair**. As abas:
 - **Agenda:** linha do tempo por dia com as aulas das últimas duas semanas, os prazos da
   mentoria e os atendimentos dos próximos 28 dias. Dias passados aparecem esmaecidos.
 - **Aulas, Pontos e Materiais:** busca sem acento, filtro por disciplina (com agrupamento quando
-  são várias) e ordem por data.
+  são várias) e ordem por data. Cada item é uma linha compacta (duas colunas em telas largas):
+  a aula mostra um trecho do resumo, o material mostra arquivo e páginas, e o ponto mostra o
+  motivo e o valor.
+- **Detalhes em modal:** aula, material e atividade da mentoria abrem numa janela por cima da
+  página, que fecha no X, no Esc ou clicando fora. A aula mostra o resumo completo, a atividade
+  mostra as instruções e o link de entrega.
 - **Leitor de material:** o texto extraído é estruturado em títulos, listas e parágrafos, com
-  índice pelos títulos e botão para fechar.
+  índice pelos títulos.
 
 A aba aberta fica no endereço (`#materiais`): o botão voltar do navegador funciona e o link só
 abre a aba depois que o aluno entra com a matrícula.

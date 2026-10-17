@@ -122,8 +122,28 @@ button.open{width:auto;margin:8px 0 0;padding:8px 14px;font-size:12px}
 .bar{display:flex;flex-wrap:wrap;gap:8px}
 .bar input,.bar select{flex:1 1 200px;width:auto;max-width:360px;margin:0}
 .card.past{opacity:.7}
-.card.wide{grid-column:1/-1}
 .reader{margin-top:10px}
+.list{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:10px}
+.row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:12px 14px;
+border:1px solid #e5e7eb;border-radius:10px;background:#fff;text-align:left}
+button.row{width:100%;margin:0;letter-spacing:0;font-weight:400;color:inherit;font-size:inherit;cursor:pointer}
+button.row:hover:not(:disabled){background:#f3f9fb;border-color:#00D6FF}
+.row .main{min-width:0;flex:1}
+.row .title{font-weight:700;font-size:15px;color:#0A1324}
+.row .meta{margin:2px 0 0}
+.row .meta .chip{margin:0 0 0 6px}
+.row .excerpt{margin-top:4px;font-size:13px;color:#4b5563;display:-webkit-box;
+-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.row .side{flex:none;font-size:12px;font-weight:700;color:#0A6E8A;white-space:nowrap}
+.modal{position:fixed;inset:0;z-index:2147483100;background:#0A1324cc;display:flex;
+align-items:center;justify-content:center}
+.modal-box{background:#fff;width:100%;height:100%;overflow:auto;padding:16px}
+.modal-head{display:flex;align-items:center;gap:12px;position:sticky;top:-16px;z-index:2;
+margin:-16px -16px 8px;padding:12px 16px;background:#fff;border-bottom:1px solid #e5e7eb}
+.modal-head h3{flex:1;margin:0;font-size:16px;color:#0A1324}
+.modal-head button{width:auto;margin:0;padding:8px 14px;font-size:12px}
+body.noscroll{overflow:hidden}
+.modal .sum.doc{max-height:none;overflow:visible;background:none;padding:0;margin:0}
 .toc{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
 .toc .meta{margin:0 4px 0 0}
 .toc-item{width:auto;margin:0;padding:5px 10px;border-radius:14px;background:#e6f4f8;color:#0A6E8A;
@@ -138,6 +158,9 @@ a.go{display:inline-block;margin-top:8px;color:#0A6E8A;font-weight:700}
 .iq-wrap{padding:28px 20px}
 main{padding:30px}
 main.logged{width:min(900px,100%)}
+.modal{padding:24px}
+.modal-box{width:min(1000px,100%);height:auto;max-height:100%;border-radius:12px;padding:20px}
+.modal-head{top:-20px;margin:-20px -20px 8px;padding:14px 20px}
 }
 @media (min-width:1000px){
 main.logged{width:min(1360px,100%)}
@@ -150,11 +173,15 @@ border-bottom:0;border-right:1px solid #e5e7eb;padding-right:14px;position:stick
 #view{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;
 align-items:start}
 #view>.card{margin-top:0}
-#view>.meta,#view>.grp{grid-column:1/-1}
+#view>.meta,#view>.grp,#view>.list{grid-column:1/-1}
+#view>.list{margin-top:0}
 .reader{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
-.reader-top{grid-column:1/-1}
 .toc{flex-direction:column;align-items:stretch;position:sticky;top:16px;max-height:520px;overflow:auto}
 .toc-item{text-align:left;border-radius:8px}
+.modal .toc{top:64px;max-height:calc(100vh - 160px)}
+}
+@media (min-width:1300px){
+#view>.list{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (min-width:1600px){
 main.logged{width:min(1560px,100%)}
@@ -251,12 +278,32 @@ _SCRIPT = """
     return box;
   }
 
-  // Leitor do material: indice pelos titulos que a estrutura achou, e botao para fechar.
-  function reader(text, close) {
+  // Janela por cima da pagina: fecha no X, no Esc e clicando fora; devolve o foco a quem abriu.
+  function modal(title, body) {
+    var prev = document.activeElement;
+    var overlay = el("div", "modal"), box = el("div", "modal-box"), head = el("div", "modal-head");
+    box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-label", title);
+    var x = el("button", "open", "Fechar"); x.type = "button";
+    head.appendChild(el("h3", "", title)); head.appendChild(x);
+    box.appendChild(head); box.appendChild(body); overlay.appendChild(box);
+    function onKey(e) { if (e.key === "Escape") close(); }
+    function close() {
+      overlay.remove(); document.removeEventListener("keydown", onKey);
+      document.body.classList.remove("noscroll");
+      if (prev && prev.focus) prev.focus();
+    }
+    x.onclick = close;
+    overlay.onclick = function (e) { if (e.target === overlay) close(); };
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("noscroll"); document.body.appendChild(overlay);
+    x.focus();
+    return close;
+  }
+
+  // Leitor do material: indice pelos titulos que a estrutura achou.
+  function reader(text) {
     var doc = structure(text), wrap = el("div", "reader");
-    var top = el("div", "reader-top");
-    var closeBtn = el("button", "open", "Fechar leitura"); closeBtn.type = "button";
-    closeBtn.onclick = close; top.appendChild(closeBtn); wrap.appendChild(top);
     if (doc.heads.length > 1) {
       var nav = el("nav", "toc"); nav.setAttribute("aria-label", "Índice");
       nav.appendChild(el("div", "meta", "Índice"));
@@ -340,8 +387,34 @@ _SCRIPT = """
       if (!by[k]) { by[k] = []; order.push(k); }
       by[k].push(i);
     });
-    if (discipline || order.length < 2) { items.forEach(build); return; }
-    order.forEach(function (k) { root.appendChild(el("h2", "grp", k)); by[k].forEach(build); });
+    function fill(list) {
+      var box = el("div", "list"); root.appendChild(box);
+      list.forEach(function (i) { build(i, box); });
+    }
+    if (discipline || order.length < 2) { fill(items); return; }
+    order.forEach(function (k) { root.appendChild(el("h2", "grp", k)); fill(by[k]); });
+  }
+
+  // Linha de lista: titulo, detalhes e, se clicavel, abre algo (modal) ao tocar.
+  function plain(t) { return String(t || "").replace(/[#*]+/g, "").replace(/\\s+/g, " ").trim().slice(0, 220); }
+  function rowItem(o) {
+    var r = el(o.onclick ? "button" : "div", "row");
+    if (o.onclick) { r.type = "button"; r.onclick = function () { o.onclick(r); }; }
+    var main = el("div", "main");
+    main.appendChild(el("div", "title", o.title));
+    if (o.meta || (o.chips && o.chips.length)) {
+      var meta = el("div", "meta", o.meta || "");
+      (o.chips || []).forEach(function (c) { meta.appendChild(c); });
+      main.appendChild(meta);
+    }
+    if (o.excerpt) main.appendChild(el("div", "excerpt", o.excerpt));
+    r.appendChild(main);
+    if (o.side) {
+      var side = el("div", "side");
+      if (typeof o.side === "string") side.textContent = o.side; else side.appendChild(o.side);
+      r.appendChild(side);
+    }
+    return r;
   }
   function drawFilters() {
     var box = $("filters"); box.textContent = "";
@@ -473,12 +546,15 @@ _SCRIPT = """
     aulas: function (root) {
       if (!data.lessons.length) return root.appendChild(
         empty("Ainda não há resumos de aulas das suas turmas."));
-      grouped(root, visible(data.lessons), function (l) {
-        var c = el("div", "card");
-        c.appendChild(el("h3", "", l.title));
-        var meta = el("div", "meta", [when(l.date), l.class_label].filter(Boolean).join(" · "));
-        if (l.mentorship) meta.appendChild(chip("Mentoria", "info"));
-        c.appendChild(meta); c.appendChild(markdown(l.summary)); root.appendChild(c);
+      grouped(root, visible(data.lessons), function (l, box) {
+        var info = [when(l.date), l.class_label].filter(Boolean).join(" · ");
+        box.appendChild(rowItem({
+          title: l.title, meta: info, excerpt: plain(l.summary), side: "Ler →",
+          chips: l.mentorship ? [chip("Mentoria", "info")] : [],
+          onclick: function () {
+            var body = el("div"); body.appendChild(el("div", "meta", info));
+            body.appendChild(markdown(l.summary)); modal(l.title, body);
+          }}));
       });
     },
     quizzes: function (root) {
@@ -505,36 +581,28 @@ _SCRIPT = """
       c.appendChild(el("div", "big", String(total)));
       root.appendChild(c);
       if (!items.length) return root.appendChild(empty("Nenhum ponto extra ainda."));
-      grouped(root, items, function (p) {
-        var r = el("div", "card");
-        r.appendChild(el("h3", "", "+" + p.points + " pts"));
-        r.appendChild(el("div", "meta", [when(p.date), p.discipline].filter(Boolean).join(" · ")));
-        if (p.reason) r.appendChild(el("p", "", p.reason));
-        root.appendChild(r);
+      grouped(root, items, function (p, box) {
+        box.appendChild(rowItem({
+          title: p.reason || "Ponto extra", side: chip("+" + p.points + " pts", "ok"),
+          meta: [when(p.date), p.discipline].filter(Boolean).join(" · ")}));
       });
     },
     materiais: function (root) {
       if (!data.materials.length) return root.appendChild(
         empty("Ainda não há materiais das suas disciplinas."));
-      grouped(root, visible(data.materials), function (m) {
-        var c = el("div", "card");
-        c.appendChild(el("h3", "", m.title));
-        c.appendChild(el("div", "meta", [m.discipline, m.filename,
-          m.pages ? m.pages + " pág." : "", when(m.date)].filter(Boolean).join(" · ")));
-        var out = el("div");
-        var btn = el("button", "open", "LER NO PORTAL"); btn.type = "button";
-        btn.onclick = async function () {
-          btn.disabled = true;
-          try {
-            var r = await call("/material", {enrollment: enrollment, material_id: m.id});
-            out.textContent = "";
-            out.appendChild(reader(r.content, function () {
-              out.textContent = ""; c.className = "card"; btn.hidden = false; btn.disabled = false;
-            }));
-            c.className = "card wide"; btn.hidden = true;
-          } catch (e) { say("err", e.message); btn.disabled = false; }
-        };
-        c.appendChild(btn); c.appendChild(out); root.appendChild(c);
+      grouped(root, visible(data.materials), function (m, box) {
+        box.appendChild(rowItem({
+          title: m.title, side: "Ler →",
+          meta: [m.discipline, m.filename, m.pages ? m.pages + " pág." : "", when(m.date)]
+            .filter(Boolean).join(" · "),
+          onclick: async function (row) {
+            row.disabled = true;
+            try {
+              var r = await call("/material", {enrollment: enrollment, material_id: m.id});
+              modal(m.title, reader(r.content));
+            } catch (e) { say("err", e.message); }
+            row.disabled = false;
+          }}));
       });
     },
     atendimento: function (root) {
@@ -601,13 +669,21 @@ _SCRIPT = """
         var c = el("div", "card");
         c.appendChild(el("h3", "", m.title));
         if (!m.activities.length) c.appendChild(empty("Ainda não há atividades."));
+        var list = el("div", "list"); c.appendChild(list);
         m.activities.forEach(function (a) {
-          var row = el("p");
           var s = STATUS[a.status] || [a.status, ""];
-          row.appendChild(chip(s[0], s[1]));
-          row.appendChild(document.createTextNode(a.title + (a.due_at ? " · prazo " + when(a.due_at, true) : "")));
-          c.appendChild(row);
-          if (a.instructions) c.appendChild(el("div", "meta", a.instructions));
+          var due = a.due_at ? "Prazo " + when(a.due_at, true) : "Sem prazo";
+          list.appendChild(rowItem({
+            title: a.title, meta: due, side: chip(s[0], s[1]), excerpt: plain(a.instructions),
+            onclick: function () {
+              var body = el("div"), top = el("p");
+              top.appendChild(chip(s[0], s[1])); top.appendChild(document.createTextNode(due));
+              body.appendChild(top);
+              body.appendChild(a.instructions ? el("p", "", a.instructions)
+                                              : empty("Sem instruções para esta atividade."));
+              var link = el("a", "go", "Ir para a entrega →"); link.href = m.deliver_path;
+              body.appendChild(link); modal(a.title, body);
+            }}));
         });
         var go = el("a", "go", "Ir para a entrega de atividades →");
         go.href = m.deliver_path; c.appendChild(go); root.appendChild(c);
