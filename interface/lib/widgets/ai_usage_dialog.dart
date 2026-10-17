@@ -292,6 +292,7 @@ class _GroupTable extends StatelessWidget {
       Row(children: [
         cell(title.toUpperCase(), flex: 4, align: TextAlign.left, style: head),
         cell('CHAMADAS', style: head),
+        cell('FALHAS', style: head),
         cell('ENTRADA', style: head),
         cell('SAÍDA', style: head),
         cell('CUSTO', style: head),
@@ -308,6 +309,10 @@ class _GroupTable extends StatelessWidget {
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
             ),
             cell(formatCount(group.calls), style: const TextStyle(fontSize: 12)),
+            cell(formatCount(group.errors),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: group.errors > 0 ? Colors.redAccent : AssistantTheme.textMuted)),
             cell(formatCount(group.inputTokens), style: const TextStyle(fontSize: 12)),
             cell(formatCount(group.outputTokens), style: const TextStyle(fontSize: 12)),
             cell(formatUsd(group.costUsd),

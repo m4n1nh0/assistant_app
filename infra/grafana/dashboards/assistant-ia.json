@@ -271,7 +271,7 @@
       "id": 6,
       "type": "stat",
       "title": "Sem preço",
-      "description": "Chamadas que não entram no custo: de agentes conectados (Codex, Claude Code), que rodam fora do servidor, ou sem token informado.",
+      "description": "Chamadas que deram certo e ficaram fora do custo: de agentes conectados (Codex, Claude Code), que rodam fora do servidor, ou de provedor que não informou token. Falhas não entram aqui: têm quadro próprio.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"

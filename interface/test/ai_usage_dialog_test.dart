@@ -167,6 +167,20 @@ void main() {
     });
   });
 
+  testWidgets('a tabela mostra as falhas de cada provedor', (tester) async {
+    final backend = _Backend()
+      ..usage = _usage(groups: [
+        {'key': 'claude', 'label': 'claude', ..._total(calls: 9, errors: 7, input: 0, output: 0, cost: 0)},
+        {'key': 'together', 'label': 'together', ..._total(calls: 5, errors: 0, cost: 0.027)},
+      ]);
+    await _open(tester, backend, body: () async {
+      expect(find.text('FALHAS'), findsOneWidget);
+      // claude: 9 chamadas, 7 falharam e nenhum token (falha nao traz token)
+      expect(find.text('7'), findsOneWidget);
+      expect(find.text('9'), findsOneWidget);
+    });
+  });
+
   testWidgets('avisa quando há chamadas sem preço, para o custo não enganar', (tester) async {
     final backend = _Backend()..usage = _usage(unpriced: 3);
     await _open(tester, backend, body: () async {

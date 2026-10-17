@@ -60,8 +60,10 @@ def _increments(usage: UsageRecord) -> dict[str, Any]:
     return dict(
         calls=1,
         errors=0 if usage.ok else 1,
-        # Sem preco: o provedor nao informou token, ou nao ha preco para o modelo.
-        unpriced_calls=1 if usage.estimated_cost_usd is None else 0,
+        # Sem preco: a chamada deu certo, mas o provedor nao informou token ou nao ha preco para o
+        # modelo (e o caso dos agentes conectados). Chamada que FALHOU nao entra aqui: nao ter
+        # token nem custo e da natureza da falha, e ela ja e contada em `errors`.
+        unpriced_calls=1 if (usage.ok and usage.estimated_cost_usd is None) else 0,
         input_tokens=usage.input_tokens or 0,
         output_tokens=usage.output_tokens or 0,
         cached_tokens=usage.cached_tokens or 0,

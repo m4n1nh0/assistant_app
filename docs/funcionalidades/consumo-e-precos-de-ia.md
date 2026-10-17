@@ -36,7 +36,12 @@ quiz, melhoria de material e as demais funções.
 | **Agente conectado** (Codex, Claude Code) | Roda no computador do professor: o backend **não vê os tokens**. Conta só a **chamada**, sem token e sem custo, e ela entra no aviso de "sem preço". |
 | **Plano gratuito de um provedor de nuvem** (Gemini, Groq...) | Os tokens são contados, mas o app não sabe que a sua chave é gratuita: o custo sai a preço de tabela. Para zerar, cadastre o preço `0` e `0` do modelo. |
 | **Modelo `:free` do OpenRouter** | Idem, e a tabela pública não cobre o OpenRouter: cadastre o preço `0` do modelo. |
+| **Chamada que falhou** (chave inválida, sem crédito, provedor fora do ar) | Conta como chamada e como **falha**, sem token e sem custo. **Não** entra em "sem preço": falha não ter token é da natureza dela. |
 | **Chamada sem conta** (processo sem usuário) | Aparece como *(sem conta)*. |
+
+Quando o provedor escolhido falha, a fila tenta o próximo, e **cada tentativa é uma chamada**. Por isso um
+provedor com chave ausente ou inválida aparece com muitas chamadas, quase todas com falha e zero token
+(a coluna **FALHAS** mostra isso): vale conferir a chave dele ou desativá-lo na lista de provedores.
 
 ## Preços
 
@@ -105,3 +110,18 @@ Autenticadas, em `/observability`:
   contagem de cada série nova, então não servem para totais de um uso pequeno.
 - O consumo por cliente depende de a chamada rodar com a conta do cliente ativa. Chamadas em
   segundo plano sem essa conta aparecem como *(sem conta)*.
+
+## Corrigir os números "sem preço" de antes da correção
+
+Até uma versão anterior, uma chamada que **falhou** também era contada como "sem preço", e o aviso do
+app mostrava, por exemplo, "12 chamadas sem preço" para 12 falhas. A regra já foi corrigida, mas as
+linhas dos dias anteriores guardam o valor inflado. Para acertá-las, rode **uma vez** no MySQL, depois
+do deploy da correção (só os dias passados: o de hoje mistura as duas regras e se acerta amanhã):
+
+```sql
+UPDATE llm_usage_daily SET unpriced_calls = GREATEST(unpriced_calls - errors, 0) WHERE day < CURDATE();
+```
+
+A conta é exata: toda falha era contada como sem preço, então tirar `errors` de `unpriced_calls` deixa
+só as chamadas que deram certo e ficaram sem custo (as dos agentes conectados). **Não rode duas vezes**,
+senão subtrai de novo.

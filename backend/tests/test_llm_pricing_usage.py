@@ -303,6 +303,22 @@ def test_chamada_com_erro_e_contada(sessions):
     assert (linha.calls, linha.errors) == (2, 1)
 
 
+def test_chamada_que_falhou_nao_conta_como_sem_preco(sessions):
+    # Falha nao tem token nem custo por natureza: e falha, e nao "sem preco". So a chamada que deu
+    # certo e ficou sem custo (agente conectado, provedor que nao informou token) e "sem preco".
+    async def caso(db):
+        await usage_service.add_usage(db, build_usage("claude", ok=False), "t1", day="2026-10-10")
+        await usage_service.add_usage(db, build_usage("claude", ok=False), "t1", day="2026-10-10")
+        await usage_service.add_usage(db, build_usage("codex_cli"), "t1", day="2026-10-10")
+        return (await db.execute(select(LLMUsageDailyModel).order_by(LLMUsageDailyModel.provider))
+                ).scalars().all()
+
+    claude, agente = roda(sessions, caso)
+
+    assert (claude.calls, claude.errors, claude.unpriced_calls) == (2, 2, 0)
+    assert (agente.calls, agente.errors, agente.unpriced_calls) == (1, 0, 1)
+
+
 def hoje(dias_atras=0):
     return (datetime.now(timezone.utc) - timedelta(days=dias_atras)).strftime("%Y-%m-%d")
 

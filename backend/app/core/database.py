@@ -1049,8 +1049,9 @@ class LLMUsageDailyModel(Base):
     sem usuario).
 
     `cost_usd` soma so as chamadas com preco conhecido, calculado na hora da chamada com o preco
-    vigente nela. `unpriced_calls` conta as que ficaram sem preco, para o total nao parecer
-    completo quando nao e. Token que o provedor nao informou nao e somado como zero.
+    vigente nela. `unpriced_calls` conta as que deram certo e ficaram sem preco (agente conectado,
+    ou provedor que nao informou token), para o total nao parecer completo quando nao e; chamada
+    com falha vai so em `errors`. Token que o provedor nao informou nao e somado como zero.
     """
 
     __tablename__ = "llm_usage_daily"
