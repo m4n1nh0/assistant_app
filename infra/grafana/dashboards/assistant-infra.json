@@ -213,7 +213,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(mysql_query_slow_count_total[24h]))",
+          "expr": "(sum(increase(mysql_query_slow_count_total[24h]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -222,7 +222,7 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "noValue": "sem dado",
+          "noValue": "0",
           "color": {
             "mode": "thresholds"
           },
@@ -277,11 +277,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -333,11 +335,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "normal"
             }
@@ -389,11 +393,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -445,11 +451,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -510,11 +518,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -566,11 +576,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "Bps",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -596,8 +608,8 @@
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Erros de conexão",
-      "description": "Conexões recusadas ou abortadas. Subir de forma contínua indica um problema.",
+      "title": "Erros de conexão por hora (24 h)",
+      "description": "Conexões recusadas ou abortadas, por hora. Período fixo de 24 horas. Subir de forma contínua indica um problema.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -614,19 +626,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (error) (increase(mysql_connection_errors_total[$__rate_interval]))",
+          "expr": "sum by (error) (increase(mysql_connection_errors_total[1h]))",
           "legendFormat": "{{error}}",
           "refId": "A"
         }
       ],
+      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "sem erros de conexão nas últimas 24 horas",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "fillOpacity": 12,
-            "showPoints": "never",
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
             }
@@ -678,11 +693,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -968,11 +985,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -1042,11 +1061,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 6,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -1107,11 +1128,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "Bps",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 12,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -1137,8 +1160,8 @@
     {
       "id": 22,
       "type": "timeseries",
-      "title": "Chaves expiradas e expulsas",
-      "description": "Expulsas por falta de memória é o sinal de que o Redis está cheio.",
+      "title": "Chaves expiradas e expulsas por hora (24 h)",
+      "description": "Expulsas por falta de memória é o sinal de que o Redis está cheio. Período fixo de 24 horas.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1155,7 +1178,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(redis_keys_expired_total[$__rate_interval]))",
+          "expr": "sum(increase(redis_keys_expired_total[1h]))",
           "legendFormat": "expiradas",
           "refId": "A"
         },
@@ -1164,19 +1187,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(redis_keys_evicted_total[$__rate_interval]))",
+          "expr": "sum(increase(redis_keys_evicted_total[1h]))",
           "legendFormat": "expulsas por falta de memória",
           "refId": "B"
         }
       ],
+      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
+          "noValue": "sem chaves expiradas nem expulsas nas últimas 24 horas",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "fillOpacity": 12,
-            "showPoints": "never",
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
             }
@@ -1344,7 +1370,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(rest_responses_total{job=\"qdrant\"}[24h]))",
+          "expr": "(sum(increase(rest_responses_total{job=\"qdrant\"}[24h]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -1353,7 +1379,7 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "noValue": "sem dado",
+          "noValue": "0",
           "color": {
             "mode": "thresholds"
           },
@@ -1383,7 +1409,7 @@
       "id": 27,
       "type": "stat",
       "title": "Falhas (24 h)",
-      "description": "",
+      "description": "Zero quando não houve nenhuma falha: o Qdrant só cria a métrica depois da primeira.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1400,7 +1426,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(rest_responses_fail_total{job=\"qdrant\"}[24h]))",
+          "expr": "(sum(increase(rest_responses_fail_total{job=\"qdrant\"}[24h]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -1409,7 +1435,7 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "noValue": "sem dado",
+          "noValue": "0",
           "color": {
             "mode": "thresholds"
           },
@@ -1438,8 +1464,8 @@
     {
       "id": 28,
       "type": "timeseries",
-      "title": "Requisições por segundo",
-      "description": "",
+      "title": "Requisições por hora (24 h)",
+      "description": "Período fixo de 24 horas: não muda com o seletor. O Qdrant recebe poucas requisições, e numa janela de minutos não há o que calcular.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1456,19 +1482,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (method, endpoint) (rate(rest_responses_total{job=\"qdrant\"}[$__rate_interval]))",
+          "expr": "sum by (method, endpoint) (increase(rest_responses_total{job=\"qdrant\"}[1h]))",
           "legendFormat": "{{method}} {{endpoint}}",
           "refId": "A"
         }
       ],
+      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "short",
+          "noValue": "sem requisições nas últimas 24 horas",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "fillOpacity": 12,
-            "showPoints": "never",
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
             }
@@ -1494,8 +1523,8 @@
     {
       "id": 29,
       "type": "timeseries",
-      "title": "Latência p95 por rota",
-      "description": "",
+      "title": "Latência p95 por rota (24 h)",
+      "description": "Percentil 95 de cada hora, só nas horas em que houve requisição. Período fixo de 24 horas.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1512,19 +1541,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(rest_responses_duration_seconds_bucket{job=\"qdrant\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, endpoint) (increase(rest_responses_duration_seconds_bucket{job=\"qdrant\"}[1h])))",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
       ],
+      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "sem requisições nas últimas 24 horas",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "fillOpacity": 12,
-            "showPoints": "never",
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
             }
@@ -1594,11 +1626,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
+          "noValue": "sem dado ainda",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 6,
             "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "mode": "none"
             }
@@ -1624,8 +1658,8 @@
     {
       "id": 31,
       "type": "timeseries",
-      "title": "Falhas por rota",
-      "description": "",
+      "title": "Falhas por rota (24 h)",
+      "description": "Falhas por hora em cada rota. Período fixo de 24 horas. Vazio quer dizer que não houve falha.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1642,19 +1676,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (endpoint) (increase(rest_responses_fail_total{job=\"qdrant\"}[$__rate_interval]))",
+          "expr": "sum by (endpoint) (increase(rest_responses_fail_total{job=\"qdrant\"}[1h]))",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
       ],
+      "timeFrom": "24h",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "sem falhas nas últimas 24 horas",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "fillOpacity": 12,
-            "showPoints": "never",
+            "showPoints": "auto",
+            "spanNulls": true,
             "stacking": {
               "mode": "none"
             }
