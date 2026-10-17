@@ -8,9 +8,9 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "1m",
+  "refresh": "10s",
   "time": {
-    "from": "now-6h",
+    "from": "now-30m",
     "to": "now"
   },
   "panels": [
@@ -35,7 +35,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Cada círculo é um serviço, banco ou provedor; cada seta é uma ligação, com o total de chamadas no período. A cor do círculo mostra a saúde (verde: sem falha; laranja: até 5% das chamadas recebidas falharam; vermelho: 5% ou mais) e o número dentro é a taxa de falha. \"user\" é quem chama a API de fora (a interface, o portal). Bancos (mysql, redis, qdrant) e provedores de modelo aparecem como destino das chamadas.",
+      "description": "Cada círculo é um serviço, banco ou API externa (as APIs externas, como os provedores de modelo, aparecem juntas em \"serviços externos\"; o detalhe de cada uma está na tabela abaixo); cada seta é uma ligação, com o total de chamadas no período. A cor do círculo mostra a saúde (verde: sem falha; laranja: até 5% das chamadas recebidas falharam; vermelho: 5% ou mais) e o número dentro é a taxa de falha. \"user\" é quem chama a API de fora (a interface, o portal). Bancos (mysql, redis, qdrant) e provedores de modelo aparecem como destino das chamadas.",
       "gridPos": {
         "h": 14,
         "w": 24,
@@ -48,7 +48,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "label_replace(label_replace(label_join(round(sum by (client, server) (increase(traces_service_graph_request_total[$__range]))), \"id\", \"->\", \"client\", \"server\"), \"source\", \"$1\", \"client\", \"(.*)\"), \"target\", \"$1\", \"server\", \"(.*)\")",
+          "expr": "label_replace(label_replace(label_join(round(sum by (client, server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\"))), \"id\", \"->\", \"client\", \"server\"), \"source\", \"$1\", \"client\", \"(.*)\"), \"target\", \"$1\", \"server\", \"(.*)\")",
           "legendFormat": "",
           "refId": "A",
           "instant": true,
@@ -59,7 +59,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "label_replace((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) >= 5), \"color\", \"red\", \"id\", \".*\") or label_replace(((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) > 0) and (max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) < 5)), \"color\", \"orange\", \"id\", \".*\") or label_replace((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (increase(traces_service_graph_request_failed_total[$__range])) / on (server) clamp_min(sum by (server) (increase(traces_service_graph_request_total[$__range])), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (increase(traces_service_graph_request_total[$__range])), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) == 0), \"color\", \"green\", \"id\", \".*\")",
+          "expr": "label_replace((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (label_replace(increase(traces_service_graph_request_failed_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")) / on (server) clamp_min(sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) >= 5), \"color\", \"red\", \"id\", \".*\") or label_replace(((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (label_replace(increase(traces_service_graph_request_failed_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")) / on (server) clamp_min(sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) > 0) and (max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (label_replace(increase(traces_service_graph_request_failed_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")) / on (server) clamp_min(sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) < 5)), \"color\", \"orange\", \"id\", \".*\") or label_replace((max by (id, title) (label_replace(label_replace(round(100 * sum by (server) (label_replace(increase(traces_service_graph_request_failed_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")) / on (server) clamp_min(sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), 1)), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (server) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"server\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\") or label_replace(label_replace(0 * sum by (client) (label_replace(increase(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), \"id\", \"$1\", \"client\", \"(.*)\"), \"title\", \"$1\", \"id\", \"(.*)\")) == 0), \"color\", \"green\", \"id\", \".*\")",
           "legendFormat": "",
           "refId": "B",
           "instant": true,
@@ -118,6 +118,784 @@
     },
     {
       "id": 3,
+      "type": "canvas",
+      "title": "Fluxo ao vivo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "O caminho principal da requisição, com a linha correndo. A espessura da linha é a quantidade de chamadas por segundo; a cor é a taxa de falha (cinza: sem dado ou sem chamadas; verde: sem falha; laranja: até 5%; vermelho: 5% ou mais). O desenho é fixo: um serviço novo aparece primeiro no mapa de cima.",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "instant": true,
+          "format": "time_series",
+          "legendFormat": "{{client}}>{{server}}",
+          "expr": "sum by (client, server) (label_replace(rate(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\"))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "instant": true,
+          "format": "time_series",
+          "legendFormat": "{{client}}>{{server}}!",
+          "expr": "sum by (client, server) (label_replace(rate(traces_service_graph_request_failed_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")) / on (client, server) clamp_min(sum by (client, server) (label_replace(rate(traces_service_graph_request_total[$__range]), \"server\", \"serviços externos\", \"server\", \".*[.].*\")), 0.000001)"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "mode": "outer"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.0001
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "inlineEditing": false,
+        "showAdvancedTypes": false,
+        "panZoom": false,
+        "infinitePan": false,
+        "root": {
+          "type": "frame",
+          "name": "Element root",
+          "background": {
+            "color": {
+              "fixed": "transparent"
+            }
+          },
+          "border": {
+            "color": {
+              "fixed": "transparent"
+            }
+          },
+          "constraint": {
+            "horizontal": "left",
+            "vertical": "top"
+          },
+          "elements": [
+            {
+              "type": "rectangle",
+              "name": "user",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "user"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#5b6577"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 10,
+                "top": 170,
+                "width": 150,
+                "height": 46
+              },
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "assistant-api",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "user>assistant-api",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "user>assistant-api!",
+                    "fixed": "#8a8f99"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "name": "assistant-api",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "assistant-api"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#1f60c4"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 210,
+                "top": 170,
+                "width": 150,
+                "height": 46
+              },
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "agent-orchestrator",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "assistant-api>agent-orchestrator",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "assistant-api>agent-orchestrator!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "tool-service",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "assistant-api>tool-service",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "assistant-api>tool-service!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "mysql",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "assistant-api>mysql",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "assistant-api>mysql!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "redis",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "assistant-api>redis",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "assistant-api>redis!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "qdrant",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "assistant-api>qdrant",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "assistant-api>qdrant!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "serviços externos",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "assistant-api>serviços externos",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "assistant-api>serviços externos!",
+                    "fixed": "#8a8f99"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "name": "agent-orchestrator",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "agent-orchestrator"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#1f60c4"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 470,
+                "top": 70,
+                "width": 150,
+                "height": 46
+              },
+              "connections": [
+                {
+                  "source": {
+                    "x": 0,
+                    "y": 1
+                  },
+                  "target": {
+                    "x": 0,
+                    "y": -1
+                  },
+                  "targetName": "tool-service",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "agent-orchestrator>tool-service",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "agent-orchestrator>tool-service!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "mysql",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "agent-orchestrator>mysql",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "agent-orchestrator>mysql!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "qdrant",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "agent-orchestrator>qdrant",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "agent-orchestrator>qdrant!",
+                    "fixed": "#8a8f99"
+                  }
+                },
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "serviços externos",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "agent-orchestrator>serviços externos",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "agent-orchestrator>serviços externos!",
+                    "fixed": "#8a8f99"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "name": "tool-service",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "tool-service"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#1f60c4"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 470,
+                "top": 290,
+                "width": 150,
+                "height": 46
+              },
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "mcp-service",
+                  "path": "straight",
+                  "lineStyle": {
+                    "style": "dashed",
+                    "animate": true
+                  },
+                  "size": {
+                    "field": "tool-service>mcp-service",
+                    "fixed": 1,
+                    "min": 1,
+                    "max": 9,
+                    "mode": "scale"
+                  },
+                  "color": {
+                    "field": "tool-service>mcp-service!",
+                    "fixed": "#8a8f99"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "name": "mcp-service",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "mcp-service"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#1f60c4"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 730,
+                "top": 290,
+                "width": 150,
+                "height": 46
+              },
+              "connections": []
+            },
+            {
+              "type": "rectangle",
+              "name": "mysql",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "mysql"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#3d7a3d"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 730,
+                "top": 10,
+                "width": 150,
+                "height": 46
+              },
+              "connections": []
+            },
+            {
+              "type": "rectangle",
+              "name": "redis",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "redis"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#3d7a3d"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 730,
+                "top": 85,
+                "width": 150,
+                "height": 46
+              },
+              "connections": []
+            },
+            {
+              "type": "rectangle",
+              "name": "qdrant",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "qdrant"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#3d7a3d"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 730,
+                "top": 160,
+                "width": 150,
+                "height": 46
+              },
+              "connections": []
+            },
+            {
+              "type": "rectangle",
+              "name": "serviços externos",
+              "config": {
+                "text": {
+                  "mode": "fixed",
+                  "fixed": "serviços externos"
+                },
+                "align": "center",
+                "valign": "middle",
+                "color": {
+                  "fixed": "#ffffff"
+                },
+                "size": 13
+              },
+              "background": {
+                "color": {
+                  "fixed": "#8a5a14"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#ffffff30"
+                },
+                "width": 1,
+                "radius": 8
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 950,
+                "top": 120,
+                "width": 150,
+                "height": 46
+              },
+              "connections": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
       "type": "stat",
       "title": "Chamadas entre serviços",
       "description": "Cada chamada de um serviço a outro, a um banco ou a um provedor, no período.",
@@ -129,7 +907,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 15
+        "y": 26
       },
       "targets": [
         {
@@ -174,7 +952,7 @@
       }
     },
     {
-      "id": 4,
+      "id": 5,
       "type": "stat",
       "title": "Falhas",
       "description": "Chamadas que terminaram em erro.",
@@ -186,7 +964,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 15
+        "y": 26
       },
       "targets": [
         {
@@ -235,7 +1013,7 @@
       }
     },
     {
-      "id": 5,
+      "id": 6,
       "type": "stat",
       "title": "Taxa de falha",
       "description": "",
@@ -247,7 +1025,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 15
+        "y": 26
       },
       "targets": [
         {
@@ -300,7 +1078,7 @@
       }
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "stat",
       "title": "Ligações ativas",
       "description": "Pares origem → destino que tiveram chamada no período.",
@@ -312,7 +1090,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 15
+        "y": 26
       },
       "targets": [
         {
@@ -357,7 +1135,7 @@
       }
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "table",
       "title": "Cada ligação",
       "datasource": {
@@ -369,7 +1147,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 30
       },
       "targets": [
         {
@@ -571,7 +1349,7 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "timeseries",
       "title": "Chamadas por segundo, por ligação",
       "description": "Quanto cada ligação está sendo usada.",
@@ -583,7 +1361,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 39
       },
       "targets": [
         {
@@ -626,7 +1404,7 @@
       }
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "timeseries",
       "title": "Falhas por segundo, por ligação",
       "description": "Vazio quer dizer que nada falhou.",
@@ -638,7 +1416,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 39
       },
       "targets": [
         {
@@ -681,7 +1459,7 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "timeseries",
       "title": "Latência p95, por ligação",
       "description": "Tempo até a resposta, visto por quem chama (inclui a rede e a fila do servidor).",
@@ -693,7 +1471,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 36
+        "y": 47
       },
       "targets": [
         {
@@ -736,7 +1514,7 @@
       }
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "timeseries",
       "title": "Latência média, por ligação",
       "description": "Média do tempo de resposta de cada ligação.",
@@ -748,7 +1526,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 47
       },
       "targets": [
         {

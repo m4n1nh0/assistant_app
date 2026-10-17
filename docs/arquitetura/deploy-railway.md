@@ -586,11 +586,17 @@ Ele é montado a partir dos traces, sem serviço novo:
    exemplo).
 3. **No Grafana**: o painel lê essas métricas do Prometheus (`traces_service_graph_*`).
 
-O que o painel mostra, tudo no período do seletor de tempo do alto:
+O que o painel mostra, tudo no período do seletor de tempo do alto (padrão 30 minutos, atualizando a
+cada 10 segundos):
 
-- **Mapa de serviços:** cada círculo é um serviço, banco ou provedor. A cor mostra a saúde (verde: sem
+- **Mapa de serviços:** cada círculo é um serviço, banco ou API externa. A cor mostra a saúde (verde: sem
   falha; laranja: até 5% das chamadas recebidas falharam; vermelho: 5% ou mais) e o número dentro é a
-  taxa de falha. `user` é quem chama a API de fora (a interface, o portal).
+  taxa de falha. `user` é quem chama a API de fora (a interface, o portal). As APIs externas (provedores
+  de modelo, Google, Hugging Face) aparecem juntas em um nó, **serviços externos**; o detalhe de cada uma
+  está na tabela "Cada ligação". O desenho se monta sozinho: um serviço novo aparece quando recebe tráfego.
+- **Fluxo ao vivo:** o caminho principal num desenho fixo, com a linha correndo. A espessura é a
+  quantidade de chamadas por segundo e a cor é a taxa de falha (cinza: sem dado; verde: sem falha;
+  laranja: com falha; vermelho: 5% ou mais). Por ser fixo, serviço novo aparece primeiro no mapa.
 - **Totais, tabela "Cada ligação" e gráficos:** chamadas, falhas, taxa de falha e latência (p95 e média)
   de cada par origem → destino.
 
