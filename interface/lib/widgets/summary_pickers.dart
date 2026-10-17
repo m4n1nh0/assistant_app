@@ -121,6 +121,9 @@ class SummaryEnginePicker extends StatelessWidget {
   final bool enabled;
   final double width;
 
+  /// Texto do tooltip quando o seletor serve a outra tarefa que nao o resumo.
+  final String? tooltip;
+
   const SummaryEnginePicker({
     super.key,
     required this.engine,
@@ -128,6 +131,7 @@ class SummaryEnginePicker extends StatelessWidget {
     required this.onChanged,
     this.enabled = true,
     this.width = 208,
+    this.tooltip,
   });
 
   @override
@@ -140,11 +144,12 @@ class SummaryEnginePicker extends StatelessWidget {
         backend.contains(engine) || connected.contains(engine) ? engine : '';
 
     return Tooltip(
-      message: 'Quem escreve o resumo.\n'
-          'Automatico: a fila do backend, do gratuito ao pago.\n'
-          'Provedor: fixa a geracao nele, sem tentar outro.\n'
-          'Agente conectado: roda neste computador e le a aula inteira de '
-          'uma vez.',
+      message: tooltip ??
+          'Quem escreve o resumo.\n'
+              'Automatico: a fila do backend, do gratuito ao pago.\n'
+              'Provedor: fixa a geracao nele, sem tentar outro.\n'
+              'Agente conectado: roda neste computador e le a aula inteira de '
+              'uma vez.',
       child: SizedBox(
         width: width,
         child: DropdownButtonHideUnderline(

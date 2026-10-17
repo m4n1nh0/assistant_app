@@ -9,10 +9,15 @@ import 'dart:io';
 
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/app_config.dart';
+import '../providers/app_provider.dart';
+import '../services/connected_ai_service.dart';
 import '../services/education_service.dart';
 import 'package:file_picker/file_picker.dart';
 import '../utils/theme.dart';
+import 'summary_pickers.dart';
 
 /// O que o seletor de arquivo deixa escolher.
 ///
@@ -52,6 +57,9 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
   List<Discipline> _disciplines = const [];
   bool _loading = true;
   bool _uploading = false;
+
+  /// Material que a IA esta reescrevendo agora; so um por vez.
+  String? _improvingId;
   String _status = '';
   bool _error = false;
   String? _disciplineFilter;
@@ -306,6 +314,152 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
     }
   }
 
+  /// A configuracao do app, quando ha um ProviderScope acima. Sem ele (testes isolados do
+  /// painel) o seletor mostra so o automatico.
+  AppConfig? _config() {
+    try {
+      return ProviderScope.containerOf(context, listen: false)
+          .read(configProvider);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _improve(CourseMaterial material) async {
+    final request = await showDialog<_ImproveRequest>(
+      context: context,
+      builder: (_) => _ImproveDialog(
+        title: material.title.isEmpty ? material.filename : material.title,
+        config: _config() ?? AppConfig(),
+        replacing: material.improved,
+      ),
+    );
+    if (request == null) return;
+    setState(() => _improvingId = material.id);
+    _report('Melhorando o texto...');
+    try {
+      final done = await _runImprove(material, request);
+      _report('Texto melhorado por ${AppConfig.serviceLabel(done.improvedLlm)}.');
+      await _load();
+      widget.onChanged?.call();
+    } catch (e) {
+      _report('Falha ao melhorar: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _improvingId = null);
+    }
+  }
+
+  /// Provedor do backend: o servidor le, reescreve e grava. Agente conectado (Codex,
+  /// Claude Code): o backend entrega o prompt, o CLI do usuario reescreve com o material
+  /// inteiro em uma chamada e o texto volta para ser gravado.
+  Future<CourseMaterial> _runImprove(
+    CourseMaterial material,
+    _ImproveRequest request,
+  ) async {
+    if (!AppConfig.connectedAgentIds.contains(request.engine)) {
+      return education.improveMaterial(
+        material.id,
+        llm: request.engine.isEmpty ? null : request.engine,
+        instructions: request.instructions,
+      );
+    }
+    final built = await education.materialImprovePrompt(
+      material.id,
+      instructions: request.instructions,
+    );
+    _report(
+      '${AppConfig.serviceLabel(request.engine)} lendo o material '
+      '(${built.chars} caracteres em uma chamada)...',
+    );
+    final result = await ConnectedAiService.run(
+      agentId: request.engine,
+      prompt: built.prompt,
+      systemPrompt: built.systemPrompt,
+      language: _config()?.language ?? 'pt-BR',
+      // Material inteiro de uma vez: leva mais que uma resposta de chat.
+      timeoutOverride: const Duration(minutes: 15),
+      onProgress: (activity) {
+        if (mounted) _report(activity);
+      },
+    );
+    if (result.isError) throw EducationException(result.content);
+    return education.saveExternalImprovement(
+      material.id,
+      text: result.content,
+      llm: request.engine,
+    );
+  }
+
+  Future<void> _viewImproved(CourseMaterial material) async {
+    try {
+      final text = await education.improvedMaterialText(material.id);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AssistantTheme.surface,
+          title: Text(material.title.isEmpty ? material.filename : material.title),
+          content: SizedBox(
+            width: 640,
+            height: 420,
+            child: SingleChildScrollView(
+              child: SelectableText(
+                text,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: AssistantTheme.textSecondary,
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('FECHAR'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      _report('Falha ao abrir o texto melhorado: $e', error: true);
+    }
+  }
+
+  Future<void> _discardImprovement(CourseMaterial material) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AssistantTheme.surface,
+        title: const Text('Voltar ao texto original'),
+        content: const Text(
+          'A versao melhorada pela IA e descartada. O portal do aluno e o quiz '
+          'voltam a usar o texto extraido do arquivo.',
+          style: TextStyle(color: AssistantTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCELAR'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('DESCARTAR'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await education.discardImprovement(material.id);
+      _report('Voltou ao texto original.');
+      await _load();
+      widget.onChanged?.call();
+    } catch (e) {
+      _report('Falha ao descartar: $e', error: true);
+    }
+  }
+
   List<CourseMaterial> get _visible => _disciplineFilter == null
       ? _materials
       : _materials
@@ -408,13 +562,130 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
                         ),
                         itemBuilder: (_, index) => _MaterialRow(
                           material: _visible[index],
+                          improving: _improvingId == _visible[index].id,
+                          busy: _improvingId != null,
                           onRename: () => _rename(_visible[index]),
                           onDelete: () => _delete(_visible[index]),
+                          onImprove: () => _improve(_visible[index]),
+                          onViewImproved: () => _viewImproved(_visible[index]),
+                          onDiscardImprovement: () =>
+                              _discardImprovement(_visible[index]),
                         ),
                       ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// O que o professor escolheu para a melhoria: quem escreve e o pedido extra.
+class _ImproveRequest {
+  final String engine;
+  final String instructions;
+
+  const _ImproveRequest(this.engine, this.instructions);
+}
+
+class _ImproveDialog extends StatefulWidget {
+  final String title;
+  final AppConfig config;
+  final bool replacing;
+
+  const _ImproveDialog({
+    required this.title,
+    required this.config,
+    required this.replacing,
+  });
+
+  @override
+  State<_ImproveDialog> createState() => _ImproveDialogState();
+}
+
+class _ImproveDialogState extends State<_ImproveDialog> {
+  final _instructions = TextEditingController();
+  String _engine = '';
+
+  @override
+  void dispose() {
+    _instructions.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AssistantTheme.surface,
+      title: const Text('Melhorar texto com IA'),
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AssistantTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'A IA reorganiza o texto extraido em titulos, listas e paragrafos, '
+              'sem resumir nem acrescentar nada. O original fica guardado e voce '
+              'pode voltar a ele quando quiser.'
+              '${widget.replacing ? ' A versao melhorada atual sera substituida.' : ''}',
+              style: const TextStyle(
+                fontSize: 11,
+                height: 1.45,
+                color: AssistantTheme.textMuted,
+              ),
+            ),
+            const SizedBox(height: 14),
+            SummaryEnginePicker(
+              engine: _engine,
+              config: widget.config,
+              width: 300,
+              tooltip: 'Quem reescreve o material.\n'
+                  'Automatico: a fila do backend, do gratuito ao pago.\n'
+                  'Provedor: fixa nele, sem tentar outro.\n'
+                  'Agente conectado (Codex, Claude Code): roda neste computador '
+                  'e le o material inteiro de uma vez.',
+              onChanged: (engine) => setState(() => _engine = engine),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _instructions,
+              maxLines: 2,
+              maxLength: 1000,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AssistantTheme.textPrimary,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'PEDIDO EXTRA (OPCIONAL)',
+                hintText: 'ex: manter os nomes das plataformas em ingles',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('CANCELAR'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(
+            context,
+            _ImproveRequest(_engine, _instructions.text.trim()),
+          ),
+          child: const Text('MELHORAR'),
+        ),
+      ],
     );
   }
 }
@@ -496,11 +767,23 @@ class _MaterialRow extends StatelessWidget {
   final CourseMaterial material;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final VoidCallback onImprove;
+  final VoidCallback onViewImproved;
+  final VoidCallback onDiscardImprovement;
+
+  /// Esta linha esta sendo reescrita pela IA; [busy] vale para qualquer linha.
+  final bool improving;
+  final bool busy;
 
   const _MaterialRow({
     required this.material,
     required this.onRename,
     required this.onDelete,
+    required this.onImprove,
+    required this.onViewImproved,
+    required this.onDiscardImprovement,
+    this.improving = false,
+    this.busy = false,
   });
 
   /// Icone que deixa o formato reconhecivel de relance na lista.
@@ -535,6 +818,8 @@ class _MaterialRow extends StatelessWidget {
       // foi uma imagem reconhecida, e nao um arquivo lido.
       if (material.fromOcr) 'lido por OCR',
       if (material.truncated) 'texto cortado no limite',
+      if (material.improved)
+        'melhorado por ${AppConfig.serviceLabel(material.improvedLlm)}',
     ].join('  ·  ');
 
     return Row(
@@ -568,6 +853,36 @@ class _MaterialRow extends StatelessWidget {
             ],
           ),
         ),
+        if (improving)
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else
+          IconButton(
+            tooltip: 'Melhorar texto com IA',
+            icon: const Icon(Icons.auto_fix_high, size: 16),
+            color: AssistantTheme.textMuted,
+            onPressed: busy ? null : onImprove,
+          ),
+        if (material.improved) ...[
+          IconButton(
+            tooltip: 'Ver texto melhorado',
+            icon: const Icon(Icons.visibility_outlined, size: 16),
+            color: AssistantTheme.textMuted,
+            onPressed: onViewImproved,
+          ),
+          IconButton(
+            tooltip: 'Voltar ao texto original',
+            icon: const Icon(Icons.undo, size: 16),
+            color: AssistantTheme.textMuted,
+            onPressed: busy ? null : onDiscardImprovement,
+          ),
+        ],
         IconButton(
           tooltip: 'Renomear material',
           icon: const Icon(Icons.edit_outlined, size: 16),

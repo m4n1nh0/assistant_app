@@ -1623,6 +1623,38 @@ class MaterialResponse(BaseModel):
     group_id: Optional[str] = None
     uploader_name: str = ""
     from_link: bool = False
+    # Versao reescrita por IA: quem escreveu e quando. Vazio enquanto nao houver.
+    improved: bool = False
+    improved_llm: str = ""
+    improved_at: Optional[datetime] = None
+
+
+class MaterialImproveRequest(BaseModel):
+    """Pedido para a IA do backend reescrever o material."""
+    llm: Optional[str] = None
+    instructions: str = Field(default="", max_length=1000)
+
+
+class MaterialImprovePromptResponse(BaseModel):
+    """Prompt pronto para um agente conectado (Codex, Claude Code) reescrever o material."""
+    material_id: str
+    system_prompt: str
+    prompt: str
+    chars: int
+
+
+class MaterialExternalImproveRequest(BaseModel):
+    """Texto reescrito fora do backend, por um agente conectado do usuario."""
+    text: str
+    llm: str
+
+
+class MaterialImprovedResponse(BaseModel):
+    """A versao melhorada, com o texto."""
+    material_id: str
+    content: str
+    llm: str
+    created_at: Optional[datetime] = None
 
 
 class MaterialLinkCreate(BaseModel):

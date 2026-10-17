@@ -22,6 +22,7 @@ from ..core.database import (
     LessonModel,
     LessonPointModel,
     LessonSegmentModel,
+    MaterialImprovementModel,
     MaterialModel,
     QuizGroupConfigModel,
     QuizGroupLinkModel,
@@ -95,7 +96,11 @@ from ..models.schemas import (
     ProjectGroupPointCreate,
     ProjectGroupPointUpdate,
     MaterialLinkUpdate,
+    MaterialExternalImproveRequest,
     MaterialGroupAssign,
+    MaterialImprovePromptResponse,
+    MaterialImproveRequest,
+    MaterialImprovedResponse,
     LessonPresentationGroup,
     ProjectGroupUpdate,
     ProjectGroupMemberLink,
@@ -139,6 +144,7 @@ from ..services.user_llm_config_service import (
 )
 from ..services import (
     material_chunk_service,
+    material_improve_service,
     material_service,
     meeting_transcript_service,
     quiz_generator_service,
@@ -3410,7 +3416,8 @@ async def list_materials(
     ).scalars().all()
     if discipline and not discipline_id:
         rows = [item for item in rows if same_discipline(item.discipline, discipline)]
-    return [_material_response(item) for item in rows]
+    improvements = await _improvements_by_material(db, [item.id for item in rows])
+    return [_material_response(item, improvements.get(item.id)) for item in rows]
 
 
 @router.patch("/materials/{material_id}", response_model=MaterialResponse)
@@ -3435,7 +3442,7 @@ async def rename_material(
     material.title = titulo
     await db.commit()
     await db.refresh(material)
-    return _material_response(material)
+    return _material_response(material, await db.get(MaterialImprovementModel, material.id))
 
 
 @router.delete("/materials/{material_id}")
@@ -3449,6 +3456,9 @@ async def delete_material(
     if not material or material.tutor_id != user["tutor_id"]:
         raise HTTPException(404, "Material nao encontrado")
     await material_chunk_service.delete_chunks(db, material_id)
+    improvement = await db.get(MaterialImprovementModel, material_id)
+    if improvement is not None:
+        await db.delete(improvement)
     await db.delete(material)
     await db.commit()
     return {"deleted": material_id}
@@ -3666,7 +3676,7 @@ async def assign_material_group(
     except submissions.SubmissionError as exc:
         raise HTTPException(exc.status, exc.message) from exc
     await db.refresh(material)
-    return _material_response(material)
+    return _material_response(material, await db.get(MaterialImprovementModel, material.id))
 
 
 @router.put("/lessons/{lesson_id}/presentation-group")
@@ -3703,8 +3713,159 @@ async def assign_lesson_presentation_group(
     return _lesson_response(lesson, group_name=group.name if body.group_id else "")
 
 
-def _material_response(material: MaterialModel) -> MaterialResponse:
+async def _improvements_by_material(
+    db: AsyncSession, material_ids: list[str]
+) -> dict[str, MaterialImprovementModel]:
+    if not material_ids:
+        return {}
+    rows = (await db.execute(
+        select(MaterialImprovementModel).where(MaterialImprovementModel.material_id.in_(material_ids))
+    )).scalars().all()
+    return {row.material_id: row for row in rows}
+
+
+async def _owned_material(material_id: str, tutor_id: str, db: AsyncSession) -> MaterialModel:
+    material = await db.get(MaterialModel, material_id)
+    if not material or material.tutor_id != tutor_id:
+        raise HTTPException(404, "Material nao encontrado")
+    return material
+
+
+async def _store_improvement(
+    db: AsyncSession, material: MaterialModel, *, content: str, llm: str
+) -> MaterialResponse:
+    """Guarda a versao melhorada e refaz os blocos a partir dela."""
+    row = await db.get(MaterialImprovementModel, material.id)
+    if row is None:
+        row = MaterialImprovementModel(
+            material_id=material.id, tutor_id=material.tutor_id, content=content, llm=llm)
+        db.add(row)
+    else:
+        row.content = content
+        row.llm = llm
+        row.created_at = datetime.now(timezone.utc)
+    await db.flush()
+    await material_chunk_service.replace_chunks(db, material, content)
+    await db.commit()
+    await db.refresh(row)
+    return _material_response(material, row)
+
+
+@router.post("/materials/{material_id}/improve", response_model=MaterialResponse)
+async def improve_material(
+    material_id: str,
+    body: MaterialImproveRequest = MaterialImproveRequest(),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _llm_context: None = Depends(user_llm_context),
+):
+    """Reescreve o material com a IA escolhida, em Markdown limpo e bem dividido.
+
+    O texto extraido nao e tocado: a versao melhorada fica ao lado, e o portal do aluno, os
+    blocos de indexacao e o leitor passam a preferi-la. `DELETE /improved` volta ao original.
+    """
+    material = await _owned_material(material_id, user["tutor_id"], db)
+    try:
+        outcome = await material_improve_service.improve(
+            title=material.title or material.filename,
+            discipline=material.discipline or "",
+            content=material.content or "",
+            llm=body.llm,
+            instructions=body.instructions,
+        )
+    except material_improve_service.ImproveError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return await _store_improvement(
+        db, material, content=outcome["content"], llm=outcome["llm"])
+
+
+@router.get(
+    "/materials/{material_id}/improve/prompt",
+    response_model=MaterialImprovePromptResponse,
+)
+async def material_improve_prompt(
+    material_id: str,
+    instructions: str = "",
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Prompt da melhoria para um agente conectado (Codex, Claude Code) executar.
+
+    Eles rodam no computador do usuario e leem o material inteiro de uma vez; devolvem o
+    texto em `/improve/external`. A redacao e a mesma do provedor do backend.
+    """
+    material = await _owned_material(material_id, user["tutor_id"], db)
+    built = material_improve_service.build_prompt(
+        title=material.title or material.filename,
+        discipline=material.discipline or "",
+        content=material.content or "",
+        instructions=instructions[:1000],
+    )
+    return MaterialImprovePromptResponse(material_id=material.id, **built)
+
+
+@router.post("/materials/{material_id}/improve/external", response_model=MaterialResponse)
+async def store_external_improvement(
+    material_id: str,
+    body: MaterialExternalImproveRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Guarda o texto que um agente conectado do proprio usuario reescreveu."""
+    material = await _owned_material(material_id, user["tutor_id"], db)
+    llm = (body.llm or "").strip()
+    if not llm:
+        raise HTTPException(400, "Informe qual agente escreveu o texto")
+    text = material_improve_service.clean_output(body.text)
+    if not text:
+        raise HTTPException(400, "O agente nao devolveu texto")
+    if not material_improve_service.looks_faithful(material.content or "", text):
+        raise HTTPException(
+            422,
+            "O texto devolvido nao parece uma reescrita fiel do material "
+            "(muito menor ou muito maior que o original).")
+    return await _store_improvement(db, material, content=text, llm=llm)
+
+
+@router.get("/materials/{material_id}/improved", response_model=MaterialImprovedResponse)
+async def get_improved_material(
+    material_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """A versao melhorada do material, para o professor conferir."""
+    material = await _owned_material(material_id, user["tutor_id"], db)
+    row = await db.get(MaterialImprovementModel, material.id)
+    if row is None:
+        raise HTTPException(404, "Este material ainda nao foi melhorado")
+    return MaterialImprovedResponse(
+        material_id=material.id, content=row.content, llm=row.llm or "", created_at=row.created_at)
+
+
+@router.delete("/materials/{material_id}/improved", response_model=MaterialResponse)
+async def discard_improved_material(
+    material_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Descarta a versao melhorada e volta ao texto original."""
+    material = await _owned_material(material_id, user["tutor_id"], db)
+    row = await db.get(MaterialImprovementModel, material.id)
+    if row is not None:
+        await db.delete(row)
+        await db.flush()
+    await material_chunk_service.replace_chunks(db, material)
+    await db.commit()
+    return _material_response(material)
+
+
+def _material_response(
+    material: MaterialModel, improvement: MaterialImprovementModel | None = None
+) -> MaterialResponse:
     return MaterialResponse(
+        improved=improvement is not None,
+        improved_llm=(improvement.llm if improvement else "") or "",
+        improved_at=improvement.created_at if improvement else None,
         id=material.id,
         discipline_id=material.discipline_id,
         discipline=material.discipline or "",

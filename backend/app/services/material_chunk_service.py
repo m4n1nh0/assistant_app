@@ -36,7 +36,8 @@ OVERLAP = 200
 
 _BULLET = re.compile(r"^\s*(?:[-*•▪◦–]|\d{1,2}[.)])\s+")
 _NUMBERED = re.compile(r"^\d+(\.\d+)*\.?\s+\S")
-_KEYWORD = re.compile(r"^(cap[ií]tulo|unidade|aula|se[cç][aã]o|m[oó]dulo)\b", re.IGNORECASE)
+_MARKDOWN_HEADING = re.compile(r"^(#{1,6})\s+(\S.*)$")
+_KEYWORD = re.compile(r"^(cap[ií]tulo|unidade|aula|tema|se[cç][aã]o|m[oó]dulo)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -46,21 +47,57 @@ class Chunk:
     text: str
 
 
-def is_heading(line: str) -> bool:
+def is_heading(line: str, strict: bool = False) -> bool:
+    """Linha que parece titulo.
+
+    No modo estrito (texto de PDF que chegou picado, uma palavra por bloco) "linha curta sem
+    ponto" nao diz nada, e so valem titulo em caixa alta, numerado ou com "Capitulo" etc.
+    """
     text = line.strip()
     if not text or len(text) > 90 or text[-1] in ".;,:!?" or _BULLET.match(text):
         return False
     words = len(text.split())
-    if words > 12:
+    if words > 12 or (strict and words < 2):
         return False
     shouty = text == text.upper() and re.search(r"[A-ZÀ-Ú]", text) is not None
-    return bool(shouty or _KEYWORD.match(text) or _NUMBERED.match(text) or words <= 8)
+    return bool(shouty or _KEYWORD.match(text) or _NUMBERED.match(text) or (not strict and words <= 8))
 
 
 def _depth(heading: str) -> int:
     """Nivel do titulo: "1.2.3 x" e 3, "1.2 x" e 2, o resto e 1."""
     numbered = re.match(r"^(\d+(?:\.\d+)*)", heading)
     return numbered.group(1).count(".") + 1 if numbered else 1
+
+
+def _is_fragmented(blocks: list[list[str]]) -> bool:
+    """Mais de 30% dos blocos sao uma linha de ate 3 palavras: a extracao picou o texto."""
+    if len(blocks) < 8:
+        return False
+    tiny = sum(1 for b in blocks if len(b) == 1 and len(b[0].split()) <= 3)
+    return tiny / len(blocks) > 0.3
+
+
+def _defragment(blocks: list[list[str]]) -> list[list[str]]:
+    """Junta os pedacos em paragrafos: so fecha em fim de frase ou quando chega um titulo."""
+    out: list[list[str]] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if buf:
+            out.append([" ".join(buf)])
+            buf.clear()
+
+    for block in blocks:
+        joined = " ".join(block)
+        if is_heading(joined, strict=True):
+            flush()
+            out.append([joined])
+            continue
+        buf.append(joined)
+        if re.search(r"""[.!?]["')\]]?$""", joined) or len(" ".join(buf)) > 700:
+            flush()
+    flush()
+    return out
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -75,12 +112,29 @@ def _sections(text: str) -> list[tuple[str, str]]:
             sections.append((" > ".join(h for _, h in path), content))
         body.clear()
 
-    for block in re.split(r"\n\s*\n", text):
-        lines = [line.strip() for line in block.split("\n") if line.strip()]
-        if not lines:
+    blocks = [
+        [line.strip() for line in block.split("\n") if line.strip()]
+        for block in re.split(r"\n\s*\n", text)
+    ]
+    blocks = [b for b in blocks if b]
+    strict = _is_fragmented(blocks)
+    if strict:
+        blocks = _defragment(blocks)
+
+    for lines in blocks:
+        # Texto melhorado por IA: titulo marcado com "#", o nivel vem da quantidade de "#".
+        marked = _MARKDOWN_HEADING.match(lines[0])
+        if marked:
+            flush()
+            level = len(marked.group(1))
+            while path and path[-1][0] >= level:
+                path.pop()
+            path.append((level, marked.group(2).strip()))
+            if len(lines) > 1:
+                body.append("\n".join(lines[1:]))
             continue
         # Titulo e bloco de uma linha, ou a primeira linha seguida de corpo que nao e titulo.
-        if is_heading(lines[0]) and (len(lines) == 1 or not is_heading(lines[1])):
+        if is_heading(lines[0], strict) and (len(lines) == 1 or not is_heading(lines[1], strict)):
             flush()
             level = _depth(lines[0])
             while path and path[-1][0] >= level:
@@ -131,10 +185,15 @@ def split_into_chunks(text: str) -> list[Chunk]:
     return [Chunk(sequence=i, heading_path=h[:500], text=t) for i, (h, t) in enumerate(pieces)]
 
 
-async def replace_chunks(db: AsyncSession, material: MaterialModel) -> int:
-    """Refaz os blocos do material. Devolve quantos ficaram. O commit e de quem chama."""
+async def replace_chunks(
+    db: AsyncSession, material: MaterialModel, content: str | None = None
+) -> int:
+    """Refaz os blocos do material. Devolve quantos ficaram. O commit e de quem chama.
+
+    `content` e o texto a cortar quando ha uma versao melhorada por IA; sem ele, o original.
+    """
     await db.execute(delete(MaterialChunkModel).where(MaterialChunkModel.material_id == material.id))
-    chunks = split_into_chunks(material.content or "")
+    chunks = split_into_chunks(content if content is not None else (material.content or ""))
     db.add_all([
         MaterialChunkModel(
             material_id=material.id, tutor_id=material.tutor_id,

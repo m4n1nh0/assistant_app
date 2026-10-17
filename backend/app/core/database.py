@@ -990,6 +990,28 @@ class MaterialChunkModel(Base):
     created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class MaterialImprovementModel(Base):
+    """Versao do material reescrita por uma IA, em Markdown simples.
+
+    O texto extraido continua em `materials.content`, intacto: a melhoria e uma segunda
+    versao que o portal, o quiz e a indexacao passam a preferir, e que o professor pode
+    descartar para voltar ao original. Tabela propria, e nao coluna em `materials`, porque
+    `create_all` cria tabela nova mas nao acrescenta coluna a uma que ja existe.
+
+    `llm` guarda quem escreveu - um provedor do backend ou um agente conectado (Codex,
+    Claude Code) - para o professor saber de onde veio o texto.
+    """
+
+    __tablename__ = "material_improvements"
+    material_id = Column(String(64), primary_key=True)
+    tutor_id    = Column(String(64), nullable=False, index=True)
+    content     = Column(
+        Text().with_variant(MEDIUMTEXT(), "mysql", "mariadb"), nullable=False
+    )
+    llm         = Column(String(80), nullable=False, default="")
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class MaterialSubmissionLinkModel(Base):
     """Link publico para os alunos enviarem o material das apresentacoes.
 

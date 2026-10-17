@@ -25,6 +25,8 @@ from app.core.database import (
     DisciplineModel,
     LessonModel,
     LessonSegmentModel,
+    MaterialChunkModel,
+    MaterialImprovementModel,
     MaterialModel,
     MaterialSubmissionLinkModel,
     ProjectGroupClassModel,
@@ -43,7 +45,7 @@ TABELAS = (
     DisciplineModel, ClassGroupModel, ClassScheduleModel, StudentModel,
     ProjectGroupModel, ProjectGroupClassModel, ProjectGroupPointModel,
     ProjectGroupMemberModel,
-    MaterialModel, MaterialSubmissionLinkModel, LessonModel, LessonSegmentModel,
+    MaterialModel, MaterialChunkModel, MaterialImprovementModel, MaterialSubmissionLinkModel, LessonModel, LessonSegmentModel,
 )
 
 

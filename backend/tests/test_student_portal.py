@@ -24,6 +24,7 @@ from app.core.database import (
     LessonClassGroupModel,
     LessonModel,
     LessonPointModel,
+    MaterialImprovementModel,
     MaterialModel,
     MentorshipActivityModel,
     MentorshipDeliveryModel,
@@ -51,7 +52,7 @@ TABELAS = (
     LessonPointModel, MaterialModel, ProjectGroupModel, ProjectGroupMemberModel, ProjectGroupClassModel,
     QuizModel, QuestionModel, StudentAnswerModel, QuizGroupConfigModel, QuizGroupLinkModel,
     QuizGroupRepresentativeModel, MentorshipFormModel, MentorshipSignupModel, MentorshipActivityModel,
-    MentorshipDeliveryModel, StudentPortalModel, AvailabilitySlotModel,
+    MentorshipDeliveryModel, StudentPortalModel, MaterialImprovementModel, AvailabilitySlotModel,
     AvailabilityExceptionModel,
 )
 AGORA = datetime(2026, 10, 10, 12, 0)

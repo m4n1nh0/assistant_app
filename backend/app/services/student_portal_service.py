@@ -25,6 +25,7 @@ from ..core.database import (
     LessonClassGroupModel,
     LessonModel,
     LessonPointModel,
+    MaterialImprovementModel,
     MaterialModel,
     MentorshipActivityModel,
     MentorshipDeliveryModel,
@@ -288,3 +289,11 @@ async def material_text(db: AsyncSession, tutor_id: str, students: list[StudentM
         return None
     allowed = {c.discipline_id for c in await _classes(db, students) if c.discipline_id}
     return material if material.discipline_id in allowed else None
+
+
+async def material_body(db: AsyncSession, material: MaterialModel) -> tuple[str, str]:
+    """Texto que o aluno lê e o formato dele: a versão melhorada por IA (Markdown), se houver."""
+    improved = await db.get(MaterialImprovementModel, material.id)
+    if improved is not None and (improved.content or "").strip():
+        return improved.content, "markdown"
+    return material.content, "text"

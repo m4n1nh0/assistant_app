@@ -85,3 +85,15 @@ def test_refazer_os_blocos_nao_duplica():
     assert primeiro == segundo == len(linhas) == 1
     assert linhas[0].discipline_id == "d1" and linhas[0].indexed is False
     assert restantes == []
+
+
+def test_texto_picado_de_pdf_vira_paragrafos_e_nao_titulos():
+    # Extracao que entrega uma palavra por bloco: cada uma virava "titulo".
+    palavras = "Amazon\n\nAWS,\n\nalém\n\nde\n\nBig\n\nData\n\ne\n\nAnalytics\n\npara\n\nindústria\n\n4.0."
+    texto = "Tema 6\n\n" + (palavras + "\n\n") * 4 + "CAPÍTULO 2\n\nFim do tema."
+    blocos = svc.split_into_chunks(texto)
+
+    caminhos = {b.heading_path for b in blocos}
+    assert "Amazon" not in caminhos and "além" not in caminhos
+    assert any("CAPÍTULO 2" in c for c in caminhos)
+    assert any("Amazon AWS, além de Big Data e Analytics para indústria 4.0." in b.text for b in blocos)

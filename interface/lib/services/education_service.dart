@@ -1470,6 +1470,71 @@ class EducationService {
     return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
   }
 
+  /// Pede ao backend para reescrever o material com a IA escolhida (vazio: automatico).
+  Future<CourseMaterial> improveMaterial(
+    String materialId, {
+    String? llm,
+    String instructions = '',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/materials/$materialId/improve'),
+      headers: _headers,
+      body: jsonEncode({
+        if (llm != null && llm.isNotEmpty) 'llm': llm,
+        'instructions': instructions.trim(),
+      }),
+    );
+    return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  /// Prompt da melhoria para um agente conectado (Codex, Claude Code) executar na
+  /// maquina do usuario. A redacao vem do backend: os dois caminhos pedem o mesmo.
+  Future<MaterialImprovePrompt> materialImprovePrompt(
+    String materialId, {
+    String instructions = '',
+  }) async {
+    final uri = Uri.parse('$_baseUrl/education/materials/$materialId/improve/prompt')
+        .replace(queryParameters: {
+      if (instructions.trim().isNotEmpty) 'instructions': instructions.trim(),
+    });
+    final response = await http.get(uri, headers: _headers);
+    return MaterialImprovePrompt.fromJson(
+        _decode(response) as Map<String, dynamic>);
+  }
+
+  /// Guarda o texto que um agente conectado reescreveu localmente.
+  Future<CourseMaterial> saveExternalImprovement(
+    String materialId, {
+    required String text,
+    required String llm,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/materials/$materialId/improve/external'),
+      headers: _headers,
+      body: jsonEncode({'text': text, 'llm': llm}),
+    );
+    return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  /// O texto melhorado, para o professor conferir antes de deixar valer.
+  Future<String> improvedMaterialText(String materialId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/materials/$materialId/improved'),
+      headers: _headers,
+    );
+    final data = _decode(response) as Map<String, dynamic>;
+    return data['content']?.toString() ?? '';
+  }
+
+  /// Descarta a versao melhorada e volta ao texto original.
+  Future<CourseMaterial> discardImprovement(String materialId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/materials/$materialId/improved'),
+      headers: _headers,
+    );
+    return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
   Future<void> deleteMaterial(String materialId) async {
     final response = await http.delete(
       Uri.parse('$_baseUrl/education/materials/$materialId'),
@@ -2445,6 +2510,29 @@ class LessonSummaryPrompt {
       );
 }
 
+/// Prompt da melhoria de um material, pronto para um agente conectado executar.
+class MaterialImprovePrompt {
+  final String materialId;
+  final String systemPrompt;
+  final String prompt;
+  final int chars;
+
+  const MaterialImprovePrompt({
+    required this.materialId,
+    required this.systemPrompt,
+    required this.prompt,
+    required this.chars,
+  });
+
+  factory MaterialImprovePrompt.fromJson(Map<String, dynamic> json) =>
+      MaterialImprovePrompt(
+        materialId: json['material_id']?.toString() ?? '',
+        systemPrompt: json['system_prompt']?.toString() ?? '',
+        prompt: json['prompt']?.toString() ?? '',
+        chars: _toInt(json['chars']),
+      );
+}
+
 /// Resumo gerado da aula, com o provedor usado e o estilo aplicado.
 class LessonSummary {
   final String lessonId;
@@ -2921,6 +3009,11 @@ class CourseMaterial {
   final String uploaderName;
   final bool fromLink;
 
+  /// Versao reescrita por uma IA (Markdown), guardada ao lado do texto original.
+  /// [improvedLlm] diz quem escreveu: um provedor do backend ou um agente conectado.
+  final bool improved;
+  final String improvedLlm;
+
   const CourseMaterial({
     required this.id,
     this.disciplineId,
@@ -2935,6 +3028,8 @@ class CourseMaterial {
     this.groupId = '',
     this.uploaderName = '',
     this.fromLink = false,
+    this.improved = false,
+    this.improvedLlm = '',
   });
 
   factory CourseMaterial.fromJson(Map<String, dynamic> json) => CourseMaterial(
@@ -2951,6 +3046,8 @@ class CourseMaterial {
         groupId: json['group_id']?.toString() ?? '',
         uploaderName: json['uploader_name']?.toString() ?? '',
         fromLink: json['from_link'] == true,
+        improved: json['improved'] == true,
+        improvedLlm: json['improved_llm']?.toString() ?? '',
       );
 
   /// Como chamar a unidade contada em [pageCount], conforme o formato.

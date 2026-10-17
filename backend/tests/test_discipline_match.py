@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.database import MaterialModel, get_db
+from app.core.database import MaterialChunkModel, MaterialImprovementModel, MaterialModel, get_db
 from app.core.security import get_current_user
 from app.routers import education
 from app.services.discipline_match import discipline_code, discipline_key, same_discipline
@@ -104,6 +104,8 @@ def api():
     async def seed():
         async with engine.begin() as conn:
             await conn.run_sync(MaterialModel.__table__.create)
+            await conn.run_sync(MaterialChunkModel.__table__.create)
+            await conn.run_sync(MaterialImprovementModel.__table__.create)
         async with sessions() as db:
             db.add_all([
                 material("pdf-bd", "00001", MATERIAL, disciplina_id="d-bd"),

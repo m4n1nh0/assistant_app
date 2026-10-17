@@ -123,6 +123,8 @@ button.open{width:auto;margin:8px 0 0;padding:8px 14px;font-size:12px}
 .bar input,.bar select{flex:1 1 200px;width:auto;max-width:360px;margin:0}
 .card.past{opacity:.7}
 .reader{margin-top:10px}
+.deck h4{margin:22px 0 6px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:15px}
+.deck h4:first-child{margin-top:0;padding-top:0;border-top:0}
 .list{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:10px}
 .row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:12px 14px;
 border:1px solid #e5e7eb;border-radius:10px;background:#fff;text-align:left}
@@ -175,8 +177,8 @@ align-items:start}
 #view>.card{margin-top:0}
 #view>.meta,#view>.grp,#view>.list{grid-column:1/-1}
 #view>.list{margin-top:0}
-.reader{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
-.toc{flex-direction:column;align-items:stretch;position:sticky;top:16px;max-height:520px;overflow:auto}
+.reader.has-toc{display:grid;grid-template-columns:260px minmax(0,1fr);gap:20px;align-items:start}
+.toc{flex-direction:column;flex-wrap:nowrap;align-items:stretch;position:sticky;top:16px;max-height:520px;overflow:auto}
 .toc-item{text-align:left;border-radius:8px}
 .modal .toc{top:64px;max-height:calc(100vh - 160px)}
 }
@@ -227,7 +229,7 @@ _SCRIPT = """
     });
   }
   function markdown(text) {
-    var box = el("div", "sum"), list = null;
+    var box = el("div", "sum"), list = null; box.heads = [];
     text.split("\\n").forEach(function (raw) {
       var line = raw.trimEnd();
       var h = /^#{1,4}\\s+(.*)$/.exec(line), li = /^\\s*[-*]\\s+(.*)$/.exec(line);
@@ -236,7 +238,7 @@ _SCRIPT = """
         var item = el("li"); inline(item, li[1]); list.appendChild(item); return;
       }
       list = null;
-      if (h) { box.appendChild(el("h4", "", h[1])); return; }
+      if (h) { var head = el("h4", "", h[1]); box.appendChild(head); box.heads.push(head); return; }
       if (line.trim()) { var p = el("p"); inline(p, line); box.appendChild(p); }
     });
     return box;
@@ -245,18 +247,89 @@ _SCRIPT = """
   // Texto extraido de apostila/slide: blocos separados por linha em branco. Linha curta sem
   // pontuacao final vira titulo; "-", "•" e "1." viram lista; o resto, paragrafo.
   var BULLET = /^\\s*(?:[-*•▪◦–]|\\d{1,2}[.)])\\s+(.*)$/;
+  // Modo estrito: texto de PDF que chegou picado (uma palavra por bloco). Ai "linha curta sem
+  // ponto" nao diz nada, e so valem titulo em caixa alta, numerado ou com "Capitulo", "Unidade".
+  var strict = false;
   function isHeading(line) {
     var t = line.trim();
     if (!t || t.length > 90 || /[.;,:!?]$/.test(t) || BULLET.test(t)) return false;
     var words = t.split(/\\s+/).length;
+    if (strict && words < 2) return false;
     return words <= 12 && (t === t.toUpperCase() && /[A-ZÀ-Ú]/.test(t) ||
-      /^(cap[ií]tulo|unidade|aula|se[cç][aã]o|m[oó]dulo)\\b/i.test(t) || /^\\d+(\\.\\d+)*\\.?\\s+\\S/.test(t) ||
-      words <= 8);
+      /^(cap[ií]tulo|unidade|aula|tema|se[cç][aã]o|m[oó]dulo)\\b/i.test(t) || /^\\d+(\\.\\d+)*\\.?\\s+\\S/.test(t) ||
+      (!strict && words <= 8));
+  }
+  function fragmented(blocks) {
+    if (blocks.length < 8) return false;
+    var tiny = blocks.filter(function (b) {
+      return b.length === 1 && b[0].split(/\\s+/).length <= 3;
+    }).length;
+    return tiny / blocks.length > 0.3;
+  }
+  // Junta os pedacos em paragrafos: so fecha um paragrafo em fim de frase, ou quando chega um titulo.
+  function defragment(blocks) {
+    var out = [], buf = [];
+    function flush() { if (buf.length) { out.push([buf.join(" ")]); buf = []; } }
+    blocks.forEach(function (b) {
+      var t = b.join(" ");
+      if (isHeading(t)) { flush(); out.push([t]); return; }
+      buf.push(t);
+      if (/[.!?]["')\\]]?$/.test(t) || buf.join(" ").length > 700) flush();
+    });
+    flush();
+    return out;
+  }
+  // Apresentacao (PPTX): cada slide e um bloco de varias linhas curtas. Juntar as linhas em
+  // paragrafo vira uma parede de texto; aqui cada slide vira um titulo com a lista do que ele diz.
+  var FOOT = /\\s*[·|-]\\s*\\d+$/, KICKER = /^\\d+\\s*[·.)-]\\s*\\S/;
+  function isDeck(blocks) {
+    if (blocks.length < 3) return false;
+    var multi = blocks.filter(function (b) { return b.length >= 2; }).length;
+    return multi / blocks.length >= 0.6;
+  }
+  // Rodape que se repete em varios slides ("Titulo da aula · 7") e so polui a leitura.
+  function footers(blocks) {
+    var count = {}, drop = {};
+    blocks.forEach(function (b) {
+      var seen = {};
+      b.forEach(function (l) {
+        if (!FOOT.test(l)) return;
+        var k = l.replace(FOOT, "");
+        if (!seen[k]) { seen[k] = 1; count[k] = (count[k] || 0) + 1; }
+      });
+    });
+    Object.keys(count).forEach(function (k) {
+      if (count[k] >= 3 && count[k] >= blocks.length * 0.3) drop[k] = 1;
+    });
+    return drop;
+  }
+  function deck(blocks) {
+    var box = el("div", "sum doc deck"); box.heads = [];
+    var drop = footers(blocks);
+    blocks.forEach(function (b) {
+      var lines = b.filter(function (l) { return !(FOOT.test(l) && drop[l.replace(FOOT, "")]); });
+      if (!lines.length) return;
+      var title = lines.shift();
+      if (KICKER.test(title) && lines.length > 1) title += " — " + lines.shift();
+      var head = el("h4", "", title); box.appendChild(head); box.heads.push(head);
+      if (!lines.length) return;
+      var ul = el("ul");
+      lines.forEach(function (l) {
+        var m = BULLET.exec(l), li = el("li"); inline(li, m ? m[1] : l); ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    });
+    return box;
   }
   function structure(text) {
+    var blocks = text.split(/\\n\\s*\\n/).map(function (block) {
+      return block.split("\\n").map(function (l) { return l.trim(); }).filter(Boolean);
+    }).filter(function (b) { return b.length; });
+    if (isDeck(blocks)) return deck(blocks);
+    strict = fragmented(blocks);
+    if (strict) blocks = defragment(blocks);
     var box = el("div", "sum doc"); box.heads = [];
-    text.split(/\\n\\s*\\n/).forEach(function (block) {
-      var lines = block.split("\\n").map(function (l) { return l.trim(); }).filter(Boolean);
+    blocks.forEach(function (lines) {
       var list = null, para = null;
       lines.forEach(function (line, i) {
         var li = BULLET.exec(line);
@@ -302,9 +375,12 @@ _SCRIPT = """
   }
 
   // Leitor do material: indice pelos titulos que a estrutura achou.
-  function reader(text) {
-    var doc = structure(text), wrap = el("div", "reader");
-    if (doc.heads.length > 1) {
+  function reader(text, format) {
+    var doc = format === "markdown" ? markdown(text) : structure(text), wrap = el("div", "reader");
+    if (format === "markdown") doc.className = "sum doc";
+    // Muitos "titulos" quase sempre e ruido da extracao: sem indice e melhor que um indice inutil.
+    if (doc.heads.length > 1 && doc.heads.length <= 60) {
+      wrap.className += " has-toc";
       var nav = el("nav", "toc"); nav.setAttribute("aria-label", "Índice");
       nav.appendChild(el("div", "meta", "Índice"));
       doc.heads.forEach(function (h) {
@@ -599,7 +675,7 @@ _SCRIPT = """
             row.disabled = true;
             try {
               var r = await call("/material", {enrollment: enrollment, material_id: m.id});
-              modal(m.title, reader(r.content));
+              modal(m.title, reader(r.content, r.format));
             } catch (e) { say("err", e.message); }
             row.disabled = false;
           }}));
@@ -804,5 +880,6 @@ async def portal_material(
     material = await svc.material_text(db, portal.tutor_id, students, body.material_id)
     if material is None:
         raise HTTPException(404, "Material não encontrado.")
-    return JSONResponse({"title": material.title, "content": material.content},
+    content, fmt = await svc.material_body(db, material)
+    return JSONResponse({"title": material.title, "content": content, "format": fmt},
                         headers={"Cache-Control": "no-store"})
