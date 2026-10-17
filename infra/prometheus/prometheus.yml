@@ -18,3 +18,11 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # Qdrant expoe as proprias metricas em /metrics (formato Prometheus). Ele nao precisa passar
+  # pelo collector. Atencao: ele responde a cada coleta, e isso conta como trafego: um Qdrant com
+  # serverless ligado deixa de dormir enquanto for monitorado.
+  - job_name: qdrant
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["qdrant.railway.internal:6333"]

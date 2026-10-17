@@ -24,6 +24,37 @@ receivers:
       grpc:
         endpoint: 0.0.0.0:4317
 
+  # Saude do MySQL e do Redis, lida direto deles. Endereco e credencial vem do ambiente do
+  # collector (no Railway, das variaveis do servico; no compose, do docker-compose.yml). O MySQL
+  # pede um usuario so de leitura (PROCESS, REPLICATION CLIENT e SELECT), nao o da aplicacao.
+  # Sem as variaveis valem os padroes abaixo (localhost): o receptor so registra erro de conexao a
+  # cada coleta e o resto segue. Um endereco vazio derrubaria o collector no boot.
+  mysql:
+    endpoint: ${env:MYSQL_ENDPOINT:-localhost:3306}
+    username: ${env:MYSQL_MONITOR_USER:-monitor}
+    password: ${env:MYSQL_MONITOR_PASSWORD:-}
+    collection_interval: 30s
+    tls:
+      insecure: true
+    # O receptor traz desligadas justamente as que mais interessam: conexoes e consultas.
+    metrics:
+      mysql.connection.count:
+        enabled: true
+      mysql.connection.errors:
+        enabled: true
+      mysql.query.count:
+        enabled: true
+      mysql.query.slow.count:
+        enabled: true
+      mysql.commands:
+        enabled: true
+      mysql.client.network.io:
+        enabled: true
+  redis:
+    endpoint: ${env:REDIS_ENDPOINT:-localhost:6379}
+    password: ${env:REDIS_PASSWORD:-}
+    collection_interval: 30s
+
 processors:
   batch:
     timeout: 5s
@@ -66,6 +97,6 @@ service:
       processors: [memory_limiter, batch]
       exporters: [debug, spanmetrics]
     metrics:
-      receivers: [otlp, spanmetrics]
+      receivers: [otlp, spanmetrics, mysql, redis]
       processors: [memory_limiter, batch]
       exporters: [prometheus]

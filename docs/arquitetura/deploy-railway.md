@@ -205,7 +205,8 @@ Prometheus busca por lá e o Grafana lê do Prometheus.
 #### Variáveis de observabilidade, serviço por serviço
 
 Os três serviços novos **não leem** variável `OTEL_*`: o que eles precisam já está nos arquivos
-da pasta `infra/`. As variáveis abaixo vão **nos serviços da aplicação**:
+da pasta `infra/`. As variáveis abaixo vão **nos serviços da aplicação**. (O `otel-collector` lê
+outras, `MYSQL_*` e `REDIS_*`, para a saúde dos bancos: veja *MySQL, Redis e Qdrant no Grafana*.)
 
 | Serviço | `OTEL_ENABLED` | `OTEL_EXPORTER_ENDPOINT` | Também vale | O que ele envia |
 |---|:---:|:---:|---|---|
@@ -213,7 +214,7 @@ da pasta `infra/`. As variáveis abaixo vão **nos serviços da aplicação**:
 | `agent-orchestrator` | `true` | sim | `LANGSMITH_*` | traces, duração das requisições, **tokens** (exatos) e **custo estimado** do chat |
 | `tool-service` | `true` | sim | — | traces e duração das requisições |
 | `mcp-service` | `true` | sim | — | traces e duração das requisições |
-| `otel-collector`, `prometheus`, `grafana` | não leem | — | — | — |
+| `otel-collector`, `prometheus`, `grafana` | não leem `OTEL_*` | — | — | — |
 
 Em cada um dos quatro:
 
@@ -391,6 +392,68 @@ Para recriar o volume em vez de resetar: apague o volume no painel e troque o no
 dois dias**, e nesse período o nome continua ocupado: recriar com o mesmo nome dá "já existe no
 projeto" (`railway volume list` mostra a data em *Deletes on*). Nome novo evita a espera.
 
+#### MySQL, Redis e Qdrant no Grafana
+
+O painel **Assistant · MySQL, Redis e Qdrant** (pasta *Assistant*) mostra a saúde dos três bancos:
+
+- **MySQL:** tempo no ar, conexões abertas, consultas por segundo e por tipo, consultas lentas, linhas
+  lidas e gravadas, memória do buffer pool, tráfego de rede e erros de conexão.
+- **Redis:** clientes, memória (usada, do sistema e pico), chaves, comandos por segundo, taxa de
+  acertos do cache, rede e chaves expulsas por falta de memória (sinal de que o Redis está cheio).
+- **Qdrant:** coleções, memória, requisições por segundo e latência p95 por rota, e falhas.
+
+Como cada um chega ao Grafana:
+
+| Banco | Caminho | O que precisa |
+|---|---|---|
+| MySQL | receptor `mysql` do collector, a cada 30 s | um usuário **só de leitura** e a senha dele |
+| Redis | receptor `redis` do collector, a cada 30 s | o endereço e a senha do serviço |
+| Qdrant | o Prometheus lê o `/metrics` dele | só o nome de rede `qdrant.railway.internal` |
+
+**1. Usuário de leitura no MySQL.** Rode uma vez, com um usuário administrador (no serviço `mysql`,
+aba *Data* ou *Connect*), trocando a senha por uma forte:
+
+```sql
+CREATE USER 'monitor'@'%' IDENTIFIED BY '<senha forte>';
+GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'monitor'@'%';
+```
+
+Esse usuário só lê estatísticas e não escreve em nada. Não use o usuário da aplicação: ele tem mais
+permissão do que a monitoria precisa, e a senha dele ficaria espalhada em mais um serviço.
+
+**2. Variável compartilhada.** Em *Project Settings > Shared Variables*, crie
+`MYSQL_MONITOR_PASSWORD` com a mesma senha. O IaC a referencia, e ela não vai para o repositório.
+
+**3. Redis.** O `.railway/railway.ts` lê `${{Redis.REDIS_PASSWORD}}` e `${{Redis.RAILWAY_PRIVATE_DOMAIN}}`.
+Confira em *Redis > Variables* que `REDIS_PASSWORD` existe com esse nome (o template do Railway pode
+chamá-la de outro jeito, como `REDISPASSWORD`); se for outro, ajuste o nome no arquivo. O nome do
+serviço no painel é `Redis`, com R maiúsculo, e a referência precisa casar com ele.
+
+**4. Aplicar.** O `plan` deve mostrar só cinco variáveis novas no `otel-collector` (`0 to add,
+5 to change, 0 to destroy`). Depois do `apply`, o collector redeploya. A configuração do Prometheus
+(a leitura do Qdrant) e o painel entram com o push do repositório.
+
+```powershell
+railway config plan --verbose
+railway config apply
+```
+
+**5. Conferir.** No Grafana, *Explore*, rode `up{job="qdrant"}` (deve dar `1`) e abra o painel: os
+quadros de MySQL e Redis enchem em cerca de um minuto. Nos logs do collector, `access denied`
+(MySQL) ou `NOAUTH` (Redis) indicam usuário ou senha errados.
+
+**Atenção com o Qdrant e o serverless.** O Prometheus lê o `/metrics` do Qdrant a cada 15 segundos, e
+cada resposta conta como tráfego de saída. O Railway só deixa dormir um serviço sem tráfego por 5 a 10
+minutos, então **um Qdrant com serverless ligado deixa de dormir** enquanto for monitorado. Escolha:
+monitorar o Qdrant (e desligar o serverless dele), ou manter o serverless e tirar o trecho
+`job_name: qdrant` do `infra/prometheus/prometheus.yml`. Se o Qdrant tiver chave de API
+(`QDRANT__SERVICE__API_KEY`), a leitura do `/metrics` pode falhar com 401: avise antes de ligar.
+
+Verificado em teste local com `mysql:8.4`, `redis:7` e `qdrant:v1.12.6`, não contra as imagens do
+Railway: o template do Redis do Railway e a versão do seu MySQL podem expor métricas ou nomes
+levemente diferentes. As métricas de MySQL que o receptor traz desligadas (conexões, consultas,
+comandos, rede e erros) estão ligadas no `otel-collector.yaml`.
+
 #### Dimensionamento e serverless
 
 Os três cabem em **1 vCPU e 1 GB** com folga (o collector tem limitador de memória em 75% do que o
@@ -421,6 +484,9 @@ container novo: depois de ligar, faça um redeploy.
 | Senha do Grafana vazia ou `admin` | variável compartilhada ausente, ou banco criado antes dela | seção *Senha do Grafana* acima |
 | Painel sem dados de tokens e custo | ninguém chamou um modelo ainda, ou `OTEL_ENABLED` está `false` na `assistant-api` | disparar um resumo e conferir a variável |
 | `permission denied` no boot do Prometheus ou do Grafana | a imagem roda sem root e o volume monta como root | `RAILWAY_RUN_UID="0"` (o IaC já define) |
+| Painel de infra sem dados do MySQL; log do collector com `access denied` | usuário `monitor` não existe, ou a senha de `MYSQL_MONITOR_PASSWORD` é outra | criar o usuário e a variável compartilhada com a mesma senha |
+| Painel de infra sem dados do Redis; log com `NOAUTH` ou `WRONGPASS` | `REDIS_PASSWORD` não resolveu (nome da variável diferente no template) | conferir *Redis > Variables* e o nome no `railway.ts` |
+| `up{job="qdrant"}` em `0`, ou o Qdrant nunca mais dorme | o Qdrant dormiu e a leitura falhou, ou o monitoramento o mantém acordado | desligar o serverless do Qdrant, ou tirar o `job_name: qdrant` do `prometheus.yml` |
 
 Em ambiente Railway antigo, de rede privada só IPv6, o collector e o Prometheus precisam escutar
 em `[::]` em vez de `0.0.0.0` (receptor `otlp` e exporter `prometheus` em

@@ -463,7 +463,19 @@ Não é código deste repositório — é a imagem oficial, configurada por arqu
 | `GRAFANA_PORT` | `3000` | Porta publicada do Grafana (só compose) |
 | `GRAFANA_ADMIN_PASSWORD` | `admin` | Senha do usuário `admin` do Grafana (só compose) |
 
-Essas variáveis são lidas pelo **`docker-compose.yml`**, na interpolação
+O `otel-collector` lê ainda as variáveis abaixo, para a saúde do MySQL e do Redis (no compose, o
+`docker-compose.yml` já as define; no Railway, o `.railway/railway.ts`):
+
+| Variável | Efeito |
+|---|---|
+| `MYSQL_ENDPOINT` | `host:porta` do MySQL monitorado |
+| `MYSQL_MONITOR_USER` / `MYSQL_MONITOR_PASSWORD` | Usuário só de leitura (`PROCESS`, `REPLICATION CLIENT`, `SELECT`) |
+| `REDIS_ENDPOINT` / `REDIS_PASSWORD` | `host:porta` e senha do Redis monitorado |
+
+Sem elas o collector segue funcionando e só registra erro de conexão a cada coleta. O passo a passo
+está em [deploy-railway.md](deploy-railway.md).
+
+As quatro de cima (`OBSERVABILITY_PORT` e as outras) são lidas pelo **`docker-compose.yml`**, na interpolação
 `${OBSERVABILITY_PORT:-8004}` e semelhantes; nenhum código da aplicação as consulta. Defini-las
 no ambiente de um serviço Python não muda nada. No Railway o equivalente é
 `GF_SECURITY_ADMIN_PASSWORD` no serviço `grafana`, descrito em

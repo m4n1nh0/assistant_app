@@ -14,7 +14,10 @@
 //   1. apague o servico `otel-collector` criado a mao, se existir (o nome e o mesmo);
 //   2. crie a variavel compartilhada GRAFANA_ADMIN_PASSWORD (Project Settings > Shared Variables),
 //      com uma senha forte: a senha nao fica neste arquivo, que vai para o repositorio;
-//   3. confira REGION abaixo: deve ser a regiao dos seus outros servicos (hoje: Virginia).
+//   3. confira REGION abaixo: deve ser a regiao dos seus outros servicos (hoje: Virginia);
+//   4. crie o usuario de leitura no MySQL e a variavel compartilhada MYSQL_MONITOR_PASSWORD (a
+//      mesma senha), e confira em Redis > Variables que REDIS_PASSWORD existe: o passo a passo
+//      esta em docs/arquitetura/deploy-railway.md, secao "MySQL, Redis e Qdrant no Grafana".
 //
 // Pontos que eu nao consegui confirmar na documentacao e que o `plan` vai mostrar:
 //   - o argumento `ctx` de defineRailway e o acesso `ctx.shared.NOME` (so vi `ctx.shared.NAME`);
@@ -46,9 +49,20 @@ export default defineRailway((ctx) => {
 
   // Recebe traces e metricas da aplicacao (OTLP em 4318) e expoe as metricas em 8889. Sem dominio
   // publico: so a rede privada o alcanca, por `otel-collector.railway.internal`.
+  //
+  // Tambem le a saude do MySQL e do Redis, direto deles, pela rede privada. As referencias
+  // ${{servico.VARIAVEL}} sao resolvidas pelo Railway, e o nome do servico tem de ser o do painel
+  // (`mysql` e `Redis`). A senha do MySQL vem de uma variavel compartilhada, como a do Grafana.
   const collector = service("otel-collector", {
     source: fromRepo("infra/otel-collector"),
     replicas: { [REGION]: 1 },
+    env: {
+      MYSQL_ENDPOINT: "${{mysql.RAILWAY_PRIVATE_DOMAIN}}:3306",
+      MYSQL_MONITOR_USER: "monitor",
+      MYSQL_MONITOR_PASSWORD: ctx.shared.MYSQL_MONITOR_PASSWORD,
+      REDIS_ENDPOINT: "${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379",
+      REDIS_PASSWORD: "${{Redis.REDIS_PASSWORD}}",
+    },
   });
 
   // Guarda as metricas (busca no collector, porta 8889). A imagem roda sem root e o volume do

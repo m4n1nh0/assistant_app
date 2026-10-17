@@ -28,6 +28,11 @@ services:
       - "6334:6334"
     volumes:
       - assistant_qdrant:/qdrant/storage
+    # O prometheus.yml usa o nome de rede do Railway para ler o /metrics do Qdrant.
+    networks:
+      default:
+        aliases:
+          - qdrant.railway.internal
 
   redis:
     image: redis:7-alpine
@@ -247,6 +252,14 @@ services:
       - "4317:4317"
     volumes:
       - ./infra/otel-collector/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    # De onde ele le a saude do MySQL e do Redis. Aqui, so em desenvolvimento, usa o root do
+    # MySQL; no Railway o certo e um usuario so de leitura (veja deploy-railway.md).
+    environment:
+      - MYSQL_ENDPOINT=mysql:3306
+      - MYSQL_MONITOR_USER=root
+      - MYSQL_MONITOR_PASSWORD=assistant-root
+      - REDIS_ENDPOINT=redis:6379
+      - REDIS_PASSWORD=
     networks:
       default:
         aliases:
