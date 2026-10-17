@@ -37,6 +37,20 @@ A página é pensada primeiro para o celular: uma coluna, abas rolando na horizo
 (a partir de ~1000 px) ela ocupa a janela: abas viram um menu lateral fixo e o conteúdo vira uma
 grade de cartões que ganha colunas conforme a largura (até ~1560 px).
 
+Depois de entrar, o campo de matrícula some e fica o link **Sair**. As abas:
+
+- **Início:** o que importa agora (atividades a entregar, próximo atendimento, última aula,
+  pontos e último quiz), com atalho para cada aba.
+- **Agenda:** linha do tempo por dia com as aulas das últimas duas semanas, os prazos da
+  mentoria e os atendimentos dos próximos 28 dias. Dias passados aparecem esmaecidos.
+- **Aulas, Pontos e Materiais:** busca sem acento, filtro por disciplina (com agrupamento quando
+  são várias) e ordem por data.
+- **Leitor de material:** o texto extraído é estruturado em títulos, listas e parágrafos, com
+  índice pelos títulos e botão para fechar.
+
+A aba aberta fica no endereço (`#materiais`): o botão voltar do navegador funciona e o link só
+abre a aba depois que o aluno entra com a matrícula.
+
 ## Acesso e privacidade
 
 O acesso é **só pela matrícula**, por escolha. Isso tem um custo: quem souber a matrícula de
