@@ -58,7 +58,7 @@ export default defineRailway((ctx) => {
     replicas: { [REGION]: 1 },
     env: {
       MYSQL_ENDPOINT: "${{mysql.RAILWAY_PRIVATE_DOMAIN}}:3306",
-      MYSQL_MONITOR_USER: "assistant",
+      MYSQL_MONITOR_USER: "monitor",
       MYSQL_MONITOR_PASSWORD: ctx.shared.MYSQL_MONITOR_PASSWORD,
       REDIS_ENDPOINT: "${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379",
       REDIS_PASSWORD: "${{Redis.REDIS_PASSWORD}}",
