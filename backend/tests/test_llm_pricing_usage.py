@@ -421,6 +421,39 @@ def test_historico_por_dia_e_copiado_para_a_tabela_por_hora(sessions):
     assert [(r.bucket, r.tenant_id, r.provider, r.calls, r.errors) for r in linhas] == [
         (datetime(2026, 10, 5), "t1", "claude", 4, 1), (datetime(2026, 10, 6), "", "gpt", 2, 2)]
     assert linhas[0].cost_usd == 0.12 and linhas[0].input_tokens == 100
+    # O que veio da tabela por dia e marcado: nao diz a hora das chamadas.
+    assert all(r.legacy is True for r in linhas)
+
+
+def test_consumo_novo_nunca_e_marcado_como_historico(sessions):
+    async def caso(db):
+        await usage_service.add_usage(db, uso(), "t1", bucket=H10)
+        return (await db.execute(select(LLMUsageHourlyModel))).scalars().one()
+
+    assert roda(sessions, caso).legacy is False
+
+
+def test_linha_copiada_antes_da_marca_so_e_marcada_sem_somar_de_novo(sessions):
+    async def caso(db):
+        # Estado da producao logo apos a primeira copia, antes de a coluna `legacy` existir: a linha
+        # esta na tabela por hora (no inicio do dia), sem marca, e a antiga continua la.
+        db.add(LLMUsageHourlyModel(
+            bucket=datetime(2026, 10, 5), tenant_id="t1", provider="claude", model="sonnet",
+            calls=4, errors=0, unpriced_calls=0, input_tokens=1, output_tokens=1, cached_tokens=0,
+            cost_usd=0.1, legacy=False))
+        db.add(LLMUsageDailyModel(day="2026-10-05", tenant_id="t1", provider="claude", model="sonnet",
+                                  calls=4, errors=0, unpriced_calls=0, input_tokens=1,
+                                  output_tokens=1, cached_tokens=0, cost_usd=0.1))
+        await db.commit()
+        marcadas = await usage_service.migrate_legacy_daily(db)
+        depois = await usage_service.migrate_legacy_daily(db)
+        linha = (await db.execute(select(LLMUsageHourlyModel))).scalars().one()
+        return marcadas, depois, linha
+
+    marcadas, depois, linha = roda(sessions, caso)
+
+    assert (marcadas, depois) == (1, 0)
+    assert linha.legacy is True and linha.calls == 4  # marcada, e nao somada de novo
 
 
 def test_a_copia_corrige_o_sem_preco_inflado_pelas_falhas(sessions):

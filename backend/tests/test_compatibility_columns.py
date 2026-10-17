@@ -164,3 +164,37 @@ def test_alter_que_falhou_de_verdade_interrompe_o_boot(monkeypatch):
 
     with pytest.raises(OperationalError):
         database._widen_material_content(_Racing())
+
+
+def test_tabela_de_consumo_por_hora_ganha_a_coluna_legacy_sem_perder_linhas(tmp_path):
+    """Como em producao: a tabela ja existe sem `legacy` e tem consumo gravado."""
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    async def roda():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/c.db")
+        async with engine.begin() as conn:
+            await conn.execute(text(
+                "CREATE TABLE llm_usage_hourly (id VARCHAR(64) PRIMARY KEY, bucket DATETIME NOT NULL, "
+                "tenant_id VARCHAR(64) NOT NULL DEFAULT '', provider VARCHAR(32) NOT NULL, "
+                "model VARCHAR(160) NOT NULL DEFAULT '', calls INTEGER NOT NULL DEFAULT 0, "
+                "errors INTEGER NOT NULL DEFAULT 0, unpriced_calls INTEGER NOT NULL DEFAULT 0, "
+                "input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, "
+                "cached_tokens INTEGER NOT NULL DEFAULT 0, cost_usd FLOAT NOT NULL DEFAULT 0)"))
+            await conn.execute(text(
+                "INSERT INTO llm_usage_hourly (id, bucket, provider, calls) "
+                "VALUES ('a', '2026-10-05 00:00:00', 'claude', 4)"))
+            await conn.run_sync(database._add_compatibility_columns)
+            # Rodar de novo (todo boot roda) nao pode falhar nem duplicar.
+            await conn.run_sync(database._add_compatibility_columns)
+            row = (await conn.execute(text(
+                "SELECT calls, legacy FROM llm_usage_hourly WHERE id = 'a'"))).one()
+        await engine.dispose()
+        return row
+
+    calls, legacy = asyncio.run(roda())
+
+    assert calls == 4          # a linha antiga continua la
+    assert not legacy          # e entra sem a marca (a copia a marca depois)

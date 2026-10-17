@@ -1071,6 +1071,9 @@ class LLMUsageHourlyModel(Base):
     output_tokens = Column(Integer, nullable=False, default=0)
     cached_tokens = Column(Integer, nullable=False, default=0)
     cost_usd      = Column(Float, nullable=False, default=0.0)
+    # Linha copiada da tabela por dia: o total do dia, posto no inicio dele. Nao diz a hora em que as
+    # chamadas aconteceram, entao o grafico hora a hora a deixa de fora (os totais a incluem).
+    legacy        = Column(Boolean, nullable=False, default=False)
 
 
 class LLMUsageDailyModel(Base):
@@ -1752,6 +1755,9 @@ def _add_compatibility_columns(sync_conn) -> None:
         },
         "research_participants": {
             "status": "VARCHAR(12) NOT NULL DEFAULT 'accepted'",
+        },
+        "llm_usage_hourly": {
+            "legacy": "BOOLEAN NOT NULL DEFAULT FALSE",
         },
         "attendance_rosters": {
             "class_group_id": "VARCHAR(64) NULL",

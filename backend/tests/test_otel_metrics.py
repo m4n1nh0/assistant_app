@@ -155,3 +155,34 @@ def test_sem_metricas_ligadas_nada_quebra():
 
     otel.record_http_metric("GET", "/x", 200, 1.0)
     record_usage(build_usage("claude", input_tokens=1))
+
+
+# --- faixas dos histogramas --------------------------------------------------------------------
+
+
+def limites(reader, nome):
+    """Limites das faixas do histograma `nome`, como foram exportados."""
+    dados = reader.get_metrics_data()
+    for recurso in dados.resource_metrics:
+        for escopo in recurso.scope_metrics:
+            for metrica in escopo.metrics:
+                if metrica.name == nome:
+                    return tuple(metrica.data.data_points[0].explicit_bounds)
+    return None
+
+
+def test_a_duracao_de_chamada_a_modelo_cobre_acima_de_10_segundos(reader):
+    # Com as faixas padrao do SDK (ate 10 s), uma chamada de 30 s caia no balde "acima de tudo" e o
+    # p95 do grafico ficava preso em 10 s.
+    record_usage(build_usage("claude", model="sonnet", input_tokens=1, duration_ms=45_000.0))
+
+    bounds = limites(reader, "assistant.llm.duration")
+
+    assert bounds == otel.LLM_DURATION_BUCKETS_MS
+    assert max(bounds) >= 60_000
+
+
+def test_a_duracao_http_tambem_passa_dos_10_segundos(reader):
+    otel.record_http_metric("POST", "/education/materials/{material_id}/improve", 200, 42_000.0)
+
+    assert limites(reader, "assistant.http.request.duration") == otel.HTTP_DURATION_BUCKETS_MS

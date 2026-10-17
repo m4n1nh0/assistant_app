@@ -147,6 +147,13 @@ def shutdown() -> None:
 
 _EXPORT_INTERVAL_MS = 15_000
 
+# Faixas dos histogramas de duracao, em ms. As do SDK terminam em 10 s: uma chamada de modelo que
+# leva 30 s cai no balde "acima de tudo", e o p95 fica preso em 10 s no grafico (parece que nada
+# demora mais que isso). Estas cobrem de meio segundo a dois minutos, que e onde uma chamada a
+# modelo de linguagem de fato varia.
+LLM_DURATION_BUCKETS_MS = (250, 500, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 60_000, 120_000)
+HTTP_DURATION_BUCKETS_MS = (5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 120_000)
+
 
 def _setup_metrics(*, service_name: str, endpoint: str, reader: Any = None) -> bool:
     """Liga o exportador de metricas OTLP. `reader` existe para os testes injetarem um leitor."""
@@ -154,6 +161,7 @@ def _setup_metrics(*, service_name: str, endpoint: str, reader: Any = None) -> b
     try:
         from opentelemetry import metrics
         from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
         from opentelemetry.sdk.resources import Resource
 
         if reader is None:
@@ -173,6 +181,16 @@ def _setup_metrics(*, service_name: str, endpoint: str, reader: Any = None) -> b
         provider = MeterProvider(
             resource=Resource.create({"service.name": service_name}),
             metric_readers=[reader],
+            views=[
+                View(
+                    instrument_name="assistant.llm.duration",
+                    aggregation=ExplicitBucketHistogramAggregation(LLM_DURATION_BUCKETS_MS),
+                ),
+                View(
+                    instrument_name="assistant.http.request.duration",
+                    aggregation=ExplicitBucketHistogramAggregation(HTTP_DURATION_BUCKETS_MS),
+                ),
+            ],
         )
         meter = provider.get_meter(service_name)
         _instruments.clear()

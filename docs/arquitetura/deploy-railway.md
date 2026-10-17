@@ -359,14 +359,22 @@ pasta *Assistant*:
 | `Prometheus` | o Prometheus do projeto | latência, requisições HTTP, operações e a saúde dos bancos |
 | `App (MySQL)` | o banco da aplicação, com o usuário `monitor` | o consumo de IA, exato |
 
-O painel **Assistant · consumo de IA e saúde** se comporta assim em relação ao seletor de período do alto:
+O painel **Assistant · consumo de IA e saúde** tem três comportamentos de período, para o dado não sumir
+quando alguém encurta o seletor de tempo do alto para olhar a latência de uma hora:
 
-- **Totais e tabelas** (custo, tokens, chamadas, falhas, por modelo e por cliente) seguem o seletor.
-- **Linhas do tempo** têm **período próprio** e não dependem dele: tokens das últimas 24 horas hora a
-  hora, e dos últimos 30 dias dia a dia, a participação de cada provedor (em %), o custo por dia, a taxa
-  de falha por provedor (em %) e as chamadas que deram certo x as que falharam. Assim nunca ficam
-  vazias por causa de uma janela curta: o dado é por hora, e uma janela de minutos não tem barra para
-  mostrar.
+- **Totais e tabelas** (custo, tokens, chamadas, falhas, sem preço, clientes, por modelo e por cliente)
+  seguem a lista **"Período do consumo"** (24 horas, 7, 30 ou 90 dias; padrão 30), e **não** o seletor
+  de tempo. É uma janela móvel em UTC, o fuso em que as horas são guardadas.
+- **Linhas do tempo do consumo** têm **período próprio**: tokens das últimas 24 horas hora a hora, e dos
+  últimos 30 dias dia a dia, a participação de cada provedor (em %), o custo por dia, a taxa de falha por
+  provedor (em %) e as chamadas que deram certo x as que falharam. O consumo anterior à tabela por hora
+  só tem o total do dia, então aparece nos gráficos dia a dia, e não no hora a hora.
+- **Latência e saúde** (Prometheus) seguem o seletor de tempo do alto, porque é com ele que se olha um
+  incidente. O padrão é 6 horas.
+
+As faixas dos histogramas de duração (chamadas a modelos e requisições HTTP) vão de meio segundo a dois
+minutos. As do SDK terminam em 10 segundos, e uma chamada de 30 segundos fazia o p95 do gráfico ficar
+preso em 10 s.
 
 A fonte `App (MySQL)` lê as variáveis `GRAFANA_DB_HOST`, `GRAFANA_DB_NAME`, `GRAFANA_DB_USER` e
 `GRAFANA_DB_PASSWORD` do **serviço do Grafana** (o IaC já as define; no painel, preencha à mão). Sem

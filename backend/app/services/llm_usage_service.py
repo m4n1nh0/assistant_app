@@ -152,6 +152,10 @@ async def migrate_legacy_daily(db: AsyncSession) -> int:
     copia a linha cujo (hora, cliente, provedor, modelo) ainda nao existe na tabela nova, entao
     repetir nao duplica. A tabela antiga so e lida, e nao recebe mais gravacao.
 
+    Toda linha copiada leva `legacy=True`: ela e o total do dia posto no inicio dele, e nao diz a
+    hora das chamadas, entao o grafico hora a hora a ignora (os totais a contam). Linhas que ja
+    tinham sido copiadas antes de existir a marca tambem sao marcadas, e isso conta como copia.
+
     No caminho, corrige o "sem preco" do historico: a regra antiga contava toda falha como sem
     preco, e a nova so conta a chamada que deu certo e ficou sem custo. Como toda falha antiga
     foi contada, tirar `errors` de `unpriced_calls` deixa o numero certo.
@@ -160,10 +164,8 @@ async def migrate_legacy_daily(db: AsyncSession) -> int:
     if not legacy:
         return 0
     existing = {
-        (row.bucket, row.tenant_id, row.provider, row.model or "")
-        for row in (await db.execute(select(
-            LLMUsageHourlyModel.bucket, LLMUsageHourlyModel.tenant_id,
-            LLMUsageHourlyModel.provider, LLMUsageHourlyModel.model))).all()
+        (row.bucket, row.tenant_id, row.provider, row.model or ""): row
+        for row in (await db.execute(select(LLMUsageHourlyModel))).scalars().all()
     }
     copied = 0
     for old in legacy:
@@ -173,13 +175,18 @@ async def migrate_legacy_daily(db: AsyncSession) -> int:
             continue
         key = (bucket, old.tenant_id or "", old.provider, old.model or "")
         if key in existing:
+            # Ja copiada antes de existir a marca: so falta marcar (e nao soma de novo).
+            if not existing[key].legacy:
+                existing[key].legacy = True
+                copied += 1
             continue
         values = {name: getattr(old, name) or 0 for name in _SUMS}
         values["unpriced_calls"] = max(values["unpriced_calls"] - values["errors"], 0)
-        db.add(LLMUsageHourlyModel(
+        row = LLMUsageHourlyModel(
             bucket=bucket, tenant_id=old.tenant_id or "", provider=old.provider,
-            model=old.model or "", **values))
-        existing.add(key)
+            model=old.model or "", legacy=True, **values)
+        db.add(row)
+        existing[key] = row
         copied += 1
     if copied:
         await db.commit()

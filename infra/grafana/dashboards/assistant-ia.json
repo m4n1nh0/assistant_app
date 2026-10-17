@@ -7,17 +7,17 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "refresh": "5m",
   "time": {
-    "from": "now-7d",
+    "from": "now-6h",
     "to": "now"
   },
   "panels": [
     {
       "id": 1,
       "type": "row",
-      "title": "Consumo de IA (exato, do banco) · o seletor de período vale para os totais e as tabelas; as linhas do tempo têm período próprio",
+      "title": "Consumo de IA (exato, do banco) · totais e tabelas seguem a lista \"Período do consumo\"; as linhas do tempo têm período próprio",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -31,7 +31,7 @@
       "id": 2,
       "type": "stat",
       "title": "Custo estimado",
-      "description": "Tokens x preço de tabela do modelo (aba Preços do app). É uma estimativa: o valor real depende do seu contrato.",
+      "description": "No período escolhido na lista \"Período do consumo\". Tokens x preço de tabela do modelo (aba Preços do app): é uma estimativa, e o valor real depende do seu contrato.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -51,7 +51,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
           "refId": "A"
         }
       ],
@@ -111,7 +111,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
           "refId": "A"
         }
       ],
@@ -171,7 +171,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
           "refId": "A"
         }
       ],
@@ -231,7 +231,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
           "refId": "A"
         }
       ],
@@ -291,7 +291,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY",
           "refId": "A"
         }
       ],
@@ -351,7 +351,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND tenant_id <> ''",
+          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY AND tenant_id <> ''",
           "refId": "A"
         }
       ],
@@ -391,7 +391,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Tokens: últimas 24 horas, hora a hora",
-      "description": "Entrada + saída por provedor, uma barra por hora. Período fixo de 24 horas: não muda com o seletor.",
+      "description": "Entrada + saída por provedor, uma barra por hora. Período fixo de 24 horas: não muda com o seletor. O consumo anterior à tabela por hora só tem o total do dia, então aparece nos gráficos dia a dia, e não neste.",
       "datasource": {
         "type": "mysql",
         "uid": "appdb"
@@ -411,14 +411,14 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND legacy = 0 GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "sem consumo no período",
+          "noValue": "sem consumo por hora nas últimas 24 horas",
           "custom": {
             "drawStyle": "bars",
             "barAlignment": 0,
@@ -564,11 +564,9 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
-          "calcs": [
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -792,7 +790,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
+          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
           "refId": "A"
         }
       ],
@@ -918,7 +916,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
+          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= UTC_TIMESTAMP() - INTERVAL ${dias} DAY GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
           "refId": "A"
         }
       ],
@@ -1023,7 +1021,7 @@
     {
       "id": 16,
       "type": "row",
-      "title": "Latência e saúde (Prometheus) · pontos aparecem conforme há chamadas",
+      "title": "Latência e saúde (Prometheus) · seguem o seletor de tempo do alto, e pontos aparecem conforme há chamadas",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1365,7 +1363,44 @@
     }
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "dias",
+        "label": "Período do consumo",
+        "type": "custom",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "query": "Últimas 24 horas : 1,7 dias : 7,30 dias : 30,90 dias : 90",
+        "current": {
+          "selected": true,
+          "text": "30 dias",
+          "value": "30"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "Últimas 24 horas",
+            "value": "1"
+          },
+          {
+            "selected": false,
+            "text": "7 dias",
+            "value": "7"
+          },
+          {
+            "selected": true,
+            "text": "30 dias",
+            "value": "30"
+          },
+          {
+            "selected": false,
+            "text": "90 dias",
+            "value": "90"
+          }
+        ]
+      }
+    ]
   },
   "annotations": {
     "list": []
