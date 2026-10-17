@@ -209,7 +209,7 @@ pronta. Por isso cada serviço sai de um Dockerfile que copia a configuração p
 | Campo | Valor |
 |---|---|
 | Source | mesmo repositório e mesma branch |
-| Root Directory | `/infra` |
+| Root Directory | vazio (raiz do repositório) |
 | Dockerfile Path | `/infra/Dockerfile.otel-collector` |
 | Watch Paths | `/infra/otel-collector.yaml` e `/infra/Dockerfile.otel-collector` |
 | Domínio público | **não**: só a rede privada recebe telemetria |

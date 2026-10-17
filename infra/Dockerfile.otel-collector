@@ -4,10 +4,10 @@
 # repositorio numa imagem pronta. Aqui o mesmo arquivo e copiado para dentro da imagem, e a
 # versao do collector e a mesma do compose.
 #
-# Root Directory: /infra
+# Root Directory: (vazio - raiz do repositorio)
 # Dockerfile Path: /infra/Dockerfile.otel-collector
 FROM otel/opentelemetry-collector-contrib:0.115.1
 
-COPY otel-collector.yaml /etc/otelcol-contrib/config.yaml
+COPY infra/otel-collector.yaml /etc/otelcol-contrib/config.yaml
 
 EXPOSE 4317 4318
