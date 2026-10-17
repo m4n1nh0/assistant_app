@@ -51,7 +51,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND)",
           "refId": "A"
         }
       ],
@@ -111,7 +111,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND)",
           "refId": "A"
         }
       ],
@@ -171,7 +171,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND)",
           "refId": "A"
         }
       ],
@@ -231,7 +231,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(errors) / NULLIF(SUM(calls), 0), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND)",
           "refId": "A"
         }
       ],
@@ -291,7 +291,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo()",
+          "rawSql": "SELECT COALESCE(SUM(unpriced_calls), 0) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND)",
           "refId": "A"
         }
       ],
@@ -351,7 +351,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND tenant_id <> ''",
+          "rawSql": "SELECT COUNT(DISTINCT tenant_id) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) AND tenant_id <> ''",
           "refId": "A"
         }
       ],
@@ -411,7 +411,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "rawSql": "SELECT (TIMESTAMPDIFF(SECOND, '1970-01-01', bucket) DIV ($__interval_ms DIV 1000)) * ($__interval_ms DIV 1000) AS time, provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -474,7 +474,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
+          "rawSql": "SELECT (TIMESTAMPDIFF(SECOND, '1970-01-01', bucket) DIV ($__interval_ms DIV 1000)) * ($__interval_ms DIV 1000) AS time, CONCAT(provider, ' / ', IF(model = '', '(sem modelo)', model)) AS metric, SUM(cost_usd) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(cost_usd) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -537,7 +537,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
+          "rawSql": "SELECT (TIMESTAMPDIFF(SECOND, '1970-01-01', bucket) DIV ($__interval_ms DIV 1000)) * ($__interval_ms DIV 1000) AS time, provider AS metric, SUM(input_tokens + output_tokens) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(input_tokens + output_tokens) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -598,7 +598,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), SUM(calls - errors) AS \"Deram certo\", SUM(errors) AS \"Falharam\" FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT (TIMESTAMPDIFF(SECOND, '1970-01-01', bucket) DIV ($__interval_ms DIV 1000)) * ($__interval_ms DIV 1000) AS time, SUM(calls - errors) AS \"Deram certo\", SUM(errors) AS \"Falharam\" FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -661,7 +661,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(bucket, $__interval), provider AS metric, SUM(errors) / SUM(calls) AS value FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(calls) > 0 ORDER BY 1",
+          "rawSql": "SELECT (TIMESTAMPDIFF(SECOND, '1970-01-01', bucket) DIV ($__interval_ms DIV 1000)) * ($__interval_ms DIV 1000) AS time, provider AS metric, SUM(errors) / SUM(calls) AS value FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) AND (legacy = 0 OR $__interval_ms >= 86400000) GROUP BY 1, 2 HAVING SUM(calls) > 0 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -726,7 +726,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
+          "rawSql": "SELECT provider AS Provedor, IF(model = '', '(sem modelo)', model) AS Modelo, SUM(calls) AS Chamadas, SUM(errors) AS Falhas, SUM(input_tokens) AS Entrada, SUM(output_tokens) AS Saida, SUM(cost_usd) AS Custo FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) GROUP BY provider, model ORDER BY Custo DESC, Chamadas DESC",
           "refId": "A"
         }
       ],
@@ -852,7 +852,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= DATE_FORMAT($__timeFrom(), '%Y-%m-%d %H:00:00') AND bucket <= $__timeTo() GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
+          "rawSql": "SELECT COALESCE(u.email, u.username, IF(a.tenant_id = '', '(sem conta)', a.tenant_id)) AS Cliente, a.calls AS Chamadas, a.errors AS Falhas, a.tin AS Entrada, a.tout AS Saida, a.cost AS Custo FROM (SELECT tenant_id, SUM(calls) AS calls, SUM(errors) AS errors, SUM(input_tokens) AS tin, SUM(output_tokens) AS tout, SUM(cost_usd) AS cost FROM llm_usage_hourly WHERE bucket >= DATE_ADD('1970-01-01', INTERVAL ($__unixEpochFrom() DIV 3600) * 3600 SECOND) AND bucket <= DATE_ADD('1970-01-01', INTERVAL $__unixEpochTo() SECOND) GROUP BY tenant_id) a LEFT JOIN (SELECT tutor_id, MIN(email) AS email, MIN(username) AS username FROM users GROUP BY tutor_id) u ON u.tutor_id = a.tenant_id ORDER BY a.cost DESC, a.calls DESC",
           "refId": "A"
         }
       ],

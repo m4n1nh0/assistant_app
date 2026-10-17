@@ -367,6 +367,8 @@ Os dois painéis são dinâmicos: **tudo segue o seletor de tempo do alto** (pad
   período, e nunca é menor que 1 hora, que é como o dado é guardado. O consumo anterior à tabela por hora só
   tem o total do dia, então só aparece quando o passo é de um dia ou mais.
 - **Latência e saúde** (Prometheus) seguem o mesmo seletor.
+- **Fuso horário:** o consumo é guardado em UTC. As consultas do Grafana contam a partir da época (1970-01-01, UTC),
+  e não do fuso da sessão do MySQL, então o período certo aparece qualquer que seja o fuso do banco ou do navegador.
 
 O painel **Assistant · MySQL, Redis e Qdrant** segue o seletor de tempo do alto em tudo (padrão 24 horas),
 sem períodos escondidos. Dois ajustes evitam o quadro vazio:
