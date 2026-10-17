@@ -410,16 +410,44 @@ Como cada um chega ao Grafana:
 | Redis | receptor `redis` do collector, a cada 30 s | o endereço e a senha do serviço |
 | Qdrant | o Prometheus lê o `/metrics` dele | só o nome de rede `qdrant.railway.internal` |
 
-**1. Usuário de leitura no MySQL.** Rode uma vez, com um usuário administrador (no serviço `mysql`,
-aba *Data* ou *Connect*), trocando a senha por uma forte:
+**1. Usuário de leitura no MySQL.** Rode uma vez, no terminal do serviço `mysql` (o *Console* do
+serviço no painel, ou `railway ssh --service mysql`). O terminal do container é um **bash**, e o SQL só
+funciona dentro do cliente `mysql`: colar o `CREATE USER` direto no bash dá `command not found` (e
+nada é criado).
 
-```sql
-CREATE USER 'monitor'@'%' IDENTIFIED BY '<senha forte>';
-GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'monitor'@'%';
-```
+1. Entre no cliente como administrador:
+
+   ```bash
+   mysql -uroot -p"$MYSQL_ROOT_PASSWORD"
+   ```
+
+   O prompt muda para `mysql>`. Se der `Access denied` ou a variável estiver vazia, confira em
+   *Variables* do serviço `mysql` qual é a senha do administrador (`MYSQL_ROOT_PASSWORD`): o
+   usuário da aplicação (`MYSQL_USER`) provavelmente não tem permissão para criar usuários.
+
+2. No prompt `mysql>`, rode as duas linhas, **trocando `SUA-SENHA-AQUI` pela senha de verdade**
+   (use uma senha forte, sem aspas simples nem barras invertidas, usada só para isso):
+
+   ```sql
+   CREATE USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';
+   GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'monitor'@'%';
+   ```
+
+   Se o usuário já existir (`ERROR 1396`), troque o `CREATE USER` por
+   `ALTER USER 'monitor'@'%' IDENTIFIED BY 'SUA-SENHA-AQUI';`.
+
+3. Confira e saia:
+
+   ```sql
+   SHOW GRANTS FOR 'monitor'@'%';
+   exit
+   ```
+
+   A saída deve listar `PROCESS, REPLICATION CLIENT` e o `SELECT`.
 
 Esse usuário só lê estatísticas e não escreve em nada. Não use o usuário da aplicação: ele tem mais
-permissão do que a monitoria precisa, e a senha dele ficaria espalhada em mais um serviço.
+permissão do que a monitoria precisa, e a senha dele ficaria espalhada em mais um serviço. Não cole a
+senha em chat nem em arquivo do repositório: o comando fica no histórico do terminal do container.
 
 **2. Variável compartilhada.** Em *Project Settings > Shared Variables*, crie
 `MYSQL_MONITOR_PASSWORD` com a mesma senha. O IaC a referencia, e ela não vai para o repositório.
@@ -485,6 +513,7 @@ container novo: depois de ligar, faça um redeploy.
 | Painel sem dados de tokens e custo | ninguém chamou um modelo ainda, ou `OTEL_ENABLED` está `false` na `assistant-api` | disparar um resumo e conferir a variável |
 | `permission denied` no boot do Prometheus ou do Grafana | a imagem roda sem root e o volume monta como root | `RAILWAY_RUN_UID="0"` (o IaC já define) |
 | Painel de infra sem dados do MySQL; log do collector com `access denied` | usuário `monitor` não existe, ou a senha de `MYSQL_MONITOR_PASSWORD` é outra | criar o usuário e a variável compartilhada com a mesma senha |
+| `CREATE: command not found` ao criar o usuário `monitor` | o SQL foi colado no bash do container, não no cliente do MySQL | `mysql -uroot -p"$MYSQL_ROOT_PASSWORD"` e colar no prompt `mysql>` |
 | Painel de infra sem dados do Redis; log com `NOAUTH` ou `WRONGPASS` | `REDIS_PASSWORD` não resolveu (nome da variável diferente no template) | conferir *Redis > Variables* e o nome no `railway.ts` |
 | `up{job="qdrant"}` em `0`, ou o Qdrant nunca mais dorme | o Qdrant dormiu e a leitura falhou, ou o monitoramento o mantém acordado | desligar o serverless do Qdrant, ou tirar o `job_name: qdrant` do `prometheus.yml` |
 
