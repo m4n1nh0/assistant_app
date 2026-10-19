@@ -1350,17 +1350,80 @@ class LessonSegmentUpdate(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
 
 
+def _iso_day(value: Optional[str], field: str) -> Optional[str]:
+    """Valida uma data `AAAA-MM-DD`; vazio e aceito e significa "limpar"."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return ""
+    try:
+        from datetime import date as _date
+
+        return _date.fromisoformat(text).isoformat()
+    except ValueError:
+        raise ValueError(f"{field} invalida. Use o formato AAAA-MM-DD")
+
+
 class SemesterUpdate(BaseModel):
-    """Ativacao ou desativacao de um semestre."""
-    active: bool
+    """Alteracao de um semestre: ativar ou encerrar, e/ou definir o periodo das aulas.
+
+    Todo campo e opcional e so o que vier e alterado. `start_date` e `end_date` vazios limpam o
+    periodo.
+    """
+    active: Optional[bool] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _valid_period(self):
+        self.start_date = _iso_day(self.start_date, "Data de inicio")
+        self.end_date = _iso_day(self.end_date, "Data de fim")
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("O fim do semestre deve ser igual ou posterior ao inicio")
+        return self
 
 
 class SemesterResponse(BaseModel):
-    """Semestre com a contagem de disciplinas e turmas."""
+    """Semestre com a contagem de disciplinas e turmas, o periodo das aulas e as datas sem aula."""
     code: str
     active: bool
     discipline_count: int = 0
     class_count: int = 0
+    start_date: str = ""
+    end_date: str = ""
+    break_count: int = 0
+
+
+class ClassBreakCreate(BaseModel):
+    """Data (ou intervalo) sem aula. `class_group_id` vazio vale para todas as turmas."""
+    date_from: str
+    date_to: Optional[str] = None
+    class_group_id: Optional[str] = None
+    reason: str = Field(default="", max_length=255)
+
+    @model_validator(mode="after")
+    def _valid_range(self):
+        self.date_from = _iso_day(self.date_from, "Data") or ""
+        if not self.date_from:
+            raise ValueError("Informe a data")
+        self.date_to = _iso_day(self.date_to, "Data final") or self.date_from
+        if self.date_to < self.date_from:
+            raise ValueError("A data final deve ser igual ou posterior a inicial")
+        self.class_group_id = (self.class_group_id or "").strip() or None
+        self.reason = self.reason.strip()
+        return self
+
+
+class ClassBreakResponse(BaseModel):
+    """Data (ou intervalo) sem aula, com a turma a que se aplica."""
+    id: str
+    semester: str
+    date_from: str
+    date_to: str
+    class_group_id: Optional[str] = None
+    class_label: str = ""
+    reason: str = ""
 
 
 class LessonPointResponse(BaseModel):

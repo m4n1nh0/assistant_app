@@ -504,6 +504,45 @@ class ClassScheduleModel(Base):
     end_time       = Column(String(5), nullable=False, default="")
 
 
+class SemesterPeriodModel(Base):
+    """Inicio e fim das aulas de um semestre letivo, por professor.
+
+    O semestre em si e so um rotulo ("2026.2") nas disciplinas e turmas; esta tabela guarda o
+    periodo em que ele vale. Datas vazias significam "nao informado": o horario semanal continua
+    valendo, mas ninguem sabe quando o semestre comeca ou termina.
+    """
+
+    __tablename__ = "semester_periods"
+    __table_args__ = (
+        UniqueConstraint("tutor_id", "code", name="uq_semester_period_tutor_code"),
+    )
+    id         = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id   = Column(String(64), nullable=False, index=True)
+    code       = Column(String(16), nullable=False)
+    start_date = Column(String(10), nullable=False, default="")
+    end_date   = Column(String(10), nullable=False, default="")
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ClassBreakModel(Base):
+    """Data, ou intervalo de datas, sem aula: feriado, recesso, aula cancelada.
+
+    `class_group_id` vazio vale para todas as turmas do semestre; preenchido, so para aquela.
+    O horario semanal repete toda semana e nao conhece excecoes: sao estas linhas que dizem em que
+    dia ele nao vale.
+    """
+
+    __tablename__ = "class_breaks"
+    id             = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tutor_id       = Column(String(64), nullable=False, index=True)
+    semester       = Column(String(16), nullable=False, index=True)
+    date_from      = Column(String(10), nullable=False)
+    date_to        = Column(String(10), nullable=False)
+    class_group_id = Column(String(64), nullable=True, index=True)
+    reason         = Column(String(255), nullable=False, default="")
+    created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class ClassCalendarSeriesModel(Base):
     """Serie semanal criada no calendario externo a partir de um horario."""
 

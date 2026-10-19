@@ -37,6 +37,7 @@ import 'meetings_tab.dart';
 import 'education_dashboard.dart';
 import 'lesson_recovery_banner.dart';
 import 'recording_monitor.dart';
+import 'semester_period_dialog.dart';
 import 'quiz_generator_widget.dart';
 import 'materials_panel.dart';
 import 'quiz_center.dart';
@@ -5665,6 +5666,7 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
   final _semesterCtrl = TextEditingController(text: _currentSemesterCode());
 
   late List<Discipline> _disciplines = List.of(widget.disciplines);
+  List<Semester> _semesterInfo = const [];
   var _status = '';
 
   @override
@@ -5684,7 +5686,13 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
   Future<void> _reload() async {
     try {
       final disciplines = await education.listDisciplines(activeOnly: false);
-      if (mounted) setState(() => _disciplines = disciplines);
+      final semesters = await education.listSemesters();
+      if (mounted) {
+        setState(() {
+          _disciplines = disciplines;
+          _semesterInfo = semesters;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _status = 'Falha ao carregar: $e');
     }
@@ -5916,18 +5924,51 @@ class _DisciplinesDialogState extends State<_DisciplinesDialog> {
                       final active = _disciplines.any(
                         (item) => item.semester == semester && item.active,
                       );
-                      return OutlinedButton.icon(
-                        onPressed: () => _setSemesterActive(semester, !active),
-                        icon: Icon(
-                          active
-                              ? Icons.archive_outlined
-                              : Icons.unarchive_outlined,
-                          size: 14,
-                        ),
-                        label: Text(
-                          '${active ? "ENCERRAR" : "REABRIR"} $semester',
-                          style: const TextStyle(fontSize: 10),
-                        ),
+                      final info = _semesterInfo
+                          .where((item) => item.code == semester)
+                          .toList();
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () =>
+                                _setSemesterActive(semester, !active),
+                            icon: Icon(
+                              active
+                                  ? Icons.archive_outlined
+                                  : Icons.unarchive_outlined,
+                              size: 14,
+                            ),
+                            label: Text(
+                              '${active ? "ENCERRAR" : "REABRIR"} $semester',
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Tooltip(
+                            message: info.isEmpty
+                                ? 'Inicio, fim e datas sem aula'
+                                : periodSummary(info.first),
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                await showDialog<void>(
+                                  context: context,
+                                  builder: (_) =>
+                                      SemesterPeriodDialog(semester: semester),
+                                );
+                                await _reload();
+                              },
+                              icon: const Icon(Icons.date_range_outlined,
+                                  size: 14),
+                              label: Text(
+                                info.isNotEmpty && info.first.hasPeriod
+                                    ? 'PERIODO'
+                                    : 'DEFINIR PERIODO',
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                            ),
+                          ),
+                        ],
                       );
                     }),
                 ],

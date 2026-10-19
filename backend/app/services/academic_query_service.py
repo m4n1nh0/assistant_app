@@ -7,11 +7,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
-
-from ..core.database import (
-    AsyncSessionLocal, ClassGroupModel, ClassScheduleModel, DisciplineModel,
-)
+from . import academic_calendar_service as calendar
 
 
 def _plain(value: str) -> str:
@@ -79,41 +75,57 @@ def is_academic_schedule_query(
 
 
 async def academic_schedule_response(tutor_id: str, timezone_name: str) -> str:
-    """Lista as proximas quatro semanas; o tutor vem da sessao autenticada."""
-    async with AsyncSessionLocal() as db:
-        rows = (await db.execute(
-            select(ClassGroupModel, ClassScheduleModel, DisciplineModel)
-            .join(ClassScheduleModel, ClassScheduleModel.class_group_id == ClassGroupModel.id)
-            .outerjoin(DisciplineModel, DisciplineModel.id == ClassGroupModel.discipline_id)
-            .where(ClassGroupModel.tutor_id == tutor_id, ClassGroupModel.active.is_(True))
-            .order_by(ClassGroupModel.code, ClassScheduleModel.weekday)
-        )).all()
-    if not rows:
+    """Lista as proximas quatro semanas; o tutor vem da sessao autenticada.
+
+    Usa o calendario letivo: respeita o inicio e o fim do semestre e as datas sem aula
+    cadastradas. Quando o semestre nao tem periodo, diz isso em vez de afirmar o que nao sabe.
+    """
+    today = datetime.now(ZoneInfo(timezone_name)).date()
+    found = await calendar.occurrences(
+        tutor_id, today, today + timedelta(days=27), include_skipped=True
+    )
+    if not found:
         return "Não encontrei horários de aula cadastrados para suas turmas no banco interno."
 
-    today = datetime.now(ZoneInfo(timezone_name)).date()
-    entries: list[tuple] = []
-    for group, schedule, discipline in rows:
-        if not 0 <= schedule.weekday <= 6:
-            continue
-        # O horario semanal nao guarda excecoes ou limite do semestre.
-        first = today + timedelta(days=(schedule.weekday - today.weekday()) % 7)
-        for week in range(4):
-            day = first + timedelta(weeks=week)
-            if day >= today + timedelta(days=28):
-                continue
-            name = discipline.name if discipline and discipline.tutor_id == tutor_id else group.discipline
-            code = discipline.code if discipline and discipline.tutor_id == tutor_id else ""
-            label = " ".join(part for part in (code, name) if part).strip() or "Disciplina sem nome"
-            group_label = " ".join(part for part in (group.code, group.name) if part).strip()
-            hours = (f"{schedule.start_time}–{schedule.end_time}" if schedule.start_time and schedule.end_time
-                     else schedule.start_time or "horário não informado")
-            entries.append((day, schedule.start_time, label, group_label, hours))
-    entries.sort()
-    if not entries:
-        return "Encontrei turmas, mas nenhum horário semanal válido cadastrado."
-    lines = [f"- {day:%d/%m/%Y}: {label} — turma {group} — {hours}"
-             for day, _, label, group, hours in entries[:80]]
-    return ("Próximas aulas conforme os horários semanais cadastrados:\n"
-            + "\n".join(lines)
-            + "\nEssas datas são projeções da rotina semanal; feriados, cancelamentos e o fim do semestre não estão registrados nesse horário.")
+    classes = [item for item in found if item.status.has_class]
+    skipped = [item for item in found if not item.status.has_class]
+    lines = [
+        f"- {item.day:%d/%m/%Y}: {item.discipline_label} — turma {item.group_label} — "
+        + (
+            f"{item.start_time}–{item.end_time}" if item.start_time and item.end_time
+            else item.start_time or "horário não informado"
+        )
+        for item in classes[:80]
+    ]
+    text = (
+        "Próximas aulas conforme os horários semanais cadastrados:\n" + "\n".join(lines)
+        if lines
+        else "Não há aulas previstas nos próximos 28 dias."
+    )
+    if skipped:
+        text += "\nSem aula nesse período (o horário semanal cairia nesses dias):\n" + "\n".join(
+            f"- {item.day:%d/%m/%Y}: {item.discipline_label} — turma {item.group_label}: "
+            f"{item.status.reason}"
+            for item in skipped[:20]
+        )
+
+    data = None
+    notes = []
+    for semester in sorted({item.semester for item in found if item.semester}):
+        if data is None:
+            data = await _calendar(tutor_id)
+        period = data.period_of(semester)
+        if period.end is not None:
+            notes.append(f"O semestre {semester} termina em {period.end:%d/%m/%Y}.")
+        else:
+            notes.append(f"O fim do semestre {semester} não está cadastrado.")
+    if not data or not any(data.period_of(item.semester).known for item in found):
+        notes.append("Feriados e cancelamentos só aparecem se cadastrados em Disciplinas > período do semestre.")
+    return text + ("\n" + " ".join(notes) if notes else "")
+
+
+async def _calendar(tutor_id: str):
+    from ..core import database
+
+    async with database.AsyncSessionLocal() as db:
+        return await calendar.load_calendar(db, tutor_id)

@@ -39,6 +39,8 @@ from ..core.database import (
     ProjectGroupPointModel,
     MaterialSubmissionLinkModel,
     DisciplineModel,
+    ClassBreakModel,
+    SemesterPeriodModel,
     QuizModel,
     QuizParticipantModel,
     QuestionModel,
@@ -70,6 +72,8 @@ from ..models.schemas import (
     LessonSegmentResponse,
     LessonSegmentUpdate,
     LessonTranscriptImportResponse,
+    ClassBreakCreate,
+    ClassBreakResponse,
     SemesterResponse,
     SemesterUpdate,
     ExternalLessonSummaryRequest,
@@ -1714,12 +1718,32 @@ async def update_discipline(
     return _discipline_response(discipline, len(groups))
 
 
+async def _semester_periods(db: AsyncSession, tutor_id: str) -> dict[str, SemesterPeriodModel]:
+    rows = (
+        await db.execute(
+            select(SemesterPeriodModel).where(SemesterPeriodModel.tutor_id == tutor_id)
+        )
+    ).scalars().all()
+    return {row.code: row for row in rows}
+
+
+async def _break_counts(db: AsyncSession, tutor_id: str) -> dict[str, int]:
+    rows = (
+        await db.execute(
+            select(ClassBreakModel.semester, func.count(ClassBreakModel.id))
+            .where(ClassBreakModel.tutor_id == tutor_id)
+            .group_by(ClassBreakModel.semester)
+        )
+    ).all()
+    return {semester: int(count) for semester, count in rows}
+
+
 @router.get("/semesters", response_model=List[SemesterResponse])
 async def list_semesters(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Lista os semestres letivos com dados registrados."""
+    """Lista os semestres letivos com dados registrados, o periodo das aulas e as datas sem aula."""
     disciplines = list(
         (
             await db.execute(
@@ -1738,6 +1762,8 @@ async def list_semesters(
             )
         ).scalars().all()
     )
+    periods = await _semester_periods(db, user["tutor_id"])
+    breaks = await _break_counts(db, user["tutor_id"])
     codes = sorted(
         {item.semester for item in disciplines if item.semester},
         reverse=True,
@@ -1750,6 +1776,9 @@ async def list_semesters(
             ),
             discipline_count=sum(item.semester == code for item in disciplines),
             class_count=sum(item.semester == code for item in groups),
+            start_date=periods[code].start_date if code in periods else "",
+            end_date=periods[code].end_date if code in periods else "",
+            break_count=breaks.get(code, 0),
         )
         for code in codes
     ]
@@ -1762,13 +1791,17 @@ async def update_semester(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Altera o rotulo ou as datas de um semestre."""
+    """Ativa ou encerra um semestre e/ou define o periodo das aulas (inicio e fim).
+
+    So o que vier no corpo e alterado. `start_date` e `end_date` vazios limpam o periodo.
+    """
     code = _semester_code(semester)
+    tutor_id = user["tutor_id"]
     disciplines = list(
         (
             await db.execute(
                 select(DisciplineModel).where(
-                    DisciplineModel.tutor_id == user["tutor_id"],
+                    DisciplineModel.tutor_id == tutor_id,
                     DisciplineModel.semester == code,
                 )
             )
@@ -1776,23 +1809,130 @@ async def update_semester(
     )
     if not disciplines:
         raise HTTPException(404, "Semestre nao encontrado")
-    for discipline in disciplines:
-        discipline.active = body.active
+    if body.active is not None:
+        for discipline in disciplines:
+            discipline.active = body.active
+
     class_count = (
         await db.execute(
             select(func.count(ClassGroupModel.id)).where(
-                ClassGroupModel.tutor_id == user["tutor_id"],
+                ClassGroupModel.tutor_id == tutor_id,
                 ClassGroupModel.semester == code,
             )
         )
     ).scalar_one()
+    periods = await _semester_periods(db, tutor_id)
+    period = periods.get(code)
+    if body.start_date is not None or body.end_date is not None:
+        if period is None:
+            period = SemesterPeriodModel(tutor_id=tutor_id, code=code, start_date="", end_date="")
+            db.add(period)
+        if body.start_date is not None:
+            period.start_date = body.start_date
+        if body.end_date is not None:
+            period.end_date = body.end_date
+        if period.start_date and period.end_date and period.end_date < period.start_date:
+            await db.rollback()
+            raise HTTPException(422, "O fim do semestre deve ser igual ou posterior ao inicio")
+        period.updated_at = datetime.now(timezone.utc)
+
+    breaks = await _break_counts(db, tutor_id)
     await db.commit()
     return SemesterResponse(
         code=code,
-        active=body.active,
+        active=any(item.active for item in disciplines),
         discipline_count=len(disciplines),
         class_count=class_count,
+        start_date=period.start_date if period else "",
+        end_date=period.end_date if period else "",
+        break_count=breaks.get(code, 0),
     )
+
+
+async def _class_labels(db: AsyncSession, tutor_id: str) -> dict[str, str]:
+    groups = (
+        await db.execute(select(ClassGroupModel).where(ClassGroupModel.tutor_id == tutor_id))
+    ).scalars().all()
+    return {group.id: _class_label(group) for group in groups}
+
+
+def _break_response(item: ClassBreakModel, labels: dict[str, str]) -> ClassBreakResponse:
+    return ClassBreakResponse(
+        id=item.id,
+        semester=item.semester,
+        date_from=item.date_from,
+        date_to=item.date_to,
+        class_group_id=item.class_group_id,
+        class_label=labels.get(item.class_group_id or "", ""),
+        reason=item.reason or "",
+    )
+
+
+@router.get("/semesters/{semester}/breaks", response_model=List[ClassBreakResponse])
+async def list_semester_breaks(
+    semester: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Datas sem aula do semestre (feriados, recessos, aulas canceladas), da mais proxima a mais distante."""
+    code = _semester_code(semester)
+    rows = (
+        await db.execute(
+            select(ClassBreakModel)
+            .where(
+                ClassBreakModel.tutor_id == user["tutor_id"],
+                ClassBreakModel.semester == code,
+            )
+            .order_by(ClassBreakModel.date_from, ClassBreakModel.date_to)
+        )
+    ).scalars().all()
+    labels = await _class_labels(db, user["tutor_id"])
+    return [_break_response(row, labels) for row in rows]
+
+
+@router.post("/semesters/{semester}/breaks", response_model=ClassBreakResponse, status_code=201)
+async def create_semester_break(
+    semester: str,
+    body: ClassBreakCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cadastra uma data (ou intervalo) sem aula, para todas as turmas do semestre ou para uma."""
+    code = _semester_code(semester)
+    tutor_id = user["tutor_id"]
+    if body.class_group_id:
+        group = await db.get(ClassGroupModel, body.class_group_id)
+        if group is None or group.tutor_id != tutor_id or group.semester != code:
+            raise HTTPException(404, "Turma nao encontrada neste semestre")
+    item = ClassBreakModel(
+        tutor_id=tutor_id,
+        semester=code,
+        date_from=body.date_from,
+        date_to=body.date_to or body.date_from,
+        class_group_id=body.class_group_id,
+        reason=body.reason,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return _break_response(item, await _class_labels(db, tutor_id))
+
+
+@router.delete("/semesters/{semester}/breaks/{break_id}")
+async def delete_semester_break(
+    semester: str,
+    break_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove uma data sem aula. So o dono enxerga e apaga as suas."""
+    code = _semester_code(semester)
+    item = await db.get(ClassBreakModel, break_id)
+    if item is None or item.tutor_id != user["tutor_id"] or item.semester != code:
+        raise HTTPException(404, "Data nao encontrada")
+    await db.delete(item)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.delete("/disciplines/{discipline_id}")

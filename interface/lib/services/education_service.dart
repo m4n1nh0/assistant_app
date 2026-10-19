@@ -1132,13 +1132,79 @@ class EducationService {
     _decode(response);
   }
 
-  Future<Semester> updateSemester(String code, {required bool active}) async {
+  Future<List<Semester>> listSemesters() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/semesters'),
+      headers: _headers,
+    );
+    return (_decode(response) as List<dynamic>)
+        .map((item) => Semester.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Ativa ou encerra o semestre e/ou define o periodo das aulas.
+  ///
+  /// So o que for informado e alterado. [startDate] e [endDate] no formato
+  /// AAAA-MM-DD; texto vazio limpa a data.
+  Future<Semester> updateSemester(
+    String code, {
+    bool? active,
+    String? startDate,
+    String? endDate,
+  }) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/education/semesters/$code'),
       headers: _headers,
-      body: jsonEncode({'active': active}),
+      body: jsonEncode({
+        if (active != null) 'active': active,
+        if (startDate != null) 'start_date': startDate,
+        if (endDate != null) 'end_date': endDate,
+      }),
     );
     return Semester.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  // --- Datas sem aula ------------------------------------------------------
+
+  Future<List<ClassBreak>> listSemesterBreaks(String code) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/education/semesters/$code/breaks'),
+      headers: _headers,
+    );
+    return (_decode(response) as List<dynamic>)
+        .map((item) => ClassBreak.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Cadastra uma data (ou intervalo) sem aula. Sem [classGroupId] vale para
+  /// todas as turmas do semestre.
+  Future<ClassBreak> createSemesterBreak(
+    String code, {
+    required String dateFrom,
+    String? dateTo,
+    String? classGroupId,
+    String reason = '',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/education/semesters/$code/breaks'),
+      headers: _headers,
+      body: jsonEncode({
+        'date_from': dateFrom,
+        if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
+        if (classGroupId != null && classGroupId.isNotEmpty)
+          'class_group_id': classGroupId,
+        'reason': reason,
+      }),
+    );
+    return ClassBreak.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteSemesterBreak(String code, String breakId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/education/semesters/$code/breaks/$breakId'),
+      headers: _headers,
+    );
+    _decode(response);
   }
 
   // --- Turmas --------------------------------------------------------------
@@ -2112,18 +2178,28 @@ class Discipline {
       );
 }
 
-/// Semestre letivo, com a contagem de disciplinas e turmas.
+/// Semestre letivo, com a contagem de disciplinas e turmas e o periodo das aulas.
 class Semester {
   final String code;
   final bool active;
   final int disciplineCount;
   final int classCount;
 
+  /// Inicio e fim das aulas, AAAA-MM-DD; vazio quando nao informado.
+  final String startDate;
+  final String endDate;
+
+  /// Quantas datas sem aula (feriado, recesso, cancelada) o semestre tem.
+  final int breakCount;
+
   const Semester({
     required this.code,
     required this.active,
     this.disciplineCount = 0,
     this.classCount = 0,
+    this.startDate = '',
+    this.endDate = '',
+    this.breakCount = 0,
   });
 
   factory Semester.fromJson(Map<String, dynamic> json) => Semester(
@@ -2131,7 +2207,51 @@ class Semester {
         active: json['active'] != false,
         disciplineCount: _toInt(json['discipline_count']),
         classCount: _toInt(json['class_count']),
+        startDate: json['start_date']?.toString() ?? '',
+        endDate: json['end_date']?.toString() ?? '',
+        breakCount: _toInt(json['break_count']),
       );
+
+  /// O periodo esta completo (inicio e fim)?
+  bool get hasPeriod => startDate.isNotEmpty && endDate.isNotEmpty;
+}
+
+/// Data, ou intervalo de datas, sem aula: feriado, recesso, aula cancelada.
+class ClassBreak {
+  final String id;
+  final String semester;
+  final String dateFrom;
+  final String dateTo;
+
+  /// Turma a que se aplica; nulo vale para todas as turmas do semestre.
+  final String? classGroupId;
+  final String classLabel;
+  final String reason;
+
+  const ClassBreak({
+    required this.id,
+    required this.semester,
+    required this.dateFrom,
+    required this.dateTo,
+    this.classGroupId,
+    this.classLabel = '',
+    this.reason = '',
+  });
+
+  factory ClassBreak.fromJson(Map<String, dynamic> json) => ClassBreak(
+        id: json['id'].toString(),
+        semester: json['semester']?.toString() ?? '',
+        dateFrom: json['date_from']?.toString() ?? '',
+        dateTo: json['date_to']?.toString() ?? '',
+        classGroupId: (json['class_group_id']?.toString().isEmpty ?? true)
+            ? null
+            : json['class_group_id'].toString(),
+        classLabel: json['class_label']?.toString() ?? '',
+        reason: json['reason']?.toString() ?? '',
+      );
+
+  /// Um dia so, ou um intervalo (recesso).
+  bool get isRange => dateTo.isNotEmpty && dateTo != dateFrom;
 }
 
 /// Dia da semana em que a turma tem aula. 0 = segunda, como no backend.

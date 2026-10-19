@@ -71,7 +71,9 @@ class SemesterDb:
         self.commits = 0
 
     async def execute(self, _query):
-        return self.results.pop(0)
+        # As duas primeiras consultas sao as que o teste descreve; periodo do semestre e datas
+        # sem aula, que a resposta tambem traz, nao existem neste cenario.
+        return self.results.pop(0) if self.results else _Result()
 
     async def commit(self):
         self.commits += 1

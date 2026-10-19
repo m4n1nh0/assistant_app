@@ -229,10 +229,22 @@ julgamento volta a ser o do provedor, que e o que se sabe de fato. A mesma
 borda vale para a grafia: `gemini` contem `mini`, e sem delimitador o Gemini
 inteiro seria rebaixado por acidente.
 
+#### Calendario letivo: periodo do semestre e datas sem aula
+
+O horario semanal ("segunda, 18:30") repete para sempre. `academic_calendar_service` o cruza com o
+**periodo do semestre** (`semester_periods`: inicio e fim das aulas) e com as **datas sem aula**
+(`class_breaks`: feriado, recesso, aula cancelada, para todas as turmas ou para uma) e responde
+"a turma X tem aula no dia D?". E a regra unica para a projecao das proximas aulas, para a
+ferramenta de "que aula e hoje?" e para a tela de presenca, para nao divergirem. O professor
+cadastra o periodo e as datas em *Disciplinas > DEFINIR PERIODO*.
+
+Semestre sem periodo nao bloqueia nada: o horario semanal vale como sempre, e a resposta diz que o
+fim do semestre nao esta cadastrado em vez de afirmar o que nao sabe.
+
 #### Agenda de aulas x aula dada
 
 `query_academic` responde "quando tenho aula?" projetando as proximas quatro
-semanas dos horarios semanais — e **ignora qualquer data citada**. Por isso
+semanas dos horarios semanais (respeitando o periodo e as datas sem aula acima) — e **ignora qualquer data citada**. Por isso
 `is_academic_schedule_query` so manda para la o que e mesmo agenda. Continua em
 conversa, com a ancoragem do RAG (secao 7.1):
 
