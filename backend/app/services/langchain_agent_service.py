@@ -640,7 +640,7 @@ async def dispatch_chain(
         )
     return LLMResponse(
         llm=last_success.llm,
-        content=f"**Resposta em etapas:**\n\n{last_success.content}",
+        content=f"{llm_service.CHAIN_LABEL}\n\n{llm_service.strip_chain_label(last_success.content)}",
         duration_ms=last_success.duration_ms,
         tokens_used=last_success.tokens_used,
     )

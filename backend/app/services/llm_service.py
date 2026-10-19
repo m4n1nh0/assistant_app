@@ -115,8 +115,33 @@ def _build_system_prompt(
     )
 
 
+#: Titulo que o modo `chain` poe no inicio da resposta. E so enfeite de exibicao.
+CHAIN_LABEL = "**Resposta em etapas:**"
+_CHAIN_LABEL_RE = re.compile(
+    r"^\s*(?:\*\*)?\s*resposta\s+em\s+etapas\s*:?\s*(?:\*\*)?\s*:?\s*", re.IGNORECASE
+)
+
+
+def strip_chain_label(text: str) -> str:
+    """Tira do inicio o titulo "Resposta em etapas:", com ou sem negrito, quantas vezes vier.
+
+    O titulo e acrescentado na exibicao. Se ele voltar no historico enviado ao modelo, o modelo o
+    imita e comeca a propria resposta com ele, e o titulo sai duplicado.
+    """
+    previous = None
+    while previous != text:
+        previous = text
+        text = _CHAIN_LABEL_RE.sub("", text, count=1)
+    return text
+
+
+def _history_text(message: Message) -> str:
+    """Texto de uma fala do historico como o modelo deve le-la: sem o enfeite das respostas."""
+    return strip_chain_label(message.content) if message.role == "assistant" else message.content
+
+
 def _format_history(history: List[Message]) -> List[dict]:
-    return [{"role": m.role, "content": m.content} for m in history if m.role != "system"]
+    return [{"role": m.role, "content": _history_text(m)} for m in history if m.role != "system"]
 
 
 # Teto de saida usado quando quem chama nao pede outro. Vale para o chat, em
@@ -400,7 +425,7 @@ async def call_gemini(
             if m.role != "system":
                 contents.append({
                     "role": "model" if m.role == "assistant" else "user",
-                    "parts": [{"text": m.content}],
+                    "parts": [{"text": _history_text(m)}],
                 })
         contents.append({"role": "user", "parts": [{"text": message}]})
 
@@ -923,7 +948,7 @@ async def dispatch_chain(
         return LLMResponse(llm="chain", content="Nenhum serviço disponível", is_error=True)
     return LLMResponse(
         llm=last_success.llm,
-        content=f"**Resposta em etapas:**\n\n{last_success.content}",
+        content=f"{CHAIN_LABEL}\n\n{strip_chain_label(last_success.content)}",
         duration_ms=last_success.duration_ms,
     )
 
