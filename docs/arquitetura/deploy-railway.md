@@ -579,6 +579,19 @@ pacote de saída, e o tráfego pela rede privada conta nos dois sentidos:
 Ligar nos três não quebra nada, mas é inútil nos dois primeiros. O serverless só vale para o
 container novo: depois de ligar, faça um redeploy.
 
+**Quem pode dormir de verdade.** O que decide é haver ou não tráfego periódico chegando ao serviço:
+
+| Serviço | Dorme? | Por quê |
+|---|:---:|---|
+| `grafana` | sim | só é usado quando alguém abre o painel |
+| `agent-orchestrator`, `tool-service`, `mcp-service` | sim | só são chamados em uso real, desde que o monitor de saúde só sonde com atividade (`HEALTH_ALERT_ONLY_WHEN_ACTIVE`, o padrão) |
+| `assistant-api` | **não**, se você quer lembretes | o agendador roda dentro dela e lê a agenda a cada 5 minutos; essas chamadas de saída a mantêm acordada |
+| `mysql`, `Redis`, `qdrant` | **não** | o collector lê MySQL e Redis a cada 30 s e o Prometheus busca o Qdrant a cada 15 s, e dormir deles atrasa ou derruba o boot da API |
+| `otel-collector`, `prometheus`, `tempo` | **não** | recebem e buscam dados o tempo todo |
+
+Um serviço que dorme demora no primeiro acesso depois de um tempo parado; para o professor isso é a
+primeira mensagem da manhã mais lenta.
+
 #### Mapa da requisição
 
 O painel **Assistant · mapa da requisição** desenha por onde a requisição passa: quem chama quem, quantas

@@ -98,6 +98,12 @@ class Settings(MCPSettings):
     health_alert_interval_seconds: int = Field(default=60, ge=30)
     health_alert_failure_threshold: int = Field(default=3, ge=1)
     health_alert_cooldown_seconds: int = Field(default=3600, ge=60)
+    # So sonda quando ha uso real (requisicao autenticada recente ou WebSocket aberto). Pingar
+    # todos os servicos a cada minuto, de madrugada, os mantem acordados no Railway (o trafego pela
+    # rede privada conta como atividade) e, num servico dormindo, uma checagem com timeout curto
+    # vira falha e alerta falso. Desligue para monitorar 24 h.
+    health_alert_only_when_active: bool = True
+    health_alert_activity_window_seconds: int = Field(default=900, ge=60)
     redis_url: str = "redis://localhost:6379/0"
     # Agenda (Google/Microsoft): o agendador le o provedor a cada ciclo e grava o resultado; quem
     # mais pergunta (interface, chat) aproveita o que tiver ate `calendar_cache_max_age_seconds` de

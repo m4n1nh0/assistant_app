@@ -65,7 +65,17 @@ HEALTH_ALERTS_ENABLED=true
 HEALTH_ALERT_INTERVAL_SECONDS=60
 HEALTH_ALERT_FAILURE_THRESHOLD=3
 HEALTH_ALERT_COOLDOWN_SECONDS=3600
+HEALTH_ALERT_ONLY_WHEN_ACTIVE=true
+HEALTH_ALERT_ACTIVITY_WINDOW_SECONDS=900
 ```
+
+Por padrão o monitor **só sonda quando há uso real**: uma requisição autenticada que deu certo (fora
+`/health` e as rotas internas) nos últimos `HEALTH_ALERT_ACTIVITY_WINDOW_SECONDS` (15 min), ou uma
+conexão WebSocket aberta (a interface ligada). Sem uso ele não faz nenhuma chamada. Isso importa com
+**App Sleeping** ligado: o tráfego pela rede privada conta como atividade para o Railway, então um
+ping por minuto mantém tudo acordado e, num serviço dormindo, uma checagem com timeout curto vira
+falha e alerta falso. Com `HEALTH_ALERT_ONLY_WHEN_ACTIVE=false` ele monitora 24 h, ao custo de nunca
+deixar os serviços dormirem.
 
 O destinatário é `REGISTRATION_ADMIN_EMAIL`; o envio reutiliza `BREVO_API_KEY`
 e `SMTP_FROM` (ou `SMTP_USERNAME` como remetente). Por padrão, o monitor está

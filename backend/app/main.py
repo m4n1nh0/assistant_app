@@ -23,7 +23,7 @@ import sys
 from .core.config import get_settings
 from .core.database import engine, init_db
 from shared.observability.otel import instrument_database
-from .services import llm_price_service, llm_usage_service
+from .services import activity_service, llm_price_service, llm_usage_service
 from .core.database_seed import apply_database_seed, database_seed_requested
 from .core.net import client_ip, client_ip_identifier
 from shared.observability.middleware import (
@@ -264,6 +264,12 @@ async def log_requests(request: Request, call_next):
             f"-> 500 ({duration_ms:.1f}ms)"
         )
         raise
+    # Uso real: autenticado, fora de health e das rotas entre servicos, e que deu certo. Um robo
+    # mandando um `Authorization` qualquer recebe 401 e nao mantem o monitor (e os servicos) vivos.
+    if response.status_code < 400 and activity_service.counts_as_activity(
+        request.url.path, bool(request.headers.get("authorization"))
+    ):
+        activity_service.touch()
     if request.url.path not in ("/health", "/health/live"):
         duration_ms = (time.perf_counter() - started) * 1000
         logger.info(

@@ -8,6 +8,7 @@ from ..core.config import get_settings
 from .registration_invite_service import (
     registration_delivery_configured, send_transactional_email,
 )
+from . import activity_service
 from .system_health_service import collect_health
 
 
@@ -19,9 +20,21 @@ class HealthAlerts:
         self.notified = set()
         self.last_attempt = None
 
+    @staticmethod
+    def _someone_is_using(settings) -> bool:
+        from ..routers.websocket import manager
+
+        return activity_service.is_active(
+            settings.health_alert_activity_window_seconds,
+            connections=len(manager.connection_users),
+        )
+
     async def poll(self):
         settings = get_settings()
         if not settings.health_alerts_enabled:
+            return
+        if getattr(settings, "health_alert_only_when_active", False) and not self._someone_is_using(settings):
+            # Ninguem usando: nao sonda, para nao acordar servico dormindo nem gerar alerta falso.
             return
         services = await collect_health()
         for name, status in services.items():
