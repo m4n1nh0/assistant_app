@@ -203,6 +203,8 @@ Prometheus busca por lá e o Grafana lê do Prometheus.
 
 O collector também entrega os traces ao `tempo` (porta `4318`), que o Grafana consulta na `3200`: é dele que vêm o mapa de serviços e a busca de traces.
 
+**O mapa de serviços nomeia o destino pela URL configurada.** Cada processo rotula a chamada que faz a `TOOL_SERVICE_URL`, `ORCHESTRATOR_URL`, `MCP_SERVICE_URL` e `ASSISTANT_API_URL` com o nome do serviço (`tool-service`, `agent-orchestrator`...), mesmo que o host seja um nome gerado pelo Railway (como `serene-creation`). Sem isso, rotas que não geram span no servidor (as de health) apareceriam no mapa com o nome gerado.
+
 **Os nomes dos serviços importam**: `prometheus.yml`, o collector e as fontes de dados do Grafana usam
 `otel-collector.railway.internal`, `prometheus.railway.internal` e `tempo.railway.internal`.
 

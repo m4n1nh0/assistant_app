@@ -121,13 +121,47 @@ def setup(
         return False
 
 
-def instrument_clients(*, tracer_provider: Any = None) -> list[str]:
+def peer_service_hooks(peers: dict[str, str]) -> tuple[Any, Any]:
+    """Ganchos do cliente HTTP que rotulam a chamada com o nome do servico de destino.
+
+    O mapa de servicos nomeia o destino pelo host quando o servidor dele nao devolve span (as
+    rotas de health, por exemplo, nao geram). No Railway o host e o nome do servico, e o nome
+    gerado ("serene-creation") nao diz o papel dele. A aplicacao sabe qual URL e de qual servico
+    (`TOOL_SERVICE_URL`, `ORCHESTRATOR_URL`...), entao o rotulo sai dela, sem apelido manual.
+
+    Args:
+        peers: host (minusculo) -> nome do servico.
+
+    Returns:
+        O gancho sincrono e o assincrono, na forma que o instrumentador do httpx espera.
+    """
+    def label(span: Any, request: Any) -> None:
+        try:
+            name = peers.get(str(request.url.host).lower())
+            if name:
+                span.set_attribute("peer.service", name)
+        except Exception:
+            pass  # rotulo e acessorio: nunca pode quebrar a chamada
+
+    async def label_async(span: Any, request: Any) -> None:
+        label(span, request)
+
+    return label, label_async
+
+
+def instrument_clients(
+    *, tracer_provider: Any = None, peers: dict[str, str] | None = None
+) -> list[str]:
     """Liga o trace nas chamadas que saem deste processo.
 
     Cada chamada HTTP (outro servico, Qdrant, provedor de modelo) e cada comando do Redis vira um
     span de CLIENTE, e as chamadas HTTP levam o `traceparent` junto. E isso que liga o trace da API
     ao do orquestrador, da tool-service e do MCP, e e o que o mapa de servicos do collector precisa
     para desenhar quem chama quem.
+
+    Args:
+        tracer_provider: provedor de traces; `None` usa o global.
+        peers: host -> nome dos nossos servicos (veja `peer_service_hooks`).
 
     Returns:
         Os nomes do que foi ligado. Pacote ausente nao e erro: aquele pedaco so fica de fora.
@@ -142,7 +176,11 @@ def instrument_clients(*, tracer_provider: Any = None) -> list[str]:
         try:
             instrumentor = getattr(importlib.import_module(modulo), classe)()
             if not instrumentor.is_instrumented_by_opentelemetry:
-                instrumentor.instrument(tracer_provider=tracer_provider)
+                options: dict[str, Any] = {"tracer_provider": tracer_provider}
+                if nome == "httpx" and peers:
+                    hook, async_hook = peer_service_hooks(peers)
+                    options.update(request_hook=hook, async_request_hook=async_hook)
+                instrumentor.instrument(**options)
             ligados.append(nome)
         except ImportError:
             logger.debug(f"Instrumentacao de {nome} ausente: sem spans de cliente para ele.")

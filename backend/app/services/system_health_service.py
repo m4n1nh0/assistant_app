@@ -58,12 +58,25 @@ async def _mcp():
     return all(item.reachable for item in await get_mcp_gateway().health())
 
 
+# A checagem de e-mail e uma chamada a API do Brevo. Com o monitor a cada minuto seriam ~1.500
+# chamadas por dia so para saber que ele responde: o que esta bem e conferido de 10 em 10 minutos,
+# e uma falha e reconferida a cada rodada.
+_EMAIL_OK_TTL_SECONDS = 600.0
+_email_cache: tuple[float, bool] | None = None
+
+
 async def _email():
+    global _email_cache
     from .registration_invite_service import brevo_api_diagnostic
 
     if not get_settings().brevo_api_key.strip():
         return False
-    return (await brevo_api_diagnostic()).get("success") is True
+    now = time.monotonic()
+    if _email_cache is not None and _email_cache[1] and now - _email_cache[0] < _EMAIL_OK_TTL_SECONDS:
+        return True
+    ok = (await brevo_api_diagnostic()).get("success") is True
+    _email_cache = (now, ok)
+    return ok
 
 
 async def _check(probe, *, configured=True, transport=None):

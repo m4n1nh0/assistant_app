@@ -96,6 +96,30 @@ def _record_request(
         pass
 
 
+def peer_names(settings) -> dict[str, str]:
+    """Host -> nome de cada servico nosso que este processo chama, pelas URLs configuradas.
+
+    E o que deixa o mapa de servicos dar o nome certo ao destino mesmo quando o servidor dele nao
+    devolve span e o host e um nome gerado pela plataforma.
+    """
+    from urllib.parse import urlparse
+
+    peers: dict[str, str] = {}
+    for attr, name in (
+        ("tool_service_url", "tool-service"),
+        ("orchestrator_url", "agent-orchestrator"),
+        ("mcp_service_url", "mcp-service"),
+        ("assistant_api_url", "assistant-api"),
+    ):
+        raw = str(getattr(settings, attr, "") or "").strip()
+        if not raw:
+            continue
+        host = urlparse(raw if "://" in raw else f"http://{raw}").hostname
+        if host:
+            peers[host.lower()] = name
+    return peers
+
+
 def setup_observability(
     app: FastAPI | None,
     *,
@@ -133,7 +157,7 @@ def setup_observability(
             # Trace que atravessa os servicos: span de servidor na entrada, de cliente na saida.
             from .otel import instrument_clients, instrument_server
 
-            instrument_clients()
+            instrument_clients(peers=peer_names(settings))
             instrument_server(app, excluded_paths=excluded_paths)
 
     from .langsmith import setup as setup_langsmith
