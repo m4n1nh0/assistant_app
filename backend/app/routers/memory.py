@@ -114,6 +114,15 @@ def _voice_decision(transcript: str) -> str:
     return "unclear"
 
 
+def _agents_of(metadata: dict | None) -> list[str]:
+    """Especialidades liberadas para um fato; `["*"]` (todas) quando o proponente nao disse."""
+    raw = (metadata or {}).get("agents")
+    if isinstance(raw, str):
+        raw = [raw]
+    agents = [str(a).strip() for a in raw or [] if str(a).strip()]
+    return agents or [qdrant_service.ALL_AGENTS]
+
+
 async def _approve_item(
     item: MemoryReviewModel,
     db: AsyncSession,
@@ -122,11 +131,15 @@ async def _approve_item(
     if item.status == "approved":
         return item
 
-    point_id = qdrant_service.upsert_memory(
+    point_id = await qdrant_service.upsert_memory(
         point_id=item.id,
         tutor_id=item.tutor_id,
         category=item.category,
         content=item.content,
+        # Quais especialidades podem usar o fato: o proponente decide em `metadata.agents`;
+        # sem isso vale para todas.
+        agents=_agents_of(item.metadata_),
+        source=item.source,
         metadata={
             **(item.metadata_ or {}),
             "source": item.source,
@@ -271,14 +284,21 @@ async def search_memory(
     tutor_id: str,
     q: str,
     category: str | None = None,
+    agent: str | None = Query(None, description="Especialidade que vai usar o resultado."),
+    min_score: float | None = Query(None, ge=0, le=1),
     limit: int = Query(5, ge=1, le=25),
     user: dict = Depends(get_current_user),
 ):
-    """Busca semantica nas memorias aprovadas do usuario."""
+    """Busca semantica nas memorias aprovadas do usuario, filtrada por categoria e especialidade."""
     tutor_id = user["tutor_id"]
-    return qdrant_service.search_memory(
-        tutor_id=tutor_id,
-        query=q,
-        category=category,
-        limit=limit,
-    )
+    try:
+        return await qdrant_service.search_memory(
+            tutor_id=tutor_id,
+            query=q,
+            categories=[category] if category else [],
+            agent=agent,
+            min_score=min_score,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))

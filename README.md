@@ -1058,9 +1058,27 @@ curl -X POST .../education/reindex -d '{"force": true}'        # troca de modelo
 `force` recria a colecao na dimensao nova e recoloca todos os trechos na fila,
 inclusive os de outros professores da instalacao, porque a colecao e uma so.
 
-As colecoes de memoria (`tutor_preferences`, `behavior_guidelines`,
-`approved_instructions`, `automation_knowledge`) continuam no hash legado de 384
-dimensoes; migra-las exige reindexacao e nao e feito automaticamente.
+### Colecoes do Qdrant
+
+Sao duas, separadas pela natureza do dado e nao por quem vai usar:
+
+| Colecao | O que guarda | Filtros (todos com indice de payload) |
+|---|---|---|
+| `assistant_lesson_transcripts` | trechos de transcricao de aula | `tutor_id` (tenant), `discipline`, `lesson_id`, `class_group`, `lesson_ts` |
+| `assistant_memory` | fatos curtos aprovados: preferencias, diretrizes, instrucoes, automacoes | `tutor_id` (tenant), `category`, `agents`, `source`, `created_ts` |
+
+A categoria e a especialidade que pode usar cada fato (`agents`, com `"*"` para todas) sao
+**campos do ponto**: quem consulta filtra, em vez de abrir uma colecao por categoria. Toda busca
+filtra por `tutor_id`, e o Qdrant agrupa o armazenamento por usuario. Os dois usam o embedding
+semantico configurado e guardam o modelo que gerou cada vetor.
+
+As quatro colecoes antigas de memoria (`tutor_preferences`, `behavior_guidelines`,
+`approved_instructions`, `automation_knowledge`) sao migradas sozinhas na subida da API: a vazia e
+apagada; a que tem dados e relida, reembedada e gravada em `assistant_memory` antes de ser removida.
+Se a migracao falhar, a antiga fica intacta para a proxima subida.
+
+A busca nas aulas e na memoria usa `query_points`, a unica busca do `qdrant-client` fixado; um
+`search` antigo falharia em silencio e devolveria lista vazia.
 
 ## Configuracao Segura
 

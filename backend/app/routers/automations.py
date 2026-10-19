@@ -86,10 +86,11 @@ async def approve_automation(
     await db.commit()
     await db.refresh(item)
 
-    qdrant_service.upsert_memory(
+    await qdrant_service.upsert_memory(
         point_id=item.id,
         tutor_id=item.tutor_id,
         category="automation_knowledge",
+        source="automation",
         content=f"{item.title}\n{item.description or ''}\n{item.instructions}",
         metadata={
             **(item.metadata_ or {}),

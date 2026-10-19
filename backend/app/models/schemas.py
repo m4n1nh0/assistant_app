@@ -726,6 +726,10 @@ class MemorySearchResponse(BaseModel):
     score: float
     category: str
     content: str
+    #: Especialidades que podem usar o fato; `["*"]` libera para todas.
+    agents: List[str] = Field(default_factory=lambda: ["*"])
+    #: De onde veio (revisao, automacao, voz...).
+    source: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

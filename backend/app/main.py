@@ -72,7 +72,11 @@ from .routers.quiz_group import router as quiz_group_router
 from .routers.sia_integration import router as sia_router
 from .services import quiz_job_service
 from .services.voice_service import warm_whisper
-from .services.qdrant_service import ensure_collections, ensure_lesson_collection
+from .services.qdrant_service import (
+    ensure_lesson_collection,
+    ensure_memory_collection,
+    migrate_legacy_memory,
+)
 from .services.embedding_service import describe as embedding_describe
 from .services.user_llm_config_service import runtime_settings
 
@@ -156,8 +160,9 @@ async def lifespan(app: FastAPI):
             raise
         logger.warning(f"Database unavailable (funcoes de historico desativadas): {e}")
     try:
-        ensure_collections()
-        logger.info("Qdrant collections ready")
+        await ensure_memory_collection()
+        legacy = await migrate_legacy_memory()
+        logger.info(f"Qdrant memory collection ready (colecoes antigas: {legacy})")
     except Exception as e:
         logger.warning(f"Qdrant unavailable: {e}")
     try:
