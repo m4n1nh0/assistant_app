@@ -1,4 +1,4 @@
-// Observabilidade no Railway: otel-collector, prometheus e grafana.
+// Observabilidade no Railway: otel-collector, prometheus, tempo e grafana.
 //
 // Este arquivo e uma PARCIAL NOMEADA (`partial` abaixo). Isso e o que impede o `apply` de apagar
 // o resto do projeto: "a named partial only deletes resources it owns". Os outros servicos
@@ -75,6 +75,16 @@ export default defineRailway((ctx) => {
     volumeMounts: { "/prometheus": prometheusData },
   });
 
+  // Guarda os traces (o collector entrega em 4318; o Grafana le na 3200). Mesmo motivo do
+  // RAILWAY_RUN_UID do Prometheus.
+  const tempoData = volume("tempo-data", { region: REGION, sizeMB: 2048 });
+  const tempo = service("tempo", {
+    source: fromRepo("infra/tempo"),
+    replicas: { [REGION]: 1 },
+    env: { RAILWAY_RUN_UID: "0" },
+    volumeMounts: { "/var/tempo": tempoData },
+  });
+
   // Painel. Ja sobe com a fonte de dados e o painel "Assistant" provisionados. A senha vem de uma
   // variavel compartilhada, para nao ser escrita aqui.
   const grafanaData = volume("grafana-storage", { region: REGION, sizeMB: 512 });
@@ -97,6 +107,6 @@ export default defineRailway((ctx) => {
   // Nome do projeto no Railway (confirmado pelo `railway link`). Se o `plan` propuser renomear o
   // projeto, o nome esta diferente: corrija antes de aplicar.
   return project("dependable-passion", {
-    resources: [collector, prometheus, grafana, prometheusData, grafanaData],
+    resources: [collector, prometheus, tempo, grafana, prometheusData, tempoData, grafanaData],
   });
 });

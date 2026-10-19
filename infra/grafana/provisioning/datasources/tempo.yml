@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    # uid fixo: os paineis referenciam a fonte por ele.
+    uid: tempo
+    type: tempo
+    access: proxy
+    # Nome que o Railway da ao servico `tempo` na rede privada (no compose, e um alias).
+    url: http://tempo.railway.internal:3200
+    editable: false
+    jsonData:
+      # O mapa de servicos do Tempo e calculado pelas metricas `traces_service_graph_*` que o
+      # collector (conector servicegraph) grava no Prometheus.
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

@@ -112,9 +112,11 @@ exporters:
       enabled: true
     # Serie que parou de chegar sai da pagina depois disso, em vez de ficar para sempre.
     metric_expiration: 15m
-  # Descomente e ajuste para enviar a um backend real.
-  # otlphttp/tempo:
-  #   endpoint: http://tempo:4318
+  # Guarda os traces no Tempo, que o Grafana consulta (mapa de servicos e busca de traces).
+  otlphttp/tempo:
+    endpoint: http://tempo.railway.internal:4318
+    tls:
+      insecure: true
 
 service:
   extensions: [health_check]
@@ -122,7 +124,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, transform/peer, batch]
-      exporters: [debug, spanmetrics, servicegraph]
+      exporters: [debug, otlphttp/tempo, spanmetrics, servicegraph]
     metrics:
       receivers: [otlp, spanmetrics, servicegraph, mysql, redis]
       processors: [memory_limiter, batch]

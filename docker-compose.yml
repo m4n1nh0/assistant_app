@@ -280,6 +280,21 @@ services:
         aliases:
           - prometheus.railway.internal
 
+  # Guarda os traces que o collector encaminha; o Grafana consulta na 3200.
+  tempo:
+    profiles: ["observability"]
+    build: ./infra/tempo
+    container_name: assistant-tempo
+    restart: unless-stopped
+    volumes:
+      - assistant_tempo:/var/tempo
+    # A imagem roda sem root e o volume novo monta como root.
+    user: "0"
+    networks:
+      default:
+        aliases:
+          - tempo.railway.internal
+
   # Painel pronto sobre o Prometheus. Usuario `admin`; a senha vem de GRAFANA_ADMIN_PASSWORD.
   grafana:
     profiles: ["observability"]
@@ -300,8 +315,10 @@ services:
       - assistant_grafana:/var/lib/grafana
     depends_on:
       - prometheus
+      - tempo
 
 volumes:
+  assistant_tempo:
   assistant_prometheus:
   assistant_grafana:
   assistant_data:

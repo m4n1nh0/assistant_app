@@ -48,6 +48,7 @@ flowchart LR
 | `localai` | imagem LocalAI | não | `/models` | LLM local (opcional) |
 | `otel-collector` | `infra/otel-collector/Dockerfile` | não | — | recebe traces e métricas da aplicação (opcional) |
 | `prometheus` | `infra/prometheus/Dockerfile` | não | `/prometheus` | guarda as métricas (opcional) |
+| `tempo` | `infra/tempo/Dockerfile` | não | `/var/tempo` | guarda os traces, 7 dias (opcional) |
 | `grafana` | `infra/grafana/Dockerfile` | **sim** | `/var/lib/grafana` | painel de consumo de IA e saúde (opcional) |
 
 Só a `assistant-api` recebe tráfego de fora. Todo o resto conversa pela rede
@@ -179,9 +180,9 @@ Configuração completa na seção *Ollama E LocalAI Na Railway* do `README.md` 
 volume em `/models`, `LOCALAI_ADDRESS=:8080` e o modelo em `PRELOAD_MODELS`.
 `LOCALAI_MODEL` na API e no orquestrador precisa ser o `id` instalado no LocalAI.
 
-### Observabilidade: otel-collector, prometheus e grafana (opcional)
+### Observabilidade: otel-collector, prometheus, tempo e grafana (opcional)
 
-Três serviços que só valem criar quando for olhar traces e métricas. Sem eles, deixe
+Quatro serviços que só valem criar quando for olhar traces e métricas. Sem eles, deixe
 `OTEL_ENABLED="false"` nos serviços da aplicação: com a telemetria ligada e sem collector
 alcançável, o SDK registra falha de envio a cada lote.
 
@@ -189,8 +190,9 @@ alcançável, o SDK registra falha de envio a cada lote.
 flowchart LR
     APP[assistant-api, orquestrador,<br/>tool-service, mcp-service] -->|OTLP traces + métricas :4318| COL[otel-collector]
     COL -->|":8889 (Prometheus)"| PROM[(prometheus)]
+    COL -->|"OTLP :4318"| TEMPO[(tempo)]
     PROM --> GRAF[grafana]
-    COL -.->|traces no log| LOG[log do serviço]
+    TEMPO --> GRAF
 ```
 
 O collector recebe traces e métricas da aplicação. Os traces vão para o log dele e também viram
@@ -199,8 +201,10 @@ aplicação são: tokens, custo estimado, chamadas e duração das chamadas a mo
 modelo) e a duração das requisições HTTP (por rota). O collector as expõe na porta `8889`, o
 Prometheus busca por lá e o Grafana lê do Prometheus.
 
-**Os nomes dos serviços importam**: `prometheus.yml` e a fonte de dados do Grafana usam
-`otel-collector.railway.internal` e `prometheus.railway.internal`.
+O collector também entrega os traces ao `tempo` (porta `4318`), que o Grafana consulta na `3200`: é dele que vêm o mapa de serviços e a busca de traces.
+
+**Os nomes dos serviços importam**: `prometheus.yml`, o collector e as fontes de dados do Grafana usam
+`otel-collector.railway.internal`, `prometheus.railway.internal` e `tempo.railway.internal`.
 
 #### Variáveis de observabilidade, serviço por serviço
 
@@ -331,6 +335,22 @@ Healthcheck opcional: `PORT="13133"` e caminho `/` (a extensão `health_check` d
 RAILWAY_RUN_UID="0"
 ```
 
+#### `tempo`
+
+| Campo | Valor |
+|---|---|
+| Source | mesmo repositório e mesma branch |
+| Root Directory | `/infra/tempo` |
+| Dockerfile Path | vazio (o Railway detecta o `Dockerfile` da pasta) |
+| Watch Paths | `/infra/tempo/**` |
+| Domínio público | **não** |
+| Volume | `/var/tempo` (traces de 7 dias) |
+
+```dotenv
+# Pelo mesmo motivo do Prometheus.
+RAILWAY_RUN_UID="0"
+```
+
 #### `grafana`
 
 | Campo | Valor |
@@ -357,6 +377,7 @@ pasta *Assistant*:
 | Fonte de dados | Lê de | Usada para |
 |---|---|---|
 | `Prometheus` | o Prometheus do projeto | latência, requisições HTTP, operações e a saúde dos bancos |
+| `Tempo` | o Tempo do projeto | o mapa de serviços (Service Graph) e os traces |
 | `App (MySQL)` | o banco da aplicação, com o usuário `monitor` | o consumo de IA, exato |
 
 Os dois painéis são dinâmicos: **tudo segue o seletor de tempo do alto** (padrão 7 dias no de consumo e

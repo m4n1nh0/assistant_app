@@ -1,0 +1,27 @@
+# Tempo: guarda os traces que o collector encaminha e responde as buscas do Grafana.
+#
+# Instancia unica, com disco local (volume em /var/tempo). O collector entrega por OTLP/HTTP na
+# 4318; o Grafana consulta na 3200. Retencao de 7 dias.
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+compactor:
+  compaction:
+    block_retention: 168h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

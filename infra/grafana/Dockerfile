@@ -9,6 +9,10 @@
 # Dockerfile Path: /infra/grafana/Dockerfile
 FROM grafana/grafana-oss:11.3.0
 
+# Business Charts (Apache ECharts): desenha o "Fluxo ao vivo" do painel do mapa. Instalado na
+# imagem, sem configurar nada na interface; precisa de rede no build.
+RUN grafana cli plugins install volkovlabs-echarts-panel
+
 COPY provisioning /etc/grafana/provisioning
 COPY dashboards /etc/grafana/dashboards
 
