@@ -73,6 +73,11 @@ processors:
           - set(attributes["peer.service"], ExtractPatterns(attributes["http.url"], "^https?://(?P<host>[^/:?#]+)")["host"]) where kind == SPAN_KIND_CLIENT and attributes["peer.service"] == nil and attributes["http.url"] != nil
           - set(attributes["peer.service"], ExtractPatterns(attributes["url.full"], "^https?://(?P<host>[^/:?#]+)")["host"]) where kind == SPAN_KIND_CLIENT and attributes["peer.service"] == nil and attributes["url.full"] != nil
           - replace_pattern(attributes["peer.service"], "[.]railway[.]internal$", "") where kind == SPAN_KIND_CLIENT
+          # Para que serve a chamada a um provedor: "status" (lista de modelos, saldo) ou "chat"
+          # (completar, transmitir). O mapa de servicos separa as duas: a API consulta o estado dos
+          # provedores por conta propria, e quem conversa com eles pelo grafo e o orquestrador.
+          - set(attributes["assistant.call_kind"], "status") where kind == SPAN_KIND_CLIENT and (IsMatch(attributes["url.full"], ".*/(models|balance|user/balance)([?/].*)?$") or IsMatch(attributes["http.url"], ".*/(models|balance|user/balance)([?/].*)?$"))
+          - set(attributes["assistant.call_kind"], "chat") where kind == SPAN_KIND_CLIENT and attributes["assistant.call_kind"] == nil and (IsMatch(attributes["url.full"], ".*(/completions|/messages|:generateContent|:streamGenerateContent|/responses).*") or IsMatch(attributes["http.url"], ".*(/completions|/messages|:generateContent|:streamGenerateContent|/responses).*"))
   batch:
     timeout: 5s
   memory_limiter:
@@ -91,6 +96,9 @@ connectors:
       max_items: 2000
     metrics_flush_interval: 15s
     virtual_node_peer_attributes: [peer.service]
+    # Vira o rotulo `client_assistant_call_kind` nas metricas do mapa.
+    dimensions:
+      - assistant.call_kind
   spanmetrics:
     namespace: assistant.spans
     histogram:
