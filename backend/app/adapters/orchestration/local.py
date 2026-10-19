@@ -7,7 +7,7 @@ chamada ao grafo.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncIterator
 
 from ...core.config import get_settings
 from ...ports.orchestration import ChatTurn
@@ -21,6 +21,13 @@ class LocalOrchestrationGateway:
         from ...orchestration.graph import run_chat_graph
 
         return await run_chat_graph(**turn.graph_kwargs())
+
+    async def stream_chat(self, turn: ChatTurn) -> AsyncIterator[dict[str, Any]]:
+        """Roda o grafo neste processo, entregando o texto aos pedacos."""
+        from ...orchestration.graph import stream_chat_graph
+
+        async for event in stream_chat_graph(**turn.graph_kwargs()):
+            yield event
 
     async def health(self) -> dict[str, Any]:
         """O grafo local esta sempre disponivel enquanto o processo estiver."""

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 import uuid, json
+from contextlib import ExitStack
 from datetime import datetime, timezone
 
 from ..core.database import (
@@ -31,7 +32,7 @@ from ..models.schemas import (
     LLMResponse,
     ToolReadResult,
 )
-from ..services.chat_graph_service import run_chat_graph
+from ..services.chat_graph_service import run_chat_graph, stream_chat_graph
 from ..services.device_catalog_service import session_device
 from ..services.llm_status_service import get_llm_statuses, get_ready_llms
 from ..services.stream_text import text_chunks
@@ -174,38 +175,82 @@ async def chat(
     return await _run_chat_turn(body, user)
 
 
-async def _run_chat_turn(body: ChatRequest, user: dict) -> ChatResponse:
-    """Um turno completo: persona, grafo, historico gravado e resposta montada.
-
-    E o que o `/chat/` e o `/chat/stream` compartilham, para nenhum dos dois falar com um
-    provedor por fora do grafo.
-    """
+async def _turn_kwargs(body: ChatRequest, user: dict) -> tuple[str, dict]:
+    """Persona, provedores ativos e fuso: tudo que o grafo precisa para rodar o turno."""
     cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
 
     tutor_id = cfg.get("tutor_id") or "default"
     timezone_name = await _profile_timezone(tutor_id)
+    return tutor_id, dict(
+        message=body.message,
+        history=body.history,
+        mode=body.mode,
+        requested_llm=body.llm.value if body.llm else None,
+        active_llms=active,
+        system_prompt=sys_prompt,
+        tutor_id=tutor_id,
+        user_id=user["uid"],
+        timezone=timezone_name,
+        # A sessao e o `thread_id` do checkpoint: e o que permite retomar a
+        # execucao em vez de refazer a conversa inteira.
+        conversation_id=body.session_id,
+    )
+
+
+async def _run_chat_turn(body: ChatRequest, user: dict) -> ChatResponse:
+    """Um turno completo: persona, grafo, historico gravado e resposta montada.
+
+    E o que o `/chat/` e o `/chat/stream` compartilham, para nenhum dos dois falar com um
+    provedor por fora do grafo.
+    """
+    tutor_id, kwargs = await _turn_kwargs(body, user)
     # Amarra a maquina desta sessao: as capacidades que a interface publicou
     # pelo WebSocket so aparecem para o agente enquanto este `with` durar, e so
     # para a conversa desta conta.
     with session_device(user["uid"], body.session_id), bind(
         conversation_id=body.session_id, tenant_id=tutor_id, user_id=user["uid"]
     ):
-        graph_result = await run_chat_graph(
-            message=body.message,
-            history=body.history,
-            mode=body.mode,
-            requested_llm=body.llm.value if body.llm else None,
-            active_llms=active,
-            system_prompt=sys_prompt,
-            tutor_id=tutor_id,
-            user_id=user["uid"],
-            timezone=timezone_name,
-            # A sessao e o `thread_id` do checkpoint: e o que permite retomar a
-            # execucao em vez de refazer a conversa inteira.
-            conversation_id=body.session_id,
-        )
+        graph_result = await run_chat_graph(**kwargs)
+    return await _finish_turn(body, user, graph_result)
+
+
+async def _stream_chat_turn(body: ChatRequest, user: dict):
+    """O mesmo turno de `_run_chat_turn`, entregando o texto aos pedacos enquanto o grafo roda.
+
+    Gera `("reset", None)` quando o modelo recomeca (descarte o texto parcial), `("delta", texto)`
+    a cada pedaco e, por ultimo, `("final", ChatResponse)` ja com a conversa gravada. O `final` e
+    a verdade: o texto transmitido e uma previa.
+    """
+    tutor_id, kwargs = await _turn_kwargs(body, user)
+    state = None
+    # Sem `with`: este gerador pode ser encerrado fora da tarefa que o criou (a interface fechou a
+    # conexao no meio), e aí o `reset` de um `ContextVar` acusa "token de outro contexto".
+    contexts = ExitStack()
+    contexts.enter_context(session_device(user["uid"], body.session_id))
+    contexts.enter_context(
+        bind(conversation_id=body.session_id, tenant_id=tutor_id, user_id=user["uid"])
+    )
+    try:
+        async for event in stream_chat_graph(**kwargs):
+            kind = event.get("type")
+            if kind == "final":
+                state = event["state"]
+            elif kind == "delta":
+                yield "delta", event.get("text", "")
+            elif kind == "reset":
+                yield "reset", None
+    finally:
+        try:
+            contexts.close()
+        except ValueError:
+            pass  # contexto ja descartado junto com a tarefa que o abriu
+    yield "final", await _finish_turn(body, user, state or {})
+
+
+async def _finish_turn(body: ChatRequest, user: dict, graph_result: dict) -> ChatResponse:
+    """Grava a troca e monta a resposta a partir do estado final do grafo."""
     responses = graph_result["responses"]
     action = graph_result.get("action")
 
@@ -302,11 +347,20 @@ async def chat_stream(
     user: dict = Depends(get_current_user),
     _llm_context: None = Depends(user_llm_context),
 ):
-    """Igual a `chat`, mas devolve a resposta em pedacos (SSE).
+    """Igual a `chat`, mas devolve a resposta aos pedacos enquanto ela e escrita (SSE).
 
-    O turno passa pelo grafo, como em `/chat/`: ferramentas, agenda, atalhos e busca nas
-    aulas valem aqui tambem, e o historico e gravado. A resposta chega pronta e e dividida
-    em pedacos; nao ha mais token a token do provedor.
+    O turno passa pelo grafo, como em `/chat/`: ferramentas, agenda, atalhos e busca nas aulas
+    valem aqui tambem, e a conversa e gravada. Eventos, um `data:` JSON por linha:
+
+    - `{"reset": true, "done": false}`: o modelo recomecou (outra volta, retentativa); descarte o
+      texto parcial.
+    - `{"chunk": "...", "done": false}`: mais um pedaco da resposta.
+    - `{"chunk": "", "done": true, "content": ..., "llm": ..., "action": ..., "tool_results": ...}`:
+      o fim. `content` e o texto final e **substitui** o que foi acumulado.
+    - `{"error": "...", "done": true}`: o turno falhou.
+
+    So o modo `single` transmite enquanto escreve; os demais chegam inteiros no fim, divididos em
+    pedacos.
     """
     active = await get_ready_llms()
     requested = body.llm.value if body.llm else None
@@ -314,31 +368,53 @@ async def chat_stream(
         resp = await _llm_unavailable_response(requested)
 
         async def _unavailable():
-            yield f"data: {json.dumps({'chunk': resp.content, 'done': True})}\n\n"
+            # `chunk` fica por compatibilidade com quem le so ele; `content` e o formato do final.
+            event = {
+                "chunk": resp.content,
+                "content": resp.content,
+                "llm": resp.llm,
+                "is_error": True,
+                "done": True,
+            }
+            yield f"data: {json.dumps(event)}\n\n"
 
         return StreamingResponse(_unavailable(), media_type="text/event-stream")
 
     async def _generate():
+        streamed = False
         try:
-            result = await _run_chat_turn(body, user)
-            reply = next((r for r in result.responses if not r.is_error), None) or (
-                result.responses[0] if result.responses else None
-            )
-            llm = reply.llm if reply else (requested or "")
-            for piece in text_chunks(reply.content if reply else ""):
-                yield f"data: {json.dumps({'chunk': piece, 'done': False, 'llm': llm})}\n\n"
-            final = {
-                "chunk": "",
-                "done": True,
-                "llm": llm,
-                "action": (
-                    result.action.model_dump(mode="json")
-                    if hasattr(result.action, "model_dump")
-                    else result.action
-                ),
-                "tool_results": [t.model_dump(mode="json") for t in result.tool_results],
-            }
-            yield f"data: {json.dumps(final)}\n\n"
+            async for kind, value in _stream_chat_turn(body, user):
+                if kind == "reset":
+                    streamed = False
+                    yield f"data: {json.dumps({'reset': True, 'done': False})}\n\n"
+                elif kind == "delta":
+                    streamed = True
+                    yield f"data: {json.dumps({'chunk': value, 'done': False})}\n\n"
+                else:
+                    result: ChatResponse = value
+                    reply = next((r for r in result.responses if not r.is_error), None) or (
+                        result.responses[0] if result.responses else None
+                    )
+                    content = reply.content if reply else ""
+                    llm = reply.llm if reply else (requested or "")
+                    if not streamed:
+                        # Nada foi escrito ao vivo (acao, atalho, modo multi): entrega o texto pronto.
+                        for piece in text_chunks(content):
+                            yield f"data: {json.dumps({'chunk': piece, 'done': False})}\n\n"
+                    final = {
+                        "chunk": "",
+                        "done": True,
+                        "content": content,
+                        "llm": llm,
+                        "is_error": bool(reply.is_error) if reply else False,
+                        "action": (
+                            result.action.model_dump(mode="json")
+                            if hasattr(result.action, "model_dump")
+                            else result.action
+                        ),
+                        "tool_results": [t.model_dump(mode="json") for t in result.tool_results],
+                    }
+                    yield f"data: {json.dumps(final)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 

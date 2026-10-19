@@ -83,6 +83,48 @@ async def run_chat_graph(
     return await get_orchestration_gateway().run_chat(turn)
 
 
+async def stream_chat_graph(
+    *,
+    message: str,
+    history: list[Message],
+    mode: ResponseModeEnum,
+    requested_llm: str | None,
+    active_llms: list[str],
+    system_prompt: str,
+    tutor_id: str,
+    user_id: str = "",
+    timezone: str = "America/Sao_Paulo",
+    conversation_id: str = "",
+    execution_id: str = "",
+):
+    """Como `run_chat_graph`, mas entrega o texto aos pedacos enquanto o turno roda.
+
+    Gera eventos `reset` e `delta` e, por ultimo, um `final` com o estado final: o mesmo
+    dicionario que `run_chat_graph` devolve. Quem fala com os provedores continua sendo o grafo,
+    no orquestrador ou neste processo, conforme `ORCHESTRATOR_TRANSPORT`.
+    """
+    from ..adapters.container import get_orchestration_gateway
+    from ..ports.orchestration import ChatTurn
+    from .device_catalog_service import current_device
+
+    turn = ChatTurn(
+        message=message,
+        history=list(history),
+        mode=mode,
+        requested_llm=requested_llm,
+        active_llms=tuple(active_llms),
+        system_prompt=system_prompt,
+        tutor_id=tutor_id,
+        user_id=user_id,
+        timezone=timezone,
+        conversation_id=conversation_id,
+        execution_id=execution_id,
+        device_id=current_device(),
+    )
+    async for event in get_orchestration_gateway().stream_chat(turn):
+        yield event
+
+
 __all__ = [
     "ActionKind",
     "ChatGraphState",
@@ -96,4 +138,5 @@ __all__ = [
     "langchain_agent_service",
     "resume_chat_graph",
     "run_chat_graph",
+    "stream_chat_graph",
 ]

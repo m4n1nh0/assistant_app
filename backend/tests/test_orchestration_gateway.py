@@ -456,3 +456,96 @@ def test_routes_facade_delivers_the_bound_device_to_the_gateway():
 
     assert received[0].device_id == DEVICE
     assert received[0].active_llms == ("gpt",)
+
+
+# --- streaming ---------------------------------------------------------------
+
+
+def _stub_stream(monkeypatch, seen: list[dict], *, fail_after_delta: bool = False):
+    """Troca o grafo em streaming pelos dois caminhos: reset, pedacos e o estado final."""
+    import app.orchestration.graph as graph_module
+    from services.orchestrator import main as orchestrator
+
+    async def fake_stream(**kwargs):
+        runtime = current_user_llms()
+        seen.append({"kwargs": kwargs, "runtime_scope": runtime.scope if runtime else None})
+        yield {"type": "reset"}
+        yield {"type": "delta", "text": "Abr"}
+        if fail_after_delta:
+            raise RuntimeError("grafo caiu no meio")
+        yield {"type": "delta", "text": "indo."}
+        yield {
+            "type": "final",
+            "state": {
+                "action_kind": "launch",
+                "responses": [LLMResponse(llm="gpt", content="Abrindo.")],
+                "action": LaunchAction(
+                    shortcut_id="shortcut-1",
+                    name="Navegador",
+                    target="browser",
+                    target_type=ShortcutType.app,
+                ),
+                "agent_id": "general",
+                "tool_trace": [],
+                "errors": [],
+                "execution_id": "exec-1",
+            },
+        }
+
+    monkeypatch.setattr(graph_module, "stream_chat_graph", fake_stream)
+    monkeypatch.setattr(orchestrator, "stream_chat_graph", fake_stream)
+
+
+async def _collect(agen):
+    return [event async for event in agen]
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["local", "remote"])
+def test_stream_is_the_same_through_both_transports(monkeypatch, index):
+    seen: list[dict] = []
+    _stub_stream(monkeypatch, seen)
+
+    events = run(_collect(_gateways()[index].stream_chat(_turn())))
+
+    assert [e["type"] for e in events] == ["reset", "delta", "delta", "final"]
+    assert "".join(e["text"] for e in events if e["type"] == "delta") == "Abrindo."
+    final = events[-1]["state"]
+    assert final["responses"][0].content == "Abrindo."
+    assert isinstance(final["action"], LaunchAction)
+    assert seen[0]["kwargs"]["message"] == "Abra o navegador"
+
+
+def test_stream_orchestrator_loads_credentials_from_the_database(monkeypatch, isolated):
+    seen: list[dict] = []
+    _stub_stream(monkeypatch, seen)
+    _, remote = _gateways()
+
+    run(_collect(remote.stream_chat(_turn())))
+
+    assert isolated == ["tutor-1"]
+    assert seen[0]["runtime_scope"] == "tutor:tutor-1"
+    assert current_user_llms() is None
+
+
+def test_stream_with_a_wrong_token_is_a_single_degraded_final(monkeypatch):
+    seen: list[dict] = []
+    _stub_stream(monkeypatch, seen)
+    _, remote = _gateways(token="outro")
+
+    events = run(_collect(remote.stream_chat(_turn())))
+
+    assert seen == []
+    assert [e["type"] for e in events] == ["final"]
+    assert events[0]["state"]["responses"][0].is_error is True
+    assert "INTERNAL_SERVICE_TOKEN diferente" in events[0]["state"]["errors"][0]
+
+
+def test_stream_that_dies_midway_ends_with_a_degraded_final(monkeypatch):
+    seen: list[dict] = []
+    _stub_stream(monkeypatch, seen, fail_after_delta=True)
+    _, remote = _gateways()
+
+    events = run(_collect(remote.stream_chat(_turn())))
+
+    assert events[-1]["type"] == "final"
+    assert events[-1]["state"]["responses"][0].is_error is True

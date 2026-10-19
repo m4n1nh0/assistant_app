@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/app_config.dart';
+import 'chat_stream.dart';
 import 'storage_service.dart';
 
 /// Cliente HTTP central do backend, compartilhado por toda a interface.
@@ -367,31 +368,71 @@ class ApiService {
     );
   }
 
+  /// Só o texto da resposta, pedaço a pedaço. Quem precisa da ação, das
+  /// leituras ou de saber quando o texto recomeça usa [chatStreamEvents].
   Stream<String> chatStream({
     required String message,
     List<Map<String, String>> history = const [],
     String? llm,
     String sessionId = 'default',
   }) async* {
-    final request = http.Request('POST', Uri.parse('$baseUrl/chat/stream'));
-    request.headers.addAll(_headers);
-    request.body = jsonEncode({
-      'message': message,
-      'history': history,
-      if (llm != null) 'llm': llm,
-      'session_id': sessionId,
-      'stream': true,
-    });
+    await for (final event in chatStreamEvents(
+      message: message,
+      history: history,
+      llm: llm,
+      sessionId: sessionId,
+    )) {
+      if (event is ChatStreamDelta) yield event.text;
+    }
+  }
 
-    final response = await http.Client().send(request);
-    await for (final chunk in response.stream.transform(utf8.decoder)) {
-      for (final line in chunk.split('\n')) {
-        if (line.startsWith('data: ')) {
-          final json = jsonDecode(line.substring(6)) as Map<String, dynamic>;
-          if (json['chunk'] != null) yield json['chunk'] as String;
-          if (json['done'] == true) return;
+  /// Resposta do chat em streaming (SSE): o texto chega enquanto o modelo o
+  /// escreve, e o último evento ([ChatStreamFinal]) traz o resultado do turno.
+  ///
+  /// O turno roda inteiro no grafo do backend, como em [chat]: ferramentas,
+  /// agenda e busca nas aulas valem aqui também. Falha HTTP sobe como exceção;
+  /// falha do turno chega como [ChatStreamError].
+  Stream<ChatStreamEvent> chatStreamEvents({
+    required String message,
+    List<Map<String, String>> history = const [],
+    String? llm,
+    String sessionId = 'default',
+  }) async* {
+    final client = http.Client();
+    try {
+      final request = http.Request('POST', Uri.parse('$baseUrl/chat/stream'));
+      request.headers.addAll(_headers);
+      request.headers['Accept'] = 'text/event-stream';
+      request.body = jsonEncode({
+        'message': message,
+        'history': history,
+        'mode': 'single',
+        if (llm != null) 'llm': llm,
+        'session_id': sessionId,
+        'stream': true,
+      });
+
+      final response = await client.send(request);
+      if (response.statusCode >= 400) {
+        final body = await response.stream.bytesToString();
+        var detail = 'HTTP ${response.statusCode}';
+        try {
+          final data = jsonDecode(body);
+          if (data is Map && data['detail'] != null) {
+            detail = data['detail'].toString();
+          }
+        } on FormatException {
+          // Corpo que nao e JSON: fica o codigo HTTP.
         }
+        throw Exception(detail);
       }
+      yield* parseChatStream(
+        response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter()),
+      );
+    } finally {
+      client.close();
     }
   }
 

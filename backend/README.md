@@ -112,9 +112,8 @@ pela fachada `app/services/chat_graph_service.py`. Ele roda na API ou no
 workflow detecta ações locais, resolve atalhos e escolhe entre despacho
 `single`, `multi` e `chain`. Os nós chamam a Service Layer existente, mantendo
 banco, provedores e execução local fora do grafo. O SSE (`POST /chat/stream`) e
-o WebSocket `chat_stream` tambem passam pelo grafo: a resposta chega pronta e sai em
-pedacos, sem token a token do provedor. So o orquestrador (ou o grafo local) fala com os
-provedores de IA no chat.
+o WebSocket `chat_stream` tambem passam pelo grafo e transmitem o texto enquanto o modelo o
+escreve. So o orquestrador (ou o grafo local) fala com os provedores de IA no chat.
 
 As ações detectáveis são `StructuredTool`s do LangChain registradas em
 `app/services/assistant_tools.py`: diagnóstico do computador, execução de
@@ -467,7 +466,7 @@ entrada e saída, fica disponível em `/docs` e `/openapi.json`.
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/chat/` | Conversa completa (single/multi/chain) |
-| POST | `/chat/stream` | SSE em pedacos; o turno passa pelo grafo |
+| POST | `/chat/stream` | SSE aos pedacos enquanto o modelo escreve; o turno passa pelo grafo |
 | GET | `/chat/history/{session_id}` | Histórico de conversa |
 | DELETE | `/chat/history/{session_id}` | Limpar histórico |
 

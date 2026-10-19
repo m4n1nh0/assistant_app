@@ -54,36 +54,136 @@ def _collect_sse(response):
     return run(drain())
 
 
-def test_chat_stream_runs_through_the_graph_and_never_calls_a_provider(monkeypatch):
-    from app.models.schemas import ChatRequest, ChatResponse, LLMResponse
+def _stream_turn_returning(events):
+    async def fake(body, user):
+        for event in events:
+            yield event
+
+    return fake
+
+
+def _answer(content, **extra):
+    from app.models.schemas import ChatResponse, LLMResponse
+
+    return ChatResponse(
+        session_id="default",
+        mode="single",
+        responses=[LLMResponse(llm="gpt", content=content, **extra)],
+    )
+
+
+def test_chat_stream_relays_the_pieces_as_the_model_writes_them(monkeypatch):
+    from app.models.schemas import ChatRequest
 
     # A rota nao conhece mais o cliente dos provedores: so o grafo fala com eles.
     assert not hasattr(chat_router, "llm_service")
 
-    turns = []
+    async def ready():
+        return ["gpt"]
+
+    final = _answer("Resposta ao vivo")
+    monkeypatch.setattr(chat_router, "get_ready_llms", ready)
+    monkeypatch.setattr(
+        chat_router,
+        "_stream_chat_turn",
+        _stream_turn_returning([("reset", None), ("delta", "Resposta "), ("delta", "ao vivo"), ("final", final)]),
+    )
+
+    events = _collect_sse(run(chat_router.chat_stream(ChatRequest(message="oi"), {"uid": "u1"}, None)))
+
+    assert events[0] == {"reset": True, "done": False}
+    assert [e["chunk"] for e in events if e.get("chunk") and not e.get("done")] == ["Resposta ", "ao vivo"]
+    end = events[-1]
+    assert end["done"] is True and end["content"] == "Resposta ao vivo" and end["llm"] == "gpt"
+
+
+def test_chat_stream_splits_the_final_text_when_nothing_was_written_live(monkeypatch):
+    from app.models.schemas import ChatRequest
 
     async def ready():
         return ["gpt"]
 
-    async def fake_turn(body, user):
-        turns.append((body.message, user["uid"]))
-        return ChatResponse(
-            session_id=body.session_id,
-            mode="single",
-            responses=[LLMResponse(llm="gpt", content="Resposta do grafo com bastante texto para dividir em pedacos.")],
-        )
+    monkeypatch.setattr(chat_router, "get_ready_llms", ready)
+    monkeypatch.setattr(
+        chat_router, "_stream_chat_turn",
+        _stream_turn_returning([("final", _answer("Agenda criada para amanha, com bastante detalhe para dividir."))]),
+    )
+
+    events = _collect_sse(run(chat_router.chat_stream(ChatRequest(message="oi"), {"uid": "u1"}, None)))
+
+    pieces = [e["chunk"] for e in events if e.get("chunk") and not e.get("done")]
+    assert len(pieces) > 1
+    assert "".join(pieces) == "Agenda criada para amanha, com bastante detalhe para dividir."
+    assert events[-1]["content"] == "Agenda criada para amanha, com bastante detalhe para dividir."
+
+
+def test_chat_stream_after_a_reset_the_final_text_is_the_truth(monkeypatch):
+    from app.models.schemas import ChatRequest
+
+    async def ready():
+        return ["gpt"]
 
     monkeypatch.setattr(chat_router, "get_ready_llms", ready)
-    monkeypatch.setattr(chat_router, "_run_chat_turn", fake_turn)
+    monkeypatch.setattr(
+        chat_router, "_stream_chat_turn",
+        _stream_turn_returning([
+            ("delta", "primeira tentativa"), ("reset", None), ("delta", "texto bom"), ("final", _answer("texto bom")),
+        ]),
+    )
 
-    response = run(chat_router.chat_stream(ChatRequest(message="oi"), {"uid": "u1"}, None))
-    events = _collect_sse(response)
+    events = _collect_sse(run(chat_router.chat_stream(ChatRequest(message="oi"), {"uid": "u1"}, None)))
 
-    assert turns == [("oi", "u1")]
-    chunks = [e["chunk"] for e in events if not e.get("done")]
-    assert len(chunks) > 1
-    assert "".join(chunks) == "Resposta do grafo com bastante texto para dividir em pedacos."
-    assert events[-1]["done"] is True and events[-1]["llm"] == "gpt"
+    assert events[1] == {"reset": True, "done": False}
+    assert events[-1]["content"] == "texto bom"
+
+
+def test_chat_stream_reports_a_failed_turn_as_an_error_event(monkeypatch):
+    from app.models.schemas import ChatRequest
+
+    async def ready():
+        return ["gpt"]
+
+    async def boom(body, user):
+        raise RuntimeError("grafo caiu")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(chat_router, "get_ready_llms", ready)
+    monkeypatch.setattr(chat_router, "_stream_chat_turn", boom)
+
+    events = _collect_sse(run(chat_router.chat_stream(ChatRequest(message="oi"), {"uid": "u1"}, None)))
+
+    assert events == [{"error": "grafo caiu", "done": True}]
+
+
+def test_stream_chat_turn_relays_graph_events_and_ends_with_the_saved_response(monkeypatch):
+    from app.models.schemas import ChatRequest
+
+    saved = []
+
+    async def kwargs(body, user):
+        return "tutor-1", {"message": body.message}
+
+    async def graph(**kw):
+        assert kw == {"message": "oi"}
+        yield {"type": "reset"}
+        yield {"type": "delta", "text": "Ola"}
+        yield {"type": "final", "state": {"responses": []}}
+
+    async def finish(body, user, state):
+        saved.append(state)
+        return _answer("Ola")
+
+    monkeypatch.setattr(chat_router, "_turn_kwargs", kwargs)
+    monkeypatch.setattr(chat_router, "stream_chat_graph", graph)
+    monkeypatch.setattr(chat_router, "_finish_turn", finish)
+
+    async def go():
+        return [x async for x in chat_router._stream_chat_turn(ChatRequest(message="oi"), {"uid": "u1"})]
+
+    out = run(go())
+
+    assert [k for k, _ in out] == ["reset", "delta", "final"]
+    assert saved == [{"responses": []}]
 
 
 def test_chat_stream_without_ready_provider_answers_unavailable(monkeypatch):
@@ -97,6 +197,7 @@ def test_chat_stream_without_ready_provider_answers_unavailable(monkeypatch):
 
     async def never(body, user):
         raise AssertionError("sem provedor pronto o grafo nao deve rodar")
+        yield  # pragma: no cover
 
     monkeypatch.setattr(chat_router, "get_ready_llms", ready)
     monkeypatch.setattr(chat_router, "_llm_unavailable_response", unavailable)
@@ -104,4 +205,10 @@ def test_chat_stream_without_ready_provider_answers_unavailable(monkeypatch):
 
     events = _collect_sse(run(chat_router.chat_stream(ChatRequest(message="oi"), {"uid": "u1"}, None)))
 
-    assert events == [{"chunk": "Nenhum agente de IA esta disponivel", "done": True}]
+    assert events == [{
+        "chunk": "Nenhum agente de IA esta disponivel",
+        "content": "Nenhum agente de IA esta disponivel",
+        "llm": "backend",
+        "is_error": True,
+        "done": True,
+    }]

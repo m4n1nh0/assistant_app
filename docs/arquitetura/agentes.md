@@ -693,9 +693,10 @@ implementacoes nao divirjam devagar.
 
 Duas limitacoes conhecidas do arranjo remoto:
 
-- **O streaming (`/chat/stream`, `chat_stream`) tambem passa pelo grafo.** A resposta chega
-  pronta do orquestrador e a API a entrega em pedacos; nao ha token a token do provedor.
-  Quem fala com os provedores de IA no chat e sempre o orquestrador (ou o grafo local).
+- **O streaming (`/chat/stream`, `chat_stream`) tambem passa pelo grafo.** O orquestrador
+  transmite o texto enquanto o modelo o escreve (`POST /orchestrate/chat/stream`, SSE) e a API o
+  repassa a interface. Quem fala com os provedores de IA no chat e sempre o orquestrador (ou o
+  grafo local). Veja [Streaming pelo grafo](#streaming-pelo-grafo).
 - **Capacidade da maquina com varias replicas da API.** O WebSocket de uma
   sessao vive numa replica so, e a volta `/internal/devices/invoke` cai em
   qualquer uma. Com mais de uma replica, e preciso afinidade de sessao ou um
@@ -722,11 +723,43 @@ de dominio e propagam os cabecalhos de correlacao. Chamada `4xx` nao e repetida
 (e decisao do servico, nao falha de rede); `5xx`, timeout e falha de transporte
 sao repetidos com backoff e **teto**.
 
-O streaming do chat (SSE/WebSocket) entrega a resposta do grafo em pedacos: o chat inteiro
-passa pelo orquestrador, e o primeiro pedaco sai quando o turno termina. Foi uma troca
-deliberada: mais ferramentas, agenda, atalhos e busca nas aulas em toda conversa, em vez de
-token a token. Fora do chat, a API ainda consulta o estado e o saldo dos provedores
-(`/models`, `/balance`) por conta propria.
+O chat inteiro, streaming incluido, passa pelo orquestrador: ferramentas, agenda, atalhos e
+busca nas aulas valem em toda conversa, e o texto aparece enquanto o modelo o escreve. Fora do
+chat, a API ainda consulta o estado e o saldo dos provedores (`/models`, `/balance`) por conta
+propria.
+
+### Streaming pelo grafo
+
+O streaming nao e um atalho ao redor do grafo: e o proprio grafo, com o texto saindo do modelo.
+
+```mermaid
+flowchart LR
+    UI([Interface]) -->|"POST /chat/stream (SSE)"| API[assistant-api]
+    API -->|"POST /orchestrate/chat/stream (SSE)"| ORCH[agent-orchestrator]
+    ORCH --> NODE[no do agente]
+    NODE --> MODEL[ProviderChatModel]
+    MODEL -->|"stream_single: pedacos + consumo"| PROV[(provedor de IA)]
+    MODEL -.->|"reset / delta"| ORCH
+```
+
+- **Provedor** (`llm_stream_service.stream_single`): devolve o texto em pedacos e termina com a
+  resposta completa, com tokens e custo contabilizados como na chamada inteira. Streaming de
+  verdade em Claude, GPT, Together, OpenRouter, DeepSeek, Grok/Groq, LocalAI e Ollama; Gemini e
+  Hugging Face respondem inteiros e saem como um unico pedaco.
+- **Modelo do grafo** (`ProviderChatModel`): se alguem acompanha o texto (um `sink` no
+  `ContextVar` de `stream_sink`), usa o streaming e repassa cada pedaco. Texto que comeca por
+  `{` ou por cerca de codigo, com ferramentas ligadas, pode ser uma chamada de ferramenta: fica
+  retido e, se nao era, sai de uma vez. Cada chamada ao modelo comeca com um `reset`.
+- **Eventos**: `reset` (descarte o texto parcial), `delta` (mais um pedaco) e `final` (o estado
+  do turno, igual ao de `/orchestrate/chat`). O `final` e a verdade; o texto transmitido e uma
+  previa. Tambem e o que a interface faz: o resultado final substitui o texto acumulado.
+- **So o modo `single` transmite.** `multi` e `chain` juntam varias respostas e chegam inteiros no
+  `final`; a API os divide em pedacos.
+- **Sem retentativa no streaming remoto**: depois que o turno chegou ao orquestrador ele pode ter
+  chamado modelo pago ou agido na maquina do usuario, e repetir faria isso duas vezes. Falha no
+  meio vira um `final` de erro.
+- **Interface**: o painel mostra a resposta crescendo e a grava no historico so no fim. Se o
+  backend nao tiver o streaming (versao antiga), cai para `POST /chat/`.
 
 ---
 

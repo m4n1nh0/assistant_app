@@ -34,7 +34,9 @@ from pydantic import BaseModel
 from .user_llm_config_service import runtime_settings
 from shared.observability import span
 from ..models.schemas import LLMResponse, Message
-from . import llm_service
+from . import llm_service, llm_stream_service
+from .llm_stream_service import StreamDone
+from .stream_sink import current_sink
 
 
 settings = runtime_settings
@@ -262,12 +264,24 @@ class ProviderChatModel(BaseChatModel):
             provider=self.provider,
             tools=len(self.bound_tools) or None,
         ) as observed:
-            response = await llm_service.dispatch_single(
-                self.provider,
-                message,
-                history,
-                system_prompt,
-            )
+            sink = current_sink()
+            if sink is None:
+                response = await llm_service.dispatch_single(
+                    self.provider,
+                    message,
+                    history,
+                    system_prompt,
+                )
+            else:
+                # Alguem acompanha o texto (rota de streaming): mesma chamada, em pedacos.
+                response = await _stream_provider_response(
+                    sink,
+                    self.provider,
+                    message,
+                    history,
+                    system_prompt,
+                    {tool.name for tool in self.bound_tools},
+                )
             observed.set(model=response.model or None)
             if response.is_error:
                 observed.fail(response.content)
@@ -308,6 +322,68 @@ class ProviderChatModel(BaseChatModel):
             generations=[ChatGeneration(message=ai_message)],
             llm_output={"provider": response.llm},
         )
+
+
+# Resposta que abre com `{` ou com cerca de codigo pode ser uma chamada de ferramenta: o protocolo
+# textual manda "SOMENTE o JSON". Esse tipo de texto fica retido ate o fim em vez de ir para a tela.
+_TOOL_CALL_OPENERS = "{`"
+
+
+def _answer_stream_policy(has_tools: bool, leading: str) -> str | None:
+    """Decide, pelo comeco do texto, se ele segue para o usuario enquanto chega.
+
+    Returns:
+        `"stream"` para mostrar ja; `"hold"` para segurar ate o fim (pode ser chamada de
+        ferramenta, que o usuario nao deve ler); `None` enquanto so chegou espaco.
+    """
+    stripped = leading.lstrip()
+    if not stripped:
+        return None
+    if has_tools and stripped[0] in _TOOL_CALL_OPENERS:
+        return "hold"
+    return "stream"
+
+
+async def _stream_provider_response(
+    sink,
+    provider: str,
+    message: str,
+    history: list[Message],
+    system_prompt: str,
+    tool_names: set[str],
+) -> LLMResponse:
+    """Chama o provedor em streaming e repassa o texto da resposta ao `sink`.
+
+    Cada chamada comeca com um `reset`: o que o usuario viu da chamada anterior (outra volta do
+    agente, retentativa) sai da tela. Texto que parece chamada de ferramenta fica retido ate o
+    fim; se no fim nao era ferramenta, sai de uma vez.
+    """
+    await sink({"type": "reset"})
+    policy: str | None = None
+    leading = ""
+    response: LLMResponse | None = None
+    async for event in llm_stream_service.stream_single(
+        provider, message, history, system_prompt
+    ):
+        if isinstance(event, StreamDone):
+            response = event.response
+            continue
+        if policy is None:
+            leading += event.text
+            policy = _answer_stream_policy(bool(tool_names), leading)
+            if policy == "stream":
+                await sink({"type": "delta", "text": leading})
+            continue
+        if policy == "stream":
+            await sink({"type": "delta", "text": event.text})
+
+    if response is None:  # o streamer sempre termina com `StreamDone`; defesa
+        response = LLMResponse(llm=provider, content=leading, is_error=not leading)
+    if policy != "stream" and not response.is_error and response.content:
+        # Era candidato a chamada de ferramenta e nao foi: a resposta e texto, e sai agora.
+        if not (tool_names and _parse_tool_call(response.content, tool_names)):
+            await sink({"type": "delta", "text": response.content})
+    return response
 
 
 def _usage_metadata(response: LLMResponse) -> dict[str, Any] | None:

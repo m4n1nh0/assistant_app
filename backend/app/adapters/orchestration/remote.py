@@ -16,7 +16,8 @@ repetir por timeout faria isso duas vezes.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import json
+from typing import Any, AsyncIterator
 
 import httpx
 from loguru import logger
@@ -125,6 +126,73 @@ class RemoteOrchestrationGateway:
             result = result_from_payload(payload)
             observed.set(action_kind=result.get("action_kind"), agent=result.get("agent_id"))
             return result
+
+    async def stream_chat(self, turn: ChatTurn) -> AsyncIterator[dict[str, Any]]:
+        """Envia o turno ao orquestrador e repassa o texto aos pedacos (SSE).
+
+        Sem retentativa: depois que o turno chegou ele pode ter chamado modelo pago ou disparado
+        acao na maquina, e repetir faria isso duas vezes. Falha em qualquer ponto vira o `final`
+        degradado, igual ao de `run_chat`; o texto parcial ja enviado e descartado pelo `final`.
+        """
+        manifest = (
+            self._device_catalog().manifest(turn.device_id)
+            if turn.device_id
+            else None
+        )
+        async with span(
+            "orchestrator.chat_stream",
+            "graph",
+            transport="remote",
+            mode=turn.mode.value,
+            provider=turn.requested_llm,
+        ) as observed:
+            final: dict[str, Any] | None = None
+            try:
+                url = f"{self._base_url}/orchestrate/chat/stream"
+                body = turn_to_payload(turn, device=manifest)
+                async for event in self._stream_events(url, body):
+                    if event.get("type") == "final":
+                        final = result_from_payload(event.get("state") or {})
+                        continue
+                    yield event
+                if final is None:
+                    raise RuntimeError("o orquestrador encerrou o streaming sem o resultado")
+            except Exception as exc:
+                observed.fail(exc)
+                logger.error(f"agent-orchestrator indisponivel: {_describe(exc)}")
+                final = _unavailable(turn, exc)
+            observed.set(action_kind=final.get("action_kind"), agent=final.get("agent_id"))
+            yield {"type": "final", "state": final}
+
+    async def _stream_events(self, url: str, body: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        headers = self._headers()
+        headers["Accept"] = "text/event-stream"
+        client = self._client
+        owned = client is None
+        if client is None:
+            client = httpx.AsyncClient(timeout=self._timeout)
+        try:
+            async with client.stream(
+                "POST", url, json=body, headers=headers, timeout=self._timeout
+            ) as response:
+                if response.is_error:
+                    await response.aread()
+                    response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if not raw:
+                        continue
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict):
+                        yield event
+        finally:
+            if owned:
+                await client.aclose()
 
     async def health(self) -> dict[str, Any]:
         """Health do orquestrador, ou o motivo de nao responder."""

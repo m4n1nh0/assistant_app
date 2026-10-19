@@ -14,7 +14,8 @@ nao importa nenhuma implementacao concreta.
 
 from __future__ import annotations
 
-from typing import Any, cast
+import asyncio
+from typing import Any, AsyncIterator, cast
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
@@ -32,6 +33,7 @@ from .nodes.dispatch import (
 )
 from .nodes.responses import acknowledge_action, query_calendar, query_academic, query_study_time
 from .nodes.retrieval import build_retrieve_context
+from ..services.stream_sink import bind_sink, reset_sink
 from .routing import route_after_resolution
 from .state import ChatGraphState, ChatRuntimeContext
 
@@ -226,6 +228,51 @@ async def run_chat_graph(
             }
 
 
+_STREAM_END = object()
+
+
+async def stream_chat_graph(**kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+    """Roda um turno como `run_chat_graph` e entrega o texto aos pedacos enquanto ele acontece.
+
+    Eventos (dicionarios simples, para atravessarem a rede sem traducao):
+
+    - `{"type": "reset"}`: nova chamada ao modelo; descarte o texto parcial anterior.
+    - `{"type": "delta", "text": "..."}`: mais um pedaco da resposta.
+    - `{"type": "final", "state": {...}}`: o estado final, igual ao de `run_chat_graph`. Sempre o
+      ultimo, e sempre presente.
+
+    So o modo `single` e transmitido; `multi` e `chain` juntam varias respostas e chegam so no
+    `final`. Quem consome deve usar o `final` como a verdade: o texto transmitido e uma previa.
+    """
+    if kwargs.get("mode") != ResponseModeEnum.single:
+        yield {"type": "final", "state": await run_chat_graph(**kwargs)}
+        return
+
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+
+    async def sink(event: dict) -> None:
+        queue.put_nowait(event)
+
+    # A tarefa herda o contexto de quando e criada: o canal precisa estar ligado so nesse instante.
+    token = bind_sink(sink)
+    try:
+        task = asyncio.ensure_future(run_chat_graph(**kwargs))
+    finally:
+        reset_sink(token)
+    task.add_done_callback(lambda _task: queue.put_nowait(_STREAM_END))
+
+    try:
+        while True:
+            item = await queue.get()
+            if item is _STREAM_END:
+                break
+            yield item
+        yield {"type": "final", "state": task.result()}
+    finally:
+        if not task.done():
+            task.cancel()
+
+
 async def resume_chat_graph(
     *,
     conversation_id: str,
@@ -309,4 +356,5 @@ __all__ = [
     "graph_state",
     "resume_chat_graph",
     "run_chat_graph",
+    "stream_chat_graph",
 ]

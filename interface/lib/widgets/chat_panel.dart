@@ -1088,10 +1088,43 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
           await _handleWorkspaceEditProposals(result);
 
         default:
-          final result = await llmSvc.call(history, apiText);
+          // A resposta aparece enquanto o modelo a escreve; o resultado final
+          // do turno (texto, acao, leituras) substitui o que foi acumulado.
+          final chat = ref.read(chatProvider.notifier);
+          final streamId = 'stream-${DateTime.now().microsecondsSinceEpoch}';
+          var streamed = '';
+          var streamStarted = false;
+          final result = await llmSvc.callStream(
+            history,
+            apiText,
+            onReset: () {
+              streamed = '';
+              if (streamStarted && mounted) {
+                chat.setStreamingContent(streamId, '');
+              }
+            },
+            onDelta: (piece) {
+              if (!mounted) return;
+              streamed += piece;
+              if (streamStarted) {
+                chat.setStreamingContent(streamId, streamed);
+              } else {
+                streamStarted = true;
+                chat.startStreaming(ChatMessage(
+                  id: streamId,
+                  role: 'assistant',
+                  content: streamed,
+                  streaming: true,
+                ));
+              }
+              _scrollToBottom();
+            },
+          );
           final resp = result.firstResponse;
           final msg = ChatMessage(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            id: streamStarted
+                ? streamId
+                : DateTime.now().millisecondsSinceEpoch.toString(),
             role: 'assistant',
             content: _visibleChatText(resp.content, isError: resp.isError),
             llm: resp.llm,
@@ -1099,7 +1132,11 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
             workspaceRoot: _editableWorkspaceRoot,
             toolResults: result.toolResults,
           );
-          ref.read(chatProvider.notifier).addMessage(msg);
+          if (streamStarted) {
+            chat.finishStreaming(msg);
+          } else {
+            chat.addMessage(msg);
+          }
           if (config.ttsEnabled && !resp.isError) {
             await _speakPreview(resp.content, 400);
           }
@@ -3212,9 +3249,14 @@ ${result.promptText}
       if (msg.role == 'system' && _isRoutineVoiceNotice(msg.content)) {
         return false;
       }
+      // Resposta que acabou de recomecar, ainda sem texto: nada a mostrar.
+      if (msg.streaming && msg.content.isEmpty) return false;
       return true;
     }).toList();
     final isLoading = ref.watch(isLoadingProvider);
+    // Com a resposta ja aparecendo na tela, o indicador de "digitando" sobra.
+    final showTyping = isLoading &&
+        !(visibleMessages.isNotEmpty && visibleMessages.last.streaming);
     final isRec = ref.watch(isRecordingProvider);
     final config = ref.watch(configProvider);
     ref.listen<QueuedChatCommand?>(queuedChatCommandProvider, (previous, next) {
@@ -3252,7 +3294,7 @@ ${result.promptText}
             child: ListView.builder(
               controller: _scrollCtrl,
               padding: const EdgeInsets.all(20),
-              itemCount: visibleMessages.length + (isLoading ? 1 : 0),
+              itemCount: visibleMessages.length + (showTyping ? 1 : 0),
               itemBuilder: (_, i) {
                 if (i == visibleMessages.length) {
                   return _TypingIndicator(activity: _agentActivity);

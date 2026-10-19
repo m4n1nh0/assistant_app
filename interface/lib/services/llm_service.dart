@@ -5,6 +5,7 @@ import 'dart:async';
 
 import '../models/app_config.dart';
 import 'api_service.dart';
+import 'chat_stream.dart';
 import 'connected_ai_service.dart';
 
 String _friendlyTimeout(String operation, Duration timeout) =>
@@ -129,6 +130,73 @@ class LlmService {
         ),
       ]);
     } catch (e) {
+      return ChatResult(responses: [
+        LlmResponse(
+          llm: 'backend',
+          content: 'Erro de conexao: $e',
+          isError: true,
+        ),
+      ]);
+    }
+  }
+
+  /// Como [call], mas mostra a resposta enquanto o modelo a escreve.
+  ///
+  /// [onDelta] recebe cada pedaço do texto e [onReset] avisa que o modelo
+  /// recomeçou (descarte o que foi mostrado). O [ChatResult] devolvido, com
+  /// ação e leituras, é a verdade: substitui o texto acumulado. Se o streaming
+  /// falhar antes de qualquer evento (backend antigo, rede), cai para a chamada
+  /// inteira, e a conversa segue como antes.
+  Future<ChatResult> callStream(
+    List<Map<String, String>> history,
+    String text, {
+    required void Function(String text) onDelta,
+    required void Function() onReset,
+  }) async {
+    final connected = _selectedConnectedAgent;
+    if (connected != null) return _runConnectedAgent(connected, history, text);
+    final timeout = _timeoutFor(120);
+    var sawEvent = false;
+    try {
+      ChatStreamFinal? last;
+      // O limite vale entre eventos: um turno longo com ferramentas continua
+      // vivo enquanto o servidor mandar algo, e so estoura se ficar mudo.
+      final events = api
+          .chatStreamEvents(
+            message: text,
+            history: history,
+            llm: _selectedBackendLlm,
+          )
+          .timeout(timeout);
+      await for (final event in events) {
+        sawEvent = true;
+        switch (event) {
+          case ChatStreamReset():
+            onReset();
+          case ChatStreamDelta(:final text):
+            onDelta(text);
+          case ChatStreamFinal():
+            last = event;
+          case ChatStreamError(:final message):
+            return ChatResult(responses: [
+              LlmResponse(llm: 'backend', content: message, isError: true),
+            ]);
+        }
+      }
+      if (last == null) {
+        throw StateError('o backend encerrou o streaming sem o resultado');
+      }
+      return _parseResult(last.data, fallbackLlm: 'backend');
+    } on TimeoutException {
+      return ChatResult(responses: [
+        LlmResponse(
+          llm: 'backend',
+          content: _friendlyTimeout('chat', timeout),
+          isError: true,
+        ),
+      ]);
+    } catch (e) {
+      if (!sawEvent) return call(history, text);
       return ChatResult(responses: [
         LlmResponse(
           llm: 'backend',

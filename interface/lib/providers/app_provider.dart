@@ -169,6 +169,33 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     });
   }
 
+  /// Comeca a mostrar uma resposta que o modelo ainda esta escrevendo. Fica so
+  /// na tela: o historico guardado recebe a mensagem em [finishStreaming].
+  void startStreaming(ChatMessage msg) {
+    state = [...state, msg];
+  }
+
+  /// Troca o texto da resposta em escrita (cresce a cada pedaco, ou volta a
+  /// vazio quando o modelo recomeca).
+  void setStreamingContent(String id, String content) {
+    state = [
+      for (final m in state) m.id == id ? m.withContent(content) : m,
+    ];
+  }
+
+  /// Termina a resposta: [msg] substitui o texto parcial (e a verdade, com a
+  /// resposta final, as leituras e o provedor) e passa para o historico.
+  void finishStreaming(ChatMessage msg) {
+    state = [for (final m in state) m.id == msg.id ? msg : m];
+    HiveConversations.append({
+      'id': msg.id,
+      'role': msg.role,
+      'content': msg.content,
+      'llm': msg.llm,
+      'timestamp': msg.timestamp.toIso8601String(),
+    });
+  }
+
   void clear() {
     state = [];
     HiveConversations.clearAll();

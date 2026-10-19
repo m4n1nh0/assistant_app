@@ -637,3 +637,81 @@ def test_chain_route_reads_registry_and_surfaces_the_trace(monkeypatch):
     assert [entry["tool"] for entry in result["tool_trace"]] == [
         "education_list_quizzes"
     ]
+
+
+# --- streaming pelo grafo de verdade -----------------------------------------
+
+
+def _stream_graph(*, message="Ola", mode=ResponseModeEnum.single, requested_llm="llama", active_llms=("llama",)):
+    async def go():
+        return [
+            event
+            async for event in chat_graph_service.stream_chat_graph(
+                message=message,
+                history=[],
+                mode=mode,
+                requested_llm=requested_llm,
+                active_llms=list(active_llms),
+                system_prompt="system",
+                tutor_id="tutor-1",
+                user_id="user-1",
+            )
+        ]
+
+    return asyncio.run(go())
+
+
+def test_text_streams_through_the_real_graph_and_the_final_state_matches(monkeypatch):
+    from app.services import llm_stream_service
+    from app.services.llm_stream_service import StreamDelta, StreamDone
+
+    async def no_shortcut(message, tutor_id):
+        return None, "chat", ""
+
+    calls = []
+
+    async def fake_stream(provider, message, history, system_prompt, **kwargs):
+        calls.append((provider, message))
+        yield StreamDelta("Resposta ")
+        yield StreamDelta("ao vivo")
+        yield StreamDone(LLMResponse(llm=provider, content="Resposta ao vivo", output_tokens=2))
+
+    async def whole_call_is_not_allowed(*args, **kwargs):
+        raise AssertionError("com alguem acompanhando o texto, o modelo deve usar o streaming")
+
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(llm_stream_service, "stream_single", fake_stream)
+    monkeypatch.setattr(
+        chat_graph_service.langchain_agent_service.llm_service, "dispatch_single", whole_call_is_not_allowed
+    )
+
+    events = _stream_graph()
+
+    types = [e["type"] for e in events]
+    assert types[-1] == "final" and types.count("final") == 1
+    assert "reset" in types
+    assert "".join(e["text"] for e in events if e["type"] == "delta") == "Resposta ao vivo"
+    final = events[-1]["state"]
+    assert final["responses"][0].content == "Resposta ao vivo"
+    assert final["agent_id"] == "general"
+    assert calls and calls[0][0] == "llama"
+
+
+def test_multi_mode_through_the_real_graph_arrives_only_as_the_final_state(monkeypatch):
+    async def no_shortcut(message, tutor_id):
+        return None, "chat", ""
+
+    async def dispatch(llms, message, history, system_prompt, tools=(), trace_sink=None):
+        return [LLMResponse(llm="gpt", content="A"), LLMResponse(llm="claude", content="B")]
+
+    async def rank(llms, task="general", available_only=False, demanding=False):
+        return llms
+
+    monkeypatch.setattr(action_detection, "lookup_shortcut", no_shortcut)
+    monkeypatch.setattr(chat_graph_service.langchain_agent_service, "dispatch_multi", dispatch)
+    monkeypatch.setattr(llm_routing_service, "rank_auto_llms", rank)
+
+    events = _stream_graph(mode=ResponseModeEnum.multi, requested_llm=None, active_llms=("gpt", "claude"))
+
+    assert [e["type"] for e in events] == ["final"]
+    assert [r.llm for r in events[0]["state"]["responses"]] == ["gpt", "claude"]

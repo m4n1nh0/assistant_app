@@ -17,9 +17,12 @@ cada turno aqui. O que antes impedia a extracao e resolvido assim:
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from contextlib import ExitStack
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Body, Depends
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.adapters.devices.callback import DeviceCapabilityCallback
@@ -31,7 +34,7 @@ from app.adapters.orchestration.wire import (
 from app.core.config import get_settings
 from app.core.internal_auth import require_internal_token
 from shared.observability import bind
-from app.orchestration.graph import chat_graph, graph_state, run_chat_graph
+from app.orchestration.graph import chat_graph, graph_state, run_chat_graph, stream_chat_graph
 from app.services import llm_price_service, llm_usage_service
 from app.services.device_catalog_service import bind_device, get_device_catalog, reset_device
 from app.services.user_llm_config_service import (
@@ -101,9 +104,8 @@ app = create_service(
 router = APIRouter(dependencies=[Depends(require_internal_token)])
 
 
-@router.post("/orchestrate/chat")
-async def orchestrate_chat(body: dict[str, Any] = Body(...)):
-    """Roda o grafo do chat para um turno enviado pela assistant-api."""
+def _prepare_turn(body: dict[str, Any]):
+    """Le o turno e deixa o catalogo da maquina do usuario igual ao que a API declarou."""
     turn = turn_from_payload(body)
     manifest = manifest_from_payload(body.get("device"))
 
@@ -115,6 +117,67 @@ async def orchestrate_chat(body: dict[str, Any] = Body(...)):
     elif turn.device_id:
         # A API nao mandou manifesto: a maquina desconectou ou nunca publicou.
         catalog.drop(turn.device_id)
+    return turn
+
+
+def _safely(reset, token) -> None:
+    """Desfaz um `ContextVar` sem deixar o erro de "outro contexto" escapar."""
+    try:
+        reset(token)
+    except ValueError:
+        pass
+
+
+def _sse(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@router.post("/orchestrate/chat/stream")
+async def orchestrate_chat_stream(body: dict[str, Any] = Body(...)):
+    """Igual a `/orchestrate/chat`, mas entrega o texto aos pedacos (SSE).
+
+    Cada evento `data:` e um JSON: `reset` e `delta` enquanto o modelo escreve e, por ultimo,
+    `final` com o mesmo corpo que `/orchestrate/chat` devolveria.
+    """
+    turn = _prepare_turn(body)
+
+    async def events() -> AsyncIterator[str]:
+        # Sem `with`: se a API fechar a conexao no meio, o gerador e encerrado fora da tarefa que
+        # o criou, e o `reset` de um `ContextVar` acusaria "token de outro contexto".
+        runtime_token = activate_user_llms(await load_user_llm_runtime(turn.tutor_id))
+        device_token = bind_device(turn.device_id)
+        contexts = ExitStack()
+        contexts.callback(_safely, reset_user_llms, runtime_token)
+        contexts.callback(_safely, reset_device, device_token)
+        contexts.enter_context(
+            bind(
+                conversation_id=turn.conversation_id,
+                tenant_id=turn.tutor_id,
+                user_id=turn.user_id,
+            )
+        )
+        try:
+            async for event in stream_chat_graph(**turn.graph_kwargs()):
+                if event.get("type") == "final":
+                    event = {"type": "final", "state": result_to_payload(event["state"])}
+                yield _sse(event)
+        finally:
+            try:
+                contexts.close()
+            except ValueError:
+                pass  # contexto ja descartado junto com a tarefa que o abriu
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/orchestrate/chat")
+async def orchestrate_chat(body: dict[str, Any] = Body(...)):
+    """Roda o grafo do chat para um turno enviado pela assistant-api."""
+    turn = _prepare_turn(body)
 
     runtime_token = activate_user_llms(await load_user_llm_runtime(turn.tutor_id))
     device_token = bind_device(turn.device_id)

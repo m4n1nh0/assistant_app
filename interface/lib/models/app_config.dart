@@ -588,6 +588,10 @@ class ChatMessage {
   /// duas juntas, e amanhã ainda dá para conferir de onde saiu o número.
   final List<ToolReadResult>? toolResults;
 
+  /// A resposta ainda esta sendo escrita pelo modelo: o texto cresce e a
+  /// mensagem so entra no historico guardado quando o turno termina.
+  final bool streaming;
+
   ChatMessage({
     required this.id,
     required this.role,
@@ -598,7 +602,22 @@ class ChatMessage {
     this.changedFiles,
     this.workspaceRoot,
     this.toolResults,
+    this.streaming = false,
   }) : timestamp = timestamp ?? DateTime.now();
+
+  /// A mesma mensagem com outro texto, para a resposta que esta crescendo.
+  ChatMessage withContent(String newContent) => ChatMessage(
+        id: id,
+        role: role,
+        content: newContent,
+        llm: llm,
+        timestamp: timestamp,
+        multiResponses: multiResponses,
+        changedFiles: changedFiles,
+        workspaceRoot: workspaceRoot,
+        toolResults: toolResults,
+        streaming: streaming,
+      );
 }
 
 /// Resposta de um provedor, com o texto e se veio como erro.

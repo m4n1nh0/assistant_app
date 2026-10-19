@@ -14,7 +14,7 @@ decifrada atravessa a rede.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
 from ..models.schemas import Message, ResponseModeEnum
 
@@ -79,6 +79,15 @@ class OrchestrationGateway(Protocol):
         Falha de transporte nao sobe como excecao: vira resposta com
         `is_error`, igual a falha do proprio grafo, para a rota responder ao
         usuario em vez de devolver 500.
+        """
+        ...
+
+    def stream_chat(self, turn: ChatTurn) -> AsyncIterator[dict[str, Any]]:
+        """Roda o grafo e entrega o texto aos pedacos, terminando sempre num `final`.
+
+        Eventos: `{"type": "reset"}`, `{"type": "delta", "text": ...}` e, por ultimo,
+        `{"type": "final", "state": {...}}` com o mesmo estado de `run_chat`. Como em `run_chat`,
+        falha de transporte vira um `final` com resposta `is_error`, nunca excecao.
         """
         ...
 

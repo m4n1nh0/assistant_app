@@ -1061,6 +1061,7 @@ ou ser apagados.
 | Serviços dormindo demoram ou falham no primeiro acesso | App Sleeping ligado em banco ou serviço interno — desligue em *Settings → Serverless* |
 | Modelo de embeddings baixado a cada deploy | sem volume em `/app/data` ou sem `RAILWAY_RUN_UID="0"` |
 | O chat não responde (inclusive `/chat/stream`) | todo o chat passa pelo orquestrador: verifique o `agent-orchestrator`, o `INTERNAL_SERVICE_TOKEN` e o `ORCHESTRATOR_URL` |
+| O texto só aparece quando a resposta termina | algum proxy entre a API e a interface está acumulando o SSE; o backend já manda `X-Accel-Buffering: no` e `Cache-Control: no-cache`, confira o proxy |
 
 ## Limitações do arranjo
 

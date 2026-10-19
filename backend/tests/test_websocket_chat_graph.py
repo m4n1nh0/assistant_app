@@ -52,67 +52,62 @@ def test_websocket_chat_uses_graph_and_serializes_action(monkeypatch):
     assert response["payload"]["action"]["shortcut_id"] == "shortcut-1"
 
 
-def test_websocket_chat_stream_runs_through_the_graph_and_sends_pieces(monkeypatch):
+def _collect(monkeypatch, graph, payload, **kwargs):
     sent: list[dict] = []
 
+    async def ready_llms():
+        return ["gpt"]
+
+    async def send(session_id, data):
+        sent.append(data)
+
+    monkeypatch.setattr(websocket_router, "get_ready_llms", ready_llms)
+    monkeypatch.setattr(websocket_router, "stream_chat_graph", graph)
+    monkeypatch.setattr(websocket_router.manager, "send", send)
+    asyncio.run(websocket_router._handle_chat_stream("connection-1", payload, **kwargs))
+    return sent
+
+
+def test_websocket_chat_stream_relays_the_pieces_as_the_model_writes_them(monkeypatch):
     # O WebSocket nao conhece mais o cliente dos provedores: so o grafo fala com eles.
     assert not hasattr(websocket_router, "llm_service")
 
-    async def ready_llms():
-        return ["gpt"]
-
-    async def run_graph(**kwargs):
+    async def graph(**kwargs):
         assert kwargs["message"] == "Oi"
-        assert kwargs["tutor_id"] == "tutor-1"
-        assert kwargs["user_id"] == "user-1"
-        return {
-            "responses": [LLMResponse(llm="gpt", content="Ola, tudo bem? Esta resposta vem pronta do grafo e sai em pedacos.")],
-            "action": None,
-        }
+        assert kwargs["tutor_id"] == "tutor-1" and kwargs["user_id"] == "user-1"
+        yield {"type": "reset"}
+        yield {"type": "delta", "text": "Ola, "}
+        yield {"type": "delta", "text": "tudo bem?"}
+        yield {"type": "final", "state": {"responses": [LLMResponse(llm="gpt", content="Ola, tudo bem?")], "action": None}}
 
-    async def send(session_id, data):
-        sent.append(data)
+    sent = _collect(monkeypatch, graph, {"message": "Oi", "llm": "gpt", "history": []},
+                    tutor_id="tutor-1", user_id="user-1")
 
-    monkeypatch.setattr(websocket_router, "get_ready_llms", ready_llms)
-    monkeypatch.setattr(websocket_router, "run_chat_graph", run_graph)
-    monkeypatch.setattr(websocket_router.manager, "send", send)
+    assert [m["type"] for m in sent] == ["thinking", "stream_reset", "stream_chunk", "stream_chunk", "stream_end"]
+    assert [m["payload"]["chunk"] for m in sent if m["type"] == "stream_chunk"] == ["Ola, ", "tudo bem?"]
+    end = sent[-1]["payload"]
+    assert end["full_response"] == "Ola, tudo bem?" and end["llm"] == "gpt" and end["done"] is True
 
-    asyncio.run(
-        websocket_router._handle_chat_stream(
-            "connection-1",
-            {"message": "Oi", "llm": "gpt", "history": []},
-            tutor_id="tutor-1",
-            user_id="user-1",
-        )
-    )
 
-    assert sent[0]["type"] == "thinking"
+def test_websocket_chat_stream_splits_the_final_text_when_nothing_was_live(monkeypatch):
+    async def graph(**kwargs):
+        text = "Ola, tudo bem? Esta resposta vem pronta do grafo e sai em pedacos."
+        yield {"type": "final", "state": {"responses": [LLMResponse(llm="gpt", content=text)], "action": None}}
+
+    sent = _collect(monkeypatch, graph, {"message": "Oi", "llm": "gpt"})
+
     chunks = [m["payload"]["chunk"] for m in sent if m["type"] == "stream_chunk"]
-    end = sent[-1]
     assert len(chunks) > 1
     assert "".join(chunks) == "Ola, tudo bem? Esta resposta vem pronta do grafo e sai em pedacos."
-    assert end["type"] == "stream_end"
-    assert end["payload"]["full_response"] == "".join(chunks)
-    assert end["payload"]["llm"] == "gpt" and end["payload"]["done"] is True
+    assert sent[-1]["payload"]["full_response"] == "".join(chunks)
 
 
 def test_websocket_chat_stream_reports_graph_failure_as_error(monkeypatch):
-    sent: list[dict] = []
-
-    async def ready_llms():
-        return ["gpt"]
-
-    async def boom(**kwargs):
+    async def graph(**kwargs):
         raise RuntimeError("grafo caiu")
+        yield  # pragma: no cover
 
-    async def send(session_id, data):
-        sent.append(data)
-
-    monkeypatch.setattr(websocket_router, "get_ready_llms", ready_llms)
-    monkeypatch.setattr(websocket_router, "run_chat_graph", boom)
-    monkeypatch.setattr(websocket_router.manager, "send", send)
-
-    asyncio.run(websocket_router._handle_chat_stream("c", {"message": "Oi"}))
+    sent = _collect(monkeypatch, graph, {"message": "Oi"})
 
     assert sent[-1]["type"] == "error"
     assert "grafo caiu" in str(sent[-1])
