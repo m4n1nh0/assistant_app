@@ -1060,7 +1060,7 @@ ou ser apagados.
 | `Access denied for user 'app'@... (using password: NO)` | referências do `DATABASE_URL` apontam para variáveis que o MySQL não publica (`MYSQLUSER` numa imagem que publica `MYSQL_USER`); o log de boot mostra `DATABASE_URL incompleta` |
 | Serviços dormindo demoram ou falham no primeiro acesso | App Sleeping ligado em banco ou serviço interno — desligue em *Settings → Serverless* |
 | Modelo de embeddings baixado a cada deploy | sem volume em `/app/data` ou sem `RAILWAY_RUN_UID="0"` |
-| Streaming (`/chat/stream`) funciona e o chat completo não | streaming fica na API; o chat completo passa pelo orquestrador — verifique o orquestrador |
+| O chat não responde (inclusive `/chat/stream`) | todo o chat passa pelo orquestrador: verifique o `agent-orchestrator`, o `INTERNAL_SERVICE_TOKEN` e o `ORCHESTRATOR_URL` |
 
 ## Limitações do arranjo
 

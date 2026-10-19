@@ -4,6 +4,10 @@ As rotas montam o prompt de sistema com a persona do usuario, chamam o grafo em
 `app.services.chat_graph_service` e persistem o par pergunta/resposta. Tudo aqui
 exige autenticacao e trabalha sempre no escopo da conta - historico de sessao
 nunca cruza usuarios.
+
+Todo turno de conversa, inclusive o do streaming, passa pelo grafo: quem fala com os
+provedores de IA e o orquestrador (ou o grafo local), nunca a rota. O streaming entrega a
+resposta pronta em pedacos.
 """
 
 from fastapi import APIRouter, Depends
@@ -27,11 +31,10 @@ from ..models.schemas import (
     LLMResponse,
     ToolReadResult,
 )
-from ..services import llm_service
 from ..services.chat_graph_service import run_chat_graph
 from ..services.device_catalog_service import session_device
 from ..services.llm_status_service import get_llm_statuses, get_ready_llms
-from ..services.llm_routing_service import pick_auto_llm
+from ..services.stream_text import text_chunks
 from ..services.user_llm_config_service import runtime_settings, user_llm_context
 
 router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
@@ -168,6 +171,15 @@ async def chat(
     Monta o prompt com a persona do usuario, roda o grafo do chat e devolve a
     resposta - ou a acao que a interface deve confirmar e executar.
     """
+    return await _run_chat_turn(body, user)
+
+
+async def _run_chat_turn(body: ChatRequest, user: dict) -> ChatResponse:
+    """Um turno completo: persona, grafo, historico gravado e resposta montada.
+
+    E o que o `/chat/` e o `/chat/stream` compartilham, para nenhum dos dois falar com um
+    provedor por fora do grafo.
+    """
     cfg = await _assistant_config(user)
     sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
@@ -290,35 +302,43 @@ async def chat_stream(
     user: dict = Depends(get_current_user),
     _llm_context: None = Depends(user_llm_context),
 ):
-    """Igual a `chat`, mas devolve a resposta em streaming (SSE).
+    """Igual a `chat`, mas devolve a resposta em pedacos (SSE).
 
-    Cai automaticamente para a resposta inteira quando o provedor escolhido nao
-    suporta streaming.
+    O turno passa pelo grafo, como em `/chat/`: ferramentas, agenda, atalhos e busca nas
+    aulas valem aqui tambem, e o historico e gravado. A resposta chega pronta e e dividida
+    em pedacos; nao ha mais token a token do provedor.
     """
-    cfg = await _assistant_config(user)
-    sys_prompt = _system_prompt(cfg) + _desktop_interface_guidance()
     active = await get_ready_llms()
-    llm = body.llm.value if body.llm else (await pick_auto_llm(active) if active else "")
-    if not llm or llm not in active:
-        resp = await _llm_unavailable_response(llm or None)
+    requested = body.llm.value if body.llm else None
+    if not active or (requested and requested not in active):
+        resp = await _llm_unavailable_response(requested)
 
         async def _unavailable():
             yield f"data: {json.dumps({'chunk': resp.content, 'done': True})}\n\n"
 
         return StreamingResponse(_unavailable(), media_type="text/event-stream")
 
-    streamer = await llm_service.get_streamer(llm)
-    if not streamer:
-        resp = await llm_service.dispatch_single(llm, body.message, body.history, sys_prompt)
-        async def _fallback():
-            yield f"data: {json.dumps({'chunk': resp.content, 'done': True})}\n\n"
-        return StreamingResponse(_fallback(), media_type="text/event-stream")
-
     async def _generate():
         try:
-            async for chunk in streamer(body.message, body.history, sys_prompt):
-                yield f"data: {json.dumps({'chunk': chunk, 'done': False, 'llm': llm})}\n\n"
-            yield f"data: {json.dumps({'chunk': '', 'done': True, 'llm': llm})}\n\n"
+            result = await _run_chat_turn(body, user)
+            reply = next((r for r in result.responses if not r.is_error), None) or (
+                result.responses[0] if result.responses else None
+            )
+            llm = reply.llm if reply else (requested or "")
+            for piece in text_chunks(reply.content if reply else ""):
+                yield f"data: {json.dumps({'chunk': piece, 'done': False, 'llm': llm})}\n\n"
+            final = {
+                "chunk": "",
+                "done": True,
+                "llm": llm,
+                "action": (
+                    result.action.model_dump(mode="json")
+                    if hasattr(result.action, "model_dump")
+                    else result.action
+                ),
+                "tool_results": [t.model_dump(mode="json") for t in result.tool_results],
+            }
+            yield f"data: {json.dumps(final)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 

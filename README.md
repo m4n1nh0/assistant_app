@@ -499,8 +499,8 @@ autenticado em vez de tentar transformar uma assinatura pessoal em API key:
 
 O grafo orquestra os servicos existentes; ele nao acessa diretamente o
 computador nem substitui as confirmacoes da interface. O endpoint SSE e a
-mensagem WebSocket `chat_stream` continuam com despacho direto para preservar
-o streaming incremental de tokens.
+mensagem WebSocket `chat_stream` tambem passam pelo grafo: a resposta chega pronta
+e sai em pedacos, sem token a token do provedor.
 
 O LangGraph usa duas integrações LangChain:
 

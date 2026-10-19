@@ -693,8 +693,9 @@ implementacoes nao divirjam devagar.
 
 Duas limitacoes conhecidas do arranjo remoto:
 
-- **Streaming (`/chat/stream`, `chat_stream`) continua na API.** Ele fala direto
-  com o provedor, sem grafo; so o chat completo passa pelo orquestrador.
+- **O streaming (`/chat/stream`, `chat_stream`) tambem passa pelo grafo.** A resposta chega
+  pronta do orquestrador e a API a entrega em pedacos; nao ha token a token do provedor.
+  Quem fala com os provedores de IA no chat e sempre o orquestrador (ou o grafo local).
 - **Capacidade da maquina com varias replicas da API.** O WebSocket de uma
   sessao vive numa replica so, e a volta `/internal/devices/invoke` cai em
   qualquer uma. Com mais de uma replica, e preciso afinidade de sessao ou um
@@ -721,8 +722,11 @@ de dominio e propagam os cabecalhos de correlacao. Chamada `4xx` nao e repetida
 (e decisao do servico, nao falha de rede); `5xx`, timeout e falha de transporte
 sao repetidos com backoff e **teto**.
 
-O streaming do chat continua em SSE/WebSocket direto da API — colocar um salto
-extra no caminho do primeiro token pioraria justamente o que o usuario sente.
+O streaming do chat (SSE/WebSocket) entrega a resposta do grafo em pedacos: o chat inteiro
+passa pelo orquestrador, e o primeiro pedaco sai quando o turno termina. Foi uma troca
+deliberada: mais ferramentas, agenda, atalhos e busca nas aulas em toda conversa, em vez de
+token a token. Fora do chat, a API ainda consulta o estado e o saldo dos provedores
+(`/models`, `/balance`) por conta propria.
 
 ---
 

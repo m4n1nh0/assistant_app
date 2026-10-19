@@ -19,9 +19,10 @@ from ..core.config import get_settings
 from ..core.database import AsyncSessionLocal, ConfigModel, scoped_config_key
 from ..core.security import resolve_token_user
 from ..models.schemas import ResponseModeEnum, Message
-from ..services import llm_service, notification_service
+from ..services import notification_service
 from ..services.calendar_service import fetch_all_account_events
 from ..services.chat_graph_service import run_chat_graph
+from ..services.stream_text import text_chunks
 from ..services.client_capability_service import (
     ClientManifestError,
     parse_manifest,
@@ -34,7 +35,6 @@ from ..services.device_catalog_service import (
 )
 from ..services.remote_capability_gateway import RemoteCapabilityGateway
 from ..services.llm_status_service import get_ready_llms
-from ..services.llm_routing_service import pick_auto_llm
 from ..services.runtime_config_service import load_notif_config
 from ..services.microsoft_identity_service import hydrate_microsoft_account
 from ..services.voice_service import transcribe_audio, text_to_speech
@@ -302,7 +302,12 @@ async def websocket_endpoint(ws: WebSocket, session_id: str, token: str = ""):
                         user["uid"],
                     )
                 case "chat_stream":
-                    await _handle_chat_stream(connection_id, payload)
+                    await _handle_chat_stream(
+                        connection_id,
+                        payload,
+                        user.get("tutor_id") or "default",
+                        user["uid"],
+                    )
                 case "voice_transcribe":
                     await _handle_voice_transcribe(connection_id, payload)
                 case "tts":
@@ -364,6 +369,41 @@ def _parse_history(raw: list) -> list[Message]:
     return msgs
 
 
+async def _run_graph_turn(
+    session_id: str,
+    payload: dict,
+    tutor_id: str,
+    user_id: str,
+) -> tuple[list, object]:
+    """Roda um turno no grafo e devolve (respostas, acao ja serializada).
+
+    E o caminho de `chat` e de `chat_stream`: a conversa so fala com os provedores de IA
+    pelo grafo, nunca direto daqui.
+    """
+    message  = payload.get("message", "").strip()
+    mode_str = payload.get("mode", "single")
+    llm_id   = payload.get("llm")
+    history  = _parse_history(payload.get("history", []))
+    sys_p    = _build_system(payload)
+    active   = await get_ready_llms()
+
+    graph_result = await run_chat_graph(
+        message=message,
+        history=history,
+        mode=ResponseModeEnum(mode_str),
+        requested_llm=llm_id,
+        active_llms=active,
+        system_prompt=sys_p,
+        tutor_id=tutor_id,
+        user_id=user_id,
+        timezone=payload.get("timezone") or "America/Sao_Paulo",
+        conversation_id=session_id,
+    )
+    action = graph_result.get("action")
+    action_payload = action.model_dump() if hasattr(action, "model_dump") else action
+    return graph_result["responses"], action_payload
+
+
 async def _handle_chat(
     session_id: str,
     payload: dict,
@@ -373,38 +413,16 @@ async def _handle_chat(
     message  = payload.get("message", "").strip()
     mode_str = payload.get("mode", "single")
     llm_id   = payload.get("llm")
-    history  = _parse_history(payload.get("history", []))
-    sys_p    = _build_system(payload)
-    active   = await get_ready_llms()
 
     if not message:
         await _send_error(session_id, "Mensagem vazia")
         return
 
+    active = await get_ready_llms()
     await manager.send(session_id, {"type": "thinking", "payload": {"llms": [llm_id] if llm_id else active}})
 
     try:
-        mode = ResponseModeEnum(mode_str)
-        graph_result = await run_chat_graph(
-            message=message,
-            history=history,
-            mode=mode,
-            requested_llm=llm_id,
-            active_llms=active,
-            system_prompt=sys_p,
-            tutor_id=tutor_id,
-            user_id=user_id,
-            timezone=payload.get("timezone") or "America/Sao_Paulo",
-            conversation_id=session_id,
-        )
-        responses = graph_result["responses"]
-        action = graph_result.get("action")
-        action_payload = (
-            action.model_dump()
-            if hasattr(action, "model_dump")
-            else action
-        )
-
+        responses, action_payload = await _run_graph_turn(session_id, payload, tutor_id, user_id)
         await manager.send(session_id, {
             "type": "chat_response",
             "payload": {
@@ -417,39 +435,41 @@ async def _handle_chat(
         await _send_error(session_id, str(e))
 
 
-async def _handle_chat_stream(session_id: str, payload: dict):
+async def _handle_chat_stream(
+    session_id: str,
+    payload: dict,
+    tutor_id: str = "default",
+    user_id: str = "",
+):
+    """Igual a `chat`, mas entrega a resposta em pedacos (`stream_chunk` / `stream_end`).
+
+    O turno passa pelo grafo: a resposta chega pronta e e dividida aqui. Nao ha mais token a
+    token do provedor.
+    """
     message = payload.get("message", "").strip()
     llm_id  = payload.get("llm")
-    history = _parse_history(payload.get("history", []))
-    sys_p   = _build_system(payload)
-    active  = await get_ready_llms()
-
-    llm = llm_id or (await pick_auto_llm(active) if active else "claude")
-    streamer = await llm_service.get_streamer(llm)
-
-    if not streamer:
-        r = await llm_service.dispatch_single(llm, message, history, sys_p)
-        await manager.send(session_id, {
-            "type": "stream_chunk",
-            "payload": {"chunk": r.content, "llm": llm, "done": False},
-        })
-        await manager.send(session_id, {
-            "type": "stream_end",
-            "payload": {"llm": llm, "done": True},
-        })
+    if not message:
+        await _send_error(session_id, "Mensagem vazia")
         return
 
-    full = ""
+    active = await get_ready_llms()
+    await manager.send(session_id, {"type": "thinking", "payload": {"llms": [llm_id] if llm_id else active}})
+
     try:
-        async for chunk in streamer(message, history, sys_p):
-            full += chunk
+        responses, action_payload = await _run_graph_turn(session_id, payload, tutor_id, user_id)
+        reply = next((r for r in responses if not r.is_error), None) or (
+            responses[0] if responses else None
+        )
+        llm = reply.llm if reply else (llm_id or "")
+        full = reply.content if reply else ""
+        for chunk in text_chunks(full):
             await manager.send(session_id, {
                 "type": "stream_chunk",
                 "payload": {"chunk": chunk, "llm": llm, "done": False},
             })
         await manager.send(session_id, {
             "type": "stream_end",
-            "payload": {"llm": llm, "full_response": full, "done": True},
+            "payload": {"llm": llm, "full_response": full, "action": action_payload, "done": True},
         })
     except Exception as e:
         await _send_error(session_id, str(e))
