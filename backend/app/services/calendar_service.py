@@ -11,6 +11,8 @@ contas do usuario em vez de uma configuracao unica.
 """
 
 import asyncio
+import hashlib
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -20,6 +22,7 @@ from loguru import logger
 
 from ..core.config import get_settings
 from ..models.schemas import CalendarEvent, CalendarConfig
+from . import calendar_cache
 
 settings = get_settings()
 
@@ -108,9 +111,46 @@ async def exchange_google_code(
     return data["refresh_token"]
 
 
+# Token de acesso por conta, ate perto de expirar. O provedor entrega um por hora; pedir outro a
+# cada leitura era uma ida ao servidor de autenticacao so para repetir o que ja se tinha. Fica na
+# memoria do processo e nunca no Redis: e credencial.
+_TOKEN_SAFETY_SECONDS = 120
+_tokens: dict[str, tuple[str, float]] = {}
+
+
+def _token_key(*parts: str) -> str:
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def _cached_token(key: str) -> str | None:
+    cached = _tokens.get(key)
+    if cached and time.monotonic() < cached[1]:
+        return cached[0]
+    _tokens.pop(key, None)
+    return None
+
+
+def _remember_token(key: str, token: str, expires_in: object) -> None:
+    try:
+        lifetime = float(expires_in)
+    except (TypeError, ValueError):
+        lifetime = 3600.0
+    ttl = lifetime - _TOKEN_SAFETY_SECONDS
+    if ttl > 0:
+        _tokens[key] = (token, time.monotonic() + ttl)
+
+
+def clear_token_cache() -> None:
+    """Esvazia os tokens guardados (testes)."""
+    _tokens.clear()
+
+
 async def _get_google_access_token(
     client_id: str, client_secret: str, refresh_token: str
 ) -> str:
+    key = _token_key("google", client_id, refresh_token)
+    if (cached := _cached_token(key)) is not None:
+        return cached
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -124,6 +164,7 @@ async def _get_google_access_token(
     data = resp.json()
     if "error" in data:
         raise Exception(data.get("error_description", data["error"]))
+    _remember_token(key, data["access_token"], data.get("expires_in"))
     return data["access_token"]
 
 
@@ -291,6 +332,9 @@ async def fetch_microsoft_profile(access_token: str) -> dict:
 async def _get_ms_access_token(
     client_id: str, client_secret: str, tenant_id: str, refresh_token: str
 ) -> str:
+    key = _token_key("microsoft", client_id, tenant_id, refresh_token)
+    if (cached := _cached_token(key)) is not None:
+        return cached
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
@@ -307,6 +351,7 @@ async def _get_ms_access_token(
         raise MicrosoftAuthenticationError(microsoft_auth_error_message(
             str(data.get("error", "")), str(data.get("error_description", ""))
         ))
+    _remember_token(key, data["access_token"], data.get("expires_in"))
     return data["access_token"]
 
 
@@ -443,6 +488,8 @@ async def create_google_account_event(
             detail = detail.get("message") or detail
         raise RuntimeError(f"Google Calendar recusou o evento: {detail}")
 
+    # O evento novo precisa aparecer na proxima leitura, nao so quando o resultado guardado vencer.
+    await calendar_cache.invalidate(calendar_cache.account_key("google", account))
     account_id = account.get("id") or "google"
     return CalendarEvent(
         id=f"google:{account_id}:{data.get('id', '')}",
@@ -537,6 +584,7 @@ async def create_microsoft_account_event(
             detail = detail.get("message") or detail
         raise RuntimeError(f"Microsoft Calendar recusou o evento: {detail}")
 
+    await calendar_cache.invalidate(calendar_cache.account_key("microsoft", account))
     account_id = account.get("id") or "microsoft"
     online_meeting = data.get("onlineMeeting") or {}
     return CalendarEvent(
@@ -557,8 +605,12 @@ async def fetch_all_account_events(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     max_results: int = 25,
+    max_age: float | None = None,
 ) -> List[CalendarEvent]:
     """Le, em paralelo, os eventos de todas as contas de calendario do usuario.
+
+    `max_age` e a idade maxima, em segundos, de um resultado ja guardado que serve: `None` usa o
+    padrao da instalacao e `0` obriga a ir ao provedor (e atualiza o que esta guardado).
 
     Returns:
         A lista unificada de eventos. Conta que falhou e simplesmente omitida - use
@@ -570,6 +622,7 @@ async def fetch_all_account_events(
         start_time=start_time,
         end_time=end_time,
         max_results=max_results,
+        max_age=max_age,
     )
     for error in errors:
         logger.error(f"Calendar account fetch failed: {error}")
@@ -583,6 +636,7 @@ async def fetch_account_events_with_errors(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     max_results: int = 25,
+    max_age: float | None = None,
 ) -> tuple[List[CalendarEvent], List[str]]:
     """Igual a `fetch_all_account_events`, mas devolve tambem as falhas por conta.
 
@@ -601,6 +655,7 @@ async def fetch_account_events_with_errors(
                 end_time=end_time,
                 max_results=max_results,
                 raise_on_error=True,
+                max_age=max_age,
             )))
 
     for account in microsoft_accounts:
@@ -612,6 +667,7 @@ async def fetch_account_events_with_errors(
                 end_time=end_time,
                 max_results=max_results,
                 raise_on_error=True,
+                max_age=max_age,
             )))
 
     if not tasks:
@@ -632,8 +688,40 @@ async def fetch_account_events_with_errors(
     return all_events, errors
 
 
+async def _cached_account_events(
+    provider: str,
+    account: dict,
+    fetch,
+    *,
+    max_age: float | None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    max_results: int = 25,
+    **query,
+) -> List[CalendarEvent]:
+    """Eventos de uma conta, do armazenamento comum quando ha resultado recente que sirva.
+
+    So grava depois de uma leitura bem-sucedida (`raise_on_error`): uma falha nao pode virar
+    "agenda vazia" guardada para todo mundo.
+    """
+    key = calendar_cache.account_key(provider, account)
+    start, end = _calendar_window(start_time, end_time)
+    limit = max(1, min(max_results, 100))
+    age = settings.calendar_cache_max_age_seconds if max_age is None else max_age
+    if age > 0:
+        hit = await calendar_cache.read(key, start, end, limit, age)
+        if hit is not None:
+            return hit
+    events = await fetch(start_time=start, end_time=end, max_results=limit, **query)
+    if query.get("raise_on_error"):
+        await calendar_cache.write(key, start, end, limit, events)
+    return events
+
+
 async def _fetch_google_account_events(
     account: dict,
+    *,
+    max_age: float | None = None,
     **query,
 ) -> List[CalendarEvent]:
     config = CalendarConfig(
@@ -642,12 +730,17 @@ async def _fetch_google_account_events(
         google_refresh_token=account.get("refresh_token", ""),
         google_enabled=True,
     )
-    events = await fetch_google_events(config, **query)
-    return _tag_account_events(events, "google", account)
+
+    async def fetch(**params) -> List[CalendarEvent]:
+        return _tag_account_events(await fetch_google_events(config, **params), "google", account)
+
+    return await _cached_account_events("google", account, fetch, max_age=max_age, **query)
 
 
 async def _fetch_microsoft_account_events(
     account: dict,
+    *,
+    max_age: float | None = None,
     **query,
 ) -> List[CalendarEvent]:
     config = CalendarConfig(
@@ -657,8 +750,13 @@ async def _fetch_microsoft_account_events(
         ms_refresh_token=account.get("refresh_token", ""),
         ms_enabled=True,
     )
-    events = await fetch_microsoft_events(config, **query)
-    return _tag_account_events(events, "microsoft", account)
+
+    async def fetch(**params) -> List[CalendarEvent]:
+        return _tag_account_events(
+            await fetch_microsoft_events(config, **params), "microsoft", account
+        )
+
+    return await _cached_account_events("microsoft", account, fetch, max_age=max_age, **query)
 
 
 def _tag_account_events(

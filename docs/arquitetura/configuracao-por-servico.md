@@ -41,6 +41,21 @@ nos serviços configurados tornam o status geral `degraded`. O diagnóstico
 de provedores de IA continua nos campos `llm_status` e `available_llms`:
 credenciais individuais não são avaliadas pelo monitor de infraestrutura.
 
+### Agenda: uma leitura serve a todos
+
+Agendador (lembretes), interface (`/calendar/events` e o `calendar_sync` do WebSocket) e chat
+(perguntas sobre a agenda) **não** leem o Google ou o Microsoft cada um por conta própria. O
+agendador lê o provedor a cada ciclo (`CALENDAR_SYNC_INTERVAL_MINUTES`, 5 min) e grava o resultado
+de cada conta num armazenamento comum (`calendar_cache`); os demais aproveitam o que tiver até
+`CALENDAR_CACHE_MAX_AGE_SECONDS` (6 min) e só vão ao provedor quando não há resultado recente que
+cubra o período pedido. Criar evento invalida a conta. O token de acesso de cada conta fica na
+memória do processo até perto de expirar, em vez de um token novo a cada leitura.
+
+O armazenamento fica na memória do processo e, com `REDIS_URL`, no Redis: é o Redis que faz a API,
+o agendador e o orquestrador verem o mesmo resultado. Sem Redis cada processo guarda o seu, e o
+orquestrador (que responde as perguntas de agenda do chat) precisa de `REDIS_URL` para compartilhar.
+O token de acesso nunca vai ao Redis, e a chave é um hash da conta.
+
 ### Alertas administrativos
 
 Para habilitar o monitor periódico no backend, configure:

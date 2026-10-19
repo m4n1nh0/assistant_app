@@ -238,7 +238,10 @@ Sem `WA_NUMBER` o envio nem tenta, seja qual for o provedor.
 | | qualquer outro | `ValueError` no startup: o processo **não sobe**. É a exceção à regra de "valor inválido cai no padrão" |
 | `QDRANT_VECTOR_SIZE` | `384` (padrão) | Dimensão da coleção. Mudar depois de indexar exige reindexar |
 | `QDRANT_COLLECTION_PREFIX` | `assistant` (padrão) | Permite dois ambientes no mesmo Qdrant |
-| `REDIS_URL` | URL | Rate limiting. **Inalcançável não impede o boot**: o limite é simplesmente pulado |
+| `REDIS_URL` | URL | Rate limiting e armazenamento comum da agenda e do status dos provedores. **Inalcançável não impede o boot**: o limite é pulado e cada processo guarda o seu cache |
+| `CALENDAR_SYNC_INTERVAL_MINUTES` | `1` a `5` (padrão `5`) | De quanto em quanto o agendador lê o Google e o Microsoft e dispara os lembretes. Não passa de 5: a janela do lembrete "na hora" é de cerca de 6 minutos |
+| `CALENDAR_CACHE_MAX_AGE_SECONDS` | `0` ou mais (padrão `360`) | Idade máxima de um resultado guardado que a interface e o chat aceitam em vez de ir ao provedor. `0` desliga o aproveitamento |
+| `CALENDAR_CACHE_TTL_SECONDS` | `60` ou mais (padrão `900`) | Quanto tempo o resultado fica no Redis |
 
 > **Banco fora do ar não derruba o boot** — vira warning e as funções de
 > histórico ficam desativadas. A exceção é quando `DATABASE_SEED` pede um seed:

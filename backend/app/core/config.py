@@ -99,6 +99,13 @@ class Settings(MCPSettings):
     health_alert_failure_threshold: int = Field(default=3, ge=1)
     health_alert_cooldown_seconds: int = Field(default=3600, ge=60)
     redis_url: str = "redis://localhost:6379/0"
+    # Agenda (Google/Microsoft): o agendador le o provedor a cada ciclo e grava o resultado; quem
+    # mais pergunta (interface, chat) aproveita o que tiver ate `calendar_cache_max_age_seconds` de
+    # idade. O ciclo tambem dispara os lembretes: a janela do lembrete "na hora" e de cerca de 6
+    # minutos, entao ciclo maior que 5 perde lembrete.
+    calendar_sync_interval_minutes: int = Field(default=5, ge=1, le=5)
+    calendar_cache_max_age_seconds: int = Field(default=360, ge=0)
+    calendar_cache_ttl_seconds: int = Field(default=900, ge=60)
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

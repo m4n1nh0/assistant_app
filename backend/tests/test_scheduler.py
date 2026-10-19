@@ -28,7 +28,7 @@ def test_scheduler_uses_configured_advance(monkeypatch):
             notify_on_time=False,
         )
 
-    async def events(*args):
+    async def events(*args, **kwargs):
         return [event]
 
     async def send(message, cfg, event=None):
@@ -65,7 +65,7 @@ def test_scheduler_respects_disabled_advance(monkeypatch):
             notify_on_time=False,
         )
 
-    async def events(*args):
+    async def events(*args, **kwargs):
         return [event]
 
     async def send(message, cfg, event=None):
@@ -80,3 +80,26 @@ def test_scheduler_respects_disabled_advance(monkeypatch):
     run(scheduler._sync_user("user-1"))
 
     assert sent == []
+
+
+def test_scheduler_always_reads_the_provider_and_keeps_the_shared_store_fresh(monkeypatch):
+    seen = {}
+
+    async def accounts(user_id):
+        return [], []
+
+    async def config(user_id=None):
+        return NotifConfig()
+
+    async def events(*args, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(scheduler, "_load_calendar_accounts", accounts)
+    monkeypatch.setattr(scheduler, "load_notif_config", config)
+    monkeypatch.setattr(scheduler, "fetch_all_account_events", events)
+
+    run(scheduler._sync_user("user-1"))
+
+    # max_age=0: o agendador nunca aceita o que ja esta guardado; e ele quem alimenta os demais.
+    assert seen["max_age"] == 0

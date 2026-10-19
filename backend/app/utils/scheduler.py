@@ -19,6 +19,7 @@ from ..core.database import (
     UserModel,
     scoped_config_key,
 )
+from ..core.config import get_settings
 from ..services.calendar_service import fetch_all_account_events
 from ..services.notification_service import send_notification, build_event_message
 from ..services.runtime_config_service import load_notif_config
@@ -115,7 +116,11 @@ async def _sync_user(user_id: str):
     notif_cfg = await load_notif_config(user_id=user_id)
 
     try:
-        events = await fetch_all_account_events(google_accounts, microsoft_accounts)
+        # `max_age=0`: o agendador e quem le o provedor a cada ciclo e mantem o armazenamento
+        # comum fresco; interface e chat aproveitam o que ele grava.
+        events = await fetch_all_account_events(
+            google_accounts, microsoft_accounts, max_age=0
+        )
     except Exception as e:
         logger.error(f"Scheduler: calendar fetch failed: {e}")
         return
@@ -217,7 +222,7 @@ def start_scheduler():
     """
     scheduler.add_job(
         _sync_and_notify,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=get_settings().calendar_sync_interval_minutes),
         id="calendar_sync",
         replace_existing=True,
         next_run_time=datetime.now(timezone.utc),
@@ -228,7 +233,6 @@ def start_scheduler():
         id="mentorship_reminders",
         replace_existing=True,
     )
-    from ..core.config import get_settings
     from ..services.health_alert_service import health_alerts
 
     settings = get_settings()
@@ -242,7 +246,9 @@ def start_scheduler():
             coalesce=True,
         )
     scheduler.start()
-    logger.info("Scheduler started - calendar sync every 5 min")
+    logger.info(
+        f"Scheduler started - calendar sync every {settings.calendar_sync_interval_minutes} min"
+    )
 
 
 def stop_scheduler():

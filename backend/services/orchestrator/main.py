@@ -88,6 +88,30 @@ async def _startup() -> None:
             "ASSISTANT_API_URL vazio: capacidades da maquina do usuario vao "
             f"tentar {settings.assistant_api_base_url}"
         )
+    await _connect_shared_cache()
+
+
+async def _connect_shared_cache() -> None:
+    """Liga o Redis compartilhado, que e onde a agenda e o status dos provedores sao guardados.
+
+    Sem ele o orquestrador guarda o seu proprio cache e le o Google por conta propria quando o
+    chat pergunta da agenda, em vez de aproveitar o que o agendador da API ja buscou. Inalcancavel
+    nao impede o boot: so deixa de compartilhar.
+    """
+    import redis.asyncio as redis_asyncio
+
+    from app.core.redis_client import set_client
+
+    url = settings.redis_url.strip()
+    if url and "://" not in url:
+        url = f"redis://{url}"
+    try:
+        connection = redis_asyncio.from_url(url, encoding="utf-8", decode_responses=True)
+        await connection.ping()
+        set_client(connection)
+        logger.info("Cache compartilhado ligado (Redis)")
+    except Exception as exc:
+        logger.warning(f"Redis indisponivel: o orquestrador guarda o proprio cache ({exc})")
 
 
 app = create_service(
