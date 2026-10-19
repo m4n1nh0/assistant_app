@@ -1612,35 +1612,49 @@ class _LessonTabState extends ConsumerState<_LessonTab> {
 
   @override
   Widget build(BuildContext context) {
+    final header = <Widget>[
+      _buildAlerts(),
+      _lesson == null ? _buildStartForm() : _buildLiveHeader(),
+      const SizedBox(height: 10),
+      if (_status.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            _status,
+            style: const TextStyle(
+                fontSize: 11, color: AssistantTheme.textSecondary),
+          ),
+        ),
+      _buildMonitorSection(),
+    ];
+    // Antes de gravar, o formulario cresce com o numero de turmas (cada uma e um botao
+    // que quebra de linha): a tela inteira rola em vez de estourar embaixo.
+    if (_lesson == null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [...header, const _HowItWorks()],
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildAlerts(),
-          _lesson == null ? _buildStartForm() : _buildLiveHeader(),
-          const SizedBox(height: 10),
-          if (_status.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                _status,
-                style: const TextStyle(
-                    fontSize: 11, color: AssistantTheme.textSecondary),
-              ),
-            ),
-          _buildMonitorSection(),
+          ...header,
           Expanded(
-            child: _lesson == null
-                ? const _HowItWorks()
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 3, child: _buildTranscript()),
-                      const SizedBox(width: 14),
-                      Expanded(flex: 2, child: _buildSidePanel()),
-                    ],
-                  ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 3, child: _buildTranscript()),
+                const SizedBox(width: 14),
+                Expanded(flex: 2, child: _buildSidePanel()),
+              ],
+            ),
           ),
         ],
       ),

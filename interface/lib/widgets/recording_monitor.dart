@@ -111,11 +111,16 @@ class InputLevelMeter extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
+        // "sem sinal  SEM SINAL" nao cabe em 118 px e quebrava em duas linhas, estourando
+        // a altura da barra: largura maior e uma linha so.
         SizedBox(
-          width: 118,
+          width: 150,
           child: Text(
             '${dbText(peak)}  ${levelLabel(kind)}',
             textAlign: TextAlign.right,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 10, color: color),
           ),
         ),
