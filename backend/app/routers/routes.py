@@ -463,7 +463,7 @@ from ..services.calendar_service import (
     create_microsoft_account_event,
     fetch_all_account_events,
     get_google_auth_url, get_microsoft_auth_url,
-    exchange_google_code, exchange_microsoft_code, fetch_microsoft_profile,
+    exchange_google_code_with_email, exchange_microsoft_code, fetch_microsoft_profile,
     microsoft_auth_error_message, MicrosoftAuthenticationError,
     validate_microsoft_session,
 )
@@ -1325,6 +1325,7 @@ async def google_oauth_app(
 @router_calendar.get("/google/start")
 async def google_start(
     request: Request,
+    account_id: str | None = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1338,14 +1339,13 @@ async def google_start(
             "Credenciais OAuth do aplicativo Google nao configuradas no banco de dados.",
         )
 
-    account_id = _new_account_id("google")
+    account_id = await _google_attempt_id(db, user["uid"], account_id)
     redirect_uri = _oauth_redirect_uri(request, "google")
     await _upsert_account(
         db,
         _KEY_GOOGLE_ACCOUNTS,
         account_id,
         {
-            "label": "Google Calendar",
             "client_id": client_id,
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
@@ -1373,7 +1373,7 @@ async def google_connect(
     db: AsyncSession = Depends(get_db),
 ):
     """Saves Google credentials and returns the OAuth URL to open in the browser."""
-    account_id = body.account_id or _new_account_id("google")
+    account_id = await _google_attempt_id(db, user["uid"], body.account_id)
     redirect_uri = _oauth_redirect_uri(request, "google")
     await _save_google_oauth_app(
         db, body.client_id, body.client_secret, user["uid"]
@@ -1400,6 +1400,43 @@ async def google_connect(
         "account_id": account_id,
         "next": "Open this URL, authorize, and POST the code to /calendar/google/callback",
     }
+
+
+async def _google_attempt_id(
+    db: AsyncSession, user_id: str, requested: str | None
+) -> str:
+    """Conta que esta tentativa de conexao vai preencher.
+
+    Reconectar uma conta (`requested`) reaproveita a linha dela; uma tentativa abandonada
+    (sem refresh token) e reaproveitada em vez de abrir outra a cada clique. So se nao ha
+    nenhuma nasce uma conta nova.
+    """
+    accounts = await _load_account_store(db, _KEY_GOOGLE_ACCOUNTS, user_id)
+    if requested and any(item.get("id") == requested for item in accounts):
+        return requested
+    for item in reversed(accounts):
+        if not item.get("refresh_token") and item.get("id"):
+            return str(item["id"])
+    return _new_account_id("google")
+
+
+async def _drop_superseded_google_accounts(
+    db: AsyncSession, user_id: str, keep_id: str, email: str
+) -> None:
+    """Renovar uma conta nao pode deixar a anterior para tras.
+
+    Saem: as tentativas de conexao abandonadas (sem refresh token) e, quando o e-mail e
+    conhecido, as outras linhas da mesma conta Google. Contas de e-mails diferentes ficam.
+    """
+    accounts = await _load_account_store(db, _KEY_GOOGLE_ACCOUNTS, user_id)
+    kept = [
+        item for item in accounts
+        if item.get("id") == keep_id
+        or (item.get("refresh_token")
+            and not (email and str(item.get("email") or "").lower() == email))
+    ]
+    if len(kept) != len(accounts):
+        await _save_account_store(db, _KEY_GOOGLE_ACCOUNTS, kept, user_id)
 
 
 class CalendarCallbackRequest(_BM):
@@ -1429,25 +1466,30 @@ async def google_callback(
     redirect_uri = account.get("redirect_uri")
     if not redirect_uri:
         redirect_uri = _oauth_redirect_uri(request, "google")
-    refresh = await exchange_google_code(
+    refresh, email = await exchange_google_code_with_email(
         body.code,
         client_id,
         client_secret,
         redirect_uri or "urn:ietf:wg:oauth:2.0:oob",
     )
+    label = account.get("label") or "Google Calendar"
+    if email and label == "Google Calendar":
+        label = email  # senao a lista fica com varias linhas iguais e ninguem sabe qual e qual
     await _upsert_account(
         db,
         _KEY_GOOGLE_ACCOUNTS,
         account_id,
         {
-            "label": account.get("label") or "Google Calendar",
+            "label": label,
             "client_id": client_id,
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
             "refresh_token": refresh,
+            **({"email": email} if email else {}),
         },
         user["uid"],
     )
+    await _drop_superseded_google_accounts(db, user["uid"], account_id, email)
     return {
         "ok": True,
         "account_id": account_id,

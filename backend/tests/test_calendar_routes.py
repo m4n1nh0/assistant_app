@@ -213,3 +213,63 @@ def test_class_agenda_creates_one_weekly_series_per_schedule(monkeypatch):
     assert result.failed_series == 0
     assert db.committed is True
     assert db.added[0].class_group_id == group.id
+
+
+# --- reconectar Google nao pode duplicar a conta ---------------------------------------------
+
+
+def _store(monkeypatch, accounts):
+    saved = {}
+
+    async def load(db, key, user_id):
+        return [dict(item) for item in accounts]
+
+    async def save(db, key, items, user_id):
+        saved["items"] = items
+
+    monkeypatch.setattr(routes, "_load_account_store", load)
+    monkeypatch.setattr(routes, "_save_account_store", save)
+    return saved
+
+
+def test_reconectar_usa_a_conta_pedida(monkeypatch):
+    _store(monkeypatch, [{"id": "g1", "refresh_token": "r"}, {"id": "g2", "refresh_token": "r"}])
+
+    assert run(routes._google_attempt_id(None, "u1", "g1")) == "g1"
+
+
+def test_tentativa_abandonada_e_reaproveitada_em_vez_de_abrir_outra(monkeypatch):
+    _store(monkeypatch, [{"id": "g1", "refresh_token": "r"}, {"id": "pendente"}])
+
+    assert run(routes._google_attempt_id(None, "u1", None)) == "pendente"
+
+
+def test_sem_nada_pendente_nasce_conta_nova(monkeypatch):
+    _store(monkeypatch, [{"id": "g1", "refresh_token": "r"}])
+
+    novo = run(routes._google_attempt_id(None, "u1", None))
+
+    assert novo.startswith("google_") and novo != "g1"
+
+
+def test_conta_renovada_substitui_a_do_mesmo_email_e_limpa_pendentes(monkeypatch):
+    saved = _store(monkeypatch, [
+        {"id": "velha", "refresh_token": "r", "email": "Ana@x.com"},
+        {"id": "outra-pessoa", "refresh_token": "r", "email": "bia@x.com"},
+        {"id": "pendente"},
+        {"id": "nova", "refresh_token": "r2", "email": "ana@x.com"},
+    ])
+
+    run(routes._drop_superseded_google_accounts(None, "u1", "nova", "ana@x.com"))
+
+    assert [item["id"] for item in saved["items"]] == ["outra-pessoa", "nova"]
+
+
+def test_sem_email_so_as_pendentes_saem(monkeypatch):
+    saved = _store(monkeypatch, [
+        {"id": "a", "refresh_token": "r"}, {"id": "pendente"}, {"id": "nova", "refresh_token": "r2"},
+    ])
+
+    run(routes._drop_superseded_google_accounts(None, "u1", "nova", ""))
+
+    assert [item["id"] for item in saved["items"]] == ["a", "nova"]

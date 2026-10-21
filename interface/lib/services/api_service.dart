@@ -1018,9 +1018,16 @@ class ApiService {
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String;
   }
 
-  Future<CalendarConnectResult> startGoogleCalendarAuth() async {
+  Future<CalendarConnectResult> startGoogleCalendarAuth({
+    String? accountId,
+  }) async {
     final r = await http.get(
-      Uri.parse('$baseUrl/calendar/google/start'),
+      Uri.parse('$baseUrl/calendar/google/start').replace(
+        queryParameters: {
+          if (accountId?.trim().isNotEmpty ?? false)
+            'account_id': accountId!.trim(),
+        },
+      ),
       headers: _headers,
     );
     final data = jsonDecode(r.body) as Map<String, dynamic>;

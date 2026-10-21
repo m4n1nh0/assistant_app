@@ -52,8 +52,9 @@ def test_oauth_urls_request_calendar_write_scopes_and_microsoft_pkce():
         ).query
     )
 
+    # openid/email so identificam a conta; a permissao de agenda continua sendo so de eventos.
     assert google["scope"] == [
-        "https://www.googleapis.com/auth/calendar.events"
+        "openid email https://www.googleapis.com/auth/calendar.events"
     ]
     scopes = set(microsoft["scope"][0].split())
     assert {"Calendars.ReadWrite", "User.Read", "offline_access"} <= scopes
@@ -307,3 +308,16 @@ def test_account_query_keeps_partial_results_and_reports_failed_account(monkeypa
 
     assert [event.title for event in events] == ["Planejamento"]
     assert errors == ["Google: token inválido"]
+
+
+def test_email_da_conta_google_sai_do_id_token():
+    import base64
+    import json
+
+    from app.services.calendar_service import google_email_from_id_token
+
+    corpo = base64.urlsafe_b64encode(json.dumps({"email": "Ana@X.com"}).encode()).decode().rstrip("=")
+
+    assert google_email_from_id_token(f"h.{corpo}.s") == "ana@x.com"
+    assert google_email_from_id_token("lixo") == ""
+    assert google_email_from_id_token(None) == ""

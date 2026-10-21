@@ -736,7 +736,8 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     } catch (_) {}
   }
 
-  Future<void> _openGoogleAuthorization() async {
+  /// Com [accountId] renova aquela conta em vez de abrir outra linha na lista.
+  Future<void> _openGoogleAuthorization({String? accountId}) async {
     await _runCalendarAction(() async {
       final clientId = _gcalClientCtrl.text.trim();
       final clientSecret = _gcalSecretCtrl.text.trim();
@@ -748,8 +749,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           ? await api.connectGoogleCalendar(
               clientId: clientId,
               clientSecret: clientSecret,
+              accountId: accountId,
             )
-          : await api.startGoogleCalendarAuth();
+          : await api.startGoogleCalendarAuth(accountId: accountId);
       if (result.authUrl.isEmpty || result.accountId.isEmpty) {
         throw Exception('backend nao retornou a URL de autorizacao Google');
       }
@@ -1500,11 +1502,13 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               hint: 'Google OAuth Client Secret', obscure: true),
           _ActionBtn(
             label: _calendarBusy ? 'Aguarde...' : 'Conectar Google Agenda',
-            onTap: _openGoogleAuthorization,
+            onTap: () => _openGoogleAuthorization(),
           ),
           _CalendarAccountList(
             accounts: _calendarAccounts['google'] ?? const [],
             onRemove: _disconnectCalendarAccount,
+            onReconnect: (account) =>
+                _openGoogleAuthorization(accountId: account.id),
           ),
         ]),
         _SectionCard(title: 'MICROSOFT (Teams + Outlook)', children: [

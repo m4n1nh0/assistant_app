@@ -11,7 +11,9 @@ contas do usuario em vez de uma configuracao unica.
 """
 
 import asyncio
+import base64
 import hashlib
+import json
 import time
 from urllib.parse import urlencode
 
@@ -26,7 +28,9 @@ from . import calendar_cache
 
 settings = get_settings()
 
-GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+# `openid email` so serve para saber de quem e a conta: sem o e-mail, reconectar a mesma conta
+# Google nao se distingue de conectar outra, e a lista enche de "Google Calendar" repetidos.
+GOOGLE_CALENDAR_SCOPE = "openid email https://www.googleapis.com/auth/calendar.events"
 MICROSOFT_CALENDAR_SCOPE = (
     "openid profile email offline_access User.Read Calendars.ReadWrite"
 )
@@ -87,13 +91,40 @@ def get_google_auth_url(
     return f"https://accounts.google.com/o/oauth2/auth?{qs}"
 
 
+def google_email_from_id_token(id_token: str | None) -> str:
+    """E-mail da conta Google a partir do `id_token` da troca de codigo.
+
+    O token chega direto do Google, por TLS, na resposta do endpoint de tokens; por isso o
+    conteudo e lido sem validar a assinatura. Serve so para rotular e reconhecer a conta.
+    """
+    try:
+        payload = (id_token or "").split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        return str(claims.get("email") or "").strip().lower()
+    except Exception:
+        return ""
+
+
 async def exchange_google_code(
     code: str,
     client_id: str,
     client_secret: str,
     redirect_uri: str = "urn:ietf:wg:oauth:2.0:oob",
 ) -> str:
-    """Troca o codigo de autorizacao do Google pelos tokens de acesso e refresh."""
+    """Troca o codigo de autorizacao do Google pelo refresh token."""
+    refresh, _email = await exchange_google_code_with_email(
+        code, client_id, client_secret, redirect_uri)
+    return refresh
+
+
+async def exchange_google_code_with_email(
+    code: str,
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str = "urn:ietf:wg:oauth:2.0:oob",
+) -> tuple[str, str]:
+    """Troca o codigo pelo refresh token e devolve tambem o e-mail da conta ("" se nao vier)."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -108,7 +139,7 @@ async def exchange_google_code(
     data = resp.json()
     if "error" in data:
         raise Exception(data.get("error_description", data["error"]))
-    return data["refresh_token"]
+    return data["refresh_token"], google_email_from_id_token(data.get("id_token"))
 
 
 # Token de acesso por conta, ate perto de expirar. O provedor entrega um por hora; pedir outro a
