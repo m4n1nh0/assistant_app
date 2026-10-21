@@ -55,6 +55,7 @@ class MaterialsPanel extends StatefulWidget {
 class _MaterialsPanelState extends State<MaterialsPanel> {
   List<CourseMaterial> _materials = const [];
   List<Discipline> _disciplines = const [];
+  List<ClassGroup> _classes = const [];
   bool _loading = true;
   bool _uploading = false;
 
@@ -77,10 +78,12 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
       // do estado de outra aba, que nem sempre esta carregado.
       final items = await education.listMaterials();
       final disciplines = await education.listDisciplines();
+      final classes = await education.listClasses(activeOnly: false);
       if (!mounted) return;
       setState(() {
         _materials = items;
         _disciplines = disciplines;
+        _classes = classes;
         _loading = false;
       });
     } catch (e) {
@@ -277,6 +280,47 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
       widget.onChanged?.call();
     } catch (e) {
       _report('Falha ao renomear: $e', error: true);
+    }
+  }
+
+  /// Turmas da disciplina do material; só elas valem no portal do aluno.
+  List<ClassGroup> _classesOf(CourseMaterial material) => material.disciplineId ==
+          null
+      ? const []
+      : _classes.where((item) => item.disciplineId == material.disciplineId).toList();
+
+  /// Escolhe quais turmas veem o material no portal. Nenhuma marcada vale a
+  /// disciplina inteira, que é o comportamento de antes.
+  Future<void> _chooseClasses(CourseMaterial material) async {
+    final options = _classesOf(material);
+    if (options.isEmpty) {
+      _report(
+        'Este material precisa de uma disciplina com turmas para limitar '
+        'o acesso por turma.',
+        error: true,
+      );
+      return;
+    }
+    final chosen = await showDialog<List<String>>(
+      context: context,
+      builder: (_) => _ClassesDialog(
+        options: options,
+        selected: material.classIds.toSet(),
+      ),
+    );
+    if (chosen == null) return;
+    try {
+      await education.setMaterialClasses(material.id, chosen);
+      _report(
+        chosen.isEmpty
+            ? 'Material liberado para todas as turmas da disciplina.'
+            : 'Material liberado só para ${chosen.length} '
+                '${chosen.length == 1 ? "turma" : "turmas"}.',
+      );
+      await _load();
+      widget.onChanged?.call();
+    } catch (e) {
+      _report('Falha ao salvar as turmas: $e', error: true);
     }
   }
 
@@ -562,6 +606,12 @@ class _MaterialsPanelState extends State<MaterialsPanel> {
                         ),
                         itemBuilder: (_, index) => _MaterialRow(
                           material: _visible[index],
+                          classLabels: [
+                            for (final turma in _classesOf(_visible[index]))
+                              if (_visible[index].classIds.contains(turma.id))
+                                turma.label,
+                          ],
+                          onClasses: () => _chooseClasses(_visible[index]),
                           improving: _improvingId == _visible[index].id,
                           busy: _improvingId != null,
                           onRename: () => _rename(_visible[index]),
@@ -770,6 +820,10 @@ class _MaterialRow extends StatelessWidget {
   final VoidCallback onImprove;
   final VoidCallback onViewImproved;
   final VoidCallback onDiscardImprovement;
+  final VoidCallback onClasses;
+
+  /// Rótulos das turmas que veem o material; vazio quando vale a disciplina toda.
+  final List<String> classLabels;
 
   /// Esta linha esta sendo reescrita pela IA; [busy] vale para qualquer linha.
   final bool improving;
@@ -782,6 +836,8 @@ class _MaterialRow extends StatelessWidget {
     required this.onImprove,
     required this.onViewImproved,
     required this.onDiscardImprovement,
+    required this.onClasses,
+    this.classLabels = const [],
     this.improving = false,
     this.busy = false,
   });
@@ -818,6 +874,7 @@ class _MaterialRow extends StatelessWidget {
       // foi uma imagem reconhecida, e nao um arquivo lido.
       if (material.fromOcr) 'lido por OCR',
       if (material.truncated) 'texto cortado no limite',
+      if (classLabels.isNotEmpty) 'só turmas: ${classLabels.join(", ")}',
       if (material.improved)
         'melhorado por ${AppConfig.serviceLabel(material.improvedLlm)}',
     ].join('  ·  ');
@@ -884,6 +941,17 @@ class _MaterialRow extends StatelessWidget {
           ),
         ],
         IconButton(
+          tooltip: 'Turmas que veem no portal do aluno',
+          icon: Icon(
+            material.classIds.isEmpty ? Icons.groups_outlined : Icons.groups,
+            size: 16,
+          ),
+          color: material.classIds.isEmpty
+              ? AssistantTheme.textMuted
+              : AssistantTheme.c3,
+          onPressed: onClasses,
+        ),
+        IconButton(
           tooltip: 'Renomear material',
           icon: const Icon(Icons.edit_outlined, size: 16),
           color: AssistantTheme.textMuted,
@@ -894,6 +962,73 @@ class _MaterialRow extends StatelessWidget {
           icon: const Icon(Icons.delete_outline, size: 16),
           color: AssistantTheme.textMuted,
           onPressed: onDelete,
+        ),
+      ],
+    );
+  }
+}
+
+/// Marca as turmas que veem o material no portal; nenhuma marcada vale todas.
+class _ClassesDialog extends StatefulWidget {
+  final List<ClassGroup> options;
+  final Set<String> selected;
+
+  const _ClassesDialog({required this.options, required this.selected});
+
+  @override
+  State<_ClassesDialog> createState() => _ClassesDialogState();
+}
+
+class _ClassesDialogState extends State<_ClassesDialog> {
+  late final Set<String> _chosen = {...widget.selected};
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AssistantTheme.surface,
+      title: const Text('Quem vê este material no portal?'),
+      content: SizedBox(
+        width: 420,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Text(
+              'Sem nenhuma turma marcada, todas as turmas da disciplina veem. '
+              'Marque para limitar a turmas específicas.',
+              style: TextStyle(fontSize: 11, color: AssistantTheme.textMuted),
+            ),
+            const SizedBox(height: 8),
+            for (final turma in widget.options)
+              CheckboxListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: _chosen.contains(turma.id),
+                title: Text(turma.label, style: const TextStyle(fontSize: 13)),
+                subtitle: turma.scheduleLabel.isEmpty
+                    ? null
+                    : Text(
+                        turma.scheduleLabel,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                onChanged: (on) => setState(() {
+                  if (on == true) {
+                    _chosen.add(turma.id);
+                  } else {
+                    _chosen.remove(turma.id);
+                  }
+                }),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('CANCELAR'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _chosen.toList()),
+          child: const Text('SALVAR'),
         ),
       ],
     );

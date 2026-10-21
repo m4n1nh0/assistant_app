@@ -1690,6 +1690,8 @@ class MaterialResponse(BaseModel):
     group_id: Optional[str] = None
     uploader_name: str = ""
     from_link: bool = False
+    # Turmas que veem o material no portal do aluno; vazio vale para a disciplina toda.
+    class_ids: List[str] = Field(default_factory=list)
     # Versao reescrita por IA: quem escreveu e quando. Vazio enquanto nao houver.
     improved: bool = False
     improved_llm: str = ""
@@ -1756,6 +1758,11 @@ class LessonPresentationGroup(BaseModel):
 class MaterialRenameRequest(BaseModel):
     """Novo nome de um material ja enviado."""
     title: str = Field(min_length=1, max_length=255)
+
+
+class MaterialClassesRequest(BaseModel):
+    """Turmas que veem o material no portal do aluno; lista vazia vale a disciplina toda."""
+    class_ids: List[str] = Field(default_factory=list, max_length=40)
 
 
 def _quiz_source_ids(values: List[Optional[str]]) -> List[str]:

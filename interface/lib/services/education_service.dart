@@ -1579,6 +1579,20 @@ class EducationService {
     return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
   }
 
+  /// Escolhe as turmas que veem o material no portal do aluno; lista vazia vale
+  /// a disciplina inteira.
+  Future<CourseMaterial> setMaterialClasses(
+    String materialId,
+    List<String> classIds,
+  ) async {
+    final response = await http.put(
+      Uri.parse('$_baseUrl/education/materials/$materialId/classes'),
+      headers: _headers,
+      body: jsonEncode({'class_ids': classIds}),
+    );
+    return CourseMaterial.fromJson(_decode(response) as Map<String, dynamic>);
+  }
+
   /// Pede ao backend para reescrever o material com a IA escolhida (vazio: automatico).
   Future<CourseMaterial> improveMaterial(
     String materialId, {
@@ -3177,6 +3191,9 @@ class CourseMaterial {
   final bool improved;
   final String improvedLlm;
 
+  /// Turmas que veem o material no portal do aluno; vazio vale a disciplina toda.
+  final List<String> classIds;
+
   const CourseMaterial({
     required this.id,
     this.disciplineId,
@@ -3193,6 +3210,7 @@ class CourseMaterial {
     this.fromLink = false,
     this.improved = false,
     this.improvedLlm = '',
+    this.classIds = const [],
   });
 
   factory CourseMaterial.fromJson(Map<String, dynamic> json) => CourseMaterial(
@@ -3211,6 +3229,9 @@ class CourseMaterial {
         fromLink: json['from_link'] == true,
         improved: json['improved'] == true,
         improvedLlm: json['improved_llm']?.toString() ?? '',
+        classIds: ((json['class_ids'] as List<dynamic>?) ?? [])
+            .map((item) => item.toString())
+            .toList(),
       );
 
   /// Como chamar a unidade contada em [pageCount], conforme o formato.

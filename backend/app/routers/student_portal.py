@@ -13,7 +13,7 @@ import time
 from collections import defaultdict, deque
 from html import escape
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,14 +86,175 @@ async def portal_toggle(
 # --- aluno ----------------------------------------------------------------------------------
 
 
-def _closed(message: str) -> HTMLResponse:
+def _closed(message: str, lang: str = "pt") -> HTMLResponse:
+    names = _I18N.get(lang, {})
+    brand, title = names.get("PORTAL DO ALUNO", "PORTAL DO ALUNO"), names.get(
+        "Portal do aluno", "Portal do aluno")
     return web_brand.page(
-        "Portal do aluno",
-        f'<div class="brand">PORTAL DO ALUNO</div><h1>Portal do aluno</h1>'
+        title, f'<div class="brand">{escape(brand)}</div><h1>{escape(title)}</h1>'
         f"<p>{escape(message)}</p>")
 
 
+#: Idiomas do portal. O texto em português é a chave (e o padrão); o conteúdo do professor
+#: (resumos, materiais, títulos) não é traduzido, só a interface.
+LANGUAGES = ("pt", "en", "es")
+
+_INTRO = ("Digite a sua matrícula para ver os resumos das aulas, o resultado dos quizzes em "
+          "grupo, seus pontos, os materiais das disciplinas e, se estiver em uma mentoria, "
+          "as atividades.")
+
+_I18N: dict[str, dict[str, str]] = {
+    "en": {
+        "PORTAL DO ALUNO": "STUDENT PORTAL", "Portal do aluno": "Student portal",
+        _INTRO: "Enter your student ID to see lesson summaries, group quiz results, your "
+                "points, course materials and, if you are in a mentorship, its activities.",
+        "Matrícula": "Student ID", "ENTRAR": "SIGN IN", "Olá,": "Hello,", "Sair": "Sign out",
+        "Digite a sua matrícula.": "Enter your student ID.",
+        "Fechar": "Close", "Índice": "Contents",
+        "Muitas tentativas. Aguarde um minuto e tente de novo.":
+            "Too many attempts. Wait a minute and try again.",
+        "O portal está fechado.": "The portal is closed.",
+        "Não encontrei esta matrícula. Confira com o professor.":
+            "I could not find this student ID. Check with your teacher.",
+        "Material não encontrado.": "Material not found.",
+        "Não foi possível concluir. Tente de novo.": "Could not complete. Try again.",
+        "Ver tudo": "See all", "Nada encontrado com esses filtros.": "Nothing found with these filters.",
+        "Nada por aqui ainda.": "Nothing here yet.", "Outras": "Other",
+        "Buscar": "Search", "Disciplina": "Course", "Todas as disciplinas": "All courses",
+        "Ordem": "Order", "Mais recentes primeiro": "Newest first",
+        "Mais antigos primeiro": "Oldest first",
+        "Presencial": "In person", "Online": "Online", "Presencial ou online": "In person or online",
+        "Entregue": "Delivered", "Entregue com atraso": "Delivered late",
+        "Prazo vencido": "Overdue", "Pendente": "Pending",
+        "Atividades para entregar": "Activities to deliver", "prazo": "due", "Prazo": "Due",
+        "Ver atividades": "See activities", "Próximo atendimento": "Next office hours",
+        "{a} às {b}": "{a} to {b}",
+        "Sem atendimento marcado nos próximos dias.": "No office hours scheduled in the coming days.",
+        "Ver horários": "See schedule", "Última aula": "Latest lesson",
+        "Ler o resumo": "Read the summary", "Ainda não há resumos.": "No summaries yet.",
+        "Pontos extras": "Extra points", "Último:": "Latest:", "Último quiz": "Latest quiz",
+        "{p}º de {n} grupos": "{p}th of {n} groups", "Você: {n} pts": "You: {n} pts",
+        "Aula": "Lesson", "Atendimento": "Office hours",
+        "Nada na agenda por enquanto.": "Nothing on the agenda for now.", "hoje": "today",
+        "Ainda não há resumos de aulas das suas turmas.": "No lesson summaries for your classes yet.",
+        "Ler →": "Read →", "Mentoria": "Mentorship",
+        "Você ainda não participou de quizzes em grupo.": "You have not taken any group quizzes yet.",
+        "Grupo: {n} pts": "Group: {n} pts",
+        "Você: {n} pts · {c}/{q} acertos": "You: {n} pts · {c}/{q} correct",
+        "Em andamento": "In progress", "Total de pontos extras": "Total extra points",
+        "Nenhum ponto extra ainda.": "No extra points yet.", "Ponto extra": "Extra point",
+        "Ainda não há materiais das suas disciplinas.": "No materials for your courses yet.",
+        "pág.": "pp.",
+        "O professor ainda não publicou horários de atendimento.":
+            "Your teacher has not published office hours yet.",
+        "entrar na reunião": "join the meeting", "Horários da semana": "Weekly schedule",
+        "Repetem toda semana, exceto nos dias avisados abaixo.":
+            "Repeat every week, except on the days listed below.",
+        "Nenhum horário fixo.": "No fixed hours.", "só mentoria": "mentorship only",
+        "só graduação": "undergraduate only", "Próximos 28 dias": "Next 28 days",
+        "Nenhum atendimento nos próximos dias.": "No office hours in the coming days.",
+        "Sem atendimento": "No office hours", "horário extra": "extra session",
+        "Você não está em nenhuma mentoria.": "You are not in any mentorship.",
+        "Ainda não há atividades.": "No activities yet.", "Sem prazo": "No deadline",
+        "Sem instruções para esta atividade.": "No instructions for this activity.",
+        "Ir para a entrega →": "Go to delivery →",
+        "Ir para a entrega de atividades →": "Go to activity delivery →",
+        "Início": "Home", "Agenda": "Agenda", "Aulas": "Lessons", "Quizzes": "Quizzes",
+        "Pontos": "Points", "Materiais": "Materials",
+    },
+    "es": {
+        "PORTAL DO ALUNO": "PORTAL DEL ALUMNO", "Portal do aluno": "Portal del alumno",
+        _INTRO: "Escribe tu matrícula para ver los resúmenes de las clases, el resultado de los "
+                "quizzes en grupo, tus puntos, los materiales de las asignaturas y, si estás en "
+                "una mentoría, las actividades.",
+        "Matrícula": "Matrícula", "ENTRAR": "ENTRAR", "Olá,": "¡Hola,", "Sair": "Salir",
+        "Digite a sua matrícula.": "Escribe tu matrícula.",
+        "Fechar": "Cerrar", "Índice": "Índice",
+        "Muitas tentativas. Aguarde um minuto e tente de novo.":
+            "Demasiados intentos. Espera un minuto e inténtalo de nuevo.",
+        "O portal está fechado.": "El portal está cerrado.",
+        "Não encontrei esta matrícula. Confira com o professor.":
+            "No encontré esta matrícula. Consúltalo con tu profesor.",
+        "Material não encontrado.": "Material no encontrado.",
+        "Não foi possível concluir. Tente de novo.": "No fue posible completar. Inténtalo de nuevo.",
+        "Ver tudo": "Ver todo", "Nada encontrado com esses filtros.": "Nada encontrado con estos filtros.",
+        "Nada por aqui ainda.": "Aún no hay nada aquí.", "Outras": "Otras",
+        "Buscar": "Buscar", "Disciplina": "Asignatura", "Todas as disciplinas": "Todas las asignaturas",
+        "Ordem": "Orden", "Mais recentes primeiro": "Más recientes primero",
+        "Mais antigos primeiro": "Más antiguos primero",
+        "Presencial": "Presencial", "Online": "En línea", "Presencial ou online": "Presencial o en línea",
+        "Entregue": "Entregada", "Entregue com atraso": "Entregada con retraso",
+        "Prazo vencido": "Plazo vencido", "Pendente": "Pendiente",
+        "Atividades para entregar": "Actividades por entregar", "prazo": "plazo", "Prazo": "Plazo",
+        "Ver atividades": "Ver actividades", "Próximo atendimento": "Próxima tutoría",
+        "{a} às {b}": "{a} a {b}",
+        "Sem atendimento marcado nos próximos dias.": "Sin tutorías programadas en los próximos días.",
+        "Ver horários": "Ver horarios", "Última aula": "Última clase",
+        "Ler o resumo": "Leer el resumen", "Ainda não há resumos.": "Aún no hay resúmenes.",
+        "Pontos extras": "Puntos extra", "Último:": "Último:", "Último quiz": "Último quiz",
+        "{p}º de {n} grupos": "{p}.º de {n} grupos", "Você: {n} pts": "Tú: {n} pts",
+        "Aula": "Clase", "Atendimento": "Tutoría",
+        "Nada na agenda por enquanto.": "Nada en la agenda por ahora.", "hoje": "hoy",
+        "Ainda não há resumos de aulas das suas turmas.": "Aún no hay resúmenes de clases de tus grupos.",
+        "Ler →": "Leer →", "Mentoria": "Mentoría",
+        "Você ainda não participou de quizzes em grupo.": "Aún no participaste en quizzes en grupo.",
+        "Grupo: {n} pts": "Grupo: {n} pts",
+        "Você: {n} pts · {c}/{q} acertos": "Tú: {n} pts · {c}/{q} aciertos",
+        "Em andamento": "En curso", "Total de pontos extras": "Total de puntos extra",
+        "Nenhum ponto extra ainda.": "Aún no hay puntos extra.", "Ponto extra": "Punto extra",
+        "Ainda não há materiais das suas disciplinas.": "Aún no hay materiales de tus asignaturas.",
+        "pág.": "pág.",
+        "O professor ainda não publicou horários de atendimento.":
+            "El profesor aún no publicó horarios de tutoría.",
+        "entrar na reunião": "entrar a la reunión", "Horários da semana": "Horarios de la semana",
+        "Repetem toda semana, exceto nos dias avisados abaixo.":
+            "Se repiten cada semana, salvo los días avisados abajo.",
+        "Nenhum horário fixo.": "Ningún horario fijo.", "só mentoria": "solo mentoría",
+        "só graduação": "solo grado", "Próximos 28 dias": "Próximos 28 días",
+        "Nenhum atendimento nos próximos dias.": "Ninguna tutoría en los próximos días.",
+        "Sem atendimento": "Sin tutoría", "horário extra": "horario extra",
+        "Você não está em nenhuma mentoria.": "No estás en ninguna mentoría.",
+        "Ainda não há atividades.": "Aún no hay actividades.", "Sem prazo": "Sin plazo",
+        "Sem instruções para esta atividade.": "Sin instrucciones para esta actividad.",
+        "Ir para a entrega →": "Ir a la entrega →",
+        "Ir para a entrega de atividades →": "Ir a la entrega de actividades →",
+        "Início": "Inicio", "Agenda": "Agenda", "Aulas": "Clases", "Quizzes": "Quizzes",
+        "Pontos": "Puntos", "Materiais": "Materiales",
+    },
+}
+
+
+def _script() -> str:
+    """O script da página com o dicionário de idiomas embutido."""
+    # `</` dentro de <script> fecharia a tag; escapar mantém o JSON válido.
+    dictionary = json.dumps(_I18N, ensure_ascii=False).replace("</", "<\\/")
+    return _SCRIPT.replace("__DICT__", dictionary)
+
+
+#: Mensagens das páginas fechadas, por idioma (a escolha vem do cabeçalho Accept-Language).
+_CLOSED = {
+    "pt": {"missing": "Este link não existe ou foi trocado. Confira com o professor.",
+           "off": "O portal está fechado no momento. Confira com o professor."},
+    "en": {"missing": "This link does not exist or was changed. Check with your teacher.",
+           "off": "The portal is closed at the moment. Check with your teacher."},
+    "es": {"missing": "Este enlace no existe o fue cambiado. Consúltalo con tu profesor.",
+           "off": "El portal está cerrado por ahora. Consúltalo con tu profesor."},
+}
+
+
+def _request_lang(request: Request) -> str:
+    for part in request.headers.get("accept-language", "").split(","):
+        code = part.split(";")[0].strip()[:2].lower()
+        if code in LANGUAGES:
+            return code
+    return "pt"
+
+
 _EXTRA_CSS = """
+#langs{display:flex;justify-content:flex-end;gap:6px;margin:0 0 8px}
+#langs button{width:auto;margin:0;padding:4px 10px;border-radius:14px;background:#e6f4f8;
+color:#0A6E8A;font-size:12px;letter-spacing:.4px}
+#langs button[aria-pressed=true]{background:#0A1324;color:#00D6FF}
 .iq-wrap{padding:12px}
 main{width:min(560px,100%);padding:20px 16px}
 main.logged{width:100%}
@@ -197,9 +358,30 @@ _SCRIPT = """
   var base = location.pathname.replace(/\\/$/, "");
   var $ = function (id) { return document.getElementById(id); };
   var enrollment = "", data = null, current = "inicio";
+
+  // Idiomas: o texto em portugues e a chave; sem traducao, aparece o proprio portugues.
+  // Conteudo do professor (resumos, materiais, titulos) nao e traduzido.
+  var LOCALE = {pt: "pt-BR", en: "en-US", es: "es-ES"};
+  var DICT = __DICT__;
+  var lang = (function () {
+    var saved = "";
+    try { saved = localStorage.getItem("portal-lang") || ""; } catch (e) {}
+    if (LOCALE[saved]) return saved;
+    var nav = String(navigator.language || "pt").slice(0, 2).toLowerCase();
+    return LOCALE[nav] ? nav : "pt";
+  })();
+  function t(text, vars) {
+    var out = (DICT[lang] && DICT[lang][text]) || text;
+    if (vars) Object.keys(vars).forEach(function (k) { out = out.split("{" + k + "}").join(vars[k]); });
+    return out;
+  }
   var MODE = {presencial: "Presencial", online: "Online", ambos: "Presencial ou online"};
   var STATUS = {delivered: ["Entregue", "ok"], late: ["Entregue com atraso", "warn"],
                 overdue: ["Prazo vencido", "bad"], pending: ["Pendente", "info"]};
+  function mode(m) { return MODE[m] ? t(MODE[m]) : ""; }
+  function weekdayName(n) {
+    return new Date(2024, 0, 1 + Number(n)).toLocaleDateString(LOCALE[lang], {weekday: "long"});
+  }
 
   function say(kind, text) {
     var box = $("msg"); box.hidden = !text;
@@ -209,8 +391,8 @@ _SCRIPT = """
     if (!iso) return "";
     var d = new Date(iso + (/[zZ]|[+-]\\d\\d:?\\d\\d$/.test(iso) ? "" : "Z"));
     if (isNaN(d)) return "";
-    return d.toLocaleString("pt-BR", withTime ? {dateStyle: "short", timeStyle: "short"}
-                                              : {dateStyle: "short"});
+    return d.toLocaleString(LOCALE[lang], withTime ? {dateStyle: "short", timeStyle: "short"}
+                                                   : {dateStyle: "short"});
   }
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -357,7 +539,7 @@ _SCRIPT = """
     var overlay = el("div", "modal"), box = el("div", "modal-box"), head = el("div", "modal-head");
     box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
     box.setAttribute("aria-label", title);
-    var x = el("button", "open", "Fechar"); x.type = "button";
+    var x = el("button", "open", t("Fechar")); x.type = "button";
     head.appendChild(el("h3", "", title)); head.appendChild(x);
     box.appendChild(head); box.appendChild(body); overlay.appendChild(box);
     function onKey(e) { if (e.key === "Escape") close(); }
@@ -381,8 +563,8 @@ _SCRIPT = """
     // Muitos "titulos" quase sempre e ruido da extracao: sem indice e melhor que um indice inutil.
     if (doc.heads.length > 1 && doc.heads.length <= 60) {
       wrap.className += " has-toc";
-      var nav = el("nav", "toc"); nav.setAttribute("aria-label", "Índice");
-      nav.appendChild(el("div", "meta", "Índice"));
+      var nav = el("nav", "toc"); nav.setAttribute("aria-label", t("Índice"));
+      nav.appendChild(el("div", "meta", t("Índice")));
       doc.heads.forEach(function (h) {
         var b = el("button", "toc-item", h.textContent); b.type = "button";
         b.onclick = function () { h.scrollIntoView({behavior: "smooth", block: "start"}); };
@@ -399,7 +581,15 @@ _SCRIPT = """
       headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
     var out = {};
     try { out = await res.json(); } catch (e) {}
-    if (!res.ok) throw new Error(out.detail || "Não foi possível concluir. Tente de novo.");
+    if (!res.ok) {
+      // O servidor manda o texto em portugues e um codigo; o codigo e traduzido aqui.
+      var known = {rate: "Muitas tentativas. Aguarde um minuto e tente de novo.",
+        closed: "O portal está fechado.",
+        unknown: "Não encontrei esta matrícula. Confira com o professor.",
+        material: "Material não encontrado."};
+      throw new Error(known[out.code] ? t(known[out.code])
+        : (out.detail || t("Não foi possível concluir. Tente de novo.")));
+    }
     return out;
   }
 
@@ -416,12 +606,12 @@ _SCRIPT = """
     if (data && t && t !== current && tabAllowed(t)) { current = t; render(); }
   });
   function more(card, tab, text) {
-    var b = el("button", "open", text || "Ver tudo"); b.type = "button";
+    var b = el("button", "open", t(text || "Ver tudo")); b.type = "button";
     b.onclick = function () { go(tab); }; card.appendChild(b);
   }
   function dayLabel(iso) {
     var p = iso.split("-");
-    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).toLocaleDateString("pt-BR",
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).toLocaleDateString(LOCALE[lang],
       {weekday: "short", day: "2-digit", month: "2-digit"});
   }
 
@@ -455,11 +645,11 @@ _SCRIPT = """
   function grouped(root, items, build) {
     var by = {}, order = [];
     if (!items.length) {
-      root.appendChild(empty(query || discipline ? "Nada encontrado com esses filtros." : "Nada por aqui ainda."));
+      root.appendChild(empty(t(query || discipline ? "Nada encontrado com esses filtros." : "Nada por aqui ainda.")));
       return;
     }
     items.forEach(function (i) {
-      var k = i.discipline || "Outras";
+      var k = i.discipline || t("Outras");
       if (!by[k]) { by[k] = []; order.push(k); }
       by[k].push(i);
     });
@@ -498,23 +688,23 @@ _SCRIPT = """
     var names = disciplines();
     if (names.indexOf(discipline) < 0) discipline = "";
     var bar = el("div", "bar");
-    var q = el("input"); q.type = "text"; q.id = "q"; q.placeholder = "Buscar";
-    q.setAttribute("aria-label", "Buscar"); q.value = query;
+    var q = el("input"); q.type = "text"; q.id = "q"; q.placeholder = t("Buscar");
+    q.setAttribute("aria-label", t("Buscar")); q.value = query;
     // So a lista e redesenhada: refazer o campo tiraria o foco a cada letra digitada.
     q.oninput = function () { query = q.value; drawView(); };
     bar.appendChild(q);
     if (names.length > 1) {
-      var sel = el("select"); sel.id = "disc"; sel.setAttribute("aria-label", "Disciplina");
+      var sel = el("select"); sel.id = "disc"; sel.setAttribute("aria-label", t("Disciplina"));
       [""].concat(names).forEach(function (n) {
-        var o = el("option", "", n || "Todas as disciplinas"); o.value = n; sel.appendChild(o);
+        var o = el("option", "", n || t("Todas as disciplinas")); o.value = n; sel.appendChild(o);
       });
       sel.value = discipline;
       sel.onchange = function () { discipline = sel.value; drawView(); };
       bar.appendChild(sel);
     }
-    var ord = el("select"); ord.id = "ord"; ord.setAttribute("aria-label", "Ordem");
+    var ord = el("select"); ord.id = "ord"; ord.setAttribute("aria-label", t("Ordem"));
     [["recent", "Mais recentes primeiro"], ["old", "Mais antigos primeiro"]].forEach(function (p) {
-      var o = el("option", "", p[1]); o.value = p[0]; ord.appendChild(o);
+      var o = el("option", "", t(p[1])); o.value = p[0]; ord.appendChild(o);
     });
     ord.value = order;
     ord.onchange = function () { order = ord.value; drawView(); };
@@ -533,47 +723,47 @@ _SCRIPT = """
       open.sort(function (x, y) { return (x[1].due_at || "9").localeCompare(y[1].due_at || "9"); });
       if (open.length) {
         var due = el("div", "card");
-        due.appendChild(el("h3", "", "Atividades para entregar"));
+        due.appendChild(el("h3", "", t("Atividades para entregar")));
         open.slice(0, 4).forEach(function (pair) {
           var a = pair[1], s = STATUS[a.status];
-          var row = el("p"); row.appendChild(chip(s[0], s[1]));
-          row.appendChild(document.createTextNode(a.title + (a.due_at ? " · prazo " + when(a.due_at, true) : "")));
+          var row = el("p"); row.appendChild(chip(t(s[0]), s[1]));
+          row.appendChild(document.createTextNode(a.title + (a.due_at ? " · " + t("prazo") + " " + when(a.due_at, true) : "")));
           due.appendChild(row);
         });
         more(due, "mentoria", "Ver atividades"); root.appendChild(due);
       }
       var a = data.availability, next = a.upcoming.filter(function (o) { return !o.blocked; })[0];
-      var meet = el("div", "card"); meet.appendChild(el("h3", "", "Próximo atendimento"));
+      var meet = el("div", "card"); meet.appendChild(el("h3", "", t("Próximo atendimento")));
       if (next) {
         var p = el("p"); p.appendChild(chip(dayLabel(next.date), "ok"));
-        p.appendChild(document.createTextNode(next.start_time + " às " + next.end_time + " · " +
-          (MODE[next.mode] || "")));
+        p.appendChild(document.createTextNode(t("{a} às {b}", {a: next.start_time, b: next.end_time}) +
+          " · " + mode(next.mode)));
         meet.appendChild(p);
-      } else meet.appendChild(empty("Sem atendimento marcado nos próximos dias."));
+      } else meet.appendChild(empty(t("Sem atendimento marcado nos próximos dias.")));
       more(meet, "atendimento", "Ver horários"); root.appendChild(meet);
 
       var last = data.lessons[0];
-      var lesson = el("div", "card"); lesson.appendChild(el("h3", "", "Última aula"));
+      var lesson = el("div", "card"); lesson.appendChild(el("h3", "", t("Última aula")));
       if (last) {
         lesson.appendChild(el("p", "", last.title));
         lesson.appendChild(el("div", "meta", [when(last.date), last.class_label].filter(Boolean).join(" · ")));
         more(lesson, "aulas", "Ler o resumo");
-      } else lesson.appendChild(empty("Ainda não há resumos."));
+      } else lesson.appendChild(empty(t("Ainda não há resumos.")));
       root.appendChild(lesson);
 
-      var pts = el("div", "card"); pts.appendChild(el("div", "meta", "Pontos extras"));
+      var pts = el("div", "card"); pts.appendChild(el("div", "meta", t("Pontos extras")));
       pts.appendChild(el("div", "big", String(data.points.total)));
-      if (data.points.items[0]) pts.appendChild(el("div", "meta", "Último: +" +
+      if (data.points.items[0]) pts.appendChild(el("div", "meta", t("Último:") + " +" +
         data.points.items[0].points + (data.points.items[0].reason ? " · " + data.points.items[0].reason : "")));
       more(pts, "pontos"); root.appendChild(pts);
 
       var q = data.quizzes[0];
       if (q) {
-        var quiz = el("div", "card"); quiz.appendChild(el("h3", "", "Último quiz"));
+        var quiz = el("div", "card"); quiz.appendChild(el("h3", "", t("Último quiz")));
         quiz.appendChild(el("div", "meta", q.title + " · " + when(q.date)));
         var r = el("p");
-        if (q.position) r.appendChild(chip(q.position + "º de " + q.groups_total + " grupos", "info"));
-        r.appendChild(chip("Você: " + q.my_score + " pts", "ok")); quiz.appendChild(r);
+        if (q.position) r.appendChild(chip(t("{p}º de {n} grupos", {p: q.position, n: q.groups_total}), "info"));
+        r.appendChild(chip(t("Você: {n} pts", {n: q.my_score}), "ok")); quiz.appendChild(r);
         more(quiz, "quizzes"); root.appendChild(quiz);
       }
     },
@@ -589,27 +779,27 @@ _SCRIPT = """
       data.lessons.forEach(function (l) {
         var d = l.date && parse(l.date);
         if (d && d.getTime() >= cutoff) ev.push({day: key(d), time: pad(d.getHours()) + ":" + pad(d.getMinutes()),
-          kind: "Aula", tone: "", text: l.title, sub: l.class_label});
+          kind: t("Aula"), tone: "", text: l.title, sub: l.class_label});
       });
       data.availability.upcoming.forEach(function (o) {
-        if (!o.blocked) ev.push({day: o.date, time: o.start_time, kind: "Atendimento", tone: "ok",
-          text: o.start_time + " às " + o.end_time + " · " + (MODE[o.mode] || ""), sub: o.note});
+        if (!o.blocked) ev.push({day: o.date, time: o.start_time, kind: t("Atendimento"), tone: "ok",
+          text: t("{a} às {b}", {a: o.start_time, b: o.end_time}) + " · " + mode(o.mode), sub: o.note});
       });
       data.mentorships.forEach(function (m) {
         m.activities.forEach(function (a) {
           var d = a.due_at && parse(a.due_at);
           if (d && (a.status === "pending" || a.status === "overdue")) ev.push({day: key(d),
-            time: pad(d.getHours()) + ":" + pad(d.getMinutes()), kind: "Prazo",
+            time: pad(d.getHours()) + ":" + pad(d.getMinutes()), kind: t("Prazo"),
             tone: a.status === "overdue" ? "bad" : "warn", text: a.title, sub: m.title});
         });
       });
-      if (!ev.length) return root.appendChild(empty("Nada na agenda por enquanto."));
+      if (!ev.length) return root.appendChild(empty(t("Nada na agenda por enquanto.")));
       ev.sort(function (x, y) { return (x.day + " " + x.time).localeCompare(y.day + " " + y.time); });
       var days = {}, order = [];
       ev.forEach(function (e) { if (!days[e.day]) { days[e.day] = []; order.push(e.day); } days[e.day].push(e); });
       order.forEach(function (day) {
         var c = el("div", "card" + (day < today ? " past" : ""));
-        c.appendChild(el("h3", "", dayLabel(day) + (day === today ? " · hoje" : "")));
+        c.appendChild(el("h3", "", dayLabel(day) + (day === today ? " · " + t("hoje") : "")));
         days[day].forEach(function (e) {
           var row = el("p"); row.appendChild(chip(e.kind, e.tone));
           row.appendChild(document.createTextNode(e.text));
@@ -621,12 +811,12 @@ _SCRIPT = """
     },
     aulas: function (root) {
       if (!data.lessons.length) return root.appendChild(
-        empty("Ainda não há resumos de aulas das suas turmas."));
+        empty(t("Ainda não há resumos de aulas das suas turmas.")));
       grouped(root, visible(data.lessons), function (l, box) {
         var info = [when(l.date), l.class_label].filter(Boolean).join(" · ");
         box.appendChild(rowItem({
-          title: l.title, meta: info, excerpt: plain(l.summary), side: "Ler →",
-          chips: l.mentorship ? [chip("Mentoria", "info")] : [],
+          title: l.title, meta: info, excerpt: plain(l.summary), side: t("Ler →"),
+          chips: l.mentorship ? [chip(t("Mentoria"), "info")] : [],
           onclick: function () {
             var body = el("div"); body.appendChild(el("div", "meta", info));
             body.appendChild(markdown(l.summary)); modal(l.title, body);
@@ -635,17 +825,17 @@ _SCRIPT = """
     },
     quizzes: function (root) {
       if (!data.quizzes.length) return root.appendChild(
-        empty("Você ainda não participou de quizzes em grupo."));
+        empty(t("Você ainda não participou de quizzes em grupo.")));
       data.quizzes.forEach(function (q) {
         var c = el("div", "card");
         c.appendChild(el("h3", "", q.title));
         c.appendChild(el("div", "meta", when(q.date) + (q.group_name ? " · " + q.group_name : "")));
         var row = el("p");
-        if (q.position) row.appendChild(chip(q.position + "º de " + q.groups_total + " grupos", "info"));
-        row.appendChild(chip("Grupo: " + q.group_score + " pts", ""));
-        row.appendChild(chip("Você: " + q.my_score + " pts · " + q.my_correct + "/" +
-                             q.questions + " acertos", "ok"));
-        if (!q.finished) row.appendChild(chip("Em andamento", "warn"));
+        if (q.position) row.appendChild(chip(t("{p}º de {n} grupos", {p: q.position, n: q.groups_total}), "info"));
+        row.appendChild(chip(t("Grupo: {n} pts", {n: q.group_score}), ""));
+        row.appendChild(chip(t("Você: {n} pts · {c}/{q} acertos",
+          {n: q.my_score, c: q.my_correct, q: q.questions}), "ok"));
+        if (!q.finished) row.appendChild(chip(t("Em andamento"), "warn"));
         c.appendChild(row); root.appendChild(c);
       });
     },
@@ -653,23 +843,23 @@ _SCRIPT = """
       var items = visible(data.points.items), c = el("div", "card");
       var total = discipline ? Math.round(items.reduce(function (s, p) { return s + p.points; }, 0) * 100) / 100
                              : data.points.total;
-      c.appendChild(el("div", "meta", "Total de pontos extras" + (discipline ? " · " + discipline : "")));
+      c.appendChild(el("div", "meta", t("Total de pontos extras") + (discipline ? " · " + discipline : "")));
       c.appendChild(el("div", "big", String(total)));
       root.appendChild(c);
-      if (!items.length) return root.appendChild(empty("Nenhum ponto extra ainda."));
+      if (!items.length) return root.appendChild(empty(t("Nenhum ponto extra ainda.")));
       grouped(root, items, function (p, box) {
         box.appendChild(rowItem({
-          title: p.reason || "Ponto extra", side: chip("+" + p.points + " pts", "ok"),
+          title: p.reason || t("Ponto extra"), side: chip("+" + p.points + " pts", "ok"),
           meta: [when(p.date), p.discipline].filter(Boolean).join(" · ")}));
       });
     },
     materiais: function (root) {
       if (!data.materials.length) return root.appendChild(
-        empty("Ainda não há materiais das suas disciplinas."));
+        empty(t("Ainda não há materiais das suas disciplinas.")));
       grouped(root, visible(data.materials), function (m, box) {
         box.appendChild(rowItem({
-          title: m.title, side: "Ler →",
-          meta: [m.discipline, m.filename, m.pages ? m.pages + " pág." : "", when(m.date)]
+          title: m.title, side: t("Ler →"),
+          meta: [m.discipline, m.filename, m.pages ? m.pages + " " + t("pág.") : "", when(m.date)]
             .filter(Boolean).join(" · "),
           onclick: async function (row) {
             row.disabled = true;
@@ -684,29 +874,29 @@ _SCRIPT = """
     atendimento: function (root) {
       var a = data.availability;
       if (!a.weekly.length && !a.upcoming.length) return root.appendChild(
-        empty("O professor ainda não publicou horários de atendimento."));
+        empty(t("O professor ainda não publicou horários de atendimento.")));
       function where(parent, s) {
-        var text = MODE[s.mode] || "";
+        var text = mode(s.mode);
         parent.appendChild(document.createTextNode(text));
         if (!s.location) return;
         parent.appendChild(document.createTextNode(" · "));
         if (/^https?:\/\//i.test(s.location)) {
-          var link = el("a", "go", "entrar na reunião");
+          var link = el("a", "go", t("entrar na reunião"));
           link.href = s.location; link.rel = "noopener noreferrer"; link.target = "_blank";
           parent.appendChild(link);
         } else parent.appendChild(document.createTextNode(s.location));
       }
       var week = el("div", "card");
-      week.appendChild(el("h3", "", "Horários da semana"));
-      week.appendChild(el("div", "meta", "Repetem toda semana, exceto nos dias avisados abaixo."));
-      if (!a.weekly.length) week.appendChild(empty("Nenhum horário fixo."));
+      week.appendChild(el("h3", "", t("Horários da semana")));
+      week.appendChild(el("div", "meta", t("Repetem toda semana, exceto nos dias avisados abaixo.")));
+      if (!a.weekly.length) week.appendChild(empty(t("Nenhum horário fixo.")));
       a.weekly.forEach(function (s) {
         var p = el("p");
-        p.appendChild(chip(s.weekday_name, "info"));
-        p.appendChild(document.createTextNode(s.start_time + " às " + s.end_time + " · "));
+        p.appendChild(chip(weekdayName(s.weekday), "info"));
+        p.appendChild(document.createTextNode(t("{a} às {b}", {a: s.start_time, b: s.end_time}) + " · "));
         where(p, s);
         if (s.audience !== "todos") {
-          var who = chip(s.audience === "mentoria" ? "só mentoria" : "só graduação", "");
+          var who = chip(t(s.audience === "mentoria" ? "só mentoria" : "só graduação"), "");
           who.style.marginLeft = "8px"; p.appendChild(who);
         }
         if (s.note) p.appendChild(el("div", "meta", s.note));
@@ -715,21 +905,21 @@ _SCRIPT = """
       root.appendChild(week);
 
       var next = el("div", "card");
-      next.appendChild(el("h3", "", "Próximos 28 dias"));
-      if (!a.upcoming.length) next.appendChild(empty("Nenhum atendimento nos próximos dias."));
+      next.appendChild(el("h3", "", t("Próximos 28 dias")));
+      if (!a.upcoming.length) next.appendChild(empty(t("Nenhum atendimento nos próximos dias.")));
       a.upcoming.forEach(function (o) {
         var parts = o.date.split("-");
         var day = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
         var p = el("p");
-        p.appendChild(chip(day.toLocaleDateString("pt-BR",
+        p.appendChild(chip(day.toLocaleDateString(LOCALE[lang],
           {weekday: "short", day: "2-digit", month: "2-digit"}), o.blocked ? "bad" : "ok"));
         if (o.blocked) {
-          p.appendChild(document.createTextNode("Sem atendimento" + (o.note ? " · " + o.note : "")));
+          p.appendChild(document.createTextNode(t("Sem atendimento") + (o.note ? " · " + o.note : "")));
         } else {
-          p.appendChild(document.createTextNode(o.start_time + " às " + o.end_time + " · "));
+          p.appendChild(document.createTextNode(t("{a} às {b}", {a: o.start_time, b: o.end_time}) + " · "));
           where(p, o);
           if (o.source === "extra") {
-            var extra = chip("horário extra", "warn");
+            var extra = chip(t("horário extra"), "warn");
             extra.style.marginLeft = "8px"; p.appendChild(extra);
           }
           if (o.note) p.appendChild(el("div", "meta", o.note));
@@ -740,28 +930,28 @@ _SCRIPT = """
     },
     mentoria: function (root) {
       if (!data.mentorships.length) return root.appendChild(
-        empty("Você não está em nenhuma mentoria."));
+        empty(t("Você não está em nenhuma mentoria.")));
       data.mentorships.forEach(function (m) {
         var c = el("div", "card");
         c.appendChild(el("h3", "", m.title));
-        if (!m.activities.length) c.appendChild(empty("Ainda não há atividades."));
+        if (!m.activities.length) c.appendChild(empty(t("Ainda não há atividades.")));
         var list = el("div", "list"); c.appendChild(list);
         m.activities.forEach(function (a) {
           var s = STATUS[a.status] || [a.status, ""];
-          var due = a.due_at ? "Prazo " + when(a.due_at, true) : "Sem prazo";
+          var due = a.due_at ? t("Prazo") + " " + when(a.due_at, true) : t("Sem prazo");
           list.appendChild(rowItem({
-            title: a.title, meta: due, side: chip(s[0], s[1]), excerpt: plain(a.instructions),
+            title: a.title, meta: due, side: chip(t(s[0]), s[1]), excerpt: plain(a.instructions),
             onclick: function () {
               var body = el("div"), top = el("p");
-              top.appendChild(chip(s[0], s[1])); top.appendChild(document.createTextNode(due));
+              top.appendChild(chip(t(s[0]), s[1])); top.appendChild(document.createTextNode(due));
               body.appendChild(top);
               body.appendChild(a.instructions ? el("p", "", a.instructions)
-                                              : empty("Sem instruções para esta atividade."));
-              var link = el("a", "go", "Ir para a entrega →"); link.href = m.deliver_path;
+                                              : empty(t("Sem instruções para esta atividade.")));
+              var link = el("a", "go", t("Ir para a entrega →")); link.href = m.deliver_path;
               body.appendChild(link); modal(a.title, body);
             }}));
         });
-        var go = el("a", "go", "Ir para a entrega de atividades →");
+        var go = el("a", "go", t("Ir para a entrega de atividades →"));
         go.href = m.deliver_path; c.appendChild(go); root.appendChild(c);
       });
     }
@@ -775,7 +965,7 @@ _SCRIPT = """
                 ["atendimento", "Atendimento", true],
                 ["mentoria", "Mentoria", data.mentorships.length > 0]];
     defs.filter(function (d) { return d[2]; }).forEach(function (d) {
-      var b = el("button", "tab", d[1]); b.type = "button"; b.setAttribute("role", "tab");
+      var b = el("button", "tab", t(d[1])); b.type = "button"; b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", String(d[0] === current));
       b.onclick = function () { setTab(d[0]); };
       tabs.appendChild(b);
@@ -793,7 +983,7 @@ _SCRIPT = """
   async function lookup() {
     enrollment = $("enrollment").value.trim();
     say("", "");
-    if (!enrollment) { say("err", "Digite a sua matrícula."); return; }
+    if (!enrollment) { say("err", t("Digite a sua matrícula.")); return; }
     $("find").disabled = true;
     try { data = await call("/lookup", {enrollment: enrollment});
       var h = location.hash.slice(1);
@@ -802,6 +992,25 @@ _SCRIPT = """
       document.querySelector("main").classList.remove("logged"); say("err", e.message); }
     $("find").disabled = false;
   }
+  // Textos fixos da pagina (data-i18n) e o seletor de idioma.
+  function applyStatic() {
+    document.documentElement.lang = lang;
+    Array.prototype.forEach.call(document.querySelectorAll("[data-i18n]"), function (n) {
+      n.textContent = t(n.getAttribute("data-i18n"));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#langs button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-lang") === lang));
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("#langs button"), function (b) {
+    b.onclick = function () {
+      lang = b.getAttribute("data-lang");
+      try { localStorage.setItem("portal-lang", lang); } catch (e) {}
+      applyStatic(); say("", "");
+      if (data) { $("who").textContent = data.student.name; render(); }
+    };
+  });
+  applyStatic();
   $("find").onclick = lookup;
   $("exit").onclick = function () {
     data = null; enrollment = ""; $("enrollment").value = ""; say("", "");
@@ -817,29 +1026,35 @@ _SCRIPT = """
 
 
 @router.get("/portal/{token}", response_class=HTMLResponse)
-async def portal_page(token: str, db: AsyncSession = Depends(get_db)):
+async def portal_page(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+    lang = _request_lang(request)
     portal = await svc.get_portal_by_token(db, token)
     if portal is None:
-        return _closed("Este link não existe ou foi trocado. Confira com o professor.")
+        return _closed(_CLOSED[lang]["missing"], lang)
     if not portal.active:
-        return _closed("O portal está fechado no momento. Confira com o professor.")
-    body = """
-<div class="brand">PORTAL DO ALUNO</div>
-<h1>Portal do aluno</h1>
-<p class="intro">Digite a sua matrícula para ver os resumos das aulas, o resultado dos quizzes em grupo,
-seus pontos, os materiais das disciplinas e, se estiver em uma mentoria, as atividades.</p>
+        return _closed(_CLOSED[lang]["off"], lang)
+    # O texto em português já está no HTML; o script troca pelo idioma escolhido (ou do navegador).
+    body = f"""
+<div id="langs" role="group" aria-label="Idioma / Language">
+<button type="button" data-lang="pt" aria-pressed="true">PT</button>
+<button type="button" data-lang="en" aria-pressed="false">EN</button>
+<button type="button" data-lang="es" aria-pressed="false">ES</button>
+</div>
+<div class="brand" data-i18n="PORTAL DO ALUNO">PORTAL DO ALUNO</div>
+<h1 data-i18n="Portal do aluno">Portal do aluno</h1>
+<p class="intro" data-i18n="{escape(_INTRO)}">{escape(_INTRO)}</p>
 <div id="login">
-<div><label for="enrollment">Matrícula</label>
+<div><label for="enrollment" data-i18n="Matrícula">Matrícula</label>
 <input type="text" id="enrollment" maxlength="80" autocomplete="off" autofocus></div>
-<button type="button" id="find">ENTRAR</button>
+<button type="button" id="find" data-i18n="ENTRAR">ENTRAR</button>
 </div>
 <div id="msg" class="msg" hidden role="alert"></div>
 <section id="step2" hidden>
-  <p>Olá, <b id="who"></b>! <button type="button" class="link" id="exit">Sair</button></p>
+  <p><span data-i18n="Olá,">Olá,</span> <b id="who"></b>! <button type="button" class="link" id="exit" data-i18n="Sair">Sair</button></p>
   <div id="tabs" class="tabs" role="tablist"></div>
   <div id="pane"><div id="filters"></div><div id="view"></div></div>
 </section>"""
-    return web_brand.page("Portal do aluno", body, _SCRIPT, _EXTRA_CSS)
+    return web_brand.page("Portal do aluno", body, _script(), _EXTRA_CSS)
 
 
 async def _students_or_error(request: Request, db: AsyncSession, token: str, enrollment: str):
@@ -879,7 +1094,8 @@ async def portal_material(
         return error
     material = await svc.material_text(db, portal.tutor_id, students, body.material_id)
     if material is None:
-        raise HTTPException(404, "Material não encontrado.")
+        return JSONResponse({"code": "material", "detail": "Material não encontrado."},
+                            status_code=404)
     content, fmt = await svc.material_body(db, material)
     return JSONResponse({"title": material.title, "content": content, "format": fmt},
                         headers={"Cache-Control": "no-store"})

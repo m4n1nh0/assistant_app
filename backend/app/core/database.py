@@ -1000,6 +1000,9 @@ class MaterialModel(Base):
     student_id    = Column(String(64), nullable=True)
     uploader_name = Column(String(180), nullable=True)
     link_id       = Column(String(64), nullable=True, index=True)
+    # Turmas que enxergam o material no portal do aluno, separadas por virgula; vazio vale
+    # a disciplina inteira (todas as turmas), como antes desta coluna existir.
+    class_ids     = Column(Text, nullable=True, default="")
 
 
 class MaterialChunkModel(Base):
@@ -1838,6 +1841,7 @@ def _add_compatibility_columns(sync_conn) -> None:
             "student_id": "VARCHAR(64) NULL",
             "uploader_name": "VARCHAR(180) NULL",
             "link_id": "VARCHAR(64) NULL",
+            "class_ids": "TEXT NULL",
         },
         "quiz_group_configs": {
             "class_id": "VARCHAR(64) NULL",

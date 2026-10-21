@@ -114,6 +114,7 @@ from ..models.schemas import (
     DisciplineUpdate,
     QuestionOption,
     QuestionResponse,
+    MaterialClassesRequest,
     MaterialRenameRequest,
     MaterialResponse,
     QuizCreateRequest,
@@ -3483,10 +3484,14 @@ async def upload_material(
     discipline_id: str = Form(""),
     discipline: str = Form(""),
     title: str = Form(""),
+    class_ids: str = Form(""),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Guarda um material da disciplina, ja com o texto extraido.
+
+    `class_ids` (separados por virgula) limita o material a certas turmas no portal do
+    aluno; vazio vale a disciplina toda.
 
     Que formatos valem esta escrito no `material_service`, e nao aqui: quem
     registra o extrator ja habilita o upload, sem uma segunda lista para
@@ -3511,8 +3516,11 @@ async def upload_material(
     vinculo, rotulo = await _resolve_material_discipline(
         discipline_id.strip(), discipline.strip(), user["tutor_id"], db
     )
+    turmas = await _valid_material_classes(
+        db, user["tutor_id"], vinculo, class_ids.split(","))
     material = MaterialModel(
         tutor_id=user["tutor_id"],
+        class_ids=",".join(turmas),
         discipline_id=vinculo,
         discipline=rotulo,
         title=(title.strip() or extraido.title or nome.rsplit(".", 1)[0])[:255],
@@ -4003,6 +4011,54 @@ async def discard_improved_material(
     return _material_response(material)
 
 
+def _material_class_ids(material: MaterialModel) -> list[str]:
+    return [item for item in (material.class_ids or "").split(",") if item]
+
+
+async def _valid_material_classes(
+    db: AsyncSession, tutor_id: str, discipline_id: str | None, class_ids: list[str]
+) -> list[str]:
+    """Ids de turma unicos e conferidos: do professor e da disciplina do material.
+
+    Turma de outra disciplina nunca chegaria ao aluno (o portal parte da disciplina),
+    entao aceitar silenciosamente deixaria o material escondido sem ninguem entender.
+    """
+    from ..services.project_group_service import as_class_list
+
+    wanted = as_class_list(class_ids)
+    if not wanted:
+        return []
+    if not discipline_id:
+        raise HTTPException(422, "Vincule o material a uma disciplina antes de escolher turmas")
+    found = (await db.execute(select(ClassGroupModel.id).where(
+        ClassGroupModel.tutor_id == tutor_id,
+        ClassGroupModel.discipline_id == discipline_id,
+        ClassGroupModel.id.in_(wanted)))).scalars().all()
+    missing = set(wanted) - set(found)
+    if missing:
+        raise HTTPException(422, "Turma nao encontrada nesta disciplina")
+    return wanted
+
+
+@router.put("/materials/{material_id}/classes", response_model=MaterialResponse)
+async def set_material_classes(
+    material_id: str,
+    body: MaterialClassesRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Escolhe as turmas que veem o material no portal do aluno (vazio: todas da disciplina)."""
+    material = await db.get(MaterialModel, material_id)
+    if not material or material.tutor_id != user["tutor_id"] or material.group_id:
+        raise HTTPException(404, "Material nao encontrado")
+    wanted = await _valid_material_classes(
+        db, user["tutor_id"], material.discipline_id, body.class_ids)
+    material.class_ids = ",".join(wanted)
+    await db.commit()
+    await db.refresh(material)
+    return _material_response(material, await db.get(MaterialImprovementModel, material.id))
+
+
 def _material_response(
     material: MaterialModel, improvement: MaterialImprovementModel | None = None
 ) -> MaterialResponse:
@@ -4023,6 +4079,7 @@ def _material_response(
         group_id=material.group_id,
         uploader_name=material.uploader_name or "",
         from_link=bool(material.link_id),
+        class_ids=_material_class_ids(material),
     )
 
 

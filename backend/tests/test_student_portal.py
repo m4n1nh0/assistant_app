@@ -229,6 +229,34 @@ def test_le_o_texto_do_material_so_se_for_da_disciplina_dele(api):
     assert outra.status_code == mentoria.status_code == grupo.status_code == 404
 
 
+def test_material_de_turma_especifica_so_aparece_para_ela(api):
+    """Duas turmas da mesma disciplina: o material marcado para uma não vai para a outra."""
+    async def run():
+        async with api.sessions() as db:
+            db.add_all([
+                ClassGroupModel(id="c-bd2", tutor_id="t1", code="3002", name="Noturno",
+                                discipline_id="d-bd", discipline="BD", semester="2026.2"),
+                StudentModel(id="s-cris", tutor_id="t1", name="Cris", class_id="c-bd2",
+                             class_group="x", external_id="20240005", active=True),
+                MaterialModel(id="m-so-3002", tutor_id="t1", discipline_id="d-bd",
+                              discipline="BD", title="Só do noturno", filename="n.pdf",
+                              content="Texto do noturno", class_ids="c-bd2"),
+            ])
+            await db.commit()
+
+    asyncio.run(run())
+    url = "/education/portal/tok-portal/material"
+
+    bia = consulta(api, "20240002").json()["materials"]
+    cris = consulta(api, "20240005").json()["materials"]
+
+    assert {m["title"] for m in bia} == {"Apostila BD"}
+    assert {m["title"] for m in cris} == {"Apostila BD", "Só do noturno"}
+    assert api.post(url, json={"enrollment": "20240002", "material_id": "m-so-3002"}).status_code == 404
+    assert api.post(url, json={"enrollment": "20240005",
+                               "material_id": "m-so-3002"}).json()["content"] == "Texto do noturno"
+
+
 def test_mentoria_mostra_atividades_com_a_situacao_de_cada_uma(api):
     dados = consulta(api, "20240001").json()["mentorships"]
 
@@ -311,6 +339,52 @@ def test_pagina_publica_tem_a_marca_e_nao_mostra_dado_antes_da_matricula(api):
 
     assert "Portal do aluno" in html and "iq-bar" in html
     assert "Normalização" not in html and "Ana Souza" not in html
+
+
+def test_pagina_traz_o_seletor_de_idioma_e_as_traducoes(api):
+    html = api.get("/education/portal/tok-portal").text
+
+    for code in ("pt", "en", "es"):
+        assert f'data-lang="{code}"' in html
+    assert "Student ID" in html and "Matrícula" in html and "__DICT__" not in html
+    assert "</script><" not in html.split("var DICT")[1].split(";\n")[0]
+
+
+def test_toda_frase_do_script_tem_traducao_para_ingles_e_espanhol():
+    import re
+
+    script = student_portal._SCRIPT
+    chaves = set(re.findall(r'\bt\("((?:[^"\\]|\\.)*)"', script))
+    chaves |= set(re.findall(r'more\([^,()]+,\s*"[^"]+"(?:,\s*"([^"]+)")?', script)) - {""}
+    chaves |= set(re.findall(r'(?:MODE|STATUS) = \{([^}]*)\}', script) and
+                  re.findall(r'"([^"]+)"', " ".join(re.findall(
+                      r'(?:MODE|STATUS) = \{([^}]*)\}', script))))
+    chaves |= set(re.findall(r'\["(?:\w+)", "([^"]+)", (?:true|data)', script))
+    chaves |= {"Mais recentes primeiro", "Mais antigos primeiro", "Ver tudo"}
+    chaves -= {"ok", "warn", "bad", "info", "", "Z"}
+    chaves = {c.replace('\\"', '"') for c in chaves if re.search(r"[A-Za-zÀ-ú]{3}", c)}
+
+    for idioma in ("en", "es"):
+        faltando = sorted(c for c in chaves
+                          if c not in student_portal._I18N[idioma]
+                          and c not in ("presencial", "online", "ambos", "delivered", "late",
+                                        "overdue", "pending", "recent", "old"))
+        assert not faltando, f"{idioma}: sem tradução para {faltando}"
+
+
+def test_pagina_fechada_responde_no_idioma_do_navegador(api):
+    en = api.get("/education/portal/errado", headers={"Accept-Language": "en-US,en;q=0.9"}).text
+    es = api.get("/education/portal/errado", headers={"Accept-Language": "es-AR"}).text
+    pt = api.get("/education/portal/errado").text
+
+    assert "does not exist" in en and "no existe" in es and "não existe" in pt
+
+
+def test_material_negado_devolve_codigo_para_o_portal_traduzir(api):
+    resposta = api.post("/education/portal/tok-portal/material",
+                        json={"enrollment": "20240002", "material_id": "m-outra"})
+
+    assert resposta.status_code == 404 and resposta.json()["code"] == "material"
 
 
 # --- quiz em grupo -----------------------------------------------------------------------

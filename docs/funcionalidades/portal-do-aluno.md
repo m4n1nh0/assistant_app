@@ -68,6 +68,24 @@ um colega vê os resultados dele. Para reduzir o risco:
 Se for preciso proteger mais, o próximo passo é pedir um código enviado por e-mail (o envio
 já existe), pelo menos para pontos e resultados de quiz.
 
+## Material por turma
+
+Por padrão o material vale para **todas as turmas da disciplina**. Quando só uma turma deve
+ver (por exemplo, a lista de uma aula específica), no **Material** do Modo Educação use o ícone
+de turmas na linha do material e marque quais turmas veem. Sem nenhuma marcada, volta a valer a
+disciplina inteira. Só turmas da disciplina do material são aceitas. A regra vale na lista e na
+leitura do material no portal. Rota: `PUT /education/materials/{id}/classes`
+(`{"class_ids": [...]}`); o envio (`POST /education/materials`) também aceita `class_ids`.
+
+## Idiomas
+
+A interface do portal está em **português, inglês e espanhol**. O idioma inicial vem do
+navegador do aluno; os botões **PT / EN / ES** no topo trocam na hora e a escolha fica
+lembrada no aparelho. Datas, dias da semana e textos da página seguem o idioma. O **conteúdo
+do professor** (resumos, materiais, títulos, motivos de pontos) não é traduzido. As frases
+ficam em `_I18N` no `student_portal.py`, com o português como chave; frase sem tradução
+aparece em português.
+
 ## Rotas
 
 Professor (autenticadas): `GET|PATCH /education/portal-link`.

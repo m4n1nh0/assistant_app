@@ -194,7 +194,14 @@ async def _points(db: AsyncSession, tutor_id: str, students: list[StudentModel])
     }
 
 
-async def _materials(db: AsyncSession, tutor_id: str, discipline_ids: set[str]) -> list[dict]:
+def _visible_to(material: MaterialModel, class_ids: set[str]) -> bool:
+    """Material sem turmas escolhidas vale a disciplina toda; com turmas, só para elas."""
+    chosen = {item for item in (material.class_ids or "").split(",") if item}
+    return not chosen or bool(chosen & class_ids)
+
+
+async def _materials(db: AsyncSession, tutor_id: str, discipline_ids: set[str],
+                     class_ids: set[str]) -> list[dict]:
     if not discipline_ids:
         return []
     rows = (await db.execute(select(MaterialModel).where(
@@ -202,6 +209,7 @@ async def _materials(db: AsyncSession, tutor_id: str, discipline_ids: set[str]) 
         MaterialModel.discipline_id.in_(discipline_ids),
         MaterialModel.group_id.is_(None),
     ).order_by(MaterialModel.created_at.desc()))).scalars().all()
+    rows = [m for m in rows if _visible_to(m, class_ids)]
     return [{"id": m.id, "title": m.title or m.filename, "filename": m.filename,
              "discipline": m.discipline, "pages": m.page_count or 0,
              "type": m.source_type, "date": _iso(m.created_at)} for m in rows]
@@ -274,7 +282,7 @@ async def build_portal(db: AsyncSession, tutor_id: str, students: list[StudentMo
         "lessons": await _lessons(db, classes, mentorship_ids),
         "quizzes": await _quizzes(db, tutor_id, students, discipline_ids),
         "points": await _points(db, tutor_id, students),
-        "materials": await _materials(db, tutor_id, discipline_ids),
+        "materials": await _materials(db, tutor_id, discipline_ids, class_ids),
         "mentorships": await _mentorships(
             db, tutor_id, class_ids & mentorship_ids, normalize_enrollment(enrollment)),
         "availability": await _availability(db, tutor_id, classes, mentorship_ids),
@@ -287,8 +295,11 @@ async def material_text(db: AsyncSession, tutor_id: str, students: list[StudentM
     material = await db.get(MaterialModel, material_id)
     if material is None or material.tutor_id != tutor_id or material.group_id:
         return None
-    allowed = {c.discipline_id for c in await _classes(db, students) if c.discipline_id}
-    return material if material.discipline_id in allowed else None
+    classes = await _classes(db, students)
+    allowed = {c.discipline_id for c in classes if c.discipline_id}
+    if material.discipline_id not in allowed:
+        return None
+    return material if _visible_to(material, {c.id for c in classes}) else None
 
 
 async def material_body(db: AsyncSession, material: MaterialModel) -> tuple[str, str]:
