@@ -176,12 +176,45 @@ def clear_token_cache() -> None:
     _tokens.clear()
 
 
+class GoogleAuthError(Exception):
+    """O Google recusou a autorizacao da conta (revogada, expirada ou credencial errada).
+
+    Repetir nao adianta: so reconectar a conta resolve. Por isso a falha e lembrada, e o
+    agendador deixa de bater no Google a cada ciclo para ouvir a mesma recusa.
+    """
+
+
+#: Erros do endpoint de token que significam "esta autorizacao morreu", e nao "tente de novo".
+_GOOGLE_AUTH_ERRORS = {
+    "invalid_grant": "a autorização expirou ou foi revogada",
+    "invalid_client": "o Client ID ou o Client Secret não são aceitos",
+    "unauthorized_client": "este Client ID não pode renovar o acesso",
+}
+#: De quanto em quanto tempo uma conta recusada tenta de novo (a pessoa pode ter reconectado
+#: por outro caminho). Reconectar gera outro refresh token e, portanto, outra chave.
+_AUTH_RETRY_SECONDS = 3600
+_auth_failures: dict[str, tuple[float, str]] = {}
+
+
+def google_auth_failure(account: dict) -> str | None:
+    """Motivo da recusa recente do Google para esta conta, ou `None` se ela esta bem."""
+    key = _token_key("google", account.get("client_id", ""), account.get("refresh_token", ""))
+    failed = _auth_failures.get(key)
+    if failed and time.monotonic() < failed[0]:
+        return failed[1]
+    _auth_failures.pop(key, None)
+    return None
+
+
 async def _get_google_access_token(
     client_id: str, client_secret: str, refresh_token: str
 ) -> str:
     key = _token_key("google", client_id, refresh_token)
     if (cached := _cached_token(key)) is not None:
         return cached
+    failed = _auth_failures.get(key)
+    if failed and time.monotonic() < failed[0]:
+        raise GoogleAuthError(failed[1])
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -194,7 +227,14 @@ async def _get_google_access_token(
         )
     data = resp.json()
     if "error" in data:
-        raise Exception(data.get("error_description", data["error"]))
+        reason = _GOOGLE_AUTH_ERRORS.get(str(data["error"]))
+        detail = data.get("error_description", data["error"])
+        if reason:
+            message = f"Google recusou renovar o acesso: {reason} ({detail}). Reconecte a conta."
+            _auth_failures[key] = (time.monotonic() + _AUTH_RETRY_SECONDS, message)
+            logger.warning(f"Google Calendar: {message}")
+            raise GoogleAuthError(message)
+        raise Exception(detail)
     _remember_token(key, data["access_token"], data.get("expires_in"))
     return data["access_token"]
 
@@ -267,7 +307,10 @@ async def fetch_google_events(
             ))
         return events
     except Exception as e:
-        logger.error(f"Google Calendar error: {e}")
+        # Recusa de autorizacao ja foi registrada quando aconteceu; repetir o log a cada ciclo
+        # do agendador so enche o registro com a mesma linha.
+        if not isinstance(e, GoogleAuthError):
+            logger.error(f"Google Calendar error: {e}")
         if raise_on_error:
             raise RuntimeError(str(e)) from e
         return []

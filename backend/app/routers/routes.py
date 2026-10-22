@@ -464,6 +464,7 @@ from ..services.calendar_service import (
     fetch_all_account_events,
     get_google_auth_url, get_microsoft_auth_url,
     exchange_google_code_with_email, exchange_microsoft_code, fetch_microsoft_profile,
+    google_auth_failure,
     microsoft_auth_error_message, MicrosoftAuthenticationError,
     validate_microsoft_session,
 )
@@ -672,6 +673,7 @@ def _sanitize_account(account: dict, provider: str) -> dict:
         "display_name": account.get("display_name"),
         "email": account.get("email"),
         "tenant_id": account.get("tenant_id"),
+        "error": account.get("error"),
         "created_at": account.get("created_at"),
         "updated_at": account.get("updated_at"),
     }
@@ -1265,6 +1267,12 @@ async def calendar_accounts(
     microsoft_accounts = await _load_microsoft_accounts(
         db, user["uid"], include_pending=True
     )
+    for account in google_accounts:
+        # Conta que o Google recusou renovar nao e "ativa": diz o motivo e pede reconexao.
+        failure = google_auth_failure(account) if account.get("refresh_token") else None
+        if failure:
+            account["connection_status"] = "reconnect_required"
+            account["error"] = failure
     for account in microsoft_accounts:
         if (
             not account.get("refresh_token")

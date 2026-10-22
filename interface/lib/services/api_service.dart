@@ -1561,6 +1561,9 @@ class CalendarAccount {
   final String? email;
   final String status;
 
+  /// Por que a conta precisa de atenção (ex.: o Google recusou renovar o acesso).
+  final String? error;
+
   const CalendarAccount({
     required this.id,
     required this.provider,
@@ -1569,6 +1572,7 @@ class CalendarAccount {
     this.tenantId,
     this.email,
     this.status = 'pending',
+    this.error,
   });
 
   String get statusLabel {
@@ -1587,6 +1591,7 @@ class CalendarAccount {
         tenantId: (json['tenant_id'] ?? json['tenantId'])?.toString(),
         email: json['email']?.toString(),
         status: json['status']?.toString() ?? 'pending',
+        error: json['error']?.toString(),
       );
 }
 

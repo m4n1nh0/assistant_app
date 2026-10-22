@@ -321,3 +321,62 @@ def test_email_da_conta_google_sai_do_id_token():
     assert google_email_from_id_token(f"h.{corpo}.s") == "ana@x.com"
     assert google_email_from_id_token("lixo") == ""
     assert google_email_from_id_token(None) == ""
+
+
+# --- Google recusou renovar o acesso: uma vez, com motivo, sem martelar o Google ---------------
+
+
+def _recusa(monkeypatch, erro="invalid_grant"):
+    monkeypatch.setattr(calendar_service.httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.calls = []
+    FakeAsyncClient.response = FakeResponse(
+        {"error": erro, "error_description": "Token has been expired or revoked."}, is_error=True)
+    calendar_service.clear_token_cache()
+    calendar_service._auth_failures.clear()
+
+
+def test_invalid_grant_vira_erro_de_autorizacao_com_o_motivo(monkeypatch):
+    import pytest
+
+    _recusa(monkeypatch)
+
+    with pytest.raises(calendar_service.GoogleAuthError) as erro:
+        run(calendar_service._get_google_access_token("c", "s", "refresh-morto"))
+
+    assert "Reconecte a conta" in str(erro.value) and "expirou ou foi revogada" in str(erro.value)
+
+
+def test_conta_recusada_nao_bate_no_google_de_novo_nem_a_cada_ciclo(monkeypatch):
+    import pytest
+
+    _recusa(monkeypatch)
+    for _ in range(3):
+        with pytest.raises(calendar_service.GoogleAuthError):
+            run(calendar_service._get_google_access_token("c", "s", "refresh-morto"))
+
+    assert len(FakeAsyncClient.calls) == 1  # as outras duas saem da memoria, sem chamada
+
+
+def test_reconectar_gera_outro_token_e_a_recusa_antiga_nao_vale(monkeypatch):
+    import pytest
+
+    _recusa(monkeypatch)
+    with pytest.raises(calendar_service.GoogleAuthError):
+        run(calendar_service._get_google_access_token("c", "s", "velho"))
+    conta_velha = {"client_id": "c", "refresh_token": "velho"}
+    conta_nova = {"client_id": "c", "refresh_token": "novo"}
+
+    assert calendar_service.google_auth_failure(conta_velha)
+    assert calendar_service.google_auth_failure(conta_nova) is None
+
+
+def test_erro_que_nao_e_de_autorizacao_continua_sendo_tentado_de_novo(monkeypatch):
+    import pytest
+
+    _recusa(monkeypatch, erro="temporarily_unavailable")
+    for _ in range(2):
+        with pytest.raises(Exception) as erro:
+            run(calendar_service._get_google_access_token("c", "s", "r"))
+        assert not isinstance(erro.value, calendar_service.GoogleAuthError)
+
+    assert len(FakeAsyncClient.calls) == 2

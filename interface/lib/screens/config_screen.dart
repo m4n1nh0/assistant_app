@@ -1819,6 +1819,14 @@ class _CalendarAccountList extends StatelessWidget {
                                 color: AssistantTheme.textMuted,
                               ),
                             ),
+                          if (account.error?.isNotEmpty == true)
+                            Text(
+                              account.error!,
+                              style: const TextStyle(
+                                fontSize: 9.5,
+                                color: AssistantTheme.danger,
+                              ),
+                            ),
                         ],
                       ),
                     ),

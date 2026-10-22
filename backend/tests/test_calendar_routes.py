@@ -273,3 +273,23 @@ def test_sem_email_so_as_pendentes_saem(monkeypatch):
     run(routes._drop_superseded_google_accounts(None, "u1", "nova", ""))
 
     assert [item["id"] for item in saved["items"]] == ["a", "nova"]
+
+
+def test_conta_google_recusada_aparece_para_reconectar_com_o_motivo(monkeypatch):
+    conta = {"id": "g1", "refresh_token": "r", "client_id": "c", "label": "Google Calendar"}
+
+    async def google(db, user_id, include_pending=False):
+        return [dict(conta)]
+
+    async def vazio(db, user_id, include_pending=False):
+        return []
+
+    monkeypatch.setattr(routes, "_load_google_accounts", google)
+    monkeypatch.setattr(routes, "_load_microsoft_accounts", vazio)
+    monkeypatch.setattr(routes, "google_auth_failure", lambda account: "Google recusou renovar.")
+
+    google_conta = run(routes.calendar_accounts(user={"uid": "u1"}, db=object()))["google"][0]
+
+    assert google_conta["connected"] is False
+    assert google_conta["status"] == "reconnect_required"
+    assert google_conta["error"] == "Google recusou renovar."

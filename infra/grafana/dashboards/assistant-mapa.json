@@ -877,9 +877,23 @@
           "instant": true,
           "format": "table",
           "expr": "sum by (client, client_assistant_call_kind, server) (increase(traces_service_graph_request_total{server=~\".*[.].*\"}[$__range])) > 0"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "instant": true,
+          "format": "table",
+          "expr": "sum by (client, client_assistant_call_kind, server) (increase(traces_service_graph_request_failed_total{server=~\".*[.].*\"}[$__range])) > 0"
         }
       ],
       "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
         {
           "id": "organize",
           "options": {
@@ -890,13 +904,15 @@
               "client": "Quem chama",
               "client_assistant_call_kind": "Tipo",
               "server": "Provedor / API externa",
-              "Value": "Chamadas"
+              "Value #A": "Chamadas",
+              "Value #B": "Falhas"
             },
             "indexByName": {
               "client": 0,
               "server": 1,
               "client_assistant_call_kind": 2,
-              "Value": 3
+              "Value #A": 3,
+              "Value #B": 4
             }
           }
         },
@@ -970,6 +986,56 @@
               {
                 "id": "decimals",
                 "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falhas"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "0",
+                        "color": "green",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }
