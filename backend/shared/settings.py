@@ -16,7 +16,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = Path(__file__).parent.parent / ".env"
@@ -39,6 +39,23 @@ class ServiceSettings(BaseSettings):
     # fecha essas rotas em vez de abri-las: a rota interna da API dispara
     # script na maquina do usuario, e ela esta no mesmo dominio publico.
     internal_service_token: str = ""
+
+    # Cofre de segredos (Infisical). O ENTRYPOINT da imagem busca os segredos e marca o
+    # processo com INFISICAL_INJECTED=1. Com INFISICAL_REQUIRED=true o servico recusa subir
+    # sem a marca: o "Start command" do Railway substitui o ENTRYPOINT e pularia o cofre em
+    # silencio, caindo nos valores padrao do codigo.
+    infisical_required: bool = False
+    infisical_injected: str = ""
+
+    @model_validator(mode="after")
+    def _vault_must_have_run(self) -> "ServiceSettings":
+        if self.infisical_required and self.infisical_injected != "1":
+            raise RuntimeError(
+                "INFISICAL_REQUIRED=true, mas os segredos nao vieram do cofre (falta "
+                "INFISICAL_INJECTED=1). O comando de inicio nao passou pelo "
+                "/usr/local/bin/infisical-entrypoint: confira o \"Start command\" do servico."
+            )
+        return self
 
     # --- Observabilidade --------------------------------------------------
     otel_enabled: bool = False

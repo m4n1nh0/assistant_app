@@ -111,7 +111,7 @@ falhar, o culpado é o último que você mexeu.
 
 ## Segredos
 
-Gere uma vez e guarde num cofre:
+Gere uma vez e guarde num cofre (o projeto usa o Infisical: veja [Cofre de segredos](cofre-de-segredos.md), que tira estes valores do painel do Railway):
 
 ```bash
 python -c "import secrets; print(secrets.token_hex(32))"      # SECRET_KEY
@@ -769,7 +769,7 @@ chaves de provedor: o serviço não carrega banco nem cifra.
 |---|---|
 | Root Directory | `/backend` |
 | Dockerfile Path | `/backend/Dockerfile` (imagem cheia) |
-| Start command | **`python -m services.orchestrator.main`** — obrigatório |
+| Start command | **`python -m services.orchestrator.main`** — obrigatório. Com o [cofre de segredos](cofre-de-segredos.md) ligado: **`/usr/local/bin/infisical-entrypoint python -m services.orchestrator.main`** (o start command substitui o `ENTRYPOINT` da imagem) |
 | Healthcheck | `/health/live` |
 | Domínio público | nenhum |
 | Volume | `/app/data` (opcional; evita baixar o modelo de embeddings a cada deploy) |
